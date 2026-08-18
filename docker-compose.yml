@@ -1,13 +1,19 @@
+# Настроено под существующую установку: контейнер ai-enricher, внутри порт 3000,
+# наружу 3004 — именно на него смотрит nginx-proxy-manager. Хостовый 3000 занят
+# другим проектом (max-comment-bot), поэтому его брать нельзя.
 services:
   enricher:
     build: .
-    # Порт наружу не публикуем: перед сервисом должен стоять TLS-терминатор,
-    # иначе пароль Basic уходит по сети открытым текстом.
+    container_name: ai-enricher
     ports:
-      - "127.0.0.1:3000:3000"
+      # Публикация на всех интерфейсах — как было. Сузить до 127.0.0.1 нельзя
+      # вслепую: nginx-proxy-manager сам в контейнере и ходит сюда не через
+      # loopback хоста. Защита — APP_PASSWORD и правило firewall на 3004.
+      - "${HOST_PORT:-3004}:3000"
     env_file: .env
     environment:
       HOST: 0.0.0.0
+      PORT: 3000
       PAGE_CACHE_DIR: /data/cache
       OUT_DIR: /data/out
     volumes:

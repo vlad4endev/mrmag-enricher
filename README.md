@@ -183,7 +183,27 @@ docker exec ai-enricher sh -c 'nslookup openrouter.ai; nslookup openrouter.ai 1.
 уходит без ответа. В `docker-compose.yml` для этого уже прописаны публичные
 резолверы `1.1.1.1` и `8.8.8.8`.
 
-Если и с правильным адресом TLS виснет — режут по SNI, и лечение одно: HTTP-прокси в `.env`:
+На сервере skyputh было именно это: ответы приходили с обнулённым последним
+компонентом адреса (`8.47.69.6` → `8.47.69.0`), причём одинаково через любой
+резолвер — подмена прозрачная. TLS до правильных адресов при этом проходит,
+поэтому в `docker-compose.yml` они закреплены через `extra_hosts`.
+
+Проверить, что закреплённые адреса ещё живые:
+
+```bash
+docker exec ai-enricher node -e "
+const tls=require('tls');
+for (const ip of ['8.47.69.6','8.6.112.6']) {
+  const s=tls.connect(443, ip, {servername:'openrouter.ai'}, ()=>{console.log(ip,'ok'); s.end()});
+  s.setTimeout(12000,()=>{console.log(ip,'ЗАВИС'); s.destroy()});
+  s.on('error',e=>console.log(ip,e.message));
+}"
+```
+
+Сервер печатает при старте, куда резолвится `openrouter.ai` — если там снова
+адрес на `.0`, значит `extra_hosts` не применились.
+
+Если и с правильным адресом TLS виснет — тогда режут по SNI, и лечение одно: HTTP-прокси в `.env`:
 
 ```
 HTTPS_PROXY=http://user:pass@proxy.example.com:3128

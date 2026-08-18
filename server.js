@@ -26,6 +26,7 @@
 
 import http from 'http';
 import crypto from 'crypto';
+import dns from 'dns';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -404,6 +405,14 @@ server.listen(PORT, HOST, () => {
 
   // Прокси задаётся окружением, а не кодом — но молча это оставлять нельзя:
   // «не достучались до openrouter.ai» и «прокси не отвечает» лечатся по-разному.
+  // Печатаем, куда на самом деле резолвится openrouter.ai. Если адрес
+  // подменён или закреплённый в extra_hosts протух, это видно сразу в логе,
+  // а не превращается в загадочный таймаут через месяц.
+  dns.lookup('openrouter.ai', { all: true }, (err, addrs) => {
+    if (err) return console.warn(`  ⚠ openrouter.ai не резолвится: ${err.message}`);
+    console.log(`  openrouter.ai → ${addrs.map(a => a.address).join(', ')}`);
+  });
+
   const proxy = process.env.HTTPS_PROXY || process.env.https_proxy;
   if (proxy) {
     console.log(`  Прокси: ${proxy.replace(/\/\/[^@]*@/, '//***@')}`);

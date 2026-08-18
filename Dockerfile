@@ -4,7 +4,9 @@ FROM node:22-alpine
 WORKDIR /app
 # Только то, что нужно в рантайме: тесты и кэши в образ не попадают.
 COPY package.json ./
-COPY lib.js catalog.js server.js enricher_mrmag.js index_final.html ./
+# smoke.mjs — внутрь образа намеренно: после обновления проверять сервис надо
+# там, где он работает, а node на хосте может отсутствовать.
+COPY lib.js catalog.js server.js enricher_mrmag.js index_final.html smoke.mjs ./
 
 # Кэш страниц и выгрузки — на том, иначе перезапуск заставляет обходить раздел заново.
 RUN mkdir -p /data/cache /data/out && chown -R node:node /data

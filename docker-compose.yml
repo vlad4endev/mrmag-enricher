@@ -1,18 +1,24 @@
-# Настроено под существующую установку: контейнер ai-enricher, внутри порт 3000,
-# наружу 3004 — именно на него смотрит nginx-proxy-manager. Хостовый 3000 занят
-# другим проектом (max-comment-bot), поэтому его брать нельзя.
+# Настроено под существующую установку на skyputh.
+#
+# name закреплён: сеть проекта — enricher-docker_default, и к ней подключён
+# nginx-proxy-manager. Если имя проекта уедет (compose берёт его из имени
+# каталога), сеть станет другой, NPM перестанет резолвить ai-enricher и домен
+# ответит 502.
+name: enricher-docker
+
 services:
   enricher:
     build: .
-    container_name: ai-enricher
+    container_name: ai-enricher      # по этому имени NPM ходит внутри сети
     ports:
-      # Публикация на всех интерфейсах — как было. Сузить до 127.0.0.1 нельзя
-      # вслепую: nginx-proxy-manager сам в контейнере и ходит сюда не через
-      # loopback хоста. Защита — APP_PASSWORD и правило firewall на 3004.
-      - "${HOST_PORT:-3004}:3000"
+      # Только loopback хоста: наружу сервис публикует nginx-proxy-manager, он
+      # в той же сети и обращается по имени контейнера. Прежняя публикация на
+      # 0.0.0.0:3004 открывала /api/enrich всему интернету.
+      # Хостовый 3000 занят другим проектом — не занимать.
+      - "127.0.0.1:${HOST_PORT:-3004}:3000"
     env_file: .env
     environment:
-      HOST: 0.0.0.0
+      HOST: 0.0.0.0                  # внутри контейнера — на всех интерфейсах
       PORT: 3000
       PAGE_CACHE_DIR: /data/cache
       OUT_DIR: /data/out

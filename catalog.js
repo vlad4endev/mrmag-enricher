@@ -26,6 +26,7 @@ import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 import { fileURLToPath } from 'url';
+import { netError } from './lib.js';
 
 export const ORIGIN = 'https://mrmag.ru';
 export const FEED_URL = `${ORIGIN}/scripts/sync_local/products.json`;
@@ -71,7 +72,12 @@ export async function fetchPage(url, { noCache = false } = {}) {
   if (gap > 0) await sleep(gap);
   lastFetch = Date.now();
 
-  const res = await fetch(url, { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(45_000) });
+  let res;
+  try {
+    res = await fetch(url, { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(45_000) });
+  } catch (e) {
+    throw new Error(`${url} — ${netError(e)}`);
+  }
   if (!res.ok) throw new Error(`HTTP ${res.status} на ${url}`);
   const html = await res.text();
   fs.mkdirSync(CACHE_DIR, { recursive: true });

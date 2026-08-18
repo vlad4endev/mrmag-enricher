@@ -81,6 +81,18 @@ const WASHER_SPECS = [
   'вес_кг', 'ширина_мм', 'высота_мм', 'глубина_мм', 'цвет',
 ];
 
+// ── ОШИБКИ СЕТИ ──────────────────────────────────────────────
+/**
+ * undici отдаёт бесполезное «fetch failed», а настоящая причина лежит в
+ * error.cause: ENETUNREACH (нет IPv6-маршрута), EAI_AGAIN (не резолвится),
+ * ETIMEDOUT (режет firewall). Без неё диагностика превращается в гадание.
+ */
+export function netError(e) {
+  if (e?.name === 'TimeoutError') return `таймаут: ${e.message}`;
+  const cause = e?.cause?.message || e?.cause?.code;
+  return cause ? `${e.message} (${cause})` : String(e?.message || e);
+}
+
 // ── ОЧИСТКА HTML ─────────────────────────────────────────────
 export function stripHtml(str) {
   if (!str) return '';
@@ -752,7 +764,7 @@ export async function enrichProduct(product, opts) {
       });
     } catch (e) {
       // Таймаут и сетевой сбой — имеет смысл повторить.
-      lastErr = new Error(e.name === 'TimeoutError' ? `таймаут ${timeoutMs}ms` : e.message);
+      lastErr = new Error(e.name === 'TimeoutError' ? `таймаут ${timeoutMs}ms` : netError(e));
       if (attempt < maxRetries) { onNote(`сеть, retry ${attempt}`); await sleep(attempt * 3000); continue; }
       fail(lastErr);
     }

@@ -30,7 +30,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import {
-  RateLimiter, enrichProduct, rpmFor, schemaFor, SCHEMAS,
+  RateLimiter, enrichProduct, rpmFor, schemaFor, SCHEMAS, netError,
   RUB_PER_USD, RUB_RATE_DATE, MISMATCH_POLICY, isEnrichable,
 } from './lib.js';
 import { CATEGORIES, findCategory, crawlCategory, loadFeed, buildFilters } from './catalog.js';
@@ -64,10 +64,15 @@ async function models() {
   if (modelsCache.list && Date.now() - modelsCache.at < MODELS_TTL) return modelsCache.list;
   if (!modelsInflight) {
     modelsInflight = (async () => {
-      const r = await fetch('https://openrouter.ai/api/v1/models', {
-        headers: { Authorization: `Bearer ${API_KEY}` },
-        signal:  AbortSignal.timeout(20_000),
-      });
+      let r;
+      try {
+        r = await fetch('https://openrouter.ai/api/v1/models', {
+          headers: { Authorization: `Bearer ${API_KEY}` },
+          signal:  AbortSignal.timeout(20_000),
+        });
+      } catch (e) {
+        throw new Error(`не достучались до openrouter.ai — ${netError(e)}`);
+      }
       const text = await r.text();
       if (!r.ok) throw new Error(`OpenRouter HTTP ${r.status}: ${text.slice(0, 200)}`);
       let data;
@@ -199,7 +204,7 @@ async function apiCatalog(res, key, limitRaw) {
 
   let cat;
   try { cat = await job; }
-  catch (e) { return json(res, 502, { error: `Не удалось обойти раздел: ${e.message}` }); }
+  catch (e) { return json(res, 502, { error: `Не удалось обойти раздел: ${netError(e)}` }); }
 
   json(res, 200, {
     category_id: cat.id, category: cat.name, slug: cat.slug, url: cat.url,
@@ -233,9 +238,9 @@ async function apiProduct(res, target) {
   try {
     r = await fetch(u, { signal: AbortSignal.timeout(60_000), redirect: 'error' });
   } catch (e) {
-    const why = e.name === 'TimeoutError' ? 'таймаут 60с'
-      : /redirect/i.test(e.message) ? 'источник отвечает перенаправлением — укажите конечный адрес'
-      : e.message;
+    const why = /redirect/i.test(e.message)
+      ? 'источник отвечает перенаправлением — укажите конечный адрес'
+      : netError(e);
     return json(res, 502, { error: `Не удалось получить каталог: ${why}` });
   }
   if (!r.ok) return json(res, r.status, { error: `Источник ответил HTTP ${r.status}` });

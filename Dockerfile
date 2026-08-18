@@ -1,5 +1,5 @@
 # Зависимостей нет — образ это Node плюс исходники.
-FROM node:22-alpine
+FROM node:24-alpine
 
 WORKDIR /app
 # Только то, что нужно в рантайме: тесты и кэши в образ не попадают.
@@ -10,7 +10,10 @@ COPY lib.js catalog.js server.js enricher_mrmag.js index_final.html smoke.mjs ./
 
 # Кэш страниц и выгрузки — на том, иначе перезапуск заставляет обходить раздел заново.
 RUN mkdir -p /data/cache /data/out && chown -R node:node /data
-ENV PAGE_CACHE_DIR=/data/cache \
+# Встроенная поддержка HTTPS_PROXY в fetch — появилась в Node 24. Нужна там,
+# где до openrouter.ai не достучаться напрямую: сам прокси задаётся в .env.
+ENV NODE_USE_ENV_PROXY=1 \
+    PAGE_CACHE_DIR=/data/cache \
     OUT_DIR=/data/out \
     HOST=0.0.0.0 \
     PORT=3000 \

@@ -152,6 +152,35 @@ docker restart nginx_proxy_manager
 `SIGTERM` дожидается текущих запросов (до 10 с), `HEALTHCHECK` в образе ходит на
 `/healthz`, `restart: unless-stopped` поднимает после сбоя.
 
+## Если до OpenRouter не достучаться
+
+Признак: TCP до `openrouter.ai:443` открывается (`nc -z` проходит), а TLS-рукопожатие
+виснет, `fetch` падает с `UND_ERR_CONNECT_TIMEOUT`. При этом до `api.github.com`
+и `cloudflare.com` TLS проходит. Это блокировка по SNI на стороне провайдера, и
+настройками контейнера она не лечится — нужен выход наружу через прокси.
+
+Проверить за минуту:
+
+```bash
+docker exec ai-enricher node -e "
+const tls=require('tls');
+for (const h of ['openrouter.ai','api.github.com','cloudflare.com']) {
+  const s=tls.connect(443,h,{servername:h},()=>{console.log(h,'→ ok');s.end()});
+  s.setTimeout(12000,()=>{console.log(h,'→ ЗАВИС');s.destroy()});
+  s.on('error',e=>console.log(h,'→',e.message));
+}"
+```
+
+Лечение — HTTP-прокси в `.env`:
+
+```
+HTTPS_PROXY=http://user:pass@proxy.example.com:3128
+NO_PROXY=mrmag.ru,localhost,127.0.0.1
+```
+
+`NODE_USE_ENV_PROXY=1` в образе уже стоит, поддержка встроена в Node 24.
+`mrmag.ru` из прокси исключён: это лишний крюк и лишняя точка отказа.
+
 ## Обновление уже развёрнутой версии
 
 Пакет релиза собирается в `dist/`:

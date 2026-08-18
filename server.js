@@ -401,6 +401,19 @@ server.listen(PORT, HOST, () => {
   console.log(`  Прокси разрешён для: ${ALLOWED_HOSTS.join(', ')}`);
   console.log(`  Курс: ${RUB_PER_USD} ₽/$ на ${RUB_RATE_DATE} | политика расхождений: ${MISMATCH_POLICY}`);
   console.log(`  Вход: ${APP_PASSWORD ? `Basic, пользователь ${APP_USER}` : 'ОТКРЫТ'}`);
+
+  // Прокси задаётся окружением, а не кодом — но молча это оставлять нельзя:
+  // «не достучались до openrouter.ai» и «прокси не отвечает» лечатся по-разному.
+  const proxy = process.env.HTTPS_PROXY || process.env.https_proxy;
+  if (proxy) {
+    console.log(`  Прокси: ${proxy.replace(/\/\/[^@]*@/, '//***@')}`);
+    if (Number(process.versions.node.split('.')[0]) < 24) {
+      console.warn(`  ⚠  Node ${process.versions.node}: встроенная поддержка HTTPS_PROXY
+     появилась в 24 — прокси будет проигнорирован. Обновите образ.`);
+    } else if (process.env.NODE_USE_ENV_PROXY !== '1') {
+      console.warn('  ⚠  HTTPS_PROXY задан, но NODE_USE_ENV_PROXY=1 не выставлен — прокси не применится');
+    }
+  }
   if (!APP_PASSWORD && HOST === '0.0.0.0') {
     console.warn(`
   ⚠  Сервер слушает все интерфейсы БЕЗ пароля. Любой, кто до него дотянется,

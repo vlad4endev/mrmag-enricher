@@ -993,11 +993,11 @@ async function init(){
     setSt('ok',`${allModels.length} моделей`);
     renderModelList(allModels.slice(0,60));
   }catch(e){
-    setSt('er','Нет связи с сервером');
-    setP('mdrop',`<div class="mi-empty">Ошибка: ${esc(e.message)}</div>`);
+    setSt('er','Список моделей не загружен');
+    setP('mdrop',`<div class="mi-empty">${esc(e.message)}<br>Модель можно ввести вручную: id вида deepseek/deepseek-v3.2</div>`);
     document.getElementById('mdrop').classList.add('open');
     document.getElementById('msearch').classList.add('open');
-    stepError(1,`Не удалось загрузить модели: ${e.message}. Запущен ли server.js?`);
+    stepError(1,`Справочник моделей недоступен: ${e.message}. Работать можно — введите id модели вручную в поиске выше.`);
   }
   await loadCategories();
   restoreResults();
@@ -1027,29 +1027,47 @@ function priceOf(m){
   return {ip:parseFloat(m?.pricing?.prompt||0),op:parseFloat(m?.pricing?.completion||0)};
 }
 
+/** Похоже на id модели OpenRouter: «vendor/model». */
+const looksLikeModelId=q=>/^[a-z0-9._-]+\/[a-z0-9._:-]+$/i.test(q);
+
 function renderModelList(models){
   const el=document.getElementById('mdrop');
-  if(!models.length){el.innerHTML='<div class="mi-empty">Ничего не найдено</div>';return;}
-  el.innerHTML=models.map(m=>{
+  const q=document.getElementById('msrch').value.trim();
+  // Список цен — удобство, а не обязательное условие. Если справочник не
+  // загрузился (нет связи с openrouter.ai), модель можно ввести вручную:
+  // серверу нужен только id.
+  const manual=looksLikeModelId(q)&&!models.some(m=>m.id===q)
+    ? `<div class="mitem" data-manual="${esc(q)}"><span class="mi-n">Использовать «${esc(q)}» как есть</span><span class="mi-p">цена неизвестна</span></div>`
+    : '';
+  if(!models.length&&!manual){
+    el.innerHTML=allModels.length
+      ? '<div class="mi-empty">Ничего не найдено</div>'
+      : '<div class="mi-empty">Список моделей не загрузился. Введите id вида deepseek/deepseek-v3.2</div>';
+    return;
+  }
+  el.innerHTML=manual+models.map(m=>{
     const {ip,op}=priceOf(m);
     const free=ip===0&&op===0;
     const pr=free?'<span class="mi-f">БЕСПЛАТНО</span>'
       :`<span class="mi-p">$${(ip*1e6).toFixed(2)} / $${(op*1e6).toFixed(2)}</span>`;
     return `<div class="mitem${selModel?.id===m.id?' on':''}" data-id="${esc(m.id)}"><span class="mi-n">${esc(m.name||m.id)}</span>${pr}</div>`;
   }).join('');
-  el.querySelectorAll('.mitem').forEach(x=>x.addEventListener('click',()=>pick(x.dataset.id)));
+  el.querySelectorAll('.mitem').forEach(x=>x.addEventListener('click',()=>pick(x.dataset.id||x.dataset.manual)));
 }
 
 function pick(id){
-  selModel=allModels.find(m=>m.id===id);
-  if(!selModel)return;
+  if(!id)return;
+  // Модель не из справочника — цену узнаем по факту, из usage ответа OpenRouter.
+  selModel=allModels.find(m=>m.id===id)||{id,name:id,pricing:null,manual:true};
   closeDrop();
   document.getElementById('msrch').value='';
   const {ip,op}=priceOf(selModel);
   const free=ip===0&&op===0;
   document.getElementById('msel').classList.remove('none');
   document.getElementById('mselName').textContent=selModel.name||selModel.id;
-  document.getElementById('mselPrice').textContent=free?'БЕСПЛАТНО':`$${(ip*1e6).toFixed(2)}/$${(op*1e6).toFixed(2)} за 1M`;
+  document.getElementById('mselPrice').textContent=selModel.manual
+    ? 'цена по факту из ответа'
+    : (free?'БЕСПЛАТНО':`${(ip*1e6).toFixed(2)}/${(op*1e6).toFixed(2)} за 1M`);
   syncSteps();
 }
 

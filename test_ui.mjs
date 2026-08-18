@@ -91,9 +91,11 @@ const script = html.match(/<script>\n([\s\S]*)<\/script>/)[1]
 const EXPORTS = `
 export const api={syncSteps,setCnt,readProd,renderList,statusOf,selectResult,renderDetail,plural,
   renderEstimate,setFilter,stepError,pick,sumRun,renderFoot,clearResults,restoreResults,saveResults,
-  downloadAll,initTheme,toggleTheme,applyTheme,dur,renderRunline,loadCategories,loadCategory};
+  downloadAll,initTheme,toggleTheme,applyTheme,dur,renderRunline,loadCategories,loadCategory,
+  renderModelList,filterModels};
 export const st={get items(){return items},set items(v){items=v},get results(){return results},
-  set results(v){results=v},get selModel(){return selModel},set allModels(v){allModels=v},
+  set results(v){results=v},get selModel(){return selModel},
+  get allModels(){return allModels},set allModels(v){allModels=v},
   get curIdx(){return curIdx},get filter(){return filter},
   get running(){return running},set running(v){running=v},
   get runIdx(){return runIdx},set runIdx(v){runIdx=v},get curCat(){return curCat},
@@ -400,6 +402,39 @@ t('системная тёмная уважается при первом зах
   globalThis.window.matchMedia = () => ({ matches: true });
   try { api.initTheme(); } finally { globalThis.window.matchMedia = real; }
   assert.strictEqual(document.documentElement.getAttribute('data-theme'), 'dark');
+});
+
+console.log('\nВыбор модели без справочника цен');
+t('справочник не загрузился — id вводится вручную', () => {
+  // openrouter.ai недоступен, allModels пуст. Работа не должна вставать:
+  // серверу нужен только id модели, цена придёт по факту в usage ответа.
+  st.allModels = [];
+  G('msrch').value = 'deepseek/deepseek-v3.2';
+  api.renderModelList([]);
+  assert.match(G('mdrop').innerHTML, /Использовать «deepseek\/deepseek-v3\.2» как есть/);
+});
+t('мусор вместо id вручную не предлагается', () => {
+  st.allModels = [];
+  G('msrch').value = 'холодильник';
+  api.renderModelList([]);
+  assert.doesNotMatch(G('mdrop').innerHTML, /как есть/);
+  assert.match(G('mdrop').innerHTML, /Список моделей не загрузился/);
+});
+t('выбранная вручную модель доезжает до запуска', () => {
+  st.allModels = [];
+  api.pick('deepseek/deepseek-v3.2');
+  assert.strictEqual(st.selModel.id, 'deepseek/deepseek-v3.2');
+  assert.strictEqual(st.selModel.manual, true);
+  assert.match(G('mselPrice').textContent, /по факту/, 'цену неизвестной модели выдумывать нельзя');
+  st.items = [{ sku: '1', description: 'общий объем 300 л' }];
+  api.syncSteps();
+  assert.strictEqual(G('runBtn').disabled, false, 'запуск должен разблокироваться');
+});
+t('модель из справочника по-прежнему показывает цену', () => {
+  st.allModels = [MODEL];
+  api.pick(MODEL.id);
+  assert.strictEqual(st.selModel.manual, undefined);
+  assert.match(G('mselPrice').textContent, /за 1M/);
 });
 
 console.log('\nРазделы каталога');

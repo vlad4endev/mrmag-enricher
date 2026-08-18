@@ -1,0 +1,21 @@
+services:
+  enricher:
+    build: .
+    # Порт наружу не публикуем: перед сервисом должен стоять TLS-терминатор,
+    # иначе пароль Basic уходит по сети открытым текстом.
+    ports:
+      - "127.0.0.1:3000:3000"
+    env_file: .env
+    environment:
+      HOST: 0.0.0.0
+      PAGE_CACHE_DIR: /data/cache
+      OUT_DIR: /data/out
+    volumes:
+      - enricher-data:/data
+    restart: unless-stopped
+    # Обход каталога и запросы к модели — сетевые ожидания, не счёт.
+    mem_limit: 512m
+    stop_grace_period: 15s
+
+volumes:
+  enricher-data:

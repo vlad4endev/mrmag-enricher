@@ -1,0 +1,1821 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI Enricher — mrmag.ru</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.19.0/dist/tabler-icons.min.css">
+<style>
+/* ═══════════════════════════════════════════════════════════════════
+   AI Enricher — светлая тема «приборная панель».
+   Предметная область — холодильники и измерения, поэтому холодная
+   нейтральная база, один сигнальный цвет и табличные цифры в данных.
+   Цвета заданы токенами дважды: светлая по умолчанию, тёмная по
+   переключателю в шапке (значение хранится в localStorage).
+   ═══════════════════════════════════════════════════════════════════ */
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+
+:root{
+  /* Поверхности: серая подложка, белые панели — панель «лежит» на столе */
+  --bg:#e9eef2;  --bg2:#ffffff; --bg3:#f5f8fa; --bg4:#edf3f6;
+  --b1:#e1e7ed;  --b2:#cbd5dd;
+  /* Текст: почти-чёрный с синим уклоном, не нейтральный серый */
+  --t1:#111a21;  --t2:#53616d; --t3:#83929e;
+  /* Единственный сигнальный цвет — глубокий циан-синий */
+  --ac:#0c6b91;  --ac-w:#e4f1f7; --ac-b:#a8d2e3;
+  --green:#14764c; --gbg:#e2f2e9; --gbd:#b3dbc6;
+  --amber:#8b5506; --abg:#fbf0d9; --abd:#eed5a3;
+  --red:#ac2e27;   --rbg:#fbe8e6; --rbd:#efc3be;
+  --blue-bg:#e4f1f7;
+  --sh1:0 1px 2px rgba(17,26,33,.05);
+  --sh2:0 2px 6px rgba(17,26,33,.06), 0 1px 2px rgba(17,26,33,.04);
+  --sh3:0 10px 28px rgba(17,26,33,.12);
+  --focus:0 0 0 3px rgba(12,107,145,.22);
+  /* Три голоса с разными ролями вместо одного шрифта на всё:
+     serif — заголовок записи каталога, sans — интерфейс, mono — данные. */
+  --serif:Georgia,"Iowan Old Style","Times New Roman",serif;
+  --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace;
+  --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+  /* Скруглённая коробка с тенью на каждом элементе — признак шаблона.
+     Радиусы малые, тени только у того, что реально висит над страницей. */
+  --r:6px; --r2:4px; --r3:3px;
+}
+:root[data-theme="dark"]{
+  --bg:#0d1319;  --bg2:#141c23; --bg3:#1a232b; --bg4:#212d36;
+  --b1:#253340;  --b2:#33434f;
+  --t1:#e7edf1;  --t2:#a1b0bb; --t3:#718493;
+  --ac:#4fb3d6;  --ac-w:#122b37; --ac-b:#1d5470;
+  --green:#5cbd90; --gbg:#122a20; --gbd:#215139;
+  --amber:#ddab5e; --abg:#2c2314; --abd:#59451f;
+  --red:#e8887f;   --rbg:#2d1917; --rbd:#5b2c27;
+  --blue-bg:#12303d;
+  --sh1:0 1px 2px rgba(0,0,0,.3);
+  --sh2:0 2px 6px rgba(0,0,0,.34);
+  --sh3:0 10px 28px rgba(0,0,0,.45);
+  --focus:0 0 0 3px rgba(79,179,214,.26);
+}
+
+/* ── БАЗА ─────────────────────────────────────────────────────── */
+html,body{height:100%}
+body{
+  font-family:var(--sans);background:var(--bg);color:var(--t1);
+  font-size:13.5px;line-height:1.55;-webkit-font-smoothing:antialiased;
+  font-feature-settings:"kern" 1;
+}
+/* Цифры в интерфейсе постоянно пересчитываются — фиксированная ширина
+   не даёт числам «прыгать» при каждом обновлении. */
+.mono,code,.jv,.mi-p,.msel-p,.est-row b,.tk-val,.tk-sub,.ri-m,.foot b,
+.step-sub,.rn-info,.pval,.ctbl td.r,.mcard-price{
+  font-family:var(--mono);font-variant-numeric:tabular-nums;
+}
+::-webkit-scrollbar{width:9px;height:9px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--b2);border-radius:6px;border:2px solid var(--bg2)}
+::-webkit-scrollbar-thumb:hover{background:var(--t3)}
+:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-radius:var(--r3)}
+button:focus-visible,input:focus-visible,textarea:focus-visible,[tabindex]:focus-visible{
+  outline:none;box-shadow:var(--focus);border-color:var(--ac)
+}
+@media(prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+
+/* ── ШАПКА ────────────────────────────────────────────────────── */
+.nav{
+  height:54px;padding:0 18px;background:var(--bg2);
+  border-bottom:1px solid var(--b1);display:flex;align-items:center;
+  position:sticky;top:0;z-index:300;flex-shrink:0;box-shadow:var(--sh1);
+}
+.logo{display:flex;align-items:center;gap:10px;margin-right:22px;flex-shrink:0}
+.logo-icon{
+  width:29px;height:29px;background:var(--ac);color:#fff;border-radius:8px;
+  display:flex;align-items:center;justify-content:center;font-size:15px;flex-shrink:0;
+}
+.logo-name{font-weight:650;font-size:14px;letter-spacing:-.2px;white-space:nowrap;color:var(--t1)}
+.nav-tabs{display:flex;gap:3px;flex:1;min-width:0}
+.ntab{
+  padding:7px 14px;border-radius:var(--r2);border:none;background:transparent;
+  color:var(--t2);cursor:pointer;font-size:13px;font-family:var(--sans);
+  font-weight:500;transition:background .15s,color .15s;white-space:nowrap;
+  display:flex;align-items:center;gap:6px;
+}
+.ntab:hover{color:var(--t1);background:var(--bg3)}
+.ntab.on{color:var(--ac);background:var(--ac-w);font-weight:600}
+.nav-right{margin-left:auto;display:flex;align-items:center;gap:9px;flex-shrink:0}
+.spill{
+  display:flex;align-items:center;gap:7px;padding:5px 11px;background:var(--bg3);
+  border:1px solid var(--b1);border-radius:20px;font-size:11.5px;color:var(--t2);white-space:nowrap;
+}
+.sdot{width:7px;height:7px;border-radius:50%;background:var(--t3);flex-shrink:0;transition:background .3s}
+.sdot.ok{background:var(--green)}
+.sdot.ld{background:var(--amber);animation:pulse 1.1s infinite}
+.sdot.er{background:var(--red)}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.28}}
+.themebtn{
+  width:32px;height:32px;border-radius:var(--r2);border:1px solid var(--b1);
+  background:var(--bg3);color:var(--t2);cursor:pointer;font-size:14px;
+  display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:all .15s;
+}
+.themebtn:hover{color:var(--ac);border-color:var(--ac-b);background:var(--ac-w)}
+
+/* ── СТРАНИЦЫ ─────────────────────────────────────────────────── */
+.page{display:none;height:calc(100vh - 54px);overflow:hidden;width:100%}
+.page.on{display:flex}
+.app{display:flex;width:100%;height:100%;overflow:hidden}
+
+/* ── ЛЕВАЯ КОЛОНКА: НАСТРОЙКА ─────────────────────────────────── */
+/* Одна непрерывная поверхность; шаги разделены линейками. Три плавающие
+   карточки на сером фоне читались как набор виджетов, а не как форма. */
+.left{
+  background:var(--bg2);border-right:1px solid var(--b1);overflow-y:auto;
+  display:flex;flex-direction:column;
+  width:342px;min-width:290px;max-width:400px;flex-shrink:0;
+}
+.sec-lbl{
+  font-size:10px;font-weight:700;letter-spacing:.11em;text-transform:uppercase;
+  color:var(--t3);margin-bottom:8px;
+}
+.card{background:var(--bg2);border:1px solid var(--b1);border-radius:var(--r);padding:14px}
+.flbl{font-size:11.5px;color:var(--t2);margin-bottom:6px;font-weight:500}
+.hint{font-size:11.5px;color:var(--t3);margin-top:7px;line-height:1.45}
+
+/* Шаги: номер слева, состояние справа — видно, что готово, а что нет */
+.step{border-bottom:1px solid var(--b1);transition:opacity .2s}
+.step.locked{opacity:.5}
+.step-h{display:flex;align-items:baseline;gap:9px;padding:15px 18px 0}
+/* Номер — единственное украшение шага. Полноширинная зелёная плашка
+   «выполнено» — генерик-троп визарда, от неё осталась только цифра. */
+.step-n{font-family:var(--mono);font-size:11px;font-weight:700;color:var(--t3);flex-shrink:0;width:14px;transition:color .2s}
+.step.done .step-n{color:var(--green)}
+.step-t{font-size:13px;font-weight:600;color:var(--t1);flex:1;min-width:0;letter-spacing:-.1px}
+.step-sub{font-size:11px;color:var(--t3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:130px;font-family:var(--mono)}
+.step.done .step-sub{color:var(--green)}
+.step-b{padding:11px 18px 17px 41px}
+
+/* Поля ввода */
+input[type=text],input[type=password],textarea,select{
+  width:100%;background:var(--bg2);border:1px solid var(--b2);border-radius:var(--r2);
+  color:var(--t1);padding:9px 11px;font-family:var(--sans);font-size:13px;
+  outline:none;transition:border-color .15s,box-shadow .15s;
+}
+input:hover,textarea:hover{border-color:var(--t3)}
+input:focus,textarea:focus,select:focus{border-color:var(--ac);box-shadow:var(--focus)}
+input::placeholder,textarea::placeholder{color:var(--t3)}
+textarea{
+  resize:vertical;font-family:var(--mono);font-size:11.5px;min-height:96px;
+  line-height:1.55;margin-top:6px;background:var(--bg3);
+}
+.irow{display:flex;gap:7px;align-items:center}
+.irow input{flex:1;min-width:0}
+.ibtn{
+  width:38px;height:38px;background:var(--ac);border:1px solid var(--ac);border-radius:var(--r2);
+  color:#fff;cursor:pointer;display:flex;align-items:center;justify-content:center;
+  flex-shrink:0;font-size:16px;transition:all .15s;box-shadow:var(--sh1);
+}
+.ibtn:hover:not(:disabled){filter:brightness(1.12)}
+.ibtn:active:not(:disabled){transform:translateY(1px)}
+.ibtn:disabled{opacity:.45;cursor:not-allowed}
+
+/* Количество */
+.cnt-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:5px;margin-top:2px}
+.cnt-btn{
+  padding:7px 4px;border-radius:var(--r2);border:1px solid var(--b2);background:var(--bg2);
+  color:var(--t2);cursor:pointer;font-size:12px;font-family:var(--mono);
+  font-variant-numeric:tabular-nums;text-align:center;transition:all .15s;font-weight:600;
+}
+.cnt-btn:hover{border-color:var(--ac-b);color:var(--t1);background:var(--bg3)}
+.cnt-btn.on{border-color:var(--ac);background:var(--ac);color:#fff;box-shadow:var(--sh1)}
+/* Разделы каталога: названия длинные, поэтому строка, а не сетка на 5 */
+.cat-row{display:flex;flex-wrap:wrap;gap:5px;margin-top:2px}
+.cat-btn{flex:1 1 140px;font-family:inherit;font-size:12px;font-weight:600;text-align:left;padding:8px 10px}
+.cat-btn .cat-n{display:block;font-size:10.5px;font-weight:500;color:var(--t3);margin-top:2px}
+.cat-btn.on .cat-n{color:rgba(255,255,255,.85)}
+
+/* Выбор модели */
+.msel{
+  padding:10px 12px;background:var(--bg2);border:1px solid var(--b2);border-radius:var(--r2);
+  cursor:pointer;display:flex;align-items:center;gap:9px;transition:all .15s;
+}
+.msel:hover{border-color:var(--ac);background:var(--ac-w)}
+.msel.none{border-style:dashed;border-color:var(--b2)}
+.msel-n{font-size:12.5px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:550}
+.msel.none .msel-n{color:var(--t3);font-weight:400}
+.msel-p{font-size:10.5px;color:var(--ac);white-space:nowrap;flex-shrink:0;font-weight:600}
+.msearch{margin-top:8px;display:none}
+.msearch.open{display:block}
+.mdrop{
+  display:none;max-height:236px;overflow-y:auto;border:1px solid var(--b1);
+  border-radius:var(--r2);background:var(--bg2);margin-top:6px;box-shadow:var(--sh2);
+}
+.mdrop.open{display:block}
+.mitem{
+  padding:9px 12px;cursor:pointer;border-bottom:1px solid var(--b1);display:flex;
+  justify-content:space-between;align-items:center;gap:9px;transition:background .12s;
+}
+.mitem:last-child{border-bottom:none}
+.mitem:hover{background:var(--ac-w)}
+.mitem.on{background:var(--ac-w);box-shadow:inset 2px 0 0 var(--ac)}
+.mi-n{font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--t1)}
+.mi-p{font-size:10px;color:var(--t3);white-space:nowrap;flex-shrink:0}
+.mi-f{
+  font-size:9.5px;color:var(--green);background:var(--gbg);border:1px solid var(--gbd);
+  padding:1px 6px;border-radius:var(--r3);font-family:var(--mono);flex-shrink:0;font-weight:700;
+}
+.mi-empty{padding:16px;text-align:center;font-size:12px;color:var(--t3)}
+
+/* Раскрывающийся JSON */
+.adv{margin-top:12px;border-top:1px solid var(--b1);padding-top:11px}
+.adv summary{
+  font-size:11.5px;color:var(--t3);cursor:pointer;list-style:none;
+  display:flex;align-items:center;gap:6px;user-select:none;transition:color .15s;
+}
+.adv summary::-webkit-details-marker{display:none}
+.adv summary::before{content:"▸";font-size:9px;transition:transform .18s}
+.adv[open] summary::before{transform:rotate(90deg)}
+.adv summary:hover{color:var(--ac)}
+
+/* Оценка стоимости */
+.est{display:flex;flex-direction:column;gap:8px}
+.est-row{display:flex;justify-content:space-between;align-items:baseline;gap:9px;font-size:12.5px;color:var(--t2)}
+.est-row b{color:var(--t1);font-weight:700;font-size:15px}
+.est-note{font-size:10.5px;color:var(--t3);line-height:1.5}
+
+/* Запуск */
+.run-wrap{
+  margin-top:auto;flex-shrink:0;padding:16px 18px;
+  border-top:1px solid var(--b1);background:var(--bg3);position:sticky;bottom:0;
+}
+.run-btn{
+  width:100%;padding:13px;background:var(--ac);border:none;border-radius:var(--r);
+  color:#fff;font-family:var(--sans);font-size:14px;font-weight:650;cursor:pointer;
+  display:flex;align-items:center;justify-content:center;gap:9px;letter-spacing:-.1px;
+  transition:filter .15s,transform .1s;box-shadow:var(--sh2);
+}
+.run-btn:hover:not(:disabled){filter:brightness(1.12)}
+.run-btn:active:not(:disabled){transform:translateY(1px)}
+.run-btn:disabled{background:var(--b2);color:var(--bg2);cursor:not-allowed;box-shadow:none}
+.run-why{font-size:11.5px;color:var(--t3);margin-top:9px;text-align:center;line-height:1.5}
+.inline-err{
+  background:var(--rbg);border:1px solid var(--rbd);border-radius:var(--r2);
+  padding:9px 11px;font-size:11.5px;color:var(--red);margin-top:9px;line-height:1.5;
+}
+
+/* ── СРЕДНЯЯ КОЛОНКА: СПИСОК ТОВАРОВ (он же прогресс) ─────────── */
+.mid{
+  width:274px;min-width:210px;background:var(--bg2);border-right:1px solid var(--b1);
+  display:flex;flex-direction:column;overflow:hidden;flex-shrink:0;
+}
+.mid-h{padding:10px 11px;border-bottom:1px solid var(--b1);background:var(--bg2);flex-shrink:0}
+/* Сегментированный переключатель: фильтры — не бейджи, и не должны
+   выглядеть как они. Пилюли повсюду — вторая примета шаблона. */
+.filters{display:flex;border:1px solid var(--b1);border-radius:var(--r2);overflow:hidden}
+.fbtn{
+  flex:1;padding:5px 6px;border:none;border-right:1px solid var(--b1);background:var(--bg2);
+  color:var(--t2);font-size:10.5px;cursor:pointer;font-family:var(--sans);
+  font-weight:600;transition:all .15s;white-space:nowrap;min-width:0;
+}
+.fbtn:last-child{border-right:none}
+.fbtn:hover:not(:disabled){color:var(--t1);border-color:var(--b2);background:var(--bg4)}
+.fbtn.on{border-color:var(--ac);color:#fff;background:var(--ac);font-weight:650}
+.fbtn:disabled{opacity:.4;cursor:default}
+/* Серьёзность видна до нажатия — не нужно кликать, чтобы понять, что горит */
+.fbtn[data-f="warn"]:not(.on):not(:disabled){background:var(--abg);border-color:var(--abd);color:var(--amber)}
+.fbtn[data-f="err"]:not(.on):not(:disabled){background:var(--rbg);border-color:var(--rbd);color:var(--red)}
+.fbtn[data-f="warn"].on{background:var(--amber);border-color:var(--amber)}
+.fbtn[data-f="err"].on{background:var(--red);border-color:var(--red)}
+.mid-bar{height:2px;background:var(--b1);flex-shrink:0;overflow:hidden}
+.mid-bar-f{height:100%;width:0;background:var(--ac);transition:width .35s ease-out}
+.mid-list{flex:1;overflow-y:auto;padding:6px;display:flex;flex-direction:column;gap:3px}
+/* Цветная полоска слева — состояние читается, не вглядываясь */
+.ri{
+  display:flex;align-items:flex-start;gap:9px;padding:8px 9px 8px 8px;
+  border-radius:var(--r2);cursor:pointer;border:1px solid transparent;
+  border-left:3px solid var(--b2);text-align:left;background:none;
+  font-family:var(--sans);width:100%;transition:background .12s,border-color .15s;
+}
+.ri:hover{background:var(--bg3)}
+/* Выделение меняет фон и рамку, но НЕ полоску статуса — иначе
+   выбранный товар перестаёт показывать своё состояние. */
+.ri.on{background:var(--ac-w);border-color:var(--ac-b);box-shadow:var(--sh1)}
+.ri.on.s-pd{border-left-color:var(--ac)}
+.ri.s-ok{border-left-color:var(--green)}
+.ri.s-wa{border-left-color:var(--amber)}
+.ri.s-er{border-left-color:var(--red)}
+.ri.s-sk{border-left-color:var(--b2)}
+.ri.s-pd{border-left-color:var(--b1)}
+.ri-st{font-family:var(--mono);font-size:11px;flex-shrink:0;width:13px;text-align:center;line-height:1.5;font-weight:700}
+.ri-st.ok{color:var(--green)}
+.ri-st.wa{color:var(--amber)}
+.ri-st.er{color:var(--red)}
+.ri-st.sk{color:var(--t3)}
+.ri-st.pd{color:var(--t3);opacity:.45}
+.ri-b{min-width:0;flex:1}
+.ri-n{
+  font-size:11.5px;color:var(--t2);line-height:1.4;overflow:hidden;
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;
+}
+.ri.on .ri-n{color:var(--t1);font-weight:550}
+.ri-m{font-size:9.5px;color:var(--t3);margin-top:3px}
+.mid-empty{
+  margin:10px 6px;padding:22px 14px;text-align:center;font-size:11.5px;color:var(--t3);
+  line-height:1.6;background:var(--bg3);border:1px dashed var(--b2);border-radius:var(--r2);
+}
+
+/* ── ПРАВАЯ КОЛОНКА: ДЕТАЛИ ───────────────────────────────────── */
+.right{flex:1;min-width:0;display:flex;flex-direction:column;overflow:hidden;background:var(--bg)}
+.ph{
+  padding:13px 22px;border-bottom:1px solid var(--b1);display:flex;align-items:center;
+  gap:13px;flex-wrap:wrap;background:var(--bg2);flex-shrink:0;min-height:52px;
+}
+/* Название товара — заголовок записи каталога. Единственное место, где
+   работает серифный голос, поэтому он не спорит с интерфейсом. */
+.pt{display:flex;flex-direction:column;gap:3px;min-width:0;flex:1 1 240px}
+.pt-name{
+  font-family:var(--serif);font-size:18.5px;line-height:1.25;color:var(--t1);
+  font-weight:400;letter-spacing:-.1px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+}
+.pt-meta{font-family:var(--mono);font-size:10.5px;color:var(--t3);font-variant-numeric:tabular-nums;display:flex;gap:8px;flex-wrap:wrap}
+.pt-meta b{color:var(--t2);font-weight:600}
+.pb{flex:1;overflow-y:auto;padding:18px 20px;min-height:0}
+.rtabs{display:flex;gap:4px;flex-shrink:0}
+.rtab{
+  padding:4px 12px;border-radius:20px;border:1px solid var(--b1);background:var(--bg3);
+  color:var(--t2);cursor:pointer;font-size:11px;font-family:var(--sans);font-weight:550;transition:all .15s;
+}
+.rtab:hover{color:var(--t1);border-color:var(--b2)}
+.rtab.on{border-color:var(--ac);color:#fff;background:var(--ac);font-weight:650}
+.bdg{
+  font-size:10.5px;padding:3px 9px;border-radius:20px;white-space:nowrap;
+  font-weight:600;border:1px solid transparent;transition:all .15s;
+}
+.bdg-g{background:var(--gbg);color:var(--green);border-color:var(--gbd)}
+.bdg-b{background:var(--blue-bg);color:var(--ac);border-color:var(--ac-b)}
+.bdg-a{background:var(--abg);color:var(--amber);border-color:var(--abd)}
+.bdg-b:hover,.bdg-g:hover,.bdg-a:hover{filter:brightness(.97);transform:translateY(-1px)}
+.empty{display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;gap:11px;color:var(--t3);min-height:80px}
+.empty .ti{font-size:28px;opacity:.3}
+.empty p{font-size:12.5px;text-align:center;line-height:1.6;max-width:280px}
+
+/* Вводная подсказка */
+.guide{
+  max-width:430px;text-align:left;font-size:13px;color:var(--t2);line-height:1.7;
+  background:var(--bg2);border:1px solid var(--b1);border-radius:var(--r);
+  padding:22px 24px;box-shadow:var(--sh2);
+}
+.guide b{color:var(--t1);font-weight:650}
+.guide ol{margin:12px 0 0;padding-left:20px;display:flex;flex-direction:column;gap:7px}
+.guide li{padding-left:2px}
+.guide li::marker{color:var(--ac);font-weight:700}
+
+/* Карточки полей */
+/* ── СПЕЦИФИКАЦИЯ ───────────────────────────────────────────────
+   Технические данные — таблица, а не 19 одинаковых коробок: в коробках
+   значения не сравнить по вертикали, и прокрутка втрое длиннее.
+   Отточие между подписью и значением — приём печатного даташита. */
+.specs{columns:2;column-gap:40px;column-rule:1px solid var(--b1)}
+.sp{display:flex;align-items:baseline;gap:7px;padding:5px 0;break-inside:avoid;font-size:12.5px}
+.sp-k{color:var(--t2);white-space:nowrap;flex-shrink:0}
+.sp-d{flex:1;min-width:12px;border-bottom:1px dotted var(--b2);transform:translateY(-4px)}
+.sp-v{color:var(--t1);font-family:var(--mono);font-variant-numeric:tabular-nums;font-weight:600;text-align:right;word-break:break-word}
+/* Расхождение с источником помечено прямо у значения, а не только в блоке сверху */
+.sp.bad .sp-v{color:var(--amber);box-shadow:inset 0 -2px 0 var(--abd)}
+
+/* Списки (синонимы, ключи) — блоками с подписью, без обрамления */
+.fgrid{display:flex;flex-direction:column;gap:16px}
+.fc{min-width:0}
+/* Подпись группы — второй уровень, поэтому НЕ капс и НЕ трекинг:
+   иначе она спорит с подписью раздела, набранной так же. */
+.fk{font-size:11.5px;color:var(--t2);margin-bottom:7px;font-weight:600;letter-spacing:0}
+.fv{font-size:13px;color:var(--t1);word-break:break-word}
+.tags{display:flex;flex-wrap:wrap;gap:4px;margin-top:3px}
+.tag{
+  font-size:11px;padding:2.5px 8px;border-radius:var(--r2);background:var(--bg3);
+  color:var(--t2);font-family:var(--mono);border:1px solid var(--b1);font-weight:500;
+}
+.spec-title{
+  font-size:10px;font-weight:700;letter-spacing:.13em;text-transform:uppercase;
+  color:var(--t3);margin:0 0 12px;padding-bottom:8px;border-bottom:1px solid var(--b2);
+  display:flex;align-items:baseline;justify-content:space-between;gap:10px;
+}
+.spec-title i{font-family:var(--mono);letter-spacing:0;font-weight:400;font-style:normal}
+.spec-title.mt{margin-top:26px}
+
+/* Блоки состояний */
+.warnbox{background:var(--abg);border:1px solid var(--abd);border-radius:var(--r);padding:12px 14px;margin-bottom:14px;font-size:12.5px}
+.warnbox .wt{font-weight:700;color:var(--amber);margin-bottom:8px;display:flex;align-items:center;gap:6px}
+.warnbox .wi{color:var(--t2);padding:3px 0;line-height:1.55}
+.warnbox code{font-size:11.5px;color:var(--t1);background:var(--bg2);border:1px solid var(--abd);padding:1px 5px;border-radius:var(--r3)}
+/* Врезка с линейкой слева: сгенерированный текст отличается структурой,
+   а не очередной рамкой вокруг. */
+.seobox{border-left:2px solid var(--ac-b);padding:2px 0 2px 16px;margin:0 0 20px;font-size:13.5px;line-height:1.7;color:var(--t2);font-family:var(--serif)}
+.seobox .st{font-family:var(--sans);font-size:10px;letter-spacing:.11em;text-transform:uppercase;color:var(--t3);margin-bottom:6px;font-weight:700}
+.errbox{
+  background:var(--rbg);border:1px solid var(--rbd);border-radius:var(--r);padding:12px 14px;
+  font-family:var(--mono);font-size:12px;color:var(--red);white-space:pre-wrap;word-break:break-word;
+}
+/* Подсветка JSON */
+.jv{
+  font-size:12px;line-height:1.8;white-space:pre-wrap;word-break:break-word;
+  background:var(--bg2);border:1px solid var(--b1);border-radius:var(--r);padding:14px 16px;box-shadow:var(--sh1);
+}
+.jk{color:var(--ac);font-weight:600}
+.js{color:var(--green)}
+.jn{color:var(--amber);font-weight:600}
+.jb{color:var(--red)}
+.jnl{color:var(--t3);font-style:italic}
+
+/* Подвал с итогами прогона */
+/* Итоги — одна строка приборной панели. Переносы съедали область
+   результата, поэтому вместо wrap — горизонтальная прокрутка. */
+.foot{
+  border-top:1px solid var(--b1);background:var(--bg2);padding:8px 20px;display:flex;
+  gap:12px;align-items:center;font-size:11.5px;color:var(--t3);flex-shrink:0;
+  overflow-x:auto;white-space:nowrap;scrollbar-width:thin;
+}
+.foot>span{flex-shrink:0}
+.foot b{color:var(--t1);font-weight:700}
+.foot b.cst{color:var(--ac)}
+.foot .fsep{color:var(--b2)}
+
+.spin{
+  display:inline-block;width:13px;height:13px;border:2px solid rgba(255,255,255,.3);
+  border-top-color:#fff;border-radius:50%;animation:rot .55s linear infinite;
+}
+@keyframes rot{to{transform:rotate(360deg)}}
+
+/* ── СТРАНИЦА КАЛЬКУЛЯТОРА ────────────────────────────────────── */
+.calc-page{flex-direction:column;width:100%}
+.calc-body{display:flex;flex:1;overflow:hidden;height:calc(100vh - 54px)}
+.calc-left{
+  background:var(--bg2);border-right:1px solid var(--b1);padding:18px;display:flex;
+  flex-direction:column;gap:14px;overflow-y:auto;width:308px;min-width:250px;flex-shrink:0;
+}
+.calc-right{flex:1;min-width:0;overflow-y:auto;padding:20px;display:flex;flex-direction:column;gap:20px;background:var(--bg)}
+.slider-row{display:flex;flex-direction:column;gap:8px}
+.slider-row label{font-size:11.5px;color:var(--t2);display:flex;justify-content:space-between;flex-wrap:wrap;gap:5px;font-weight:500}
+.slider-row label span{font-family:var(--mono);color:var(--t1);font-weight:700;font-variant-numeric:tabular-nums}
+input[type=range]{
+  width:100%;-webkit-appearance:none;appearance:none;height:5px;border-radius:3px;
+  background:var(--b2);outline:none;border:none;padding:0;cursor:pointer;
+}
+input[type=range]::-webkit-slider-thumb{
+  -webkit-appearance:none;appearance:none;width:17px;height:17px;border-radius:50%;
+  background:var(--ac);cursor:pointer;border:3px solid var(--bg2);box-shadow:var(--sh2);
+}
+input[type=range]::-moz-range-thumb{
+  width:17px;height:17px;border-radius:50%;background:var(--ac);
+  cursor:pointer;border:3px solid var(--bg2);box-shadow:var(--sh2);
+}
+.model-cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:10px}
+.mcard{
+  background:var(--bg2);border:1px solid var(--b1);border-radius:var(--r);padding:12px 14px;
+  cursor:pointer;transition:all .15s;position:relative;box-shadow:var(--sh1);
+}
+.mcard:hover{border-color:var(--ac-b);box-shadow:var(--sh2);transform:translateY(-1px)}
+.mcard.on{border-color:var(--ac);box-shadow:var(--sh2),inset 0 0 0 1px var(--ac)}
+.mcard-prov{font-size:10px;color:var(--t3);margin-bottom:3px;text-transform:uppercase;letter-spacing:.06em;font-weight:700}
+.mcard-name{font-size:12.5px;font-weight:650;color:var(--t1);margin-bottom:6px}
+.mcard-price{font-size:10.5px;color:var(--t2)}
+/* Деньги — нейтральным акцентом; зелёный означает «дешевле всех», а не «сумма» */
+.mcard-cost{margin-top:7px;font-family:var(--mono);font-size:15px;font-weight:700;color:var(--t1);font-variant-numeric:tabular-nums}
+.mcard-cost.cheap{color:var(--green)}
+.mcard-rub{font-size:10px;color:var(--t3);font-family:var(--mono);font-variant-numeric:tabular-nums}
+.tcost{font-family:var(--mono);font-variant-numeric:tabular-nums;color:var(--t1);font-weight:700}
+.tcost.cheap{color:var(--green)}
+.mcard-badge{position:absolute;top:9px;right:9px;font-size:9px;padding:2px 7px;border-radius:20px;font-weight:700;border:1px solid transparent}
+.mb-cheap{background:var(--gbg);color:var(--green);border-color:var(--gbd)}
+.mb-best{background:var(--blue-bg);color:var(--ac);border-color:var(--ac-b)}
+.mb-ru{background:var(--abg);color:var(--amber);border-color:var(--abd)}
+/* Таблица шире узкого экрана — прокручивается внутри себя,
+   а не обрезается и не растягивает страницу. */
+.tblwrap{background:var(--bg2);border:1px solid var(--b1);border-radius:var(--r);overflow-x:auto;box-shadow:var(--sh1)}
+.ctbl{width:100%;border-collapse:collapse;font-size:12.5px;background:var(--bg2)}
+.ctbl th{
+  font-size:10px;font-weight:700;color:var(--t3);text-align:left;padding:9px 12px;
+  border-bottom:1px solid var(--b2);white-space:nowrap;text-transform:uppercase;
+  letter-spacing:.06em;background:var(--bg3);position:sticky;top:0;
+}
+.ctbl th.r,.ctbl td.r{text-align:right}
+.ctbl td{padding:9px 12px;border-bottom:1px solid var(--b1);color:var(--t1)}
+.ctbl tr:last-child td{border-bottom:none}
+.ctbl tbody tr{transition:background .12s}
+.ctbl tbody tr:hover td{background:var(--bg3)}
+.ctbl tr.selected td{background:var(--ac-w)}
+.ctbl tr.cheapest td{background:var(--gbg)}
+.bar-wrap{display:flex;align-items:center;gap:7px}
+.cbar{height:6px;border-radius:3px;background:var(--ac);min-width:2px;opacity:.75}
+.tk{background:var(--bg3);border:1px solid var(--b1);border-radius:var(--r2);padding:11px;text-align:center}
+.tk-lbl{font-size:10px;color:var(--t3);margin-bottom:4px;font-weight:600}
+.tk-val{font-size:16px;font-weight:700;color:var(--t1)}
+.tk-sub{font-size:10px;color:var(--t3);margin-top:3px}
+.tk-val.inp{color:var(--ac)}
+.tk-val.out{color:var(--green)}
+.tk-val.cst{color:var(--amber)}
+
+/* Текстовый резерв, если шрифт иконок с CDN не загрузился */
+.ico-fb{display:none}
+.no-icons .ti{display:none}
+.no-icons .ico-fb{display:inline}
+
+/* ── АДАПТИВНОСТЬ ─────────────────────────────────────────────── */
+@media(max-width:1200px){
+  .left{width:310px}
+  .mid{width:238px}
+  .model-cards{grid-template-columns:repeat(auto-fill,minmax(170px,1fr))}
+}
+@media(max-width:900px){
+  .mid{width:210px}
+  .fgrid{grid-template-columns:1fr}
+}
+@media(max-width:768px){
+  .logo-name{display:none}
+  .ntab{padding:7px 11px;font-size:12px}
+  .spill{display:none}
+  .page{height:auto;overflow:visible;flex-direction:column}
+  .app{flex-direction:column}
+  .left{width:100%;max-width:100%;border-right:none;border-bottom:1px solid var(--b1)}
+  .mid{width:100%;border-right:none;border-bottom:1px solid var(--b1);max-height:250px}
+  .right{min-height:440px}
+  .pb{padding:14px}
+  .calc-body{flex-direction:column;height:auto;overflow:visible}
+  .calc-left{width:100%;border-right:none;border-bottom:1px solid var(--b1)}
+  .calc-right{padding:14px}
+  .model-cards{grid-template-columns:1fr 1fr}
+  .ctbl th:nth-child(3),.ctbl td:nth-child(3),.ctbl th:nth-child(4),.ctbl td:nth-child(4){display:none}
+}
+
+/* ═══ АНИМАЦИЯ ПРОЦЕССА ═══════════════════════════════════════════
+   Задача не украсить, а сообщить: запущено, вот здесь сейчас, столько
+   осталось. Мотив взят из предметной области — снежинка и морозный
+   отблеск, а не абстрактный кружок. Всё уважает prefers-reduced-motion:
+   движение выключается, а состояние остаётся читаемым цветом и текстом. */
+.flake{width:1em;height:1em;display:inline-block;vertical-align:-.13em;flex-shrink:0}
+.flake path{stroke:currentColor;stroke-width:1.7;stroke-linecap:round;fill:none}
+.flake.spinning{animation:flakeSpin 2.6s linear infinite}
+@keyframes flakeSpin{to{transform:rotate(360deg)}}
+
+/* Кнопка запуска: внутренняя заливка показывает долю выполненного */
+.run-btn{position:relative;overflow:hidden;isolation:isolate}
+.run-btn .rb-fill{
+  position:absolute;inset:0 auto 0 0;width:0;background:rgba(255,255,255,.2);
+  transition:width .4s ease-out;z-index:-1;
+}
+.run-btn.working{background:var(--ac);color:#fff;cursor:progress}
+.run-btn.working .rb-fill{box-shadow:0 0 12px rgba(255,255,255,.35)}
+
+/* Полоса прогресса: заливка + бегущие полосы поверх, пока идёт работа */
+.mid-bar{height:4px;background:var(--b1);flex-shrink:0;overflow:hidden;position:relative}
+.mid-bar-f{height:100%;width:0;background:var(--ac);transition:width .4s ease-out;position:relative}
+.mid-bar.running .mid-bar-f::after{
+  content:"";position:absolute;inset:0;
+  background:repeating-linear-gradient(115deg,
+    rgba(255,255,255,0) 0 7px, rgba(255,255,255,.55) 7px 14px);
+  animation:stripes .8s linear infinite;
+}
+@keyframes stripes{to{transform:translateX(14px)}}
+
+/* Строка состояния прогона над списком */
+.runline{
+  display:flex;align-items:center;gap:7px;margin-bottom:8px;padding:6px 9px;
+  background:var(--ac-w);border:1px solid var(--ac-b);border-radius:var(--r2);
+  font-size:11px;color:var(--ac);font-weight:600;
+}
+.runline .rl-n{font-family:var(--mono);font-variant-numeric:tabular-nums}
+.runline .rl-t{margin-left:auto;color:var(--t2);font-weight:500;font-family:var(--mono);font-variant-numeric:tabular-nums}
+
+/* Товар, который обрабатывается прямо сейчас */
+.ri.s-run{border-left-color:var(--ac);background:var(--ac-w);animation:breathe 1.6s ease-in-out infinite}
+.ri.s-run .ri-n{color:var(--t1);font-weight:600}
+@keyframes breathe{0%,100%{background:var(--ac-w)}50%{background:var(--bg2)}}
+.ri-st.run{color:var(--ac);position:relative}
+.ri-st.run::before{
+  content:"";position:absolute;left:50%;top:50%;width:16px;height:16px;margin:-8px 0 0 -8px;
+  border:1.5px solid var(--ac);border-radius:50%;opacity:0;animation:ring 1.6s ease-out infinite;
+}
+@keyframes ring{0%{transform:scale(.5);opacity:.7}100%{transform:scale(1.5);opacity:0}}
+
+/* Заглушка в панели деталей, пока ждём ответ модели */
+.skel{display:flex;flex-direction:column;gap:11px}
+.skel-h{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--ac);font-weight:600;margin-bottom:3px}
+.sk{
+  height:13px;border-radius:var(--r3);
+  background:linear-gradient(90deg,var(--bg3) 0%,var(--bg4) 38%,var(--bg3) 76%);
+  background-size:280% 100%;animation:sheen 1.5s ease-in-out infinite;
+}
+.sk.tall{height:58px}
+.sk.w80{width:80%}.sk.w60{width:60%}.sk.w40{width:40%}
+@keyframes sheen{0%{background-position:120% 0}100%{background-position:-60% 0}}
+
+/* Готовый результат «приезжает», а не появляется рывком */
+.sp,.warnbox,.seobox,.fc{animation:riseIn .3s ease-out both}
+@keyframes riseIn{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:none}}
+
+/* Короткая вспышка подвала, когда прогон завершился */
+.foot.done{animation:footFlash 1.1s ease-out}
+@keyframes footFlash{0%{background:var(--gbg)}100%{background:var(--bg2)}}
+
+/* Галочка шага встаёт с лёгким щелчком */
+.step.done .step-n{animation:pop .3s ease-out}
+@keyframes pop{0%{transform:scale(.6)}60%{transform:scale(1.15)}100%{transform:scale(1)}}
+
+/* Морозный водяной знак за вводной подсказкой — единственное чистое
+   украшение, и оно из предметной области */
+.guide{position:relative;overflow:hidden}
+.guide .frost{position:absolute;right:-26px;bottom:-30px;width:150px;height:150px;color:var(--ac);opacity:.055;pointer-events:none}
+:root[data-theme="dark"] .guide .frost{opacity:.09}
+
+@media(prefers-reduced-motion:reduce){
+  /* Движение убираем, различимость состояний оставляем */
+  .flake.spinning,.ri.s-run,.ri-st.run::before,.sk,.foot.done,
+  .step.done .step-n,.sp,.fc,.warnbox,.seobox,.mid-bar.running .mid-bar-f::after{
+    animation:none!important
+  }
+  .ri.s-run{background:var(--ac-w)}
+  .sk{background:var(--bg4)}
+}
+</style>
+</head>
+<body>
+
+<nav class="nav">
+  <div class="logo">
+    <div class="logo-icon">⚙</div>
+    <div class="logo-name">AI Enricher</div>
+  </div>
+  <div class="nav-tabs">
+    <button class="ntab on" onclick="showPage('enricher',this)"><i class="ti ti-sparkles"></i> Обогащение</button>
+    <button class="ntab" onclick="showPage('calc',this)"><i class="ti ti-calculator"></i> Калькулятор цен</button>
+  </div>
+  <div class="nav-right">
+    <button class="themebtn" id="themeBtn" onclick="toggleTheme()" title="Светлая / тёмная тема" aria-label="Переключить тему">
+      <span id="themeIcon">☾</span>
+    </button>
+    <div class="spill">
+      <span class="sdot" id="sdot"></span>
+      <span id="stxt">Загрузка...</span>
+    </div>
+  </div>
+</nav>
+
+<!-- ===== PAGE: ENRICHER ===== -->
+<div class="page on" id="page-enricher">
+<div class="app">
+
+  <!-- НАСТРОЙКА: три шага в том порядке, в котором они выполняются -->
+  <aside class="left">
+
+    <section class="step" id="step1">
+      <div class="step-h">
+        <span class="step-n" id="n1">1</span>
+        <span class="step-t">Модель</span>
+        <span class="step-sub" id="sub1">не выбрана</span>
+      </div>
+      <div class="step-b">
+        <div class="msel none" id="msel" onclick="toggleDrop()" role="button" tabindex="0"
+             aria-label="Выбрать модель" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleDrop()}">
+          <span class="msel-n" id="mselName">Выберите модель</span>
+          <span class="msel-p" id="mselPrice"></span>
+          <i class="ti ti-chevron-down" aria-hidden="true" style="opacity:.4;font-size:11px;flex-shrink:0"></i><span class="ico-fb">▾</span>
+        </div>
+        <div class="msearch" id="msearch">
+          <input type="text" id="msrch" placeholder="Поиск: deepseek, claude, gpt..." oninput="filterModels()" autocomplete="off" aria-label="Поиск модели">
+          <div class="mdrop" id="mdrop"></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="step" id="step2">
+      <div class="step-h">
+        <span class="step-n" id="n2">2</span>
+        <span class="step-t">Товары</span>
+        <span class="step-sub" id="sub2">не загружены</span>
+      </div>
+      <div class="step-b">
+        <div class="flbl">Сколько обработать</div>
+        <div class="cnt-grid">
+          <button class="cnt-btn" data-n="1" onclick="setCnt(this)">1</button>
+          <button class="cnt-btn on" data-n="10" onclick="setCnt(this)">10</button>
+          <button class="cnt-btn" data-n="50" onclick="setCnt(this)">50</button>
+          <button class="cnt-btn" data-n="100" onclick="setCnt(this)">100</button>
+          <button class="cnt-btn" data-n="500" onclick="setCnt(this)">500</button>
+        </div>
+
+        <div class="flbl" style="margin-top:12px">Раздел каталога</div>
+        <div class="cat-row" id="catRow"><div class="hint" style="margin:0">Загружаем разделы…</div></div>
+
+        <div class="flbl" style="margin-top:12px">Или свой адрес JSON</div>
+        <div class="irow">
+          <input type="text" id="urlIn" placeholder="https://mrmag.ru/scripts/sync_local/products.json" aria-label="URL каталога товаров">
+          <button class="ibtn" id="fetchBtn" onclick="fetchProducts()" title="Загрузить товары" aria-label="Загрузить товары">
+            <i class="ti ti-download" aria-hidden="true"></i><span class="ico-fb">↓</span>
+          </button>
+        </div>
+        <div class="hint" id="fetchHint">Загрузит первые 10 товаров по адресу</div>
+
+        <details class="adv" id="advBox">
+          <summary id="advSum">JSON товаров — можно вставить вручную</summary>
+          <textarea id="prod" oninput="onProdInput()" aria-label="JSON товаров"
+                    placeholder='[{"sku":"123","name":"...","description":"..."}]'></textarea>
+        </details>
+      </div>
+    </section>
+
+    <section class="step" id="step3">
+      <div class="step-h">
+        <span class="step-n" id="n3">3</span>
+        <span class="step-t">Проверьте и запустите</span>
+      </div>
+      <div class="step-b">
+        <div class="est" id="est">
+          <div class="est-note">Выберите модель и загрузите товары — здесь появится стоимость прогона.</div>
+        </div>
+      </div>
+    </section>
+
+    <div class="run-wrap">
+      <button class="run-btn" id="runBtn" onclick="run()" disabled>
+        <span class="rb-fill" id="rbFill"></span>
+        <i class="ti ti-player-play" aria-hidden="true"></i>
+        <span id="runTxt">Обогатить через ИИ</span>
+      </button>
+      <div class="run-why" id="runWhy">Сначала выберите модель</div>
+    </div>
+  </aside>
+
+  <!-- СПИСОК ТОВАРОВ: он же индикатор прогресса во время работы -->
+  <div class="mid">
+    <div class="mid-h">
+      <div class="runline" id="runline" style="display:none"></div>
+      <div class="filters" id="filters">
+        <button class="fbtn on" data-f="all" onclick="setFilter(this)" disabled>Все</button>
+        <button class="fbtn" data-f="warn" onclick="setFilter(this)" disabled>Расхождения</button>
+        <button class="fbtn" data-f="err" onclick="setFilter(this)" disabled>Ошибки</button>
+      </div>
+    </div>
+    <div class="mid-bar"><div class="mid-bar-f" id="midBarF"></div></div>
+    <div class="mid-list" id="midList">
+      <div class="mid-empty">Здесь появятся товары.<br>Загрузите их в шаге 2.</div>
+    </div>
+  </div>
+
+  <!-- ДЕТАЛИ ОДНОГО ТОВАРА -->
+  <div class="right">
+    <div class="ph">
+      <span class="pt" id="detailTitle"><i class="ti ti-sparkles" aria-hidden="true"></i> Результат</span>
+      <div class="rtabs" id="rtabs" style="display:none;padding:0;border:none;background:none">
+        <button class="rtab on" onclick="switchTab('vis',this)">Поля</button>
+        <button class="rtab" onclick="switchTab('json',this)">JSON</button>
+      </div>
+      <div style="margin-left:auto;display:flex;gap:5px;align-items:center;flex-wrap:wrap">
+        <span class="bdg bdg-g" id="confBdg" style="display:none"></span>
+        <span class="bdg bdg-b" id="cpyBtn" style="display:none;cursor:pointer" onclick="copyJSON()" title="Скопировать JSON товара"><i class="ti ti-copy" aria-hidden="true"></i> Копировать</span>
+        <span class="bdg bdg-b" id="dlBtn" style="display:none;cursor:pointer" onclick="downloadAll('json')" title="Выгрузить все результаты в JSON"><i class="ti ti-download" aria-hidden="true"></i> JSON</span>
+        <span class="bdg bdg-g" id="dlTxtBtn" style="display:none;cursor:pointer" onclick="downloadAll('txt')" title="Выгрузить все результаты в TXT"><i class="ti ti-file-text" aria-hidden="true"></i> TXT</span>
+        <span class="bdg bdg-a" id="clrBtn" style="display:none;cursor:pointer" onclick="clearResults()" title="Удалить сохранённый прогон">✕ Сброс</span>
+      </div>
+    </div>
+    <div class="pb" id="detail">
+      <div class="empty">
+        <div class="guide">
+          <svg class="flake frost" viewBox="0 0 24 24" aria-hidden="true"><g><path d="M12 2v20M3.34 7l17.32 10M3.34 17L20.66 7"/><path d="M12 6.4 9.9 4.3M12 6.4l2.1-2.1M12 17.6l-2.1 2.1M12 17.6l2.1 2.1"/><path d="M7.3 9.3 4.4 8.5M7.3 9.3 6.5 6.4M16.7 14.7l2.9.8M16.7 14.7l.8 2.9"/><path d="M7.3 14.7l-2.9.8M7.3 14.7l.8-2.9M16.7 9.3l2.9-.8M16.7 9.3l-.8-2.9"/></g></svg>
+          <b>Что делает эта страница</b><br>
+          Берёт товары с описаниями и достаёт из них характеристики, синонимы и SEO-текст.
+          <ol>
+            <li>Выберите <b>модель</b> — рядом видна её цена за 1M токенов.</li>
+            <li>Укажите, <b>сколько</b> товаров обработать, и загрузите их по адресу.</li>
+            <li>Сверьте <b>стоимость</b> прогона и нажмите «Обогатить».</li>
+          </ol>
+        </div>
+      </div>
+    </div>
+    <div class="foot" id="foot" style="display:none"></div>
+  </div>
+
+</div>
+</div>
+
+
+<!-- ===== PAGE: CALCULATOR ===== -->
+<div class="page calc-page" id="page-calc">
+  <div class="calc-body">
+    <div class="calc-left">
+      <div>
+        <div class="sec-lbl">Параметры запроса</div>
+        <div class="card" style="display:flex;flex-direction:column;gap:14px">
+          <div class="slider-row">
+            <label>Токены вход <span id="sl-in-val">1 000</span></label>
+            <input type="range" id="sl-in" min="100" max="10000" step="100" value="1000" oninput="calcUpdate()">
+          </div>
+          <div class="slider-row">
+            <label>Токены выход <span id="sl-out-val">500</span></label>
+            <input type="range" id="sl-out" min="100" max="5000" step="100" value="500" oninput="calcUpdate()">
+          </div>
+          <div class="slider-row">
+            <label>Количество товаров <span id="sl-cnt-val">10 000</span></label>
+            <input type="range" id="sl-cnt" min="1000" max="500000" step="1000" value="10000" oninput="calcUpdate()">
+          </div>
+        </div>
+      </div>
+      <div>
+        <div class="sec-lbl">Выбранная модель</div>
+        <div class="card" id="calc-sel-model" style="font-size:12px;color:var(--t3)">Кликните на модель справа</div>
+      </div>
+      <div>
+        <div class="sec-lbl">Итог</div>
+        <div class="card" id="calc-result-box" style="font-size:12px;color:var(--t3)">Выберите модель</div>
+      </div>
+    </div>
+    <div class="calc-right">
+      <div>
+        <div class="sec-lbl" style="margin-bottom:12px">Выберите модель для расчёта</div>
+        <div class="model-cards" id="calc-model-cards"></div>
+      </div>
+      <div>
+        <div class="sec-lbl" style="margin-bottom:12px">Сравнение всех моделей</div>
+        <div class="tblwrap">
+          <table class="ctbl" id="calc-table">
+            <thead>
+              <tr>
+                <th>Провайдер</th>
+                <th>Модель</th>
+                <th class="r">$/1M вход</th>
+                <th class="r">$/1M выход</th>
+                <th class="r">Итого</th>
+                <th class="r">В рублях</th>
+                <th>Дешевле в</th>
+              </tr>
+            </thead>
+            <tbody id="calc-tbody"></tbody>
+          </table>
+        </div>
+        <div class="hint" id="calc-provenance" style="margin-top:10px;line-height:1.6"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+'use strict';
+
+// Курс приходит с сервера (/api/models); значение ниже — резерв до его загрузки.
+let RUB = 80;
+let RUB_DATE = '—';
+
+// ── MODELS DATABASE ──────────────────────────────────────────
+// Внесено вручную и НЕ обновляется автоматически. Цены с пометкой unverified
+// не сверены с прайсом провайдера — не принимайте по ним решений, пока не
+// проверите. Модели OpenRouter с живыми ценами есть на странице «Обогащение».
+const PRICES_EDITED = '18.08.2026';
+const CALC_MODELS = [
+  // OpenAI
+  {prov:'OpenAI',name:'GPT-5.4 Nano',   inp:0.20,  out:1.25,  badge:'cheap', badgeText:'Дешёвый'},
+  {prov:'OpenAI',name:'GPT-5.4 Mini',   inp:0.75,  out:4.50,  badge:'',      badgeText:''},
+  {prov:'OpenAI',name:'GPT-5.4',        inp:2.50,  out:15.00, badge:'best',  badgeText:'Популярный'},
+  {prov:'OpenAI',name:'GPT-5.5',        inp:5.00,  out:30.00, badge:'',      badgeText:''},
+  // Anthropic
+  {prov:'Claude', name:'Haiku 4.5',     inp:1.00,  out:5.00,  badge:'best',  badgeText:'Лучший JSON'},
+  {prov:'Claude', name:'Sonnet 4.6',    inp:3.00,  out:15.00, badge:'',      badgeText:''},
+  {prov:'Claude', name:'Opus 4.6',      inp:5.00,  out:25.00, badge:'',      badgeText:''},
+  // Google
+  {prov:'Google', name:'Gemini 2.5 Flash-Lite', inp:0.10, out:0.40, badge:'cheap', badgeText:'Самый дешёвый'},
+  {prov:'Google', name:'Gemini 2.5 Flash',      inp:0.30, out:2.50, badge:'',      badgeText:''},
+  {prov:'Google', name:'Gemini 2.5 Pro',        inp:1.25, out:10.00,badge:'',      badgeText:''},
+  // DeepSeek
+  {prov:'DeepSeek',name:'deepseek-chat',         inp:0.14, out:0.28, badge:'cheap', badgeText:'Дешёвый'},
+  {prov:'DeepSeek',name:'deepseek-reasoner',     inp:0.55, out:2.19, badge:'',      badgeText:''},
+  {prov:'DeepSeek',name:'deepseek-v4-pro (акция)',inp:0.435,out:0.87,badge:'',     badgeText:'до 31.05'},
+  // YandexGPT — цены заданы в ₽ за 1M токенов (inp_rub/out_rub), в $ переводятся
+  // в calcCost по текущему курсу. Единицы в исходной таблице были несогласованы:
+  // две строки выглядели как ₽/1K, одна как ₽/1M, из-за чего GPT Pro считался
+  // как $18 525/1M. Ниже приведено к одной единице — но требует проверки по прайсу.
+  {prov:'YandexGPT',name:'Alice Flash', badge:'ru', badgeText:'Данные в РФ', rub:true, inp_rub:500,  out_rub:125,  unverified:true},
+  {prov:'YandexGPT',name:'GPT Lite',    badge:'ru', badgeText:'Данные в РФ', rub:true, inp_rub:1000, out_rub:1000, unverified:true},
+  {prov:'YandexGPT',name:'GPT Pro 5',   badge:'ru', badgeText:'Данные в РФ', rub:true, inp_rub:1482, out_rub:1482, unverified:true},
+];
+
+// Рублёвые тарифы → $/1M по текущему курсу. Один проход, чтобы единица была одна.
+for(const m of CALC_MODELS){
+  if(m.rub){ m.inp=m.inp_rub/RUB; m.out=m.out_rub/RUB; }
+}
+
+let calcSelModel = CALC_MODELS[4]; // Claude Haiku по умолчанию
+
+// ── PAGE NAVIGATION ──────────────────────────────────────────
+function showPage(id, btn){
+  document.querySelectorAll('.page').forEach(p=>p.classList.remove('on'));
+  document.querySelectorAll('.ntab').forEach(b=>b.classList.remove('on'));
+  document.getElementById('page-'+id).classList.add('on');
+  btn.classList.add('on');
+  if(id==='calc') calcUpdate();
+}
+
+// Снежинка — знак «идёт работа». Предметная область — холодильники,
+// поэтому мотив не абстрактный кружок, а кристалл.
+const FLAKE_SVG=`<svg class="flake" viewBox="0 0 24 24" aria-hidden="true"><g><path d="M12 2v20M3.34 7l17.32 10M3.34 17L20.66 7"/><path d="M12 6.4 9.9 4.3M12 6.4l2.1-2.1M12 17.6l-2.1 2.1M12 17.6l2.1 2.1"/><path d="M7.3 9.3 4.4 8.5M7.3 9.3 6.5 6.4M16.7 14.7l2.9.8M16.7 14.7l.8 2.9"/><path d="M7.3 14.7l-2.9.8M7.3 14.7l.8-2.9M16.7 9.3l2.9-.8M16.7 9.3l-.8-2.9"/></g></svg>`;
+const flake=cls=>FLAKE_SVG.replace('class="flake"',`class="flake ${cls}"`);
+
+// ── ENRICHER STATE ───────────────────────────────────────────
+let allModels=[], selModel=null;
+let items=[];        // товары, которые пойдут в обработку
+let results=[];      // результаты, индексы совпадают с items
+let curIdx=0, selCnt=10, curTab='vis', filter='all', running=false;
+let runIdx=-1, runT0=0;   // что обрабатывается сейчас и когда начали
+
+// results разрежен: пока товар не обработан, на его месте пусто (после
+// сохранения в localStorage — null). Всё, что перебирает результаты, обязано
+// идти через это — иначе падение на частично завершённом прогоне.
+const doneRes=()=>results.filter(Boolean);
+
+// ── СОХРАНЕНИЕ ПРОГОНА ───────────────────────────────────────
+// Прогон стоит денег, поэтому результат пишется сразу по получении: закрытая
+// вкладка или перезагрузка больше не стирают оплаченную работу.
+const STORE_KEY='enricher.lastRun';
+
+function saveResults(){
+  try{
+    localStorage.setItem(STORE_KEY,JSON.stringify({at:Date.now(),model:selModel?.id||null,items,results}));
+  }catch(e){
+    // Переполнение квоты не должно ронять прогон — он важнее сохранения.
+    console.warn('Не удалось сохранить прогон:',e.message);
+  }
+}
+
+function restoreResults(){
+  let saved;
+  try{ saved=JSON.parse(localStorage.getItem(STORE_KEY)||'null'); }catch{ return; }
+  if(!saved?.results?.length) return;
+  results=saved.results;
+  items=saved.items?.length?saved.items:doneRes().map(r=>r.original||{});
+  document.getElementById('prod').value=JSON.stringify(items,null,2);
+  renderList();
+  selectResult(0);
+  showActions();
+  renderFoot(sumRun(),`восстановлен ${new Date(saved.at).toLocaleString('ru')}`);
+  syncSteps();
+}
+
+function clearResults(){
+  if(!confirm('Удалить сохранённый прогон? Выгрузите его, если он ещё нужен.')) return;
+  localStorage.removeItem(STORE_KEY);
+  results=[];curIdx=0;filter='all';
+  ['cpyBtn','dlBtn','dlTxtBtn','clrBtn','confBdg'].forEach(hide);
+  document.getElementById('rtabs').style.display='none';
+  document.getElementById('foot').style.display='none';
+  document.getElementById('midBarF').style.width='0';
+  renderList();
+  setP('detail','<div class="empty"><p>Прогон удалён. Загрузите товары и запустите снова.</p></div>');
+  syncSteps();
+}
+
+function setSt(cls,txt){
+  document.getElementById('sdot').className='sdot '+cls;
+  document.getElementById('stxt').textContent=txt;
+}
+
+/** Пересчитывает рублёвые тарифы под текущий курс. */
+function applyRate(){
+  for(const m of CALC_MODELS){
+    if(m.rub){ m.inp=m.inp_rub/RUB; m.out=m.out_rub/RUB; }
+  }
+}
+
+async function init(){
+  setSt('ld','Загружаем модели...');
+  try{
+    const r=await fetch('/api/models');
+    const data=await r.json();
+    if(!r.ok) throw new Error(data.error||`HTTP ${r.status}`);
+    if(typeof data.rub_per_usd==='number'&&data.rub_per_usd>0){
+      RUB=data.rub_per_usd;
+      RUB_DATE=data.rub_rate_date||'—';
+      applyRate();
+      calcUpdate();
+    }
+    allModels=(data.data||[]).filter(m=>m.id&&m.pricing).sort((a,b)=>(a.name||a.id).localeCompare(b.name||b.id));
+    setSt('ok',`${allModels.length} моделей`);
+    renderModelList(allModels.slice(0,60));
+  }catch(e){
+    setSt('er','Нет связи с сервером');
+    setP('mdrop',`<div class="mi-empty">Ошибка: ${esc(e.message)}</div>`);
+    document.getElementById('mdrop').classList.add('open');
+    document.getElementById('msearch').classList.add('open');
+    stepError(1,`Не удалось загрузить модели: ${e.message}. Запущен ли server.js?`);
+  }
+  await loadCategories();
+  restoreResults();
+  syncSteps();
+}
+
+// ── ШАГ 1: МОДЕЛЬ ────────────────────────────────────────────
+function toggleDrop(){
+  const box=document.getElementById('msearch');
+  const open=box.classList.toggle('open');
+  document.getElementById('mdrop').classList.toggle('open',open);
+  if(open) document.getElementById('msrch').focus();
+}
+function closeDrop(){
+  document.getElementById('msearch').classList.remove('open');
+  document.getElementById('mdrop').classList.remove('open');
+}
+
+function filterModels(){
+  const q=document.getElementById('msrch').value.toLowerCase().trim();
+  const list=q?allModels.filter(m=>(m.id+(m.name||'')).toLowerCase().includes(q)):allModels.slice(0,60);
+  renderModelList(list.slice(0,80));
+  document.getElementById('mdrop').classList.add('open');
+}
+
+function priceOf(m){
+  return {ip:parseFloat(m?.pricing?.prompt||0),op:parseFloat(m?.pricing?.completion||0)};
+}
+
+function renderModelList(models){
+  const el=document.getElementById('mdrop');
+  if(!models.length){el.innerHTML='<div class="mi-empty">Ничего не найдено</div>';return;}
+  el.innerHTML=models.map(m=>{
+    const {ip,op}=priceOf(m);
+    const free=ip===0&&op===0;
+    const pr=free?'<span class="mi-f">БЕСПЛАТНО</span>'
+      :`<span class="mi-p">$${(ip*1e6).toFixed(2)} / $${(op*1e6).toFixed(2)}</span>`;
+    return `<div class="mitem${selModel?.id===m.id?' on':''}" data-id="${esc(m.id)}"><span class="mi-n">${esc(m.name||m.id)}</span>${pr}</div>`;
+  }).join('');
+  el.querySelectorAll('.mitem').forEach(x=>x.addEventListener('click',()=>pick(x.dataset.id)));
+}
+
+function pick(id){
+  selModel=allModels.find(m=>m.id===id);
+  if(!selModel)return;
+  closeDrop();
+  document.getElementById('msrch').value='';
+  const {ip,op}=priceOf(selModel);
+  const free=ip===0&&op===0;
+  document.getElementById('msel').classList.remove('none');
+  document.getElementById('mselName').textContent=selModel.name||selModel.id;
+  document.getElementById('mselPrice').textContent=free?'БЕСПЛАТНО':`$${(ip*1e6).toFixed(2)}/$${(op*1e6).toFixed(2)} за 1M`;
+  syncSteps();
+}
+
+document.addEventListener('click',e=>{
+  if(!e.target.closest('#step1')) closeDrop();
+});
+
+// ── ШАГ 2: ТОВАРЫ ────────────────────────────────────────────
+function setCnt(btn){
+  document.querySelectorAll('.cnt-btn').forEach(b=>b.classList.remove('on'));
+  btn.classList.add('on');
+  selCnt=parseInt(btn.dataset.n);
+  document.getElementById('fetchHint').textContent=`Загрузит первые ${selCnt} ${plural(selCnt,'товар','товара','товаров')} по адресу`;
+  // Количество ограничивает и уже загруженный список — смысл настройки один.
+  if(items.length>selCnt){
+    items=items.slice(0,selCnt);
+    document.getElementById('prod').value=JSON.stringify(items,null,2);
+    renderList();
+  }
+  syncSteps();
+}
+
+function plural(n,one,few,many){
+  const m10=n%10,m100=n%100;
+  if(m10===1&&m100!==11) return one;
+  if(m10>=2&&m10<=4&&(m100<10||m100>=20)) return few;
+  return many;
+}
+
+/** Разбирает textarea в items. Возвращает текст ошибки либо null. */
+function readProd(){
+  const raw=document.getElementById('prod').value.trim();
+  if(!raw){ items=[]; return null; }
+  let parsed;
+  try{ parsed=JSON.parse(raw); }
+  catch(e){ items=[]; return 'JSON товаров не разбирается: '+e.message; }
+  const arr=Array.isArray(parsed)?parsed:[parsed];
+  const bad=arr.findIndex(x=>!x||typeof x!=='object');
+  if(bad>=0) return `Элемент №${bad+1} — не объект товара`;
+  items=arr.slice(0,selCnt);
+  return null;
+}
+
+function onProdInput(){
+  const err=readProd();
+  stepError(2,err);
+  if(!err){ results=[]; renderList(); }
+  syncSteps();
+}
+
+// ── РАЗДЕЛЫ КАТАЛОГА ─────────────────────────────────────────
+// Разделы приходят с сервера (/api/categories), а не вбиты в страницу: id и
+// набор полей знает бэкенд, и расходиться им нельзя.
+let categories=[], curCat=null;
+
+async function loadCategories(){
+  const box=document.getElementById('catRow');
+  try{
+    const r=await fetch('/api/categories');
+    const d=await r.json();
+    if(!r.ok) throw new Error(d.error||`HTTP ${r.status}`);
+    categories=d.categories||[];
+    if(!categories.length) throw new Error('сервер не вернул разделы');
+    box.innerHTML=categories.map(c=>
+      `<button class="cnt-btn cat-btn" data-slug="${esc(c.slug)}" onclick="loadCategory(this.dataset.slug)">`+
+      `${esc(c.name)}<span class="cat-n">id ${c.id} · ${c.spec_keys.length} полей</span></button>`).join('');
+  }catch(e){
+    box.innerHTML=`<div class="hint" style="margin:0">Разделы недоступны: ${esc(e.message)}. Ниже можно указать адрес JSON.</div>`;
+  }
+}
+
+/** Обход раздела на сервере. Первый заход по разделу небыстрый — страницы там кэшируются. */
+async function loadCategory(slug){
+  const cat=categories.find(c=>c.slug===slug);
+  if(!cat) return;
+  const hint=document.getElementById('fetchHint');
+  document.querySelectorAll('.cat-btn').forEach(b=>b.classList.toggle('on',b.dataset.slug===slug));
+  stepError(2,null);
+  hint.textContent=`Обходим «${cat.name}» — первый раз это до минуты…`;
+  setSt('ld',`Раздел ${cat.name}`);
+  try{
+    const r=await fetch(`/api/catalog?category=${encodeURIComponent(slug)}&limit=${selCnt}`);
+    const d=await r.json();
+    if(!r.ok) throw new Error(d.error||`HTTP ${r.status}`);
+    if(!Array.isArray(d.products)||!d.products.length) throw new Error('в разделе нет товаров');
+    curCat=d;
+    items=d.products.slice(0,selCnt);
+    results=[];
+    document.getElementById('prod').value=JSON.stringify(items,null,2);
+    document.getElementById('urlIn').value='';
+    const br=d.filters?.find(f=>f.code==='brand'), pr=d.filters?.find(f=>f.code==='price');
+    // d.count — весь раздел, поэтому «10 из 256» уже говорит, что загружено не всё.
+    hint.innerHTML=`Загружено <b>${items.length}</b> из ${d.count} в разделе · id ${d.category_id}`+
+      (br?` · брендов ${br.values.length}`:'')+
+      (pr&&pr.min!=null?` · цена ${pr.min.toLocaleString('ru')}–${pr.max.toLocaleString('ru')} ₽`:'');
+    setSt('ok',`${cat.name}: ${items.length}`);
+    renderList();
+    selectResult(0);
+  }catch(e){
+    curCat=null;
+    document.querySelectorAll('.cat-btn').forEach(b=>b.classList.remove('on'));
+    hint.textContent=`Загрузит первые ${selCnt} ${plural(selCnt,'товар','товара','товаров')} по адресу`;
+    setSt('er','Раздел не загружен');
+    stepError(2,e.message);
+  }
+  syncSteps();
+}
+
+async function fetchProducts(){
+  const url=document.getElementById('urlIn').value.trim();
+  stepError(2,null);
+  curCat=null;
+  document.querySelectorAll('.cat-btn').forEach(b=>b.classList.remove('on'));
+  if(!url){ stepError(2,'Укажите адрес каталога товаров'); return; }
+
+  const btn=document.getElementById('fetchBtn'),hint=document.getElementById('fetchHint');
+  btn.disabled=true;btn.innerHTML='<span class="spin"></span>';hint.textContent='Загружаем...';
+  try{
+    let fetchUrl=url;
+    if(!fetchUrl.includes('limit=')) fetchUrl+=(fetchUrl.includes('?')?'&':'?')+'limit='+selCnt;
+    const r=await fetch('/api/product?url='+encodeURIComponent(fetchUrl));
+    const data=await r.json();
+    if(!r.ok) throw new Error(data.error||`HTTP ${r.status}`);
+    const all=Array.isArray(data)?data:(data.items??data.products??data.data??[data]);
+    if(!Array.isArray(all)||!all.length) throw new Error('В ответе нет товаров');
+    items=all.slice(0,selCnt);
+    results=[];
+    document.getElementById('prod').value=JSON.stringify(items,null,2);
+    hint.textContent=`Загружено ${items.length} из ${all.length} доступных`;
+    renderList();
+    selectResult(0);
+  }catch(e){
+    hint.textContent=`Загрузит первые ${selCnt} ${plural(selCnt,'товар','товара','товаров')} по адресу`;
+    stepError(2,e.message);
+  }
+  finally{
+    btn.disabled=false;
+    btn.innerHTML='<i class="ti ti-download" aria-hidden="true"></i><span class="ico-fb">↓</span>';
+    syncSteps();
+  }
+}
+
+// ── СОСТОЯНИЕ ШАГОВ И КНОПКИ ─────────────────────────────────
+/** Показывает ошибку внутри шага. Раньше для этого был alert(). */
+function stepError(n,msg){
+  const box=document.getElementById('step'+n);
+  let el=box.querySelector('.inline-err');
+  if(!msg){ el?.remove(); return; }
+  if(!el){ el=document.createElement('div'); el.className='inline-err'; box.querySelector('.step-b').appendChild(el); }
+  el.textContent=msg;
+}
+
+/**
+ * Единственное место, где решается, что готово и можно ли запускать.
+ * Кнопка не молчит: если запуск невозможен, под ней написано почему.
+ */
+function syncSteps(){
+  const hasModel=!!selModel, hasItems=items.length>0;
+
+  document.getElementById('step1').classList.toggle('done',hasModel);
+  document.getElementById('n1').textContent=hasModel?'✓':'1';
+  document.getElementById('sub1').textContent=hasModel?'выбрана':'не выбрана';
+
+  document.getElementById('step2').classList.toggle('done',hasItems);
+  document.getElementById('step2').classList.toggle('locked',!hasModel);
+  document.getElementById('n2').textContent=hasItems?'✓':'2';
+  document.getElementById('sub2').textContent=hasItems
+    ? `${items.length} ${plural(items.length,'товар','товара','товаров')}`
+    : 'не загружены';
+
+  document.getElementById('step3').classList.toggle('locked',!(hasModel&&hasItems));
+  document.getElementById('advSum').textContent=items.length
+    ? `JSON товаров — ${items.length} ${plural(items.length,'запись','записи','записей')}`
+    : 'JSON товаров — можно вставить вручную';
+
+  renderEstimate();
+
+  const btn=document.getElementById('runBtn'), why=document.getElementById('runWhy');
+  // В частично завершённом прогоне есть незаполненные позиции — их пропускаем.
+  const done=doneRes().filter(r=>r.enriched||r.skipped).length;
+  if(running){ btn.disabled=true; why.textContent='Идёт обработка — прогресс виден в списке'; return; }
+  btn.disabled=!(hasModel&&hasItems);
+  if(!hasModel)      why.textContent='Сначала выберите модель в шаге 1';
+  else if(!hasItems) why.textContent='Загрузите товары в шаге 2';
+  else if(done)      why.textContent=`Повторный запуск заменит текущие ${done} ${plural(done,'результат','результата','результатов')}`;
+  else               why.textContent=`Будет обработано ${items.length} ${plural(items.length,'товар','товара','товаров')}`;
+}
+
+// Допущение о размере запроса. До первого прогона — оценка, после — факт.
+let estIn=1200, estOut=700, estFromRun=false;
+
+function renderEstimate(){
+  const el=document.getElementById('est');
+  if(!selModel||!items.length){
+    el.innerHTML='<div class="est-note">Выберите модель и загрузите товары — здесь появится стоимость прогона.</div>';
+    return;
+  }
+  const {ip,op}=priceOf(selModel);
+  const per=estIn*ip+estOut*op;
+  const all=per*items.length;
+  const fmt=u=>u===0?'бесплатно':u<0.01?`$${u.toFixed(5)}`:`$${u.toFixed(3)}`;
+  const rub=u=>u===0?'':` · ${u*RUB<1?(u*RUB).toFixed(3):Math.round(u*RUB)} ₽`;
+  el.innerHTML=
+    `<div class="est-row"><span>За ${items.length} ${plural(items.length,'товар','товара','товаров')}</span><b>${fmt(all)}</b></div>`
+   +`<div class="est-row" style="font-size:11px"><span>За один товар</span><span style="font-family:var(--mono)">${fmt(per)}${rub(per)}</span></div>`
+   +`<div class="est-note">${estFromRun?`По факту прошлого прогона: ${estIn}↑ ${estOut}↓ токенов на товар.`
+        :`Оценка по ${estIn}↑ ${estOut}↓ токенов на товар — уточнится после первого прогона.`}`
+   +` Курс ${RUB} ₽/$ на ${RUB_DATE}.</div>`;
+}
+
+// ── СПИСОК ТОВАРОВ (он же прогресс) ──────────────────────────
+function statusOf(i){
+  const r=results[i];
+  // Обрабатываемый сейчас товар обязан отличаться от стоящих в очереди —
+  // иначе непонятно, где вообще идёт работа.
+  if(!r&&running&&i===runIdx) return {cls:'run',sym:'',txt:'обрабатывается'};
+  if(!r) return {cls:'pd',sym:'·',txt:'в очереди'};
+  if(r.enriched) return r.enriched.warnings?.length
+    ? {cls:'wa',sym:'⚠',txt:`${r.enriched.warnings.length} расхождений`}
+    : {cls:'ok',sym:'✓',txt:'готово'};
+  if(r.skipped) return {cls:'sk',sym:'⊘',txt:'пропущен'};
+  return {cls:'er',sym:'✗',txt:'ошибка'};
+}
+
+function passesFilter(i){
+  if(filter==='all') return true;
+  const st=statusOf(i);
+  return filter==='warn'?st.cls==='wa':st.cls==='er';
+}
+
+function setFilter(btn){
+  filter=btn.dataset.f;
+  document.querySelectorAll('.fbtn').forEach(b=>b.classList.toggle('on',b===btn));
+  renderList();
+  const first=items.findIndex((_,i)=>passesFilter(i));
+  if(first>=0) selectResult(first);
+}
+
+/** Человекочитаемая длительность: 8с, 1:20, 12:05 */
+function dur(ms){
+  const sec=Math.max(0,Math.round(ms/1000));
+  if(sec<60) return sec+'с';
+  return Math.floor(sec/60)+':'+String(sec%60).padStart(2,'0');
+}
+
+/**
+ * Строка «идёт обработка» над списком. Остаток считается по фактической
+ * скорости этого прогона, а не по номинальному лимиту — так честнее.
+ */
+function renderRunline(){
+  const el=document.getElementById('runline');
+  const bar=document.getElementById('mid-bar-holder')||document.querySelector('.mid-bar');
+  if(!running){
+    el.style.display='none';
+    bar?.classList.remove('running');
+    document.getElementById('rbFill').style.width='0';
+    return;
+  }
+  const done=doneRes().length, total=items.length;
+  const elapsed=Date.now()-runT0;
+  const eta=done>0?(elapsed/done)*(total-done):null;
+  el.style.display='flex';
+  el.innerHTML=flake('spinning')
+    +`<span>Обрабатываем <span class="rl-n">${done+1} из ${total}</span></span>`
+    +`<span class="rl-t">${dur(elapsed)}${eta!=null?` · осталось ~${dur(eta)}`:''}</span>`;
+  bar?.classList.add('running');
+  document.getElementById('rbFill').style.width=total?`${Math.round(done/total*100)}%`:'0';
+}
+
+function renderList(){
+  const el=document.getElementById('midList');
+
+  // Счётчики на фильтрах: сразу видно, сколько требует внимания.
+  const cnt={warn:0,err:0};
+  results.forEach((_,i)=>{const c=statusOf(i).cls; if(c==='wa')cnt.warn++; if(c==='er')cnt.err++;});
+  document.querySelectorAll('.fbtn').forEach(b=>{
+    const f=b.dataset.f;
+    const n=f==='all'?items.length:cnt[f==='warn'?'warn':'err'];
+    b.textContent=f==='all'?`Все ${items.length||''}`.trim():`${f==='warn'?'Расхождения':'Ошибки'} ${n||''}`.trim();
+    b.disabled=f==='all'?!items.length:!n;
+    if(b.disabled&&b.classList.contains('on')&&f!=='all'){
+      filter='all';
+      document.querySelectorAll('.fbtn').forEach(x=>x.classList.toggle('on',x.dataset.f==='all'));
+    }
+  });
+
+  if(!items.length){
+    el.innerHTML='<div class="mid-empty">Здесь появятся товары.<br>Загрузите их в шаге 2.</div>';
+    return;
+  }
+
+  const visible=items.map((it,i)=>[it,i]).filter(([,i])=>passesFilter(i));
+  if(!visible.length){
+    el.innerHTML='<div class="mid-empty">По этому фильтру ничего нет.</div>';
+    return;
+  }
+
+  el.innerHTML=visible.map(([it,i])=>{
+    const st=statusOf(i);
+    const name=it.name||it.title||it.sku||`Товар №${i+1}`;
+    return `<button class="ri s-${st.cls}${i===curIdx?' on':''}" onclick="selectResult(${i})" title="${esc(String(name))}">`
+      +`<span class="ri-st ${st.cls}">${st.cls==='run'?flake('spinning'):st.sym}</span>`
+      +`<span class="ri-b"><span class="ri-n">${esc(String(name))}</span>`
+      +`<span class="ri-m">${i+1} · ${esc(st.txt)}</span></span></button>`;
+  }).join('');
+
+  const done=doneRes().length;
+  document.getElementById('midBarF').style.width=items.length?`${Math.round(done/items.length*100)}%`:'0';
+  renderRunline();
+}
+
+// ── ДЕТАЛИ ОДНОГО ТОВАРА ─────────────────────────────────────
+function selectResult(i){
+  if(!items.length) return;
+  curIdx=Math.max(0,Math.min(i,items.length-1));
+  renderList();
+  renderDetail();
+}
+
+function switchTab(tab,btn){
+  curTab=tab;
+  document.querySelectorAll('.rtab').forEach(b=>b.classList.toggle('on',b===btn));
+  renderDetail();
+}
+
+function renderDetail(){
+  const it=items[curIdx], r=results[curIdx];
+  const name=it?.name||it?.sku||`Товар №${curIdx+1}`;
+  const meta=[];
+  if(it?.sku!=null)   meta.push(`арт. <b>${esc(String(it.sku))}</b>`);
+  if(it?.price!=null) meta.push(`<b>${Number(it.price).toLocaleString('ru')} ₽</b>`);
+  if(items.length>1)  meta.push(`${curIdx+1} из ${items.length}`);
+  document.getElementById('detailTitle').innerHTML=
+    `<span class="pt-name">${esc(String(name))}</span>`
+    +(meta.length?`<span class="pt-meta">${meta.join('<span style="color:var(--b2)">·</span>')}</span>`:'');
+
+  hide('confBdg');
+  const showTabs=!!r?.enriched;
+  document.getElementById('rtabs').style.display=showTabs?'flex':'none';
+
+  if(!r){
+    const src=[it?.description,it?.annotation].filter(Boolean).join(' ').replace(/<[^>]+>/g,' ').replace(/\s{2,}/g,' ').trim();
+    // Пока ждём ответ по этому товару — видно, что работа идёт именно здесь.
+    if(running&&curIdx===runIdx){
+      setP('detail',`<div class="skel">`
+        +`<div class="skel-h">${flake('spinning')} Запрос к модели — извлекаем характеристики</div>`
+        +`<div class="sk tall"></div>`
+        +`<div class="sk w80"></div><div class="sk w60"></div>`
+        +`<div class="sk w40"></div><div class="sk"></div><div class="sk w60"></div>`
+        +`</div>`);
+      return;
+    }
+    setP('detail',`<div class="seobox"><div class="st">Исходный текст — ${src.length} символов</div>${esc(src||'пусто')}</div>`
+      +`<div class="hint">Товар ещё не обработан. Нажмите «Обогатить через ИИ».</div>`);
+    return;
+  }
+  if(r.skipped){
+    setP('detail',`<div class="warnbox"><div class="wt">⊘ Пропущен без обращения к модели</div><div class="wi">${esc(r.skipped)}</div></div>`
+      +`<div class="hint">Запрос не отправлялся, деньги не потрачены. Допишите описание товара в источнике.</div>`);
+    return;
+  }
+  if(!r.enriched){
+    setP('detail',`<div class="errbox">${esc(r.error||'Ошибка')}</div>`
+      +`<div class="hint">Повторный запуск обработает товар заново.</div>`);
+    return;
+  }
+  if(r.enriched.confidence!=null){
+    const b=document.getElementById('confBdg');
+    b.textContent=`уверенность ${(r.enriched.confidence*100).toFixed(0)}%`;
+    show('confBdg');
+  }
+  setP('detail',curTab==='json'?`<div class="jv">${hl(r.enriched)}</div>`:renderVis(r.enriched));
+}
+
+function showActions(){
+  ['cpyBtn','dlBtn','dlTxtBtn','clrBtn'].forEach(show);
+}
+
+// Стрелками удобно просматривать сотню результатов подряд.
+document.addEventListener('keydown',e=>{
+  if(/^(INPUT|TEXTAREA)$/.test(e.target.tagName)||e.metaKey||e.ctrlKey) return;
+  if(!items.length) return;
+  const vis=items.map((_,i)=>i).filter(passesFilter);
+  const at=vis.indexOf(curIdx);
+  if(e.key==='ArrowDown'||e.key==='j'){ e.preventDefault(); selectResult(vis[Math.min(at+1,vis.length-1)]); }
+  if(e.key==='ArrowUp'||e.key==='k'){ e.preventDefault(); selectResult(vis[Math.max(at-1,0)]); }
+});
+
+// ── ИТОГИ ПРОГОНА ────────────────────────────────────────────
+function sumRun(){
+  let tIn=0,tOut=0,tCost=0,ok=0,warn=0,err=0,skip=0;
+  for(const [i,r] of results.entries()){
+    if(!r) continue;
+    tIn+=r.iT||0; tOut+=r.oT||0; tCost+=r.cost||0;
+    const c=statusOf(i).cls;
+    if(c==='ok')ok++; else if(c==='wa'){ok++;warn++;} else if(c==='er')err++; else if(c==='sk')skip++;
+  }
+  return {tIn,tOut,tCost,ok,warn,err,skip};
+}
+
+function renderFoot(s,note){
+  const el=document.getElementById('foot');
+  el.style.display='flex';
+  const n=doneRes().length;
+  const parts=[
+    `<span>Готово <b>${n}/${items.length}</b></span>`,
+    `<span>Токены <b>${s.tIn.toLocaleString('ru')}↑</b> <b>${s.tOut.toLocaleString('ru')}↓</b></span>`,
+    `<span>Итого <b class="cst">$${s.tCost.toFixed(5)}</b> · <b class="cst">${(s.tCost*RUB).toFixed(2)} ₽</b></span>`,
+  ];
+  // Проблемные счётчики — только если они не нулевые, иначе строка шумит.
+  if(s.err)  parts.push(`<span style="color:var(--red)">Ошибок <b>${s.err}</b></span>`);
+  if(s.warn) parts.push(`<span style="color:var(--amber)">Расхождений <b>${s.warn}</b></span>`);
+  if(s.skip) parts.push(`<span>Пропущено <b>${s.skip}</b></span>`);
+  if(note)   parts.push(`<span>${esc(note)}</span>`);
+  el.innerHTML=parts.join('<span class="fsep">│</span>');
+}
+
+
+async function run(){
+  const err=readProd();
+  if(err){ stepError(2,err); return; }
+  if(!selModel||!items.length){ syncSteps(); return; }
+
+  running=true;
+  runT0=Date.now();
+  runIdx=0;
+  results=[];
+  filter='all';
+  document.getElementById('runBtn').classList.add('working');
+  document.getElementById('foot').classList.remove('done');
+  document.querySelectorAll('.fbtn').forEach(b=>b.classList.toggle('on',b.dataset.f==='all'));
+  ['confBdg'].forEach(hide);
+
+  const btn=document.getElementById('runBtn');
+  document.getElementById('runTxt').innerHTML=`${flake('spinning')} Обрабатываем...`;
+  // Таймер тикает сам, иначе «осталось ~» замирает между товарами.
+  const tick=setInterval(renderRunline,1000);
+  syncSteps();
+  renderList();
+  selectResult(0);
+
+  const {ip,op}=priceOf(selModel);
+  const t0=Date.now();
+
+  for(let i=0;i<items.length;i++){
+    runIdx=i;
+    setSt('ld',`${i+1} / ${items.length}`);
+    renderList();
+    // Если пользователь не ушёл смотреть другой товар — следим за текущим.
+    if(curIdx===i-1||curIdx===i) selectResult(i);
+    try{
+      const r=await fetch('/api/enrich',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({model:selModel.id,product:items[i],category:curCat?.slug})});
+      const d=await r.json();
+      if(!r.ok) throw new Error(d.error?.message||d.error||`HTTP ${r.status}`);
+      const iT=d.usage?.prompt_tokens??0,oT=d.usage?.completion_tokens??0;
+      // Стоимость приходит с сервера от OpenRouter; тариф модели — резерв.
+      const cost=typeof d.usage?.cost==='number'?d.usage.cost:iT*ip+oT*op;
+      results[i]={original:items[i],enriched:d.enriched??null,skipped:d.skipped,iT,oT,cost};
+    }catch(e){
+      results[i]={original:items[i],enriched:null,error:e.message};
+    }
+    saveResults();
+    renderList();
+    if(curIdx===i) renderDetail();
+    renderFoot(sumRun());
+  }
+
+  const s=sumRun();
+  const el=((Date.now()-t0)/1000).toFixed(1);
+  setSt('ok',`Готово: ${s.ok} / ${items.length}`);
+  renderFoot(s,`за ${el}с`);
+
+  // Прогноз в шаге 3 теперь опирается на факт, а не на допущение.
+  if(s.ok>0){ estIn=Math.round(s.tIn/s.ok); estOut=Math.round(s.tOut/s.ok); estFromRun=true; }
+
+  running=false;
+  runIdx=-1;
+  clearInterval(tick);
+  renderRunline();
+  renderList();
+  document.getElementById('runBtn').classList.remove('working');
+  document.getElementById('runTxt').innerHTML='<span>Обогатить через ИИ</span>';
+  // Короткая вспышка подвала — прогон закончился, даже если не смотрел на экран.
+  const ft=document.getElementById('foot');
+  ft.classList.add('done');
+  setTimeout(()=>ft.classList.remove('done'),1200);
+  showActions();
+  syncSteps();
+
+  // Если что-то требует внимания — сразу переводим на первую проблему.
+  const firstBad=results.findIndex((_,i)=>['er','wa'].includes(statusOf(i).cls));
+  if(firstBad>=0) selectResult(firstBad);
+}
+
+
+function downloadAll(fmt='json'){
+  if(!doneRes().length)return;
+  let content, filename, type;
+  if(fmt==='txt'){
+    // Формат строится по фактическим полям ответа — не по списку из схемы,
+    // иначе выгрузка молча теряет поля при смене схемы.
+    const sep='═'.repeat(60);
+    const lines=results.map((r,i)=>[r,i]).filter(([r])=>r).map(([r,i])=>{
+      const d=r.enriched;
+      const head=`${sep}\n[${i+1}] ${r.original?.name||r.original?.sku||'—'}\nSKU: ${r.original?.sku??r.original?.article??'—'}\n${sep}`;
+      if(!d) return `${head}\n${r.skipped?`ПРОПУЩЕН: ${r.skipped}`:`ОШИБКА: ${r.error||'нет данных'}`}\n`;
+
+      const out=[head];
+      const sp=Object.entries({...(d.specs||{}),...(d.technical_specs||{}),...(d.dimensions||{}),...(d.thread||{})})
+        .filter(([,v])=>!isEmpty(v));
+      out.push('','ХАРАКТЕРИСТИКИ:', sp.length?sp.map(([k,v])=>`  ${k}: ${v}`).join('\n'):'  —');
+
+      if(Array.isArray(d.warnings)&&d.warnings.length){
+        out.push('','РАСХОЖДЕНИЯ С ТЕКСТОМ:');
+        out.push(d.warnings.map(w=>`  ⚠ ${w.field}: модель "${w.model}"${w.source!=null?`, в тексте "${w.source}"`:''} — ${w.note}`).join('\n'));
+      }
+      if(d.seo_description) out.push('','SEO-ОПИСАНИЕ:',`  ${d.seo_description}`);
+
+      for(const [k,v] of Object.entries(d)){
+        if(META_FIELDS.has(k)||isEmpty(v)) continue;
+        out.push('',`${label(k).toUpperCase()}:`);
+        out.push(Array.isArray(v)?v.map(x=>`  • ${x}`).join('\n'):`  ${typeof v==='object'?JSON.stringify(v):v}`);
+      }
+      if(d.confidence!=null) out.push('',`Confidence: ${(d.confidence*100).toFixed(0)}%`);
+      if(r.cost!=null) out.push('',`Токены: ${r.iT??0}↑ ${r.oT??0}↓ | $${r.cost.toFixed(6)}`);
+      return out.join('\n')+'\n';
+    });
+    const okCnt=doneRes().filter(r=>r.enriched).length;
+    content=`AI ENRICHER\nДата: ${new Date().toLocaleString('ru')}\n`
+      +`Модель: ${selModel?.id||'—'}\nТоваров: ${results.length} (успешно ${okCnt})\n`
+      +`Курс: ${RUB} ₽/$ на ${RUB_DATE}\n\n`+lines.join('\n');
+    filename=`enriched_${Date.now()}.txt`;
+    type='text/plain;charset=utf-8';
+  } else {
+    // Необработанные позиции в выгрузку не попадают — их просто нет.
+    content=JSON.stringify({model:selModel?.id||null,rub_per_usd:RUB,rub_rate_date:RUB_DATE,
+      items:doneRes().map(r=>({original:r.original,enriched:r.enriched,skipped:r.skipped,error:r.error,
+        _meta:r.cost!=null?{input_tokens:r.iT,output_tokens:r.oT,cost_usd:+r.cost.toFixed(6)}:{}}))},null,2);
+    filename=`enriched_${Date.now()}.json`;
+    type='application/json';
+  }
+  const blob=new Blob([content],{type});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a');a.href=url;a.download=filename;a.click();
+  URL.revokeObjectURL(url);
+}
+function copyJSON(){
+  if(!results[curIdx]?.enriched)return;
+  navigator.clipboard.writeText(JSON.stringify(results[curIdx].enriched,null,2)).then(()=>{
+    const b=document.getElementById('cpyBtn');
+    b.innerHTML='<i class="ti ti-check"></i> скопировано';
+    setTimeout(()=>{b.innerHTML='<i class="ti ti-copy"></i> JSON';},1600);
+  });
+}
+
+// Рендер не привязан к схеме: показывает то, что реально пришло. Так одна
+// версия интерфейса работает и с холодильниками, и с автозапчастями — и не
+// теряет поля молча, когда схема меняется.
+const FIELD_LABELS={
+  normalized_name:'Нормализованное название', product_type:'Тип товара',
+  brand_normalized:'Бренд', article:'Артикул', oem_numbers:'OEM номера',
+  vehicle_brands:'Марки авто', vehicle_models:'Модели',
+  vehicle_generations:'Поколения', compatible_engines:'Двигатели',
+  assembly_group:'Группа', system:'Система', placement:'Расположение',
+  material:'Материал', kit_contents:'Комплект', cross_numbers:'Кросс-номера',
+  synonyms:'Синонимы', search_aliases:'Псевдонимы поиска', seo_keywords:'SEO ключи',
+  // Поля, которые модель оставила пустыми, а детерминированный разбор текста заполнил.
+  filled_from_text:'Добрано из текста',
+};
+// Служебные поля: выводятся отдельными блоками, не как обычные карточки.
+const META_FIELDS=new Set(['specs','technical_specs','dimensions','thread','source_facts','warnings','seo_description','confidence']);
+
+function label(k){
+  return FIELD_LABELS[k] || (k.charAt(0).toUpperCase()+k.slice(1)).replace(/_/g,' ');
+}
+function tags(v){
+  return `<div class="tags">${v.map(x=>`<span class="tag">${esc(String(x))}</span>`).join('')}</div>`;
+}
+function isEmpty(v){
+  return v==null||v===''||(Array.isArray(v)&&!v.length)||(typeof v==='object'&&!Array.isArray(v)&&!Object.keys(v).length);
+}
+
+function renderVis(d){
+  if(!d||typeof d!=='object') return '<div class="empty"><p>Нет данных</p></div>';
+  let out='';
+
+  // Расхождения с текстом источника — вперёд всего: это причина не доверять полю.
+  if(Array.isArray(d.warnings)&&d.warnings.length){
+    out+=`<div class="warnbox"><div class="wt">⚠ Расхождения с текстом источника (${d.warnings.length})</div>`
+      +d.warnings.map(w=>`<div class="wi">${esc(label(w.field))}: модель <code>${esc(String(w.model))}</code>`
+        +(w.source!=null?`, в тексте <code>${esc(String(w.source))}</code>`:'')
+        +` — ${esc(String(w.note||''))}</div>`).join('')
+      +`</div>`;
+  }
+
+  if(d.seo_description){
+    out+=`<div class="seobox"><div class="st">SEO-описание</div>${esc(d.seo_description)}</div>`;
+  }
+
+  // Характеристики: и новая схема (specs), и прежняя (technical_specs/dimensions/thread).
+  const sp={...(d.specs||{}),...(d.technical_specs||{}),...(d.dimensions||{}),...(d.thread||{})};
+  const filled=Object.entries(sp).filter(([,v])=>!isEmpty(v));
+  if(filled.length){
+    // Поля с расхождением подсвечиваем прямо в строке: смотреть значение и
+    // отдельно сверяться со списком предупреждений — лишняя работа глазами.
+    const bad=new Set((d.warnings||[]).map(w=>w.field));
+    out+=`<div class="spec-title">Характеристики <i>${filled.length}</i></div>`
+      +`<div class="specs">${filled.map(([k,v])=>
+          `<div class="sp${bad.has(k)?' bad':''}"><span class="sp-k">${esc(label(k))}</span>`
+          +`<span class="sp-d"></span><span class="sp-v">${esc(String(v))}</span></div>`).join('')}</div>`;
+  }
+
+  // Всё остальное, что вернула модель, — чтобы новые поля не пропадали.
+  const rest=Object.entries(d).filter(([k,v])=>!META_FIELDS.has(k)&&!isEmpty(v));
+  if(rest.length){
+    out+=`<div class="spec-title mt">Поисковые и SEO-данные</div>`
+      +`<div class="fgrid">${rest.map(([k,v])=>{
+      const inner=Array.isArray(v)?tags(v)
+        :typeof v==='object'?`<div class="fv">${esc(JSON.stringify(v))}</div>`
+        :`<div class="fv">${esc(String(v))}</div>`;
+      return `<div class="fc"><div class="fk">${esc(label(k))}</div>${inner}</div>`;
+    }).join('')}</div>`;
+  }
+
+  return out||'<div class="empty"><p>Модель не вернула заполненных полей</p></div>';
+}
+
+// ── CALCULATOR ───────────────────────────────────────────────
+function calcCost(m, inT, outT){
+  // цены в $ за 1M токенов → делим на 1M
+  return (inT/1e6)*m.inp + (outT/1e6)*m.out;
+}
+
+function calcUpdate(){
+  const inT=parseInt(document.getElementById('sl-in').value);
+  const outT=parseInt(document.getElementById('sl-out').value);
+  const cnt=parseInt(document.getElementById('sl-cnt').value);
+  document.getElementById('sl-in-val').textContent=inT.toLocaleString('ru');
+  document.getElementById('sl-out-val').textContent=outT.toLocaleString('ru');
+  document.getElementById('sl-cnt-val').textContent=cnt.toLocaleString('ru');
+
+  // render model cards
+  const cards=document.getElementById('calc-model-cards');
+  const minC=Math.min(...CALC_MODELS.map(m=>calcCost(m,inT,outT)));
+  cards.innerHTML=CALC_MODELS.map((m,i)=>{
+    const cost=calcCost(m,inT,outT)*cnt;
+    const isCheapest=calcCost(m,inT,outT)===minC;
+    const badgeCls=m.badge==='cheap'?'mb-cheap':m.badge==='best'?'mb-best':m.badge==='ru'?'mb-ru':'';
+    const priceStr=m.rub
+      ? `${m.inp_rub} ₽ / ${m.out_rub} ₽ за 1M`
+      : `$${m.inp} / $${m.out} за 1M`;
+    return `<div class="mcard${calcSelModel===m?' on':''}" onclick="calcSelect(${i})">
+      ${m.badge?`<span class="mcard-badge ${badgeCls}">${m.badgeText}</span>`:''}
+      <div class="mcard-prov">${m.prov}</div>
+      <div class="mcard-name">${m.name}${m.unverified?' <span title="Цена не сверена с прайсом провайдера" style="color:var(--amber)">⚠</span>':''}</div>
+      <div class="mcard-price">${priceStr}</div>
+      <div class="mcard-cost${isCheapest?' cheap':''}">$${cost.toFixed(2)}</div>
+      <div class="mcard-rub">${Math.round(cost*RUB)} ₽</div>
+    </div>`;
+  }).join('');
+
+  // render comparison table
+  const sorted=[...CALC_MODELS].sort((a,b)=>calcCost(a,inT,outT)-calcCost(b,inT,outT));
+  const minCost=calcCost(sorted[0],inT,outT)*cnt;
+  document.getElementById('calc-tbody').innerHTML=sorted.map(m=>{
+    const cost=calcCost(m,inT,outT)*cnt;
+    const ratio=minCost>0?cost/minCost:1;
+    const barW=Math.min(120,Math.round(ratio*8));
+    const isSel=calcSelModel===m;
+    const isCheap=m===sorted[0];
+    return `<tr class="${isSel?'selected':isCheap?'cheapest':''}">
+      <td>${m.prov}</td>
+      <td><strong>${m.name}</strong>${m.unverified?' <span title="Цена не сверена с прайсом провайдера" style="color:var(--amber)">⚠</span>':''}</td>
+      <td class="r" style="font-family:var(--mono);font-size:11px">$${m.inp}</td>
+      <td class="r" style="font-family:var(--mono);font-size:11px">$${m.out}</td>
+      <td class="r"><strong class="tcost${isCheap?' cheap':''}">$${cost.toFixed(2)}</strong></td>
+      <td class="r" style="font-family:var(--mono);font-size:11px">${Math.round(cost*RUB)} ₽</td>
+      <td><div class="bar-wrap"><div class="cbar" style="width:${barW}px"></div><span style="font-size:10px;color:var(--t3)">${ratio<1.05?'—':'×'+ratio.toFixed(1)}</span></div></td>
+    </tr>`;
+  }).join('');
+
+  // provenance: откуда цифры и что им нельзя доверять «как есть»
+  const unv=CALC_MODELS.filter(m=>m.unverified);
+  document.getElementById('calc-provenance').innerHTML=
+    `Цены внесены вручную ${PRICES_EDITED} и не обновляются автоматически — сверяйтесь с прайсом провайдера. `+
+    `Курс ${RUB} ₽/$ на ${RUB_DATE}. `+
+    `Живые цены моделей OpenRouter — на странице «Обогащение».`+
+    (unv.length?`<br>⚠ Требуют проверки: ${unv.map(m=>esc(m.name)).join(', ')} — единицы в исходной таблице были несогласованы.`:'');
+
+  // update selected model info
+  if(calcSelModel){
+    const cost1=calcCost(calcSelModel,inT,outT);
+    const costAll=cost1*cnt;
+    document.getElementById('calc-sel-model').innerHTML=`
+      <div style="font-weight:600;margin-bottom:4px">${calcSelModel.prov} · ${calcSelModel.name}</div>
+      <div style="font-size:11px;color:var(--t3);font-family:var(--mono)">вход: $${calcSelModel.inp}/1M · выход: $${calcSelModel.out}/1M</div>`;
+    document.getElementById('calc-result-box').innerHTML=`
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+        <div class="tk"><div class="tk-lbl">1 товар</div><div class="tk-val cst" style="font-size:13px">$${cost1.toFixed(6)}</div><div class="tk-sub">${(cost1*RUB).toFixed(5)} ₽</div></div>
+        <div class="tk"><div class="tk-lbl">${cnt.toLocaleString('ru')} товаров</div><div class="tk-val cst" style="font-size:13px">$${costAll.toFixed(2)}</div><div class="tk-sub">${Math.round(costAll*RUB)} ₽</div></div>
+      </div>`;
+  }
+}
+
+function calcSelect(idx){
+  calcSelModel=CALC_MODELS[idx];
+  calcUpdate();
+}
+
+// ── SHARED HELPERS ───────────────────────────────────────────
+function hl(obj){
+  return JSON.stringify(obj,null,2)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?)/g,m=>{
+      let c='jn';
+      if(/^"/.test(m))c=/:$/.test(m)?'jk':'js';
+      else if(/true|false/.test(m))c='jb';
+      else if(/null/.test(m))c='jnl';
+      return `<span class="${c}">${m}</span>`;
+    });
+}
+function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+function setP(id,html){document.getElementById(id).innerHTML=html;}
+function show(id){document.getElementById(id).style.display='inline-block';}
+function hide(id){document.getElementById(id).style.display='none';}
+function sleep(ms){return new Promise(r=>setTimeout(r,ms));}
+
+// ── ТЕМА ─────────────────────────────────────────────────────
+// Светлая по умолчанию. Выбор запоминается; при первом заходе уважаем
+// системную настройку, чтобы не бить по глазам тем, у кого всё тёмное.
+const THEME_KEY='enricher.theme';
+
+function applyTheme(t){
+  document.documentElement.setAttribute('data-theme',t);
+  document.getElementById('themeIcon').textContent=t==='dark'?'☀':'☾';
+  document.getElementById('themeBtn').title=t==='dark'?'Включить светлую тему':'Включить тёмную тему';
+}
+
+function toggleTheme(){
+  const next=document.documentElement.getAttribute('data-theme')==='dark'?'light':'dark';
+  try{ localStorage.setItem(THEME_KEY,next); }catch{}
+  applyTheme(next);
+}
+
+function initTheme(){
+  let saved=null;
+  try{ saved=localStorage.getItem(THEME_KEY); }catch{}
+  if(saved!=='light'&&saved!=='dark'){
+    saved=window.matchMedia?.('(prefers-color-scheme: dark)')?.matches?'dark':'light';
+  }
+  applyTheme(saved);
+}
+
+// Иконочный шрифт с CDN может не загрузиться — тогда включаем текстовые подписи.
+async function checkIconFont(){
+  try{
+    await document.fonts.ready;
+    if(!document.fonts.check('16px "tabler-icons"')) document.documentElement.classList.add('no-icons');
+  }catch{ document.documentElement.classList.add('no-icons'); }
+}
+
+initTheme();
+checkIconFont();
+init();
+calcUpdate();
+</script>
+</body>
+</html>

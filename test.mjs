@@ -1,0 +1,617 @@
+/**
+ * test.mjs — самопроверка логики разбора и валидации. Запуск: node test.mjs
+ * Без фреймворков: если что-то из этого падает, обогащение писать мусор в каталог.
+ */
+
+import assert from 'assert';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+import {
+  coerceNumber, extractFacts, crossCheck, parseResponse,
+  normalizeResponse, stripHtml, RateLimiter, isEnrichable,
+  buildUserContent, rpmFor,
+  SCHEMAS, schemaFor, buildSystemPrompt, enrichProduct,
+} from './lib.js';
+import { parseListing, parseProductPage, buildFilters, assignMissingBrands, writeCategoryFiles } from './catalog.js';
+
+let n = 0;
+const t = (name, fn) => { fn(); n++; console.log(`  ✓ ${name}`); };
+const tAsync = async (name, fn) => { await fn(); n++; console.log(`  ✓ ${name}`); };
+
+console.log('\nПриведение чисел');
+t('строка с единицей → число', () => {
+  assert.strictEqual(coerceNumber('310 л'), 310);
+  assert.strictEqual(coerceNumber('57,4'), 57.4);
+  assert.strictEqual(coerceNumber('≈60 кг'), 60);
+  assert.strictEqual(coerceNumber(42), 42);
+});
+t('пустые маркеры → null', () => {
+  for (const v of [null, undefined, '', '-', '—', 'нет данных', 'не указано', 'N/A', 'текст']) {
+    assert.strictEqual(coerceNumber(v), null, `ожидался null для ${JSON.stringify(v)}`);
+  }
+});
+t('NaN и Infinity → null', () => {
+  assert.strictEqual(coerceNumber(NaN), null);
+  assert.strictEqual(coerceNumber(Infinity), null);
+});
+
+console.log('\nОчистка HTML');
+t('теги и сущности', () => {
+  assert.strictEqual(stripHtml('<p>Объём&nbsp;310&nbsp;л</p>'), 'Объём 310 л');
+  assert.strictEqual(stripHtml('57.4&times;61'), '57.4×61');
+  assert.strictEqual(stripHtml(null), '');
+});
+
+console.log('\nФакты из текста (кириллица)');
+t('реальное описание из каталога', () => {
+  const f = extractFacts('размер 57.4x61x171 см. двухкамерный. класс A. морозильник снизу. общий объем 310 л.');
+  assert.deepStrictEqual(f.размеры_мм, [574, 610, 1710]);
+  assert.strictEqual(f.высота_мм, 1710);
+  assert.strictEqual(f.объем_общий_л, 310);
+  assert.strictEqual(f.класс_энергоэффективности, 'A');
+  assert.strictEqual(f.количество_камер, 2);
+});
+t('\\w не ломает кириллические суффиксы', () => {
+  // Ловушка, на которой споткнулся первый замер: \w в JS = [A-Za-z0-9_].
+  assert.strictEqual(extractFacts('Общий объём: 250 л').объем_общий_л, 250);
+  assert.strictEqual(extractFacts('вес 62 кг').вес_кг, 62);
+  assert.strictEqual(extractFacts('трёхкамерный').количество_камер, 3);
+});
+t('система охлаждения', () => {
+  assert.strictEqual(extractFacts('система No Frost').система_охлаждения, 'No Frost');
+  assert.strictEqual(extractFacts('капельная разморозка').система_охлаждения, 'капельная');
+});
+t('шум и миллиметры без пересчёта', () => {
+  assert.strictEqual(extractFacts('уровень шума 39 дБ').уровень_шума_дб, 39);
+  assert.deepStrictEqual(extractFacts('600x650x2000 мм').размеры_мм, [600, 650, 2000]);
+});
+t('пустой текст не падает', () => {
+  assert.deepStrictEqual(extractFacts(''), {});
+  assert.deepStrictEqual(extractFacts(null), {});
+});
+
+console.log('\nСверка с фактами');
+t('совпадение не даёт предупреждений', () => {
+  const facts = extractFacts('размер 57.4x61x171 см. общий объем 310 л. класс A.');
+  const specs = { объем_общий_л: 310, класс_энергоэффективности: 'A', высота_мм: 1710, ширина_мм: 574, глубина_мм: 610 };
+  assert.deepStrictEqual(crossCheck(specs, facts), []);
+});
+t('расхождение по числу помечается', () => {
+  const facts = extractFacts('общий объем 310 л');
+  const w = crossCheck({ объем_общий_л: 250 }, facts);
+  assert.strictEqual(w.length, 1);
+  assert.strictEqual(w[0].field, 'объем_общий_л');
+  assert.strictEqual(w[0].source, 310);
+});
+t('размер не из текста помечается', () => {
+  const facts = extractFacts('размер 57.4x61x171 см');
+  const w = crossCheck({ ширина_мм: 900 }, facts);
+  assert.strictEqual(w.length, 1);
+  assert.match(w[0].note, /нет в размерах/);
+});
+t('перепутанные оси не считаются ошибкой', () => {
+  // Оси из текста не восстановить — проверяем только принадлежность тройке.
+  const facts = extractFacts('размер 57.4x61x171 см');
+  assert.deepStrictEqual(crossCheck({ ширина_мм: 610, глубина_мм: 574 }, facts), []);
+});
+t('null у модели не проверяется', () => {
+  const facts = extractFacts('общий объем 310 л');
+  assert.deepStrictEqual(crossCheck({ объем_общий_л: null }, facts), []);
+});
+
+console.log('\nОтбор товаров, за которые стоит платить');
+t('короткое, но плотное описание НЕ пропускается', () => {
+  // 84 символа и пять характеристик — реальный товар из каталога.
+  const p = { description: 'размер 57.4x61x171 см. двухкамерный. класс A. морозильник снизу. общий объем 310 л.' };
+  assert.ok(p.description.length < 100, 'описание должно быть короче порога');
+  assert.strictEqual(isEnrichable(p).ok, true, 'плотное описание нельзя отсекать по длине');
+});
+t('короткое и без характеристик пропускается', () => {
+  const r = isEnrichable({ description: 'Холодильник белый' });
+  assert.strictEqual(r.ok, false);
+  assert.match(r.reason, /ни одной распознанной/);
+});
+t('пустой товар пропускается', () => {
+  assert.strictEqual(isEnrichable({}).ok, false);
+  assert.match(isEnrichable({ description: '   ' }).reason, /нет ни description/);
+});
+t('длинное описание проходит даже без распознанных полей', () => {
+  assert.strictEqual(isEnrichable({ description: 'Отличный холодильник для дома. '.repeat(6) }).ok, true);
+});
+t('annotation учитывается наравне с description', () => {
+  assert.strictEqual(isEnrichable({ description: '', annotation: 'общий объем 250 л' }).ok, true);
+});
+
+console.log('\nРазбор ответа модели');
+t('чистый JSON', () => {
+  assert.strictEqual(parseResponse('{"a":1}').a, 1);
+});
+t('обёртка в markdown', () => {
+  assert.strictEqual(parseResponse('```json\n{"a":2}\n```').a, 2);
+  assert.strictEqual(parseResponse('```\n{"a":3}\n```').a, 3);
+});
+t('массив вместо объекта → первый элемент', () => {
+  assert.strictEqual(parseResponse('[{"a":4}]').a, 4);
+});
+t('JSON среди пояснений', () => {
+  assert.strictEqual(parseResponse('Вот результат: {"a":5} — готово').a, 5);
+});
+t('пустой ответ бросает', () => {
+  assert.throws(() => parseResponse(''), /Пустой ответ/);
+  assert.throws(() => parseResponse('совсем не json'), /распарсить/);
+});
+
+console.log('\nНормализация');
+t('числа-строки приводятся, схема заполняется целиком', () => {
+  const r = normalizeResponse({
+    specs: { объем_общий_л: '310 л', вес_кг: '≈60', бренд: 'DON', цвет: 'нет данных' },
+    synonyms: ['а', '  б  ', ''],
+    seo_description: '  Описание.  ',
+  }, 'общий объем 310 л');
+  assert.strictEqual(r.specs.объем_общий_л, 310);
+  assert.strictEqual(r.specs.вес_кг, 60);
+  assert.strictEqual(r.specs.бренд, 'DON');
+  assert.strictEqual(r.specs.цвет, null, '"нет данных" должно стать null');
+  assert.strictEqual(r.specs.хладагент, null, 'отсутствующий ключ схемы должен быть null');
+  assert.deepStrictEqual(r.synonyms, ['а', 'б']);
+  assert.strictEqual(r.seo_description, 'Описание.');
+  assert.deepStrictEqual(r.warnings, []);
+});
+t('мусор вместо массивов не роняет', () => {
+  const r = normalizeResponse({ specs: {}, synonyms: 'строка', seo_keywords: null });
+  assert.deepStrictEqual(r.synonyms, []);
+  assert.deepStrictEqual(r.seo_keywords, []);
+});
+t('не объект бросает', () => {
+  assert.throws(() => normalizeResponse(null), /не объект/);
+  assert.throws(() => normalizeResponse([1]), /не объект/);
+});
+t('расхождение доезжает до warnings', () => {
+  const r = normalizeResponse({ specs: { объем_общий_л: 250 } }, 'общий объем 310 л');
+  assert.strictEqual(r.warnings.length, 1);
+  assert.strictEqual(r.source_facts.объем_общий_л, 310);
+});
+
+console.log('\nОграничитель частоты');
+t('не превышает rpm в минутном окне', () => {
+  const rl = new RateLimiter(20);
+  let clock = 0, calls = [];
+  // Имитация без реального ожидания: повторяем арифметику wait().
+  for (let i = 0; i < 100; i++) {
+    rl.window = rl.window.filter(x => clock - x < 60_000);
+    if (rl.window.length >= rl.rpm) clock += 60_000 - (clock - rl.window[0]) + 150;
+    else if (clock - rl.lastCall < rl.minDelay) clock += rl.minDelay - (clock - rl.lastCall);
+    rl.lastCall = clock; rl.window.push(clock); calls.push(clock);
+  }
+  for (const start of calls) {
+    const inWindow = calls.filter(c => c >= start && c < start + 60_000).length;
+    assert.ok(inWindow <= 20, `в окне с ${start} оказалось ${inWindow} запросов`);
+  }
+});
+
+// ── ФОРМАТЫ КАТАЛОГА ─────────────────────────────────────────
+// Все строки ниже взяты из mrmag.ru/scripts/sync_local/products.json как есть.
+console.log('\nФорматы каталога: единица ПЕРЕД числом');
+t('«Вес (кг) - 72» и «Масса, кг., не более 74»', () => {
+  assert.strictEqual(extractFacts('Вес (кг) - 72 Габариты').вес_кг, 72);
+  assert.strictEqual(extractFacts('Масса, кг., не более 74 Тип').вес_кг, 74);
+  assert.strictEqual(extractFacts('Вес: 75 кг').вес_кг, 75);
+  assert.strictEqual(extractFacts('Вес - 71 кг').вес_кг, 71);
+});
+t('«Уровень шума (дБА) - 41» и «Мощность замораживания (кг/сут) - 7»', () => {
+  assert.strictEqual(extractFacts('Уровень шума (дБА) - 41 Хладагент').уровень_шума_дб, 41);
+  assert.strictEqual(extractFacts('Мощность замораживания (кг/сут) - 7').мощность_замораживания_кг_сут, 7);
+});
+t('«Общий объем, л 122» и «Объем брутто (л)/Общий - 365»', () => {
+  assert.strictEqual(extractFacts('Общий объем, л 122 Объем морозильника').объем_общий_л, 122);
+  assert.strictEqual(extractFacts('Объем брутто (л)/Общий - 365 Мощность').объем_общий_л, 365);
+});
+t('«Общий объем холодильника» — это ОБЩИЙ, а не объём камеры', () => {
+  const f = extractFacts('Общий объем холодильника 180 л. Объем холодильного отделения 117 л. Объем морозильного отделения 63 л.');
+  assert.strictEqual(f.объем_общий_л, 180);
+  assert.strictEqual(f.объем_холодильной_камеры_л, 117, 'подпись «холодильника» не должна давать объём камеры');
+  assert.strictEqual(f.объем_морозильной_камеры_л, 63);
+});
+t('единица обязательна: «Количество полок 3» не литры', () => {
+  assert.strictEqual(extractFacts('Общий объем не указан. Количество полок 3').объем_общий_л, undefined);
+});
+t('диапазон отсекает мусор', () => {
+  assert.strictEqual(extractFacts('Высота 2 полки').высота_мм, undefined);
+  assert.strictEqual(extractFacts('Вес 2 кг').вес_кг, undefined);
+});
+
+console.log('\nГабариты: порядок осей');
+t('подписанные оси дают точные ширину/высоту/глубину', () => {
+  const f = extractFacts('Габариты (Без упаковки) (Ш × В × Г, мм) - 580× 2010× 610');
+  assert.strictEqual(f.ширина_мм, 580);
+  assert.strictEqual(f.высота_мм, 2010);
+  assert.strictEqual(f.глубина_мм, 610);
+});
+t('другой порядок осей и сантиметры', () => {
+  const f = extractFacts('Габариты (ШxГxВ): 60x64x176 см Холод');
+  assert.deepStrictEqual([f.ширина_мм, f.глубина_мм, f.высота_мм], [600, 640, 1760]);
+});
+t('ВхШхГ читается как ВхШхГ, а не как «высота — самое большое»', () => {
+  const f = extractFacts('Габаритные размеры, мм (ВхШхГ) 815x1790x680 Внутренний объем, л 510');
+  assert.strictEqual(f.высота_мм, 815, 'подпись важнее эвристики «большое = высота»');
+  assert.strictEqual(f.ширина_мм, 1790);
+});
+t('габариты упаковки не берутся, если есть нетто', () => {
+  const f = extractFacts('Размеры с учетом упаковки (ШхГхВ) - 60х62х202 см Габариты (ШхГхВ) - 59х60х200 см');
+  assert.strictEqual(f.высота_мм, 2000);
+  assert.strictEqual(f.ширина_мм, 590);
+});
+t('лживая подпись отбрасывается целиком', () => {
+  // Каталог: «(ШхГхВ) - 595 х 1860 х 590» — по подписи глубина 1860 мм.
+  const f = extractFacts('Размеры, мм (ШхГхВ) - 595 х 1860 х 590');
+  assert.strictEqual(f.высота_мм, 1860, 'при недостоверной подписи высота = самое большое');
+  assert.notStrictEqual(f.глубина_мм, 1860);
+});
+t('подписи по отдельности', () => {
+  const f = extractFacts('Габаритные размеры, мм, Высота, мм 2025 Глубина, мм 630 Ширина, мм 595 Масса');
+  assert.deepStrictEqual([f.высота_мм, f.глубина_мм, f.ширина_мм], [2025, 630, 595]);
+});
+t('см и значение без единицы', () => {
+  assert.strictEqual(extractFacts('Высота 100,1 см').высота_мм, 1001);
+  assert.strictEqual(extractFacts('Высота - 202 Ширина').высота_мм, 2020);
+  assert.strictEqual(extractFacts('Высота, мм - 2025 Глубина').высота_мм, 2025);
+});
+
+console.log('\nОхлаждение и класс энергоэффективности');
+t('«без No Frost» — это НЕ No Frost', () => {
+  assert.strictEqual(extractFacts('Система охлаждения - без NO FROST Цвет').система_охлаждения, undefined);
+  assert.strictEqual(extractFacts('Система охлаждения -  Без No Frost Количество').система_охлаждения, undefined);
+});
+t('положительный No Frost и капельная', () => {
+  assert.strictEqual(extractFacts('система No Frost').система_охлаждения, 'No Frost');
+  assert.strictEqual(extractFacts('капельная разморозка').система_охлаждения, 'капельная');
+});
+t('кириллическая «А+» приводится к латинской', () => {
+  assert.strictEqual(extractFacts('с высоким классом энергопотребления "А+"').класс_энергоэффективности, 'A+');
+  assert.strictEqual(extractFacts('Класс энергоэффективности - A++').класс_энергоэффективности, 'A++');
+  assert.strictEqual(extractFacts('Класс энергетической эффективности A+').класс_энергоэффективности, 'A+');
+  assert.strictEqual(extractFacts('класс A').класс_энергоэффективности, 'A');
+});
+t('климатический класс не уходит в энергоэффективность', () => {
+  assert.strictEqual(extractFacts('Климатический класс SN-ST Блокировка').класс_энергоэффективности, undefined);
+  assert.strictEqual(extractFacts('Климатический класс - N, ST Суточный расход').класс_энергоэффективности, undefined);
+});
+t('хладагент', () => {
+  assert.strictEqual(extractFacts('Хладагент - R600a Климатический').хладагент, 'R600a');
+  assert.strictEqual(extractFacts('Хладагент R 600A').хладагент, 'R600a');
+});
+
+console.log('\nСверка: одно расхождение на поле');
+t('высота не помечается дважды', () => {
+  const facts = extractFacts('размер 57.4x61x171 см');
+  const w = crossCheck({ высота_мм: 900 }, facts);
+  assert.strictEqual(w.length, 1, 'общая сверка и проверка тройки не должны дублировать поле');
+});
+
+console.log('\nДобор пустых полей и передача фактов модели');
+t('null у модели заполняется фактом из текста', () => {
+  const r = normalizeResponse({ specs: { бренд: 'DON' } }, 'Общий объем, л 310 Вес (кг) - 62');
+  assert.strictEqual(r.specs.объем_общий_л, 310);
+  assert.strictEqual(r.specs.вес_кг, 62);
+  assert.ok(r.filled_from_text.includes('объем_общий_л'), 'добор должен быть перечислен');
+  assert.deepStrictEqual(r.warnings, [], 'добор — не расхождение');
+});
+t('значение модели не перезаписывается добором', () => {
+  const r = normalizeResponse({ specs: { объем_общий_л: 305 } }, 'Общий объем, л 310');
+  assert.strictEqual(r.specs.объем_общий_л, 305);
+  assert.deepStrictEqual(r.filled_from_text, []);
+});
+t('facts уезжают в запрос к модели', () => {
+  const body = JSON.parse(buildUserContent(
+    { name: 'X', description: 'Общий объем, л 310' },
+    extractFacts('Общий объем, л 310'),
+  ));
+  assert.strictEqual(body.facts.объем_общий_л, 310);
+  assert.strictEqual(JSON.parse(buildUserContent({ name: 'X' })).facts, undefined);
+});
+t('rpm известных моделей не занижается до 20', () => {
+  assert.strictEqual(rpmFor('openai/gpt-4o-mini'), 500);
+  assert.strictEqual(rpmFor('чего-то-нет'), 20);
+});
+
+// ── КАТЕГОРИИ И СХЕМЫ ────────────────────────────────────────
+console.log('\nСхемы категорий');
+t('схема находится по slug, id и названию', () => {
+  assert.strictEqual(schemaFor('stiralnye_mashiny').id, 467);
+  assert.strictEqual(schemaFor(467).slug, 'stiralnye_mashiny');
+  assert.strictEqual(schemaFor('Холодильники').id, 523);
+  assert.strictEqual(schemaFor('чего-то нет').slug, 'kholodilniki', 'неизвестная категория — холодильники');
+});
+t('поля категорий не пересекаются по смыслу', () => {
+  const f = SCHEMAS.kholodilniki.specKeys, w = SCHEMAS.stiralnye_mashiny.specKeys;
+  assert.ok(f.includes('объем_морозильной_камеры_л') && !w.includes('объем_морозильной_камеры_л'));
+  assert.ok(w.includes('скорость_отжима_об_мин') && !f.includes('скорость_отжима_об_мин'));
+});
+t('промпт называет категорию и её поля', () => {
+  const p = buildSystemPrompt('stiralnye_mashiny');
+  assert.match(p, /Категория: Стиральные машины/);
+  assert.match(p, /"скорость_отжима_об_мин": null/);
+  assert.ok(!/морозил/i.test(p), 'в промпте машины не должно быть морозильной камеры');
+});
+
+console.log('\nФакты стиральных машин');
+t('подписи магазина: тип загрузки и загрузка белья', () => {
+  const f = extractFacts('Тип загрузки - фронтальная Мax загрузка белья, (кг) - 7', 'stiralnye_mashiny');
+  assert.strictEqual(f.тип_загрузки, 'фронтальная');
+  assert.strictEqual(f.максимальная_загрузка_кг, 7);
+});
+t('«Глубина, (см) - от 40,5 до 50» — диапазон фильтра, не факт', () => {
+  const f = extractFacts('Глубина, (см) - от 40,5 до 50', 'stiralnye_mashiny');
+  assert.strictEqual(f.глубина_мм, undefined, 'диапазон нельзя объявлять размером товара');
+  assert.strictEqual(extractFacts('Глубина, см - 60', 'stiralnye_mashiny').глубина_мм, 600);
+});
+t('отжим и программы читаются с числом до подписи', () => {
+  const f = extractFacts('скорость отжима 1200 об/мин, 15 программ', 'stiralnye_mashiny');
+  assert.strictEqual(f.скорость_отжима_об_мин, 1200);
+  assert.strictEqual(f.количество_программ, 15);
+});
+t('«вертикальные ручки» не делают загрузку вертикальной', () => {
+  assert.strictEqual(extractFacts('2 ручки вертикальные', 'stiralnye_mashiny').тип_загрузки, undefined);
+});
+t('загрузка без единицы не берётся', () => {
+  // «в зависимости от загрузки. Программа Хлопок 40» иначе даёт 40 кг.
+  const f = extractFacts('регулирует расход воды в зависимости от загрузки. Программа Хлопок 40', 'stiralnye_mashiny');
+  assert.strictEqual(f.максимальная_загрузка_кг, undefined);
+});
+t('нормализация берёт поля своей категории', () => {
+  const r = normalizeResponse({ specs: { скорость_отжима_об_мин: '1200 об/мин' } },
+    'Тип загрузки - фронтальная', 'stiralnye_mashiny');
+  assert.strictEqual(r.specs.скорость_отжима_об_мин, 1200);
+  assert.strictEqual(r.specs.тип_загрузки, 'фронтальная', 'факт должен добраться');
+  assert.ok(!('объем_морозильной_камеры_л' in r.specs));
+});
+
+// ── РАЗБОР КАТАЛОГА ──────────────────────────────────────────
+// Разметка ниже — вырезка из реальных страниц mrmag.ru.
+console.log('\nРазбор раздела');
+const LISTING = `<div data-category="523"></div>
+<a href="/shop/kholodilniki?page=2">2</a><a href="/shop/kholodilniki?page=13">13</a>
+<div class="col mr-item" itemscope itemtype="http://schema.org/Product">
+  <a itemprop="url" href="/shop/kholodilniki/kholodilnik_lg_ga_b419sqgl"><span itemprop="name">Холодильник LG GA-B419SQGL</span></a>
+  <img itemprop="image" src="https://mrmag.ru/img/200x200/originals/a.jpg">
+  <a href="/shop/kholodilniki/kupit/brand-lg" class="mr-brand"> LG </a>
+  <div itemprop="offers" itemscope itemtype="http://schema.org/Offer">
+    <meta itemprop="price" content="43790.00"><link itemprop="availability" href="http://schema.org/InStock">
+    <button class="js-item-add" data-sku="296646"></button>
+  </div></div>
+<div itemscope itemtype="http://schema.org/Product">
+  <a itemprop="url" href="/shop/kholodilniki/pozis-rk-102"><span itemprop="name">Холодильник Pozis RK-102</span></a>
+  <a href="/shop/kholodilniki/kupit/brand-pozis" class="mr-brand"> POZIS </a>
+  <meta itemprop="price" content="18450.00"><link itemprop="availability" href="http://schema.org/OutOfStock">
+  <button class="js-item-add" data-sku="315460"></button></div>`;
+
+t('id категории, число страниц и товары', () => {
+  const r = parseListing(LISTING);
+  assert.strictEqual(r.categoryId, 523, 'id берётся со страницы, а не из кода');
+  assert.strictEqual(r.pages, 13);
+  assert.strictEqual(r.items.length, 2);
+  const [a, b] = r.items;
+  assert.strictEqual(a.sku, '296646');
+  assert.strictEqual(a.name, 'Холодильник LG GA-B419SQGL');
+  assert.strictEqual(a.price, 43790);
+  assert.strictEqual(a.brand, 'LG');
+  assert.strictEqual(a.brand_slug, 'lg');
+  assert.strictEqual(a.available, true);
+  assert.strictEqual(a.product_url, 'https://mrmag.ru/shop/kholodilniki/kholodilnik_lg_ga_b419sqgl');
+  assert.strictEqual(b.available, false, 'OutOfStock должен читаться как нет в наличии');
+});
+t('блок без кнопки в корзину товаром не считается', () => {
+  const r = parseListing('<div data-category="1"></div><div itemtype="http://schema.org/Product"><span itemprop="name">Крошка</span></div>');
+  assert.strictEqual(r.items.length, 0, 'хлебные крошки — тоже Product-разметка');
+});
+
+const PRODUCT = `<h3>Описание</h3>
+<div itemprop="description" class="p-2"><p>Стиральная машина HW60 с загрузкой 6&nbsp;кг.</p></div>
+</section><section><h3 class="border-bottom pb-1">Характеристики</h3><div class="p-2">
+<div class="row border-bottom py-1"><div class="col-sm-5 text-muted">Тип загрузки</div><div class="col-sm-7"> фронтальная </div></div>
+<div class="row border-bottom py-1"><div class="col-sm-5 text-muted">Мax загрузка белья, (кг)</div><div class="col-sm-7"> 6 </div></div>
+</div></section>`;
+
+t('страница товара: описание и характеристики', () => {
+  const p = parseProductPage(PRODUCT);
+  assert.match(p.description, /загрузкой 6 кг/);
+  assert.deepStrictEqual(p.attributes, [
+    { name: 'Тип загрузки', value: 'фронтальная' },
+    { name: 'Мax загрузка белья, (кг)', value: '6' },
+  ]);
+  // Разбор фактов читает description + annotation, поэтому таблица
+  // разворачивается в annotation ровно как в фиде магазина.
+  assert.strictEqual(p.annotation, 'Тип загрузки - фронтальная Мax загрузка белья, (кг) - 6');
+  assert.strictEqual(extractFacts(p.annotation, 'stiralnye_mashiny').максимальная_загрузка_кг, 6);
+});
+
+console.log('\nАвтофильтры');
+t('бренд и цена строятся из товаров', () => {
+  const cat = { id: 523, name: 'Холодильники', url: 'u' };
+  const f = buildFilters(cat, [
+    { brand: 'LG', brand_slug: 'lg', price: 43790 },
+    { brand: 'LG', brand_slug: 'lg', price: 52890 },
+    { brand: 'POZIS', brand_slug: 'pozis', price: 18450 },
+    { brand: null, brand_slug: null, price: null },
+  ]);
+  assert.strictEqual(f.category_id, 523);
+  assert.strictEqual(f.products_total, 4);
+  const [brand, price] = f.filters;
+  assert.strictEqual(brand.code, 'brand');
+  assert.deepStrictEqual(brand.values.map(v => [v.value, v.count]), [['LG', 2], ['POZIS', 1]]);
+  assert.strictEqual(brand.without_value, 1, 'товар без бренда должен быть посчитан отдельно');
+  assert.strictEqual(price.min, 18450);
+  assert.strictEqual(price.max, 52890);
+  assert.strictEqual(price.without_price, 1);
+  assert.ok(price.step >= 10 && price.step <= price.max - price.min, `шаг ${price.step} бессмыслен`);
+});
+t('бренд из названия по словарю категории', () => {
+  const items = [
+    { name: 'Холодильник LG GA-B419', brand: 'LG', brand_slug: 'lg' },
+    { name: 'Холодильник ATLANT ХМ-4619', brand: 'Атлант', brand_slug: 'atlant' },
+    { name: 'Холодильники_1/ATLANT ХМ-4619-101' },              // магазин бренд не привязал
+    { name: 'ХОЛОДИЛЬНИК БИРЮСА M50' },                          // словаря нет — остаётся пустым
+    { name: 'Norsk NR-100' },                                    // «orsk» внутри слова не считается
+  ];
+  const filled = assignMissingBrands(items);
+  assert.strictEqual(filled, 1);
+  assert.strictEqual(items[2].brand, 'Атлант', 'по латинскому slug в названии');
+  assert.strictEqual(items[2].brand_source, 'name', 'источник должен быть виден');
+  assert.strictEqual(items[3].brand, undefined, 'бренда нет в словаре категории');
+  assert.strictEqual(items[4].brand, undefined);
+  assert.strictEqual(items[0].brand_source, undefined, 'бренду от магазина пометка не нужна');
+});
+t('пустая категория не роняет фильтры', () => {
+  const f = buildFilters({ id: 1, name: 'X', url: 'u' }, []);
+  assert.deepStrictEqual(f.filters[0].values, []);
+  assert.strictEqual(f.filters[1].min, null);
+});
+
+console.log('\nФайлы категории');
+t('products_(id).json — массив, filters_(id).json рядом', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'catfiles-'));
+  const cat = { id: 523, name: 'Холодильники', slug: 'kholodilniki', url: 'https://mrmag.ru/shop/kholodilniki' };
+  const items = [{ sku: '1', name: 'Холодильник LG', brand: 'LG', brand_slug: 'lg', price: 43790 }];
+  const { productsFile, filtersFile } = writeCategoryFiles(cat, items, { dir });
+
+  assert.strictEqual(path.basename(productsFile), 'products_523.json', 'имя файла несёт id раздела');
+  assert.strictEqual(path.basename(filtersFile), 'filters_523.json');
+  const written = JSON.parse(fs.readFileSync(productsFile, 'utf-8'));
+  assert.ok(Array.isArray(written), 'товары — массив, без обёртки');
+  assert.strictEqual(written[0].sku, '1');
+  // Когда собрано и сколько товаров — в файле фильтров, поэтому массив ничего не теряет.
+  const f = JSON.parse(fs.readFileSync(filtersFile, 'utf-8'));
+  assert.strictEqual(f.category_id, 523);
+  assert.strictEqual(f.products_total, 1);
+  assert.ok(f.generated_at);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+// ── ПУТЬ ЗАПРОСА К МОДЕЛИ ────────────────────────────────────
+// Заглушка вместо OpenRouter: это единственный участок, где тратятся деньги,
+// и проверять его на живом API дорого и нестабильно.
+console.log('\nЗапрос к модели');
+{
+  const answer = specs => JSON.stringify({
+    specs, synonyms: ['а'], search_aliases: [], seo_keywords: [], seo_description: 'Описание.',
+  });
+  const reply = (content, { finish = 'stop', usage = {}, status = 200, error = null } = {}) => ({
+    ok: status >= 200 && status < 300,
+    status,
+    headers: new Map([['retry-after', '0']]),
+    text: () => Promise.resolve(JSON.stringify(error
+      ? { error }
+      : { choices: [{ finish_reason: finish, message: { content } }], usage })),
+  });
+
+  const record = [];
+  const stub = replies => {
+    let i = 0;
+    globalThis.fetch = (url, opts) => {
+      record.push({ url, body: JSON.parse(opts.body) });
+      return Promise.resolve(replies[Math.min(i++, replies.length - 1)]);
+    };
+  };
+  const limiter = new RateLimiter(60_000);   // без реальных пауз в тесте
+  const run = (product, opts = {}) => enrichProduct(product, {
+    model: 'test/model', apiKey: 'k', limiter, maxRetries: 3, ...opts,
+  });
+
+  await tAsync('факты и схема уезжают в запрос, ответ нормализуется', async () => {
+    record.length = 0;
+    stub([reply(answer({ объем_общий_л: '310 л', бренд: 'DON' }),
+      { usage: { prompt_tokens: 1000, completion_tokens: 500, cost: 0.002 } })]);
+    const r = await run({ name: 'Холодильник DON', description: 'Общий объем, л 310 Вес (кг) - 62' });
+
+    const [{ url, body }] = record;
+    assert.match(url, /openrouter\.ai/);
+    assert.strictEqual(body.response_format.type, 'json_object');
+    assert.strictEqual(body.usage.include, true, 'без этого OpenRouter не вернёт стоимость');
+    assert.match(body.messages[0].content, /Категория: Холодильники/);
+    assert.strictEqual(JSON.parse(body.messages[1].content).facts.объем_общий_л, 310,
+      'проверенные факты должны уехать модели');
+
+    assert.strictEqual(r.enriched.specs.объем_общий_л, 310);
+    assert.strictEqual(r.enriched.specs.вес_кг, 62, 'пропущенное моделью добирается из текста');
+    assert.deepStrictEqual(r.enriched.warnings, []);
+    assert.strictEqual(r.cost, 0.002);
+    assert.strictEqual(r.costSource, 'openrouter');
+    assert.strictEqual(r.attempts, 1);
+  });
+
+  await tAsync('схема стиральных машин меняет промпт и поля', async () => {
+    record.length = 0;
+    stub([reply(answer({ скорость_отжима_об_мин: 1200 }), { usage: { prompt_tokens: 10, completion_tokens: 5 } })]);
+    const r = await run(
+      { name: 'Стиральная машина', description: 'Тип загрузки - фронтальная' },
+      { schema: schemaFor('stiralnye_mashiny') },
+    );
+    assert.match(record[0].body.messages[0].content, /Категория: Стиральные машины/);
+    assert.strictEqual(r.enriched.specs.скорость_отжима_об_мин, 1200);
+    assert.strictEqual(r.enriched.specs.тип_загрузки, 'фронтальная');
+    assert.ok(!('объем_морозильной_камеры_л' in r.enriched.specs));
+  });
+
+  await tAsync('обрыв по длине поднимает лимит, а расход суммируется', async () => {
+    record.length = 0;
+    stub([
+      reply('{"specs":{"бренд":"D', { finish: 'length', usage: { prompt_tokens: 900, completion_tokens: 2500, cost: 0.003 } }),
+      reply(answer({ бренд: 'DON' }), { usage: { prompt_tokens: 900, completion_tokens: 400, cost: 0.001 } }),
+    ]);
+    const r = await run({ name: 'X', description: 'Общий объем, л 310 Вес (кг) - 62' }, { maxTokens: 2500 });
+    assert.strictEqual(record.length, 2);
+    assert.strictEqual(record[0].body.max_tokens, 2500);
+    assert.strictEqual(record[1].body.max_tokens, 5000, 'повтор с тем же лимитом бессмыслен');
+    // Обрезанная попытка тоже оплачена: 0.003 + 0.001.
+    assert.strictEqual(+r.cost.toFixed(6), 0.004, 'ретрай — оплаченный запрос');
+    assert.strictEqual(r.iT, 1800);
+    assert.strictEqual(r.oT, 2900);
+  });
+
+  await tAsync('тариф модели считает стоимость, когда OpenRouter её не вернул', async () => {
+    stub([reply(answer({ бренд: 'DON' }), { usage: { prompt_tokens: 1000, completion_tokens: 500 } })]);
+    const r = await run({ name: 'X', description: 'Общий объем, л 310' },
+      { pricing: { prompt: 0.000001, completion: 0.000002 } });
+    assert.strictEqual(r.cost, 1000 * 0.000001 + 500 * 0.000002);
+    assert.strictEqual(r.costSource, 'тариф модели');
+  });
+
+  await tAsync('502 повторяется, 401 — нет', async () => {
+    record.length = 0;
+    stub([reply(null, { status: 502, error: { code: 502, message: 'шлюз' } }),
+          reply(answer({ бренд: 'DON' }), { usage: {} })]);
+    await run({ name: 'X', description: 'Общий объем, л 310' });
+    assert.strictEqual(record.length, 2, '502 имеет смысл повторить');
+
+    record.length = 0;
+    stub([reply(null, { status: 401, error: { code: 401, message: 'User not found.' } })]);
+    await assert.rejects(() => run({ name: 'X', description: 'Общий объем, л 310' }), /User not found/);
+    assert.strictEqual(record.length, 1, 'неверный ключ повторять бессмысленно');
+  });
+
+  await tAsync('провал отдаёт потраченное в error.usage', async () => {
+    stub([reply('это не json', { usage: { prompt_tokens: 100, completion_tokens: 50, cost: 0.0005 } })]);
+    const e = await run({ name: 'X', description: 'Общий объем, л 310' }).then(() => null, err => err);
+    assert.ok(e, 'должно бросить');
+    assert.strictEqual(e.usage.iT, 300, 'три попытки по 100 входных токенов');
+    assert.strictEqual(+e.usage.cost.toFixed(6), 0.0015, 'деньги за неудачу не должны исчезать');
+  });
+
+  delete globalThis.fetch;
+}
+
+console.log('\nОграничитель частоты под параллелью');
+{
+  // Параллельные вызовы обязаны встать в очередь: без этого они читают одно
+  // состояние окна, проходят одновременно и rpm перестаёт соблюдаться.
+  const rl = new RateLimiter(6000);           // minDelay = 10 мс
+  const t0 = Date.now();
+  const stamps = [];
+  await Promise.all([1, 2, 3].map(async () => { await rl.wait(); stamps.push(Date.now() - t0); }));
+  stamps.sort((a, b) => a - b);
+  assert.ok(stamps[2] >= 15, `третий вызов прошёл на ${stamps[2]}мс — очередь не работает`);
+  n++; console.log('  ✓ параллельные вызовы встают в очередь');
+}
+
+console.log(`\n✅ ${n} проверок пройдено\n`);

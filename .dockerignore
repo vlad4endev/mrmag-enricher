@@ -1,0 +1,11 @@
+node_modules
+.git
+.page_cache
+.products_cache.json
+products_*.json
+filters_*.json
+enriched_*
+mrmag_enriched*
+test*.mjs
+.env
+.ui_under_test.mjs

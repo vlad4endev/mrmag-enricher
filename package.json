@@ -1,0 +1,22 @@
+{
+  "name": "mrmag-enricher",
+  "version": "1.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Обогащение каталога mrmag.ru через OpenRouter: обход разделов, автофильтры, CLI + веб-интерфейс",
+  "scripts": {
+    "start": "node server.js",
+    "catalog": "node catalog.js",
+    "enrich": "node enricher_mrmag.js",
+    "enrich:kholodilniki": "CATEGORY=kholodilniki node enricher_mrmag.js",
+    "enrich:stiralnye": "CATEGORY=stiralnye_mashiny node enricher_mrmag.js",
+    "test": "node test.mjs && node test_ui.mjs && node test_api.mjs",
+    "test:api": "node test_api.mjs",
+    "quality": "node quality.mjs",
+    "sample": "node sample.mjs",
+    "smoke": "node smoke.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

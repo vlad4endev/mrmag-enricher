@@ -75,7 +75,7 @@ async function models() {
         throw new Error(`не достучались до openrouter.ai — ${netError(e)}`);
       }
       const text = await r.text();
-      if (!r.ok) throw new Error(`OpenRouter HTTP ${r.status}: ${text.slice(0, 200)}`);
+      if (!r.ok) throw new Error(explainUpstream(r, text));
       let data;
       try { data = JSON.parse(text); } catch { throw new Error('OpenRouter вернул не JSON'); }
       modelsCache = { at: Date.now(), list: data.data || [] };
@@ -83,6 +83,23 @@ async function models() {
     })().finally(() => { modelsInflight = null; });
   }
   return modelsInflight;
+}
+
+/**
+ * Cloudflare перед OpenRouter отдаёт 403 «Access denied by security policy» по
+ * географии IP — на публичный эндпоинт, ещё до проверки ключа. Голый код 403
+ * толкает искать проблему в ключе, хотя ключ тут ни при чём.
+ */
+function explainUpstream(res, text) {
+  const ray = res.headers.get('cf-ray') || '';
+  if (res.status === 403 && /security policy/i.test(text)) {
+    const edge = ray.split('-')[1];
+    return `OpenRouter отклонил запрос с этого адреса (Cloudflare${edge ? `, узел ${edge}` : ''}). ` +
+      'Ключ ни при чём — 403 приходит и без него. Нужен выход через сеть другой страны: ' +
+      'задайте HTTPS_PROXY в .env';
+  }
+  if (res.status === 401) return 'OpenRouter не принял ключ — проверьте OPENROUTER_API_KEY';
+  return `OpenRouter HTTP ${res.status}: ${text.slice(0, 200)}`;
 }
 
 /** Тариф модели из того же кэша. Не найден — считаем по usage.cost из ответа. */

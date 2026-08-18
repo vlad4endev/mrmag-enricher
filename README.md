@@ -213,6 +213,29 @@ NO_PROXY=mrmag.ru,localhost,127.0.0.1
 `NODE_USE_ENV_PROXY=1` в образе уже стоит, поддержка встроена в Node 24.
 `mrmag.ru` из прокси исключён: это лишний крюк и лишняя точка отказа.
 
+### 403 «Access denied by security policy»
+
+```
+server: cloudflare
+cf-ray: ...-DME
+{ "success": false, "error": "Access denied by security policy." }
+```
+
+Cloudflare перед OpenRouter блокирует по географии адреса. Приходит на публичный
+`/api/v1/models` и **без ключа** — то есть ключ ни при чём. С сети другой страны
+тот же запрос отдаёт 200 (узел `-AMS` вместо `-DME`).
+
+Лечится только выходом через сеть, которая не заблокирована: `HTTPS_PROXY` в
+`.env` или VPN на хосте. Ни `extra_hosts`, ни смена резолвера здесь не помогают —
+это уже не сеть, а решение принимающей стороны.
+
+Пока прокси нет, прогон делается с машины, у которой доступ есть:
+
+```bash
+CATEGORY=kholodilniki node enricher_mrmag.js
+scp products_*.json filters_*.json сервер:/opt/mrmag-enricher/
+```
+
 ## Обновление уже развёрнутой версии
 
 Пакет релиза собирается в `dist/`:

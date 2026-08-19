@@ -727,11 +727,23 @@ await tAsync('401 объясняет, что нужен вход, а не лом
   catch (e) { assert.match(e.message, /Требуется вход/); assert.doesNotMatch(e.message, /JSON\b.*not valid|Unexpected token/); }
   finally { globalThis.fetch = realFetch; }
 });
-await tAsync('HTML шлюза вместо ответа — понятная ошибка', async () => {
+await tAsync('504 от шлюза объясняется, а не вываливает HTML в таблицу', async () => {
   const realFetch = globalThis.fetch;
-  globalThis.fetch = () => reply('<html>504 Gateway Timeout</html>', false, 504);
+  const page = '<html>\n<head><title>504 Gateway Time-out</title></head>\n<body>\n<center><h1>504 Gateway Time-out</h1></center>\n<hr><center>nginx</center>\n</body>\n</html>';
+  globalThis.fetch = () => reply(page, false, 504);
   try { await api.apiJson('/api/enrich'); assert.fail('ошибка должна была вылететь'); }
-  catch (e) { assert.match(e.message, /504/); }
+  catch (e) {
+    assert.match(e.message, /proxy_read_timeout/, 'сообщение называет причину, а не только код');
+    assert.doesNotMatch(e.message, /</, 'разметка страницы шлюза в результат не попадает');
+  }
+  finally { globalThis.fetch = realFetch; }
+});
+await tAsync('свою ошибку сервера шлюзовое объяснение не подменяет', async () => {
+  const realFetch = globalThis.fetch;
+  // 502 отдаёт и сам сервер, когда модель не ответила: там JSON и своя причина.
+  globalThis.fetch = () => reply({ error: 'таймаут 60000ms' }, false, 502);
+  try { await api.apiJson('/api/enrich'); assert.fail('ошибка должна была вылететь'); }
+  catch (e) { assert.strictEqual(e.message, 'таймаут 60000ms'); }
   finally { globalThis.fetch = realFetch; }
 });
 await tAsync('200 с пустым телом не выдаётся за успех', async () => {

@@ -916,11 +916,24 @@ async function apiJson(url,opts){
   const text=await r.text();
   let d=null; try{ d=JSON.parse(text); }catch{}
   if(!r.ok){
+    // Свой сервер всегда отвечает JSON — если разобралось, причина уже в нём.
+    const own=d?.error?.message||d?.error;
+    if(own) throw new Error(own);
     if(r.status===401) throw new Error('Требуется вход — обновите страницу и введите пароль');
-    throw new Error(d?.error?.message||d?.error||`HTTP ${r.status}: ${text.slice(0,120)}`);
+    // Не-JSON на 502/504 отдаёт шлюз перед сервером, а не сервер. Обогащение
+    // одного товара занимает до трёх минут, nginx по умолчанию ждёт минуту.
+    if(r.status===502||r.status===504) throw new Error(`шлюз не дождался ответа (HTTP ${r.status}) — поднимите proxy_read_timeout, обогащение товара идёт до 3 минут`);
+    throw new Error(`HTTP ${r.status}: ${brief(text)}`);
   }
-  if(d===null) throw new Error(`сервер вернул не JSON: ${text.slice(0,120)||'пустой ответ'}`);
+  if(d===null) throw new Error(`сервер вернул не JSON: ${brief(text)||'пустой ответ'}`);
   return d;
+}
+
+// Страница ошибки от шлюза — это HTML на 500+ байт. В таблице результатов нужна
+// суть, а не разметка: заголовок страницы её и несёт.
+function brief(text){
+  const t=text.match(/<title>([^<]+)<\/title>/i);
+  return (t?t[1]:text.replace(/<[^>]+>/g,' ')).replace(/\s+/g,' ').trim().slice(0,120);
 }
 
 // ── MODELS DATABASE ──────────────────────────────────────────

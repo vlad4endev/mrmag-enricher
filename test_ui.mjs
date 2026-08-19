@@ -487,7 +487,7 @@ await tAsync('раздел выгружается парой products/filters с
   assert.strictEqual(JSON.parse(files[1].body).products_total, 256);
 });
 
-await tAsync('товары из фида раскладываются по разделам, фильтры считает сервер', async () => {
+await tAsync('товары из фида идут одной парой файлов, фильтры считает сервер', async () => {
   st.curCat = null;
   st.categories = [{ slug: 'kholodilniki', name: 'Холодильники', id: 523, url: 'u1' }];
   st.schemas = { posuda: { id: null, name: 'Посуда' } };
@@ -507,11 +507,11 @@ await tAsync('товары из фида раскладываются по ра�
   try { files = await catchFiles(() => api.downloadCategoryFiles()); }
   finally { globalThis.fetch = realFetch; }
 
-  assert.deepStrictEqual(files.map(f => f.name),
-    ['products_523.json', 'filters_523.json', 'products_posuda.json', 'filters_posuda.json'],
-    'без id раздела имя файла берёт slug схемы — молча склеивать разделы нельзя');
-  assert.strictEqual(asked.length, 2, 'фильтры считает сервер, а не копия buildFilters в браузере');
-  assert.deepStrictEqual(asked.map(a => a.products.length), [1, 1]);
+  assert.deepStrictEqual(files.map(f => f.name), ['products_all.json', 'filters_all.json'],
+    'прогон — одна пара файлов; на нескольких разделах id в имени соврал бы, поэтому all');
+  assert.strictEqual(asked.length, 1, 'фильтры считает сервер, а не копия buildFilters в браузере');
+  assert.strictEqual(asked[0].products.length, 2, 'в один файл идут товары всех разделов');
+  assert.strictEqual(asked[0].category_id, null, 'склеенному набору нельзя приписать id одного из разделов');
 });
 
 await tAsync('сбой фильтров не оставляет половину пары', async () => {

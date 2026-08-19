@@ -159,6 +159,11 @@ async function readCapped(res, limit) {
   return Buffer.concat(chunks).toString('utf-8');
 }
 
+// Прогон на 259 товаров с обогащением — это ~1,5 МБ тела: на общем лимите
+// пакетная выгрузка падала «Тело запроса слишком велико». Один товар в
+// /api/enrich так и остаётся в пределах мегабайта.
+const BULK_BODY_LIMIT = 64_000_000;
+
 function readBody(req, limit = 1_000_000) {
   return new Promise((resolve, reject) => {
     let size = 0;
@@ -292,7 +297,7 @@ async function apiProduct(res, target) {
  * же buildFilters, что пишет файл в CLI, — иначе два формата разъедутся.
  */
 async function apiFilters(req, res) {
-  const raw = await readBody(req);
+  const raw = await readBody(req, BULK_BODY_LIMIT);
   let body;
   try { body = JSON.parse(raw); } catch { return json(res, 400, { error: 'Тело запроса не JSON' }); }
 
@@ -311,7 +316,7 @@ async function apiFilters(req, res) {
  * одно, а прогон пропускал другое.
  */
 async function apiQuality(req, res) {
-  const raw = await readBody(req);
+  const raw = await readBody(req, BULK_BODY_LIMIT);
   let body;
   try { body = JSON.parse(raw); } catch { return json(res, 400, { error: 'Тело запроса не JSON' }); }
 
@@ -331,7 +336,7 @@ async function apiQuality(req, res) {
  * браузере.
  */
 async function apiExportV2(req, res) {
-  const raw = await readBody(req);
+  const raw = await readBody(req, BULK_BODY_LIMIT);
   let body;
   try { body = JSON.parse(raw); } catch { return json(res, 400, { error: 'Тело запроса не JSON' }); }
 

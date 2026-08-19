@@ -819,7 +819,7 @@ input[type=range]::-moz-range-thumb{
         <span class="bdg bdg-b" id="dlBtn" style="display:none;cursor:pointer" onclick="downloadAll('json')" title="Выгрузить все результаты в JSON"><i class="ti ti-download" aria-hidden="true"></i> JSON</span>
         <span class="bdg bdg-g" id="dlTxtBtn" style="display:none;cursor:pointer" onclick="downloadAll('txt')" title="Выгрузить все результаты в TXT"><i class="ti ti-file-text" aria-hidden="true"></i> TXT</span>
         <span class="bdg bdg-b" id="dlV2Btn" style="display:none;cursor:pointer" onclick="downloadV2()" title="Выгрузка v2: категории, фасеты диапазонами и товары с description_html"><i class="ti ti-braces" aria-hidden="true"></i> JSON v2</span>
-        <span class="bdg bdg-b" id="dlCatBtn" style="display:none;cursor:pointer" onclick="downloadCategoryFiles()" title="На каждый раздел два файла: products_(id).json и filters_(id).json"><i class="ti ti-files" aria-hidden="true"></i> 2 файла</span>
+        <span class="bdg bdg-b" id="dlCatBtn" style="display:none;cursor:pointer" onclick="downloadCategoryFiles()" title="Два файла на весь прогон: products_(id).json и filters_(id).json"><i class="ti ti-files" aria-hidden="true"></i> 2 файла</span>
         <span class="bdg bdg-a" id="clrBtn" style="display:none;cursor:pointer" onclick="clearResults()" title="Удалить сохранённый прогон">✕ Сброс</span>
       </div>
     </div>
@@ -1942,9 +1942,10 @@ function saveFile(content,filename,type='application/json'){
  *    «JSON» рядом — про прогон, эта — про раздел.
  * 2. Фильтр берётся из ответа обхода (filters_file): он описывает весь раздел.
  *    Пересчитать его по загруженным 10 товарам значило бы отдать фильтр окна.
- * 3. Товары по адресу фида приходят вперемешку по категориям, поэтому файлы
- *    раскладываются по разделам, а фильтр для таких групп считает сервер
- *    (POST /api/filters) — той же функцией, что пишет файл в CLI.
+ * 3. Товары по адресу фида приходят вперемешку по категориям, но выгрузка
+ *    отдаёт одну пару файлов на прогон (см. mergeGroups), а фильтр по этому
+ *    набору считает сервер (POST /api/filters) — той же функцией, что пишет
+ *    файл в CLI.
  */
 function catOf(p){
   // Обход раздела отдаёт товары одного раздела — гадать по названию не нужно.
@@ -1981,22 +1982,37 @@ function groupItems(onlyEnriched=false){
   return groups;
 }
 
+/**
+ * Один набор файлов на весь прогон, а не по паре на раздел: 259 товаров фида
+ * ложатся в два файла, а не в шесть. Пока раздел один (обычный случай — схема
+ * полей на прогон одна), имена не меняются: products_(id).json. Разделов
+ * несколько — товары склеиваются, ключ имени становится all, и вместе с ним
+ * обезличивается описание раздела: писать в один файл id одного из них значило
+ * бы соврать про остальные.
+ */
+function mergeGroups(groups){
+  const all=[...groups.values()];
+  if(all.length===1) return [String([...groups.keys()][0]),all[0]];
+  return ['all',{cat:{id:null,name:'Все разделы',url:null,slug:'all'},
+    rows:all.flatMap(g=>g.rows)}];
+}
+
 async function downloadCategoryFiles(){
   if(!items.length){ setSt('er','Нет загруженных товаров'); return; }
   const b=document.getElementById('dlCatBtn'), was=b.innerHTML;
   b.innerHTML='<span class="spin"></span> готовим';
   try{
     const groups=groupItems();
+    const [key,g]=mergeGroups(groups);
 
-    // Сначала собираем всё, потом сохраняем: если фильтр для второй группы не
-    // посчитается, лучше не отдать ничего, чем отдать половину пары.
-    const files=[];
-    for(const [key,g] of groups){
-      files.push([`products_${key}.json`,g.rows]);
-      files.push([`filters_${key}.json`, curCat&&String(curCat.category_id)===key&&curCat.filters_file
+    // Сначала собираем всё, потом сохраняем: если фильтр не посчитается, лучше
+    // не отдать ничего, чем отдать половину пары.
+    const files=[
+      [`products_${key}.json`,g.rows],
+      [`filters_${key}.json`, curCat&&String(curCat.category_id)===key&&curCat.filters_file
         ? curCat.filters_file
-        : await serverFilters(g.cat,g.rows)]);
-    }
+        : await serverFilters(g.cat,g.rows)],
+    ];
     files.forEach(([name,data])=>saveFile(JSON.stringify(data,null,2),name));
     setSt('ok',`Файлов: ${files.length}`);
   }catch(e){
@@ -2007,8 +2023,8 @@ async function downloadCategoryFiles(){
 }
 
 /**
- * Выгрузка v2: categories_v2.json на все разделы плюс пара
- * filters_v2_(id).json + products_v2_(id).json на каждый.
+ * Выгрузка v2: categories_v2.json на все разделы плюс одна пара
+ * filters_v2_(id).json + products_v2_(id).json на весь прогон.
  *
  * Идёт только прогон: без enriched у товара нет ни description_html, ни
  * характеристик — в v2 ему нечем быть. Диапазоны фасетов считает сервер той же
@@ -2024,11 +2040,13 @@ async function downloadV2(){
     // Сначала собираем всё, потом сохраняем: половина выгрузки хуже, чем ничего.
     const files=[['categories_v2.json',{categories:[...groups.values()]
       .map(g=>({id:g.cat.id??g.cat.slug,name:g.cat.name}))}]];
-    for(const [key,g] of groups){
-      const d=await serverV2(g.rows);
-      files.push([`filters_v2_${key}.json`,{filters:d.filters}]);
-      files.push([`products_v2_${key}.json`,d.products]);
-    }
+    const [key,g]=mergeGroups(groups);
+    // Диапазоны фасетов считаются по всему набору сразу: посчитай их по
+    // разделам и склей файлы потом — у товара остался бы диапазон своего
+    // раздела, которого нет в общем списке фасетов.
+    const d=await serverV2(g.rows);
+    files.push([`filters_v2_${key}.json`,{filters:d.filters}]);
+    files.push([`products_v2_${key}.json`,d.products]);
     files.forEach(([name,data])=>saveFile(JSON.stringify(data,null,2),name));
     setSt('ok',`Файлов: ${files.length}`);
   }catch(e){

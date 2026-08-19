@@ -201,6 +201,19 @@ try {
     assert.strictEqual(d.products[0].id, 1);
     assert.ok(d.filters.find(f => f.name === 'Цвет').value.includes(d.products[0].filters['Цвет']));
   });
+  await t('прогон целиком — тело больше мегабайта не отбивается', async () => {
+    // 259 обогащённых товаров — это ~1,5 МБ: на общем лимите readBody пакетная
+    // выгрузка падала «Тело запроса слишком велико».
+    const filler = 'о'.repeat(6000);
+    const products = Array.from({ length: 259 }, (_, i) => ({
+      sku: String(i + 1), name: `Товар ${i + 1}`,
+      enriched: { specs: { цвет: 'белый' }, short_description: filler },
+    }));
+    assert.ok(JSON.stringify({ products }).length > 1_000_000, 'проверка бессмысленна на теле меньше лимита');
+    const r = await postV2({ products });
+    assert.strictEqual(r.status, 200);
+    assert.strictEqual((await r.json()).products.length, 259);
+  });
 
   console.log('\nВалидация обогащения');
   const post = body => fetch(url('/api/enrich'), {

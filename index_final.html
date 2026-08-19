@@ -281,6 +281,21 @@ textarea{
 .fbtn[data-f="err"]:not(.on):not(:disabled){background:var(--rbg);border-color:var(--rbd);color:var(--red)}
 .fbtn[data-f="warn"].on{background:var(--amber);border-color:var(--amber)}
 .fbtn[data-f="err"].on{background:var(--red);border-color:var(--red)}
+.fbtn[data-f="thin"]:not(.on):not(:disabled){color:var(--t1)}
+/* Дата импорта. Строка появляется только если в загруженных товарах нашлось
+   поле с датой: у фида mrmag его нет, и пустой диапазон сбивал бы с толку. */
+.dfilter{display:flex;align-items:center;gap:5px;margin-top:6px}
+.dfilter label{font-size:10px;color:var(--t3);flex-shrink:0}
+.dfilter input[type=date]{
+  flex:1;min-width:0;background:var(--bg2);border:1px solid var(--b1);border-radius:var(--r2);
+  color:var(--t1);padding:4px 5px;font-family:var(--sans);font-size:10.5px;outline:none;
+}
+.dfilter input[type=date]:focus{border-color:var(--ac);box-shadow:var(--focus)}
+.dfilter .dclr{
+  background:none;border:none;color:var(--t3);cursor:pointer;font-size:12px;padding:2px 4px;
+}
+.dfilter .dclr:hover{color:var(--t1)}
+.dhint{margin-top:4px;font-size:10px;color:var(--t3);line-height:1.45}
 .mid-bar{height:2px;background:var(--b1);flex-shrink:0;overflow:hidden}
 .mid-bar-f{height:100%;width:0;background:var(--ac);transition:width .35s ease-out}
 .mid-list{flex:1;overflow-y:auto;padding:6px;display:flex;flex-direction:column;gap:3px}
@@ -746,9 +761,17 @@ input[type=range]::-moz-range-thumb{
       <div class="runline" id="runline" style="display:none"></div>
       <div class="filters" id="filters">
         <button class="fbtn on" data-f="all" onclick="setFilter(this)" disabled>Все</button>
+        <button class="fbtn" data-f="thin" onclick="setFilter(this)" disabled title="Нет описания и характеристик — такой товар модели обогащать не из чего">Без данных</button>
         <button class="fbtn" data-f="warn" onclick="setFilter(this)" disabled>Расхождения</button>
         <button class="fbtn" data-f="err" onclick="setFilter(this)" disabled>Ошибки</button>
       </div>
+      <div class="dfilter" id="dateFilter" style="display:none">
+        <label for="dFrom">Импорт</label>
+        <input type="date" id="dFrom" onchange="applyDates()" aria-label="Импортированы с">
+        <input type="date" id="dTo" onchange="applyDates()" aria-label="Импортированы по">
+        <button class="dclr" id="dClr" onclick="clearDates()" title="Сбросить даты" aria-label="Сбросить даты">✕</button>
+      </div>
+      <div class="dhint" id="dateHint" style="display:none"></div>
     </div>
     <div class="mid-bar"><div class="mid-bar-f" id="midBarF"></div></div>
     <div class="mid-list" id="midList">
@@ -920,11 +943,117 @@ let items=[];        // товары, которые пойдут в обраб�
 let results=[];      // результаты, индексы совпадают с items
 let curIdx=0, selCnt=10, curTab='vis', filter='all', running=false;
 let runIdx=-1, runT0=0;   // что обрабатывается сейчас и когда начали
+let runQueue=null;        // индексы текущего прогона: он идёт по фильтру, а не по всему списку
 
 // results разрежен: пока товар не обработан, на его месте пусто (после
 // сохранения в localStorage — null). Всё, что перебирает результаты, обязано
 // идти через это — иначе падение на частично завершённом прогоне.
 const doneRes=()=>results.filter(Boolean);
+
+// ── КАЧЕСТВО ИСХОДНЫХ ДАННЫХ И ДАТА ИМПОРТА ──────────────────
+// quality[i] = {ok} | {ok:false, reason} — ответ /api/quality, индексы как у items.
+// Считает сервер той же isEnrichable, что потом пропускает товар в /api/enrich:
+// копии этой логики здесь нет, иначе фильтр показывал бы одно, а прогон делал другое.
+let quality=[];
+let qSeq=0, qTimer=null;
+
+async function loadQuality(){
+  const my=++qSeq;
+  quality=[];
+  if(!items.length){ renderDates(); renderList(); return; }
+  try{
+    const r=await fetch('/api/quality',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({products:items,category:curCat?.slug})});
+    const d=await r.json();
+    if(!r.ok) throw new Error(d.error||`HTTP ${r.status}`);
+    if(my!==qSeq) return;                   // ответ на прошлый список — выбрасываем
+    quality=d.quality||[];
+  }catch(e){
+    // Фильтр — удобство, а не условие работы: списка нет, но прогон возможен.
+    console.warn('Качество исходных данных недоступно:',e.message);
+  }
+  renderDates();
+  renderList();
+  syncSteps();
+}
+
+/** В шаге 2 текст правят руками — не дёргаем сервер на каждую букву. */
+function loadQualitySoon(){
+  clearTimeout(qTimer);
+  qTimer=setTimeout(loadQuality,350);
+}
+
+const isThin=i=>quality[i]?.ok===false;
+
+// Поле с датой у каждого фида своё, а у mrmag его нет вовсе. Поэтому не
+// хардкодим одно имя, а берём первое подходящее — и показываем в подсказке,
+// какое именно нашлось, чтобы фильтр не выглядел волшебством.
+const DATE_KEYS=['imported_at','import_date','date_import','imported','created_at','date_created','updated_at','modified','date'];
+let dateKey=null, dFrom=null, dTo=null;
+
+/** Дата товара в мс. Понимает ISO-строку и unix-секунды/миллисекунды. */
+function dateOf(p){
+  for(const k of (dateKey?[dateKey]:DATE_KEYS)){
+    const v=p?.[k];
+    if(v==null||v==='') continue;
+    const t=typeof v==='number'?(v<1e11?v*1000:v):Date.parse(v);
+    if(!Number.isNaN(t)) return t;
+  }
+  return null;
+}
+
+function inDateRange(p){
+  if(dFrom==null&&dTo==null) return true;
+  const t=dateOf(p);
+  // Диапазон задан — товар без даты в него не попадает: иначе «с 1 июня»
+  // молча вернуло бы и записи вообще без даты импорта.
+  if(t==null) return false;
+  return (dFrom==null||t>=dFrom)&&(dTo==null||t<=dTo);
+}
+
+const dayStr=t=>new Date(t-new Date(t).getTimezoneOffset()*60000).toISOString().slice(0,10);
+
+/** Строка с датами появляется, только если дата у товаров вообще есть. */
+function renderDates(){
+  const row=document.getElementById('dateFilter'), hint=document.getElementById('dateHint');
+  dateKey=DATE_KEYS.find(k=>items.some(p=>{
+    const v=p?.[k];
+    if(v==null||v==='') return false;
+    return !Number.isNaN(typeof v==='number'?v:Date.parse(v));
+  }))||null;
+  if(!dateKey){
+    dFrom=dTo=null;
+    row.style.display='none'; hint.style.display='none';
+    return;
+  }
+  const ts=items.map(dateOf).filter(t=>t!=null).sort((a,b)=>a-b);
+  row.style.display='flex';
+  hint.style.display='block';
+  const f=document.getElementById('dFrom'), t=document.getElementById('dTo');
+  f.setAttribute('min',dayStr(ts[0])); f.setAttribute('max',dayStr(ts[ts.length-1]));
+  t.setAttribute('min',dayStr(ts[0])); t.setAttribute('max',dayStr(ts[ts.length-1]));
+  const noDate=items.length-ts.length;
+  hint.textContent=`Дата импорта — поле «${dateKey}»: ${dayStr(ts[0])} – ${dayStr(ts[ts.length-1])}`
+    +(noDate?` · без даты ${noDate}`:'');
+}
+
+function applyDates(){
+  const f=document.getElementById('dFrom').value, t=document.getElementById('dTo').value;
+  dFrom=f?Date.parse(f+'T00:00:00'):null;
+  // Конец дня, иначе «по 5 июня» отсекало бы всё, что импортировано в этот день.
+  dTo=t?Date.parse(t+'T23:59:59.999'):null;
+  if(dFrom!=null&&dTo!=null&&dFrom>dTo){ const x=dFrom; dFrom=dTo; dTo=x; }
+  renderList();
+  syncSteps();
+  const first=items.findIndex((_,i)=>passesFilter(i));
+  if(first>=0) selectResult(first);
+}
+
+function clearDates(){
+  document.getElementById('dFrom').value='';
+  document.getElementById('dTo').value='';
+  applyDates();
+}
 
 // ── СОХРАНЕНИЕ ПРОГОНА ───────────────────────────────────────
 // Прогон стоит денег, поэтому результат пишется сразу по получении: закрытая
@@ -947,6 +1076,7 @@ function restoreResults(){
   results=saved.results;
   items=saved.items?.length?saved.items:doneRes().map(r=>r.original||{});
   document.getElementById('prod').value=JSON.stringify(items,null,2);
+  loadQuality();
   renderList();
   selectResult(0);
   showActions();
@@ -957,7 +1087,7 @@ function restoreResults(){
 function clearResults(){
   if(!confirm('Удалить сохранённый прогон? Выгрузите его, если он ещё нужен.')) return;
   localStorage.removeItem(STORE_KEY);
-  results=[];curIdx=0;filter='all';
+  results=[];curIdx=0;filter='all';runQueue=null;
   ['cpyBtn','dlBtn','dlTxtBtn','dlV2Btn','confBdg'].forEach(hide);
   hide('clrBtn');   // «2 файла» не прячем: товары остались, раздел выгрузить можно
   document.getElementById('rtabs').style.display='none';
@@ -1117,7 +1247,7 @@ function readProd(){
 function onProdInput(){
   const err=readProd();
   stepError(2,err);
-  if(!err){ results=[]; renderList(); }
+  if(!err){ results=[]; renderList(); loadQualitySoon(); }
   syncSteps();
 }
 
@@ -1170,6 +1300,7 @@ async function loadCategory(slug){
     setSt('ok',`${cat.name}: ${items.length}`);
     renderList();
     selectResult(0);
+    loadQuality();
   }catch(e){
     curCat=null;
     document.querySelectorAll('.cat-btn').forEach(b=>b.classList.remove('on'));
@@ -1203,6 +1334,7 @@ async function fetchProducts(){
     hint.textContent=`Загружено ${items.length} из ${all.length} доступных`;
     renderList();
     selectResult(0);
+    loadQuality();
   }catch(e){
     hint.textContent=`Загрузит первые ${selCnt} ${plural(selCnt,'товар','товара','товаров')} по адресу`;
     stepError(2,e.message);
@@ -1253,9 +1385,13 @@ function syncSteps(){
   // В частично завершённом прогоне есть незаполненные позиции — их пропускаем.
   const done=doneRes().filter(r=>r.enriched||r.skipped).length;
   if(running){ btn.disabled=true; why.textContent='Идёт обработка — прогресс виден в списке'; return; }
-  btn.disabled=!(hasModel&&hasItems);
+  // Кнопка обещает ровно то, что уйдёт в прогон: фильтр сужает и его тоже.
+  const q=hasItems?queued().length:0;
+  btn.disabled=!(hasModel&&hasItems&&q);
   if(!hasModel)      why.textContent='Сначала выберите модель в шаге 1';
   else if(!hasItems) why.textContent='Загрузите товары в шаге 2';
+  else if(!q)        why.textContent='По текущему фильтру не осталось товаров — снимите фильтр в списке';
+  else if(q<items.length) why.textContent=`Будет обработано ${q} из ${items.length} — по текущему фильтру`;
   else if(done)      why.textContent=`Повторный запуск заменит текущие ${done} ${plural(done,'результат','результата','результатов')}`;
   else               why.textContent=`Будет обработано ${items.length} ${plural(items.length,'товар','товара','товаров')}`;
 }
@@ -1271,11 +1407,14 @@ function renderEstimate(){
   }
   const {ip,op}=priceOf(selModel);
   const per=estIn*ip+estOut*op;
-  const all=per*items.length;
+  // Считаем по очереди прогона, а не по всему списку: с фильтром «Без данных»
+  // цифра иначе врала бы в разы.
+  const q=queued().length;
+  const all=per*q;
   const fmt=u=>u===0?'бесплатно':u<0.01?`$${u.toFixed(5)}`:`$${u.toFixed(3)}`;
   const rub=u=>u===0?'':` · ${u*RUB<1?(u*RUB).toFixed(3):Math.round(u*RUB)} ₽`;
   el.innerHTML=
-    `<div class="est-row"><span>За ${items.length} ${plural(items.length,'товар','товара','товаров')}</span><b>${fmt(all)}</b></div>`
+    `<div class="est-row"><span>За ${q} ${plural(q,'товар','товара','товаров')}${q<items.length?` из ${items.length}`:''}</span><b>${fmt(all)}</b></div>`
    +`<div class="est-row" style="font-size:11px"><span>За один товар</span><span style="font-family:var(--mono)">${fmt(per)}${rub(per)}</span></div>`
    +`<div class="est-note">${estFromRun?`По факту прошлого прогона: ${estIn}↑ ${estOut}↓ токенов на товар.`
         :`Оценка по ${estIn}↑ ${estOut}↓ токенов на товар — уточнится после первого прогона.`}`
@@ -1297,10 +1436,17 @@ function statusOf(i){
 }
 
 function passesFilter(i){
-  if(filter==='all') return true;
+  // Даты сужают любой фильтр, а не заменяют его: «без данных за июнь» — это
+  // один запрос, а не два взаимоисключающих режима.
+  if(!inDateRange(items[i])) return false;
+  if(filter==='all')  return true;
+  if(filter==='thin') return isThin(i);
   const st=statusOf(i);
   return filter==='warn'?st.cls==='wa':st.cls==='er';
 }
+
+/** Индексы товаров, которые сейчас видны — они же и пойдут в прогон. */
+const queued=()=>items.map((_,i)=>i).filter(passesFilter);
 
 function setFilter(btn){
   filter=btn.dataset.f;
@@ -1330,7 +1476,8 @@ function renderRunline(){
     document.getElementById('rbFill').style.width='0';
     return;
   }
-  const done=doneRes().length, total=items.length;
+  const done=runQueue?runQueue.filter(i=>results[i]).length:doneRes().length;
+  const total=runQueue?runQueue.length:items.length;
   const elapsed=Date.now()-runT0;
   const eta=done>0?(elapsed/done)*(total-done):null;
   el.style.display='flex';
@@ -1349,12 +1496,15 @@ function renderList(){
   (items.length?show:hide)('dlCatBtn');
 
   // Счётчики на фильтрах: сразу видно, сколько требует внимания.
-  const cnt={warn:0,err:0};
+  const cnt={all:items.length,thin:0,warn:0,err:0};
   results.forEach((_,i)=>{const c=statusOf(i).cls; if(c==='wa')cnt.warn++; if(c==='er')cnt.err++;});
+  items.forEach((_,i)=>{ if(isThin(i)) cnt.thin++; });
+  const LBL={all:'Все',thin:'Без данных',warn:'Расхождения',err:'Ошибки'};
   document.querySelectorAll('.fbtn').forEach(b=>{
     const f=b.dataset.f;
-    const n=f==='all'?items.length:cnt[f==='warn'?'warn':'err'];
-    b.textContent=f==='all'?`Все ${items.length||''}`.trim():`${f==='warn'?'Расхождения':'Ошибки'} ${n||''}`.trim();
+    if(!f) return;
+    const n=cnt[f]||0;
+    b.textContent=`${LBL[f]} ${n||''}`.trim();
     b.disabled=f==='all'?!items.length:!n;
     if(b.disabled&&b.classList.contains('on')&&f!=='all'){
       filter='all';
@@ -1376,14 +1526,19 @@ function renderList(){
   el.innerHTML=visible.map(([it,i])=>{
     const st=statusOf(i);
     const name=it.name||it.title||it.sku||`Товар №${i+1}`;
-    return `<button class="ri s-${st.cls}${i===curIdx?' on':''}" onclick="selectResult(${i})" title="${esc(String(name))}">`
+    // Причину «без данных» пишем в строку: иначе непонятно, почему товар в
+    // фильтре и что с ним делать — она же уйдёт в skipped при прогоне.
+    const why=!results[i]&&isThin(i)?` · без данных: ${quality[i].reason}`:'';
+    const d=dateKey?dateOf(it):null;
+    return `<button class="ri s-${st.cls}${i===curIdx?' on':''}" onclick="selectResult(${i})" title="${esc(String(name))}${why?esc(why):''}">`
       +`<span class="ri-st ${st.cls}">${st.cls==='run'?flake('spinning'):st.sym}</span>`
       +`<span class="ri-b"><span class="ri-n">${esc(String(name))}</span>`
-      +`<span class="ri-m">${i+1} · ${esc(st.txt)}</span></span></button>`;
+      +`<span class="ri-m">${i+1} · ${esc(st.txt)}${d!=null?` · ${dayStr(d)}`:''}${esc(why)}</span></span></button>`;
   }).join('');
 
-  const done=doneRes().length;
-  document.getElementById('midBarF').style.width=items.length?`${Math.round(done/items.length*100)}%`:'0';
+  const done=runQueue?runQueue.filter(i=>results[i]).length:doneRes().length;
+  const total=runQueue?runQueue.length:items.length;
+  document.getElementById('midBarF').style.width=total?`${Math.round(done/total*100)}%`:'0';
   renderRunline();
 }
 
@@ -1499,14 +1654,22 @@ async function run(){
   if(err){ stepError(2,err); return; }
   if(!selModel||!items.length){ syncSteps(); return; }
 
+  // Прогон идёт по тому, что видно: фильтры «Без данных» и даты сужают не
+  // только выдачу — иначе отобрать проблемные товары и обогатить именно их
+  // было бы нечем.
+  const queue=queued();
+  if(!queue.length){ stepError(2,'По текущему фильтру нечего обрабатывать'); return; }
+  stepError(2,null);
+
   running=true;
+  runQueue=queue;
   runT0=Date.now();
-  runIdx=0;
-  results=[];
-  filter='all';
+  runIdx=queue[0];
+  // Повторный прогон заменяет только выбранное: результаты остальных товаров
+  // уже оплачены и остаются на месте.
+  for(const i of queue) delete results[i];
   document.getElementById('runBtn').classList.add('working');
   document.getElementById('foot').classList.remove('done');
-  document.querySelectorAll('.fbtn').forEach(b=>b.classList.toggle('on',b.dataset.f==='all'));
   ['confBdg'].forEach(hide);
 
   const btn=document.getElementById('runBtn');
@@ -1520,12 +1683,15 @@ async function run(){
   const {ip,op}=priceOf(selModel);
   const t0=Date.now();
 
-  for(let i=0;i<items.length;i++){
+  let prev=-1;
+  for(let n=0;n<queue.length;n++){
+    const i=queue[n];
     runIdx=i;
-    setSt('ld',`${i+1} / ${items.length}`);
+    setSt('ld',`${n+1} / ${queue.length}`);
     renderList();
     // Если пользователь не ушёл смотреть другой товар — следим за текущим.
-    if(curIdx===i-1||curIdx===i) selectResult(i);
+    if(curIdx===prev||curIdx===i) selectResult(i);
+    prev=i;
     try{
       const r=await fetch('/api/enrich',{method:'POST',headers:{'Content-Type':'application/json'},
         body:JSON.stringify({model:selModel.id,product:items[i],category:curCat?.slug})});
@@ -1546,7 +1712,7 @@ async function run(){
 
   const s=sumRun();
   const el=((Date.now()-t0)/1000).toFixed(1);
-  setSt('ok',`Готово: ${s.ok} / ${items.length}`);
+  setSt('ok',`Готово: ${queue.filter(i=>results[i]?.enriched).length} / ${queue.length}`);
   renderFoot(s,`за ${el}с`);
 
   // Прогноз в шаге 3 теперь опирается на факт, а не на допущение.
@@ -1554,6 +1720,7 @@ async function run(){
 
   running=false;
   runIdx=-1;
+  runQueue=null;
   clearInterval(tick);
   renderRunline();
   renderList();

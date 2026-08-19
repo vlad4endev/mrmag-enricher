@@ -101,6 +101,41 @@ try {
     }
   });
 
+  console.log('\nКачество исходных данных');
+  const postQuality = body => fetch(url('/api/quality'), {
+    method: 'POST',
+    headers: { authorization: auth, 'Content-Type': 'application/json' },
+    body: typeof body === 'string' ? body : JSON.stringify(body),
+  });
+  await t('без пароля не считает', async () => {
+    assert.strictEqual((await fetch(url('/api/quality'), { method: 'POST', body: '{}' })).status, 401);
+  });
+  await t('битое тело и пустой список — 400', async () => {
+    assert.strictEqual((await postQuality('{не json')).status, 400);
+    assert.strictEqual((await postQuality({ products: [] })).status, 400);
+  });
+  await t('отвечает тем же вердиктом, с которым /api/enrich пропустит товар', async () => {
+    const products = [
+      { sku: '1', category: 'Холодильники', description: 'Двухкамерный холодильник, общий объем 310 л, класс A, No Frost, ширина 59.5 см, вес 66 кг' },
+      { sku: '2', category: 'Холодильники' },
+      { sku: '3', category: 'Холодильники', description: 'Хороший' },
+    ];
+    const d = await (await postQuality({ products })).json();
+    assert.strictEqual(d.quality.length, 3);
+    assert.strictEqual(d.quality[0].ok, true, 'из этого текста есть что извлекать');
+    assert.strictEqual(d.quality[1].ok, false);
+    assert.match(d.quality[1].reason, /нет ни description/);
+    assert.strictEqual(d.quality[2].ok, false, 'семь букв — не характеристики');
+
+    // Тот же товар в /api/enrich должен не тратить деньги, а вернуться пропуском.
+    const e = await (await fetch(url('/api/enrich'), {
+      method: 'POST', headers: { authorization: auth, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: 'deepseek/deepseek-chat', product: products[1] }),
+    })).json();
+    assert.strictEqual(e.enriched, null);
+    assert.strictEqual(e.skipped, d.quality[1].reason, 'фильтр и прогон обязаны говорить одно и то же');
+  });
+
   console.log('\nФильтры по списку товаров');
   const postFilters = body => fetch(url('/api/filters'), {
     method: 'POST',

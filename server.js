@@ -17,6 +17,7 @@
  *   GET  /api/catalog?category=kholodilniki[&limit=N]
  *                             обход раздела: товары с описаниями + автофильтры
  *   POST /api/filters         фильтры по переданному списку товаров
+ *   POST /api/quality         качество исходных данных по списку товаров
  *   POST /api/enrich          обогащение одного товара {model, product, category?}
  *
  * Ответ /api/enrich: { enriched, usage:{prompt_tokens, completion_tokens, cost,
@@ -303,6 +304,27 @@ async function apiFilters(req, res) {
 }
 
 /**
+ * Качество исходных данных: POST { products, category } → { quality: [{ ok, reason }] }.
+ * Интерфейсу нужно знать до прогона, по каким товарам платить бессмысленно.
+ * Считает та же isEnrichable, что потом пропускает товар в /api/enrich, — копии
+ * этой логики в браузере нет: разойдись они, фильтр «Без данных» показывал бы
+ * одно, а прогон пропускал другое.
+ */
+async function apiQuality(req, res) {
+  const raw = await readBody(req);
+  let body;
+  try { body = JSON.parse(raw); } catch { return json(res, 400, { error: 'Тело запроса не JSON' }); }
+
+  const { products, category = null } = body || {};
+  if (!Array.isArray(products) || !products.length) {
+    return json(res, 400, { error: 'Не передан список товаров' });
+  }
+  json(res, 200, {
+    quality: products.map(p => isEnrichable(p || {}, schemaFor(category || p?.category))),
+  });
+}
+
+/**
  * Выгрузка v2 по переданным товарам: POST { products } → { filters, products }.
  * Считает buildV2 на сервере по той же причине, что и фильтры: значение фасета
  * у товара и в списке каталога должна давать одна функция, а не её копия в
@@ -460,6 +482,7 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'GET'  && u.pathname === '/api/models')     return await apiModels(res);
     if (req.method === 'GET'  && u.pathname === '/api/categories') return apiCategories(res);
     if (req.method === 'POST' && u.pathname === '/api/filters')    return apiFilters(req, res);
+    if (req.method === 'POST' && u.pathname === '/api/quality')    return apiQuality(req, res);
     if (req.method === 'POST' && u.pathname === '/api/export-v2')  return await apiExportV2(req, res);
     if (req.method === 'GET'  && u.pathname === '/api/catalog')    return await apiCatalog(res, u.searchParams.get('category'), u.searchParams.get('limit'));
     if (req.method === 'GET'  && u.pathname === '/api/product')    return await apiProduct(res, u.searchParams.get('url'));

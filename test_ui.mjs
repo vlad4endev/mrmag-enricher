@@ -55,7 +55,7 @@ for (const n of ['step1', 'step2', 'step3']) store.get(n).appendChild(new El(n +
 
 const groups = { '.cnt-btn': [], '.fbtn': [], '.rtab': [], '.mitem': [], '.page': [], '.ntab': [] };
 for (const n of ['1', '10', '50', '100', '500']) { const e = new El('cnt' + n); e.dataset.n = n; groups['.cnt-btn'].push(e); }
-for (const f of ['all', 'warn', 'err'])          { const e = new El('f' + f);  e.dataset.f = f; groups['.fbtn'].push(e); }
+for (const f of ['all', 'thin', 'warn', 'err'])  { const e = new El('f' + f);  e.dataset.f = f; groups['.fbtn'].push(e); }
 groups['.rtab'].push(new El('rt1'), new El('rt2'));
 
 globalThis.document = {
@@ -92,7 +92,8 @@ const EXPORTS = `
 export const api={syncSteps,setCnt,readProd,renderList,statusOf,selectResult,renderDetail,plural,
   renderEstimate,setFilter,stepError,pick,sumRun,renderFoot,clearResults,restoreResults,saveResults,
   downloadAll,downloadCategoryFiles,downloadV2,initTheme,toggleTheme,applyTheme,dur,renderRunline,
-  loadCategories,loadCategory,renderModelList,filterModels};
+  loadCategories,loadCategory,renderModelList,filterModels,
+  applyDates,clearDates,renderDates,passesFilter,queued,onProdInput};
 export const st={get items(){return items},set items(v){items=v},get results(){return results},
   set results(v){results=v},get selModel(){return selModel},
   get allModels(){return allModels},set allModels(v){allModels=v},
@@ -102,7 +103,9 @@ export const st={get items(){return items},set items(v){items=v},get results(){r
   get curCat(){return curCat},set curCat(v){curCat=v},
   get categories(){return categories},set categories(v){categories=v},
   set schemas(v){schemas=v},
-  set runT0(v){runT0=v}};
+  set runT0(v){runT0=v},
+  get quality(){return quality},set quality(v){quality=v},
+  get dateKey(){return dateKey}};
 `;
 const tmp = path.join(ROOT, '.ui_under_test.mjs');
 fs.writeFileSync(tmp, script + EXPORTS, 'utf-8');
@@ -149,6 +152,67 @@ t('повторный запуск предупреждает о замене р
   st.results = [ok(), ok(), null];
   api.syncSteps();
   assert.match(G('runWhy').textContent, /заменит текущие 2 результата/);
+});
+
+console.log('\nФильтр «Без данных» и даты импорта');
+const F = f => groups['.fbtn'].find(b => b.dataset.f === f);
+t('без ответа /api/quality кнопка «Без данных» выключена', () => {
+  st.items = [{ name: 'A' }, { name: 'B' }];
+  st.results = []; st.quality = [];
+  api.setFilter(F('all'));
+  api.renderList();
+  assert.strictEqual(F('thin').disabled, true, 'нечего фильтровать — кнопка не должна кликаться');
+});
+t('фильтр оставляет только товары без нормальных данных', () => {
+  st.items = [{ name: 'A' }, { name: 'B' }, { name: 'C' }];
+  st.results = [];
+  st.quality = [{ ok: true }, { ok: false, reason: 'нет ни description, ни annotation' }, { ok: false, reason: 'текст 12 симв.' }];
+  api.renderList();
+  assert.strictEqual(F('thin').textContent, 'Без данных 2', 'счётчик берётся из ответа сервера');
+  api.setFilter(F('thin'));
+  assert.deepStrictEqual(api.queued(), [1, 2]);
+  assert.match(G('midList').innerHTML, /нет ни description/, 'причина видна в строке товара');
+  assert.ok(!/>A</.test(G('midList').innerHTML), 'товар с данными в фильтр попасть не должен');
+});
+t('прогон обещает ровно то, что в фильтре', () => {
+  api.syncSteps();
+  assert.match(G('runWhy').textContent, /Будет обработано 2 из 3/);
+  api.renderEstimate();
+  assert.match(G('est').innerHTML, /За 2 товара из 3/);
+});
+t('без поля с датой строка дат скрыта', () => {
+  api.setFilter(F('all'));
+  api.renderDates();
+  assert.strictEqual(G('dateFilter').style.display, 'none');
+  assert.strictEqual(st.dateKey, null);
+});
+t('дата импорта найдена — диапазон сужает список', () => {
+  st.items = [
+    { name: 'A', imported_at: '2026-06-01T10:00:00Z' },
+    { name: 'B', imported_at: '2026-06-05T10:00:00Z' },
+    { name: 'C', imported_at: '2026-07-20T10:00:00Z' },
+    { name: 'D' },
+  ];
+  st.results = []; st.quality = [];
+  api.renderDates();
+  assert.strictEqual(st.dateKey, 'imported_at');
+  assert.strictEqual(G('dateFilter').style.display, 'flex');
+  assert.match(G('dateHint').textContent, /imported_at/);
+  assert.match(G('dateHint').textContent, /без даты 1/, 'товар без даты нужно посчитать отдельно');
+  G('dFrom').value = '2026-06-01'; G('dTo').value = '2026-06-05';
+  api.applyDates();
+  assert.deepStrictEqual(api.queued(), [0, 1], 'граничные дни входят в диапазон, товар без даты — нет');
+});
+t('фильтры складываются: «без данных» внутри диапазона', () => {
+  st.quality = [{ ok: true }, { ok: false, reason: 'пусто' }, { ok: false, reason: 'пусто' }, { ok: false, reason: 'пусто' }];
+  api.renderList();
+  api.setFilter(F('thin'));
+  assert.deepStrictEqual(api.queued(), [1], 'C и D вне диапазона дат');
+});
+t('сброс дат возвращает весь список', () => {
+  api.clearDates();
+  api.setFilter(F('all'));
+  assert.deepStrictEqual(api.queued(), [0, 1, 2, 3]);
 });
 
 console.log('\nРусские склонения в подписях');
@@ -209,6 +273,7 @@ t('пустое поле — не ошибка', () => {
 console.log('\nСтатусы товаров и фильтры');
 t('четыре состояния различаются', () => {
   st.items = [{ name: 'A' }, { name: 'B' }, { name: 'C' }, { name: 'D' }];
+  st.quality = [];
   st.results = [ok(), warn(), err(), skip()];
   assert.deepStrictEqual([0, 1, 2, 3].map(i => api.statusOf(i).cls), ['ok', 'wa', 'er', 'sk']);
 });
@@ -219,23 +284,22 @@ t('необработанный товар — «в очереди»', () => {
 });
 t('счётчики на фильтрах считают верно', () => {
   api.renderList();
-  const [all, w, e] = groups['.fbtn'];
-  assert.strictEqual(all.textContent, 'Все 4');
-  assert.strictEqual(w.textContent, 'Расхождения 1');
-  assert.strictEqual(e.textContent, 'Ошибки 1');
+  assert.strictEqual(F('all').textContent, 'Все 4');
+  assert.strictEqual(F('warn').textContent, 'Расхождения 1');
+  assert.strictEqual(F('err').textContent, 'Ошибки 1');
 });
 t('фильтр сужает список и переводит на первую проблему', () => {
-  api.setFilter(groups['.fbtn'][2]);
+  api.setFilter(F('err'));
   assert.strictEqual(st.filter, 'err');
   assert.strictEqual((G('midList').innerHTML.match(/class="ri s-[a-z]+(?: on)?"/g) || []).length, 1);
   assert.strictEqual(st.curIdx, 2, 'должен выбраться товар с ошибкой');
-  api.setFilter(groups['.fbtn'][0]);
+  api.setFilter(F('all'));
 });
 t('фильтр без совпадений выключен', () => {
   st.results = [ok(), ok(), ok(), ok()];
   api.renderList();
-  assert.strictEqual(groups['.fbtn'][1].disabled, true, 'нет расхождений — кнопка неактивна');
-  assert.strictEqual(groups['.fbtn'][2].disabled, true, 'нет ошибок — кнопка неактивна');
+  assert.strictEqual(F('warn').disabled, true, 'нет расхождений — кнопка неактивна');
+  assert.strictEqual(F('err').disabled, true, 'нет ошибок — кнопка неактивна');
   st.results = [ok(), warn(), err(), skip()];
 });
 t('полоса прогресса отражает долю обработанных', () => {

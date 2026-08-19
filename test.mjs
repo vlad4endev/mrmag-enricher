@@ -20,6 +20,7 @@ import {
 const extractFacts = (text, key = 'kholodilniki') => extractFactsIn(text, key);
 const normalizeResponse = (data, src = '', key = 'kholodilniki') => normalizeResponseIn(data, src, key);
 import { parseListing, parseProductPage, buildFilters, assignMissingBrands, writeCategoryFiles } from './catalog.js';
+import { buildV2, splitKey } from './export_v2.js';
 import { parseProxy, startBridge, setupProxy } from './socks.js';
 import net from 'net';
 
@@ -817,6 +818,64 @@ console.log('\nМост SOCKS5 → HTTP CONNECT');
 
   echo.close();
 }
+
+console.log('\nВыгрузка v2: фасеты и товары');
+const v2row = (sku, specs, extra = {}) => ({
+  sku, name: 'Товар ' + sku,
+  enriched: { specs, short_description: 'Коротко', seo_description: 'Подробно', seo_keywords: ['ключ'], ...extra },
+});
+
+t('ключ схемы разбирается на подпись и единицу', () => {
+  assert.deepStrictEqual(splitKey('объем_общий_л'), { label: 'Объем общий', unit: 'л' });
+  assert.deepStrictEqual(splitKey('скорость_отжима_об_мин'), { label: 'Скорость отжима', unit: 'об/мин' });
+  assert.deepStrictEqual(splitKey('мощность_замораживания_кг_сут'), { label: 'Мощность замораживания', unit: 'кг/сут' });
+  assert.deepStrictEqual(splitKey('тип_загрузки'), { label: 'Тип загрузки', unit: '' });
+});
+
+t('значение товара совпадает со значением фасета', () => {
+  // Главное свойство выгрузки: разойдись эти два числа хоть в округлении —
+  // товар не попадёт ни в один свой фильтр, и раздел молча опустеет.
+  const rows = [190, 225, 298, 310, 355, 364, 420, 455].map((v, i) => v2row(String(i + 1), { объем_общий_л: v }));
+  const { filters, products } = buildV2(rows);
+  const facet = filters.find(f => f.name === 'Объем общий, л');
+  assert.ok(facet.value.every(v => /^\d+(\.\d+)?-\d+(\.\d+)?$/.test(v)), `не диапазоны: ${facet.value}`);
+  for (const p of products) {
+    assert.ok(facet.value.includes(p.filters['Объем общий, л']),
+      `значение ${p.filters['Объем общий, л']} товара ${p.id} отсутствует в фасете`);
+  }
+  assert.deepStrictEqual([...facet.value].sort((a, b) => parseFloat(a) - parseFloat(b)), facet.value,
+    'диапазоны идут по возрастанию');
+});
+
+t('мало значений — перечисление, а не диапазоны вокруг них', () => {
+  const rows = [30, 40, 50].map((v, i) => v2row(String(i + 1), { объем_л: v }));
+  assert.deepStrictEqual(buildV2(rows).filters[0], { name: 'Объем, л', value: ['30', '40', '50'] });
+});
+
+t('да/нет становится Есть/Нет и в фильтре, и в описании', () => {
+  const { filters, products } = buildV2([v2row('1', { дисплей: 'да', сушка: 'нет' })]);
+  assert.deepStrictEqual(filters.map(f => f.value), [['Есть'], ['Нет']]);
+  assert.strictEqual(products[0].filters['Дисплей'], 'Есть');
+  assert.match(products[0].description_html, /<li>Дисплей: Есть<\/li>/);
+});
+
+t('description_html: описание, характеристики с единицами, ключи в meta', () => {
+  const [p] = buildV2([v2row('296646', { тип_товара: 'холодильник', объем_общий_л: 310, цвет: null })]).products;
+  assert.strictEqual(p.id, 296646, 'id — числовой sku, как в примере заказчика');
+  assert.strictEqual(p.meta_keywords, 'ключ');
+  assert.strictEqual(p.description_html,
+    '<p>Коротко</p><ul><li>Тип товара: холодильник</li><li>Объем общий: 310 л</li></ul><p>Подробно</p>');
+  assert.ok(!('Цвет' in p.filters), 'пустая характеристика не создаёт фасет');
+});
+
+t('html в описании экранируется', () => {
+  const [p] = buildV2([v2row('1', { цвет: 'белый & <b>яркий</b>' })]).products;
+  assert.match(p.description_html, /белый &amp; &lt;b&gt;яркий&lt;\/b&gt;/);
+});
+
+t('без обогащения выгружать нечего', () => {
+  assert.deepStrictEqual(buildV2([{ sku: '1', name: 'A', enriched: null }]), { filters: [], products: [] });
+});
 
 console.log('\nОграничитель частоты под параллелью');
 {

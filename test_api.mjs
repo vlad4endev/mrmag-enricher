@@ -139,6 +139,34 @@ try {
     assert.strictEqual(price.without_price, 1, 'цена 0 — это отсутствие цены');
   });
 
+  console.log('\nВыгрузка v2');
+  const postV2 = body => fetch(url('/api/export-v2'), {
+    method: 'POST',
+    headers: { authorization: auth, 'Content-Type': 'application/json' },
+    body: typeof body === 'string' ? body : JSON.stringify(body),
+  });
+  await t('без пароля не считает', async () => {
+    assert.strictEqual((await fetch(url('/api/export-v2'), { method: 'POST', body: '{}' })).status, 401);
+  });
+  await t('битое тело, пустой список и список без прогона — 400', async () => {
+    assert.strictEqual((await postV2('{не json')).status, 400);
+    assert.strictEqual((await postV2({ products: [] })).status, 400);
+    assert.strictEqual((await postV2({ products: [{ sku: '1', enriched: null }] })).status, 400,
+      'выгрузка без обогащения — пустой файл, а не успех');
+  });
+  await t('фасеты и товары считает buildV2 на сервере', async () => {
+    const r = await postV2({ products: [
+      { sku: '1', name: 'A', enriched: { specs: { цвет: 'белый', объем_л: 310 }, short_description: 'Коротко', seo_keywords: ['к'] } },
+      { sku: '2', name: 'B', enriched: { specs: { цвет: 'чёрный', объем_л: 225 }, short_description: 'Коротко', seo_keywords: [] } },
+    ] });
+    assert.strictEqual(r.status, 200);
+    const d = await r.json();
+    assert.deepStrictEqual(d.filters.map(f => f.name), ['Цвет', 'Объем, л']);
+    assert.strictEqual(d.products.length, 2);
+    assert.strictEqual(d.products[0].id, 1);
+    assert.ok(d.filters.find(f => f.name === 'Цвет').value.includes(d.products[0].filters['Цвет']));
+  });
+
   console.log('\nВалидация обогащения');
   const post = body => fetch(url('/api/enrich'), {
     method: 'POST',

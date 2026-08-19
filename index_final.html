@@ -769,6 +769,7 @@ input[type=range]::-moz-range-thumb{
         <span class="bdg bdg-b" id="cpyBtn" style="display:none;cursor:pointer" onclick="copyJSON()" title="Скопировать JSON товара"><i class="ti ti-copy" aria-hidden="true"></i> Копировать</span>
         <span class="bdg bdg-b" id="dlBtn" style="display:none;cursor:pointer" onclick="downloadAll('json')" title="Выгрузить все результаты в JSON"><i class="ti ti-download" aria-hidden="true"></i> JSON</span>
         <span class="bdg bdg-g" id="dlTxtBtn" style="display:none;cursor:pointer" onclick="downloadAll('txt')" title="Выгрузить все результаты в TXT"><i class="ti ti-file-text" aria-hidden="true"></i> TXT</span>
+        <span class="bdg bdg-b" id="dlV2Btn" style="display:none;cursor:pointer" onclick="downloadV2()" title="Выгрузка v2: категории, фасеты диапазонами и товары с description_html"><i class="ti ti-braces" aria-hidden="true"></i> JSON v2</span>
         <span class="bdg bdg-b" id="dlCatBtn" style="display:none;cursor:pointer" onclick="downloadCategoryFiles()" title="На каждый раздел два файла: products_(id).json и filters_(id).json"><i class="ti ti-files" aria-hidden="true"></i> 2 файла</span>
         <span class="bdg bdg-a" id="clrBtn" style="display:none;cursor:pointer" onclick="clearResults()" title="Удалить сохранённый прогон">✕ Сброс</span>
       </div>
@@ -957,7 +958,7 @@ function clearResults(){
   if(!confirm('Удалить сохранённый прогон? Выгрузите его, если он ещё нужен.')) return;
   localStorage.removeItem(STORE_KEY);
   results=[];curIdx=0;filter='all';
-  ['cpyBtn','dlBtn','dlTxtBtn','confBdg'].forEach(hide);
+  ['cpyBtn','dlBtn','dlTxtBtn','dlV2Btn','confBdg'].forEach(hide);
   hide('clrBtn');   // «2 файла» не прячем: товары остались, раздел выгрузить можно
   document.getElementById('rtabs').style.display='none';
   document.getElementById('foot').style.display='none';
@@ -1450,7 +1451,7 @@ function renderDetail(){
 }
 
 function showActions(){
-  ['cpyBtn','dlBtn','dlTxtBtn','clrBtn'].forEach(show);
+  ['cpyBtn','dlBtn','dlTxtBtn','dlV2Btn','clrBtn'].forEach(show);
 }
 
 // Стрелками удобно просматривать сотню результатов подряд.
@@ -1669,19 +1670,26 @@ function fileRow(p,r){
   };
 }
 
+/** Товары по разделам: обе файловые выгрузки раскладывают их одинаково. */
+function groupItems(onlyEnriched=false){
+  const groups=new Map();
+  items.forEach((p,i)=>{
+    if(onlyEnriched && !results[i]?.enriched) return;
+    const cat=catOf(p);
+    const key=String(cat.id??cat.slug);
+    const g=groups.get(key)||{cat,rows:[]};
+    g.rows.push(fileRow(p,results[i]));
+    groups.set(key,g);
+  });
+  return groups;
+}
+
 async function downloadCategoryFiles(){
   if(!items.length){ setSt('er','Нет загруженных товаров'); return; }
   const b=document.getElementById('dlCatBtn'), was=b.innerHTML;
   b.innerHTML='<span class="spin"></span> готовим';
   try{
-    const groups=new Map();
-    items.forEach((p,i)=>{
-      const cat=catOf(p);
-      const key=String(cat.id??cat.slug);
-      const g=groups.get(key)||{cat,rows:[]};
-      g.rows.push(fileRow(p,results[i]));
-      groups.set(key,g);
-    });
+    const groups=groupItems();
 
     // Сначала собираем всё, потом сохраняем: если фильтр для второй группы не
     // посчитается, лучше не отдать ничего, чем отдать половину пары.
@@ -1699,6 +1707,46 @@ async function downloadCategoryFiles(){
   }finally{
     b.innerHTML=was;
   }
+}
+
+/**
+ * Выгрузка v2: categories_v2.json на все разделы плюс пара
+ * filters_v2_(id).json + products_v2_(id).json на каждый.
+ *
+ * Идёт только прогон: без enriched у товара нет ни description_html, ни
+ * характеристик — в v2 ему нечем быть. Диапазоны фасетов считает сервер той же
+ * buildV2, что и значения у товаров: копия в браузере разошлась бы в
+ * округлении, и товар не попал бы в свой же фильтр.
+ */
+async function downloadV2(){
+  const groups=groupItems(true);
+  if(!groups.size){ setSt('er','Нет обработанных товаров'); return; }
+  const b=document.getElementById('dlV2Btn'), was=b.innerHTML;
+  b.innerHTML='<span class="spin"></span> готовим';
+  try{
+    // Сначала собираем всё, потом сохраняем: половина выгрузки хуже, чем ничего.
+    const files=[['categories_v2.json',{categories:[...groups.values()]
+      .map(g=>({id:g.cat.id??g.cat.slug,name:g.cat.name}))}]];
+    for(const [key,g] of groups){
+      const d=await serverV2(g.rows);
+      files.push([`filters_v2_${key}.json`,{filters:d.filters}]);
+      files.push([`products_v2_${key}.json`,d.products]);
+    }
+    files.forEach(([name,data])=>saveFile(JSON.stringify(data,null,2),name));
+    setSt('ok',`Файлов: ${files.length}`);
+  }catch(e){
+    setSt('er',`Выгрузка v2: ${e.message}`);
+  }finally{
+    b.innerHTML=was;
+  }
+}
+
+async function serverV2(products){
+  const r=await fetch('/api/export-v2',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({products})});
+  const d=await r.json();
+  if(!r.ok) throw new Error(d.error||`HTTP ${r.status}`);
+  return d;
 }
 
 /** Фильтры считает сервер: buildFilters живёт там, дублировать её здесь нельзя. */

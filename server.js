@@ -37,6 +37,7 @@ import {
   RUB_PER_USD, RUB_RATE_DATE, MISMATCH_POLICY, isEnrichable,
 } from './lib.js';
 import { CATEGORIES, findCategory, crawlCategory, loadFeed, buildFilters } from './catalog.js';
+import { buildV2 } from './export_v2.js';
 
 const API_KEY = process.env.OPENROUTER_API_KEY;
 const PORT    = Number(process.env.PORT || 3000);
@@ -301,6 +302,26 @@ async function apiFilters(req, res) {
   json(res, 200, buildFilters({ id: category_id, name: category, url }, products));
 }
 
+/**
+ * Выгрузка v2 по переданным товарам: POST { products } → { filters, products }.
+ * Считает buildV2 на сервере по той же причине, что и фильтры: значение фасета
+ * у товара и в списке каталога должна давать одна функция, а не её копия в
+ * браузере.
+ */
+async function apiExportV2(req, res) {
+  const raw = await readBody(req);
+  let body;
+  try { body = JSON.parse(raw); } catch { return json(res, 400, { error: 'Тело запроса не JSON' }); }
+
+  const { products } = body || {};
+  if (!Array.isArray(products) || !products.length) {
+    return json(res, 400, { error: 'Не передан список товаров' });
+  }
+  const out = buildV2(products);
+  if (!out.products.length) return json(res, 400, { error: 'Нет обогащённых товаров — в v2 нечего выгружать' });
+  json(res, 200, out);
+}
+
 async function apiEnrich(req, res) {
   const raw = await readBody(req);
   let body;
@@ -439,6 +460,7 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'GET'  && u.pathname === '/api/models')     return await apiModels(res);
     if (req.method === 'GET'  && u.pathname === '/api/categories') return apiCategories(res);
     if (req.method === 'POST' && u.pathname === '/api/filters')    return apiFilters(req, res);
+    if (req.method === 'POST' && u.pathname === '/api/export-v2')  return await apiExportV2(req, res);
     if (req.method === 'GET'  && u.pathname === '/api/catalog')    return await apiCatalog(res, u.searchParams.get('category'), u.searchParams.get('limit'));
     if (req.method === 'GET'  && u.pathname === '/api/product')    return await apiProduct(res, u.searchParams.get('url'));
     if (req.method === 'POST' && u.pathname === '/api/enrich')     return await apiEnrich(req, res);

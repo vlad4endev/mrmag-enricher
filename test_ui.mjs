@@ -91,7 +91,7 @@ const script = html.match(/<script>\n([\s\S]*)<\/script>/)[1]
 const EXPORTS = `
 export const api={syncSteps,setCnt,readProd,renderList,statusOf,selectResult,renderDetail,plural,
   renderEstimate,setFilter,stepError,pick,sumRun,renderFoot,clearResults,restoreResults,saveResults,
-  downloadAll,downloadCategoryFiles,initTheme,toggleTheme,applyTheme,dur,renderRunline,
+  downloadAll,downloadCategoryFiles,downloadV2,initTheme,toggleTheme,applyTheme,dur,renderRunline,
   loadCategories,loadCategory,renderModelList,filterModels};
 export const st={get items(){return items},set items(v){items=v},get results(){return results},
   set results(v){results=v},get selModel(){return selModel},
@@ -396,6 +396,52 @@ await tAsync('сбой фильтров не оставляет половину
   try { files = await catchFiles(() => api.downloadCategoryFiles()); }
   finally { globalThis.fetch = realFetch; }
   assert.strictEqual(files.length, 0, 'products без filters выгружать нельзя');
+});
+
+console.log('\nВыгрузка JSON v2');
+await tAsync('три файла: категории, фасеты диапазонами и товары', async () => {
+  st.curCat = { category_id: 523, category: 'Холодильники', slug: 'kholodilniki', url: 'u' };
+  st.items = [
+    { sku: '1', name: 'Холодильник A', category: 'Холодильники' },
+    { sku: '2', name: 'Холодильник B', category: 'Холодильники' },
+    { sku: '3', name: 'Холодильник C', category: 'Холодильники' },   // без прогона
+  ];
+  st.results = [
+    { enriched: { specs: { цвет: 'белый' }, warnings: [] } },
+    { enriched: { specs: { цвет: 'чёрный' }, warnings: [] } },
+    null,
+  ];
+
+  let sent = null;
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (url, opts) => {
+    sent = { url, body: JSON.parse(opts.body) };
+    return Promise.resolve({ ok: true, json: () => Promise.resolve({
+      filters: [{ name: 'Цвет', value: ['белый', 'чёрный'] }],
+      products: [{ id: 1, name: 'Холодильник A', meta_keywords: '', description_html: '<p>a</p>', filters: { Цвет: 'белый' } }],
+    }) });
+  };
+  let files;
+  try { files = await catchFiles(() => api.downloadV2()); }
+  finally { globalThis.fetch = realFetch; }
+
+  assert.strictEqual(sent.url, '/api/export-v2');
+  assert.strictEqual(sent.body.products.length, 2, 'необработанные товары в v2 не идут — им нечем быть');
+  assert.deepStrictEqual(files.map(f => f.name),
+    ['categories_v2.json', 'filters_v2_523.json', 'products_v2_523.json']);
+  assert.deepStrictEqual(JSON.parse(files[0].body), { categories: [{ id: 523, name: 'Холодильники' }] });
+  assert.deepStrictEqual(JSON.parse(files[1].body).filters[0].name, 'Цвет');
+  assert.strictEqual(JSON.parse(files[2].body)[0].description_html, '<p>a</p>');
+});
+
+await tAsync('без прогона выгрузка v2 не зовёт сервер', async () => {
+  st.results = [null, null, null];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = () => { throw new Error('сервер не должен вызываться'); };
+  let files;
+  try { files = await catchFiles(() => api.downloadV2()); }
+  finally { globalThis.fetch = realFetch; }
+  assert.strictEqual(files.length, 0);
 });
 
 t('сброс очищает состояние и прячет кнопки', () => {

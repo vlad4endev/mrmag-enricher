@@ -96,7 +96,7 @@ export const api={syncSteps,setCnt,setCntFree,applyCnt,applySource,setSource,pic
   renderEstimate,setFilter,stepError,pick,sumRun,renderFoot,clearResults,restoreResults,saveResults,
   downloadAll,downloadCategoryFiles,downloadV2,initTheme,toggleTheme,applyTheme,dur,renderRunline,
   loadCategories,catOf,renderModelList,filterModels,
-  applyDates,clearDates,renderDates,passesFilter,queued,onProdInput,apiJson};
+  applyDates,clearDates,renderDates,passesFilter,queued,onProdInput,apiJson,run};
 export const st={get items(){return items},set items(v){items=v},
   get srcItems(){return srcItems},set srcItems(v){srcItems=v},
   get pickCat(){return pickCat},set pickCat(v){pickCat=v},get selCnt(){return selCnt},get results(){return results},
@@ -109,6 +109,7 @@ export const st={get items(){return items},set items(v){items=v},
   set schemas(v){schemas=v},
   set runT0(v){runT0=v},
   get quality(){return quality},set quality(v){quality=v},
+  get runStore(){return runStore},
   get dateKey(){return dateKey}};
 `;
 const tmp = path.join(ROOT, '.ui_under_test.mjs');
@@ -511,6 +512,11 @@ t('выгрузка TXT не падает на пропусках', () => {
 console.log('\nДва файла на раздел');
 // Ловим и содержимое (Blob), и имя (a.download): пара файлов на раздел — это
 // про имена не меньше, чем про содержимое.
+// Выгрузка читает и окно (items/results), и хранилище прогона: тест, который
+// выставляет окно напрямую, обязан начинать с пустого хранилища — иначе в файл
+// приедут товары предыдущей проверки.
+const setWindow = (its, res) => { st.runStore.clear(); st.items = its; st.results = res; };
+
 const catchFiles = async fn => {
   const files = [];
   const RealBlob = globalThis.Blob, realCreate = document.createElement;
@@ -527,8 +533,8 @@ const catchFiles = async fn => {
 
 await tAsync('одна категория выгружается парой products/filters с её id', async () => {
   st.categories = [{ slug: 'kholodilniki', name: 'Холодильники', id: 523, url: 'u1' }];
-  st.items = [{ sku: '1', name: 'A', category: 'Холодильники' }, { sku: '2', name: 'B', category: 'Холодильники' }];
-  st.results = [{ enriched: { specs: {}, warnings: [] }, iT: 10, oT: 5, cost: 0.001 }, null];
+  setWindow([{ sku: '1', name: 'A', category: 'Холодильники' }, { sku: '2', name: 'B', category: 'Холодильники' }],
+    [{ enriched: { specs: {}, warnings: [] }, iT: 10, oT: 5, cost: 0.001 }, null]);
 
   const realFetch = globalThis.fetch;
   globalThis.fetch = () => reply({ category_id: 523, products_total: 2, filters: [] });
@@ -548,11 +554,10 @@ await tAsync('одна категория выгружается парой prod
 await tAsync('товары из фида идут одной парой файлов, фильтры считает сервер', async () => {
   st.categories = [{ slug: 'kholodilniki', name: 'Холодильники', id: 523, url: 'u1' }];
   st.schemas = { posuda: { id: null, name: 'Посуда' } };
-  st.items = [
+  setWindow([
     { sku: '1', name: 'Холодильник', category: 'Холодильники' },
     { sku: '2', name: 'Кастрюля',    category: 'Посуда' },
-  ];
-  st.results = [null, null];
+  ], [null, null]);
 
   const asked = [];
   const realFetch = globalThis.fetch;
@@ -571,9 +576,39 @@ await tAsync('товары из фида идут одной парой файл
   assert.strictEqual(asked[0].category_id, null, 'склеенному набору нельзя приписать id одного из разделов');
 });
 
+await tAsync('окно сузилось после прогона — в файл идёт весь прогон', async () => {
+  // Тот самый случай: 259 товаров обработали, потом открыли один — в файле
+  // оказывался он один, потому что выгрузка читала окно, а не прогон.
+  st.curCat = null; st.categories = []; st.schemas = {};
+  st.runStore.clear();
+  st.allModels = [MODEL]; api.pick(MODEL.id);
+  api.setSource([{ sku: '1', name: 'A', category: 'Холодильники' },
+                 { sku: '2', name: 'B', category: 'Холодильники' },
+                 { sku: '3', name: 'C', category: 'Холодильники' }]);
+
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = () => reply({ enriched: { specs: { цвет: 'белый' }, warnings: [] },
+    usage: { prompt_tokens: 10, completion_tokens: 5, cost: 0.001 } });
+  try { await api.run(); } finally { globalThis.fetch = realFetch; }
+  assert.strictEqual(st.results.filter(Boolean).length, 3, 'прогон прошёл по всем трём');
+
+  api.setCnt(CNT('1'));
+  assert.strictEqual(st.items.length, 1, 'окно сузилось до одного товара');
+
+  globalThis.fetch = () => reply({ category_id: null, filters: [] });
+  let files;
+  try { files = await catchFiles(() => api.downloadCategoryFiles()); }
+  finally { globalThis.fetch = realFetch; }
+
+  const products = JSON.parse(files[0].body);
+  assert.strictEqual(products.length, 3, 'в файле весь прогон, а не открытый товар');
+  assert.ok(products.every(p => p.enriched), 'у каждого свой результат');
+  assert.deepStrictEqual(products.map(p => p.sku), ['1', '2', '3'], 'товары не перепутались местами');
+  api.setCnt(CNT('10'));
+});
+
 await tAsync('сбой фильтров не оставляет половину пары', async () => {
-  st.items = [{ sku: '1', name: 'X', category: 'Посуда' }];
-  st.results = [null];
+  setWindow([{ sku: '1', name: 'X', category: 'Посуда' }], [null]);
   const realFetch = globalThis.fetch;
   globalThis.fetch = () => reply({ error: 'сервер лёг' }, false);
   let files;
@@ -585,16 +620,15 @@ await tAsync('сбой фильтров не оставляет половину
 console.log('\nВыгрузка JSON v2');
 await tAsync('три файла: категории, фасеты диапазонами и товары', async () => {
   st.categories = [{ slug: 'kholodilniki', name: 'Холодильники', id: 523, url: 'u' }];
-  st.items = [
+  setWindow([
     { sku: '1', name: 'Холодильник A', category: 'Холодильники' },
     { sku: '2', name: 'Холодильник B', category: 'Холодильники' },
     { sku: '3', name: 'Холодильник C', category: 'Холодильники' },   // без прогона
-  ];
-  st.results = [
+  ], [
     { enriched: { specs: { цвет: 'белый' }, warnings: [] } },
     { enriched: { specs: { цвет: 'чёрный' }, warnings: [] } },
     null,
-  ];
+  ]);
 
   let sent = null;
   const realFetch = globalThis.fetch;

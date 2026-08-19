@@ -1005,6 +1005,22 @@ let runQueue=null;        // индексы текущего прогона: о�
 // идти через это — иначе падение на частично завершённом прогоне.
 const doneRes=()=>results.filter(Boolean);
 
+/**
+ * Всё обработанное за прогон, ключ — сам товар, а не его позиция.
+ *
+ * items — это срез загруженного (выбранная категория × количество), и он
+ * пересобирается по чипу и по числу. Пока результаты жили только в results,
+ * привязанном к индексу, пересборка окна их обрезала, а на другой категории
+ * результат вставал против чужого товара — и файловая выгрузка отдавала то,
+ * что видно, а не то, за что заплачено. Поэтому results теперь проекция этого
+ * хранилища на текущее окно (applySource), а выгрузки читают его целиком.
+ */
+const runStore=new Map();
+
+// Ключ товара: sku магазина, дальше — что есть. ponytail: у товара без единого
+// признака ключом остаётся позиция, и в другом окне он посчитается новым.
+const rowKey=(p,i)=>String(p?.sku??p?.article??p?.url??p?.name??`#${i}`);
+
 // ── КАЧЕСТВО ИСХОДНЫХ ДАННЫХ И ДАТА ИМПОРТА ──────────────────
 // quality[i] = {ok} | {ok:false, reason} — ответ /api/quality, индексы как у items.
 // Считает сервер той же isEnrichable, что потом пропускает товар в /api/enrich:
@@ -1126,9 +1142,14 @@ function clearDates(){
 // вкладка или перезагрузка больше не стирают оплаченную работу.
 const STORE_KEY='enricher.lastRun';
 
+/** Обработанное — ключ + результат: восстановление не пересчитывает ключи. */
+const doneRows=()=>[...new Map([...runStore,
+  ...items.map((p,i)=>[rowKey(p,i),results[i]]).filter(([,r])=>r)])];
+
 function saveResults(){
   try{
-    localStorage.setItem(STORE_KEY,JSON.stringify({at:Date.now(),model:selModel?.id||null,items,results}));
+    localStorage.setItem(STORE_KEY,JSON.stringify(
+      {at:Date.now(),model:selModel?.id||null,items,done:doneRows()}));
   }catch(e){
     // Переполнение квоты не должно ронять прогон — он важнее сохранения.
     console.warn('Не удалось сохранить прогон:',e.message);
@@ -1138,9 +1159,15 @@ function saveResults(){
 function restoreResults(){
   let saved;
   try{ saved=JSON.parse(localStorage.getItem(STORE_KEY)||'null'); }catch{ return; }
-  if(!saved?.results?.length) return;
-  results=saved.results;
-  items=saved.items?.length?saved.items:doneRes().map(r=>r.original||{});
+  // done — прогон целиком; results остался у сохранений прежней версии, там он
+  // выровнен по saved.items.
+  const done=saved.done?.length ? saved.done
+    : (saved.results||[]).map((r,i)=>[rowKey(saved.items?.[i]||r?.original,i),r]).filter(([,r])=>r);
+  if(!done.length) return;
+  runStore.clear();
+  for(const [k,r] of done) runStore.set(k,r);
+  items=saved.items?.length?saved.items:done.map(([,r])=>r.original||{});
+  results=items.map((p,i)=>runStore.get(rowKey(p,i)));
   srcItems=items; pickCat=null;
   renderDataCats();
   document.getElementById('prod').value=JSON.stringify(items,null,2);
@@ -1155,6 +1182,7 @@ function restoreResults(){
 function clearResults(){
   if(!confirm('Удалить сохранённый прогон? Выгрузите его, если он ещё нужен.')) return;
   localStorage.removeItem(STORE_KEY);
+  runStore.clear();
   results=[];curIdx=0;filter='all';runQueue=null;
   ['cpyBtn','dlBtn','dlTxtBtn','dlV2Btn','confBdg'].forEach(hide);
   hide('clrBtn');   // «2 файла» не прячем: товары остались, раздел выгрузить можно
@@ -1327,7 +1355,9 @@ const runCat=()=>pickCat??undefined;
 function applySource(){
   const pool=pickCat==null?srcItems:srcItems.filter(p=>catKey(p)===pickCat);
   items=pool.slice(0,selCnt);
-  results=results.slice(0,items.length);   // индексы результатов совпадают с items
+  // Результат берётся по товару, а не по позиции: иначе смена чипа ставила бы
+  // его против чужого товара, а обрезка выбрасывала оплаченную работу.
+  results=items.map((p,i)=>runStore.get(rowKey(p,i)));
   renderDataCats();
   renderList();
 }
@@ -1336,6 +1366,7 @@ function applySource(){
 function setSource(all){
   srcItems=Array.isArray(all)?all:[];
   pickCat=null;
+  runStore.clear();   // другой список товаров — другой прогон
   results=[];
   applySource();
   document.getElementById('prod').value=JSON.stringify(items,null,2);
@@ -1361,10 +1392,13 @@ function renderDataCats(){
       .map(([k,n])=>chip(k,n,k||'без категории')).join('');
 }
 
-/** Выбор категории меняет весь список — прежние результаты к нему не относятся. */
+/**
+ * Выбор категории меняет окно, но не прогон: обработанные товары этой категории
+ * остаются со своими результатами (их подставит applySource), а выгрузка всё
+ * равно отдаёт весь прогон целиком.
+ */
 function pickDataCat(name){
   pickCat=name==null?null:String(name);
-  results=[];
   applySource();
   document.getElementById('prod').value=JSON.stringify(items,null,2);
   selectResult(0);
@@ -1419,7 +1453,7 @@ function readProd(){
 function onProdInput(){
   const err=readProd();
   stepError(2,err);
-  if(!err){ results=[]; renderList(); loadQualitySoon(); }
+  if(!err){ runStore.clear(); results=[]; renderList(); loadQualitySoon(); }
   syncSteps();
 }
 
@@ -1834,6 +1868,7 @@ async function run(){
     }catch(e){
       results[i]={original:items[i],enriched:null,error:e.message};
     }
+    runStore.set(rowKey(items[i],i),results[i]);
     saveResults();
     renderList();
     if(curIdx===i) renderDetail();
@@ -1967,17 +2002,32 @@ function fileRow(p,r){
   };
 }
 
+/**
+ * Что уходит в файлы: видимое окно плюс всё обработанное за прогон.
+ *
+ * Окном выгрузка ограничиваться не может — items сужает и чип категории, и
+ * количество, и тогда в файл попадал бы один открытый товар вместо всех
+ * обработанных. Товар из окна идёт первым и своим результатом: у него он
+ * актуальный, даже когда прогон ещё идёт.
+ */
+function exportRows(){
+  const rows=items.map((p,i)=>[rowKey(p,i),p,results[i]]);
+  const seen=new Set(rows.map(([k])=>k));
+  for(const [k,r] of runStore) if(!seen.has(k)) rows.push([k,r.original||{},r]);
+  return rows;
+}
+
 /** Товары по разделам: обе файловые выгрузки раскладывают их одинаково. */
 function groupItems(onlyEnriched=false){
   const groups=new Map();
-  items.forEach((p,i)=>{
-    if(onlyEnriched && !results[i]?.enriched) return;
+  for(const [,p,r] of exportRows()){
+    if(onlyEnriched && !r?.enriched) continue;
     const cat=catOf(p);
     const key=String(cat.id??cat.slug);
     const g=groups.get(key)||{cat,rows:[]};
-    g.rows.push(fileRow(p,results[i]));
+    g.rows.push(fileRow(p,r));
     groups.set(key,g);
-  });
+  }
   return groups;
 }
 
@@ -2011,7 +2061,7 @@ async function downloadCategoryFiles(){
       [`filters_${key}.json`, await serverFilters(g.cat,g.rows)],
     ];
     files.forEach(([name,data])=>saveFile(JSON.stringify(data,null,2),name));
-    setSt('ok',`Файлов: ${files.length}`);
+    setSt('ok',`Файлов: ${files.length} · товаров: ${g.rows.length}`);
   }catch(e){
     setSt('er',`Выгрузка: ${e.message}`);
   }finally{
@@ -2045,7 +2095,7 @@ async function downloadV2(){
     files.push([`filters_v2_${key}.json`,{filters:d.filters}]);
     files.push([`products_v2_${key}.json`,d.products]);
     files.forEach(([name,data])=>saveFile(JSON.stringify(data,null,2),name));
-    setSt('ok',`Файлов: ${files.length}`);
+    setSt('ok',`Файлов: ${files.length} · товаров: ${d.products.length}`);
   }catch(e){
     setSt('er',`Выгрузка v2: ${e.message}`);
   }finally{

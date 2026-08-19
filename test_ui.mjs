@@ -76,6 +76,9 @@ globalThis.localStorage = {
 globalThis.confirm = () => true;
 globalThis.window = { matchMedia: () => ({ matches: false }) };
 globalThis.fetch = () => Promise.reject(new Error('сеть в тесте отключена'));
+// Ответ сервера интерфейс читает текстом — заглушки собираем так же.
+const reply = (data, ok = true, status = ok ? 200 : 500) =>
+  Promise.resolve({ ok, status, text: () => Promise.resolve(typeof data === 'string' ? data : JSON.stringify(data)) });
 globalThis.URL = { createObjectURL: () => 'blob:', revokeObjectURL: () => {} };
 globalThis.Blob = class { constructor(a) { this.parts = a; } };
 Object.defineProperty(globalThis, 'navigator', {
@@ -93,7 +96,7 @@ export const api={syncSteps,setCnt,setCntFree,applyCnt,applySource,setSource,pic
   renderEstimate,setFilter,stepError,pick,sumRun,renderFoot,clearResults,restoreResults,saveResults,
   downloadAll,downloadCategoryFiles,downloadV2,initTheme,toggleTheme,applyTheme,dur,renderRunline,
   loadCategories,catOf,renderModelList,filterModels,
-  applyDates,clearDates,renderDates,passesFilter,queued,onProdInput};
+  applyDates,clearDates,renderDates,passesFilter,queued,onProdInput,apiJson};
 export const st={get items(){return items},set items(v){items=v},
   get srcItems(){return srcItems},set srcItems(v){srcItems=v},
   get pickCat(){return pickCat},set pickCat(v){pickCat=v},get selCnt(){return selCnt},get results(){return results},
@@ -469,8 +472,7 @@ await tAsync('одна категория выгружается парой prod
   st.results = [{ enriched: { specs: {}, warnings: [] }, iT: 10, oT: 5, cost: 0.001 }, null];
 
   const realFetch = globalThis.fetch;
-  globalThis.fetch = () => Promise.resolve({ ok: true,
-    json: () => Promise.resolve({ category_id: 523, products_total: 2, filters: [] }) });
+  globalThis.fetch = () => reply({ category_id: 523, products_total: 2, filters: [] });
   let files;
   try { files = await catchFiles(() => api.downloadCategoryFiles()); }
   finally { globalThis.fetch = realFetch; }
@@ -497,7 +499,7 @@ await tAsync('товары из фида идут одной парой файл
   const realFetch = globalThis.fetch;
   globalThis.fetch = (url, opts) => {
     asked.push(JSON.parse(opts.body));
-    return Promise.resolve({ ok: true, json: () => Promise.resolve({ category_id: null, filters: [] }) });
+    return reply({ category_id: null, filters: [] });
   };
   let files;
   try { files = await catchFiles(() => api.downloadCategoryFiles()); }
@@ -514,7 +516,7 @@ await tAsync('сбой фильтров не оставляет половину
   st.items = [{ sku: '1', name: 'X', category: 'Посуда' }];
   st.results = [null];
   const realFetch = globalThis.fetch;
-  globalThis.fetch = () => Promise.resolve({ ok: false, json: () => Promise.resolve({ error: 'сервер лёг' }) });
+  globalThis.fetch = () => reply({ error: 'сервер лёг' }, false);
   let files;
   try { files = await catchFiles(() => api.downloadCategoryFiles()); }
   finally { globalThis.fetch = realFetch; }
@@ -539,10 +541,10 @@ await tAsync('три файла: категории, фасеты диапазо
   const realFetch = globalThis.fetch;
   globalThis.fetch = (url, opts) => {
     sent = { url, body: JSON.parse(opts.body) };
-    return Promise.resolve({ ok: true, json: () => Promise.resolve({
+    return reply({
       filters: [{ name: 'Цвет', value: ['белый', 'чёрный'] }],
       products: [{ id: 1, name: 'Холодильник A', meta_keywords: '', description_html: '<p>a</p>', filters: { Цвет: 'белый' } }],
-    }) });
+    });
   };
   let files;
   try { files = await catchFiles(() => api.downloadV2()); }
@@ -696,9 +698,7 @@ const stubFetch = map => { globalThis.fetch = url => {
   const hit = Object.entries(map).find(([k]) => url.includes(k));
   if (!hit) return Promise.reject(new Error('нет заглушки для ' + url));
   const [, v] = hit;
-  return Promise.resolve(v instanceof Error
-    ? { ok: false, status: 502, json: () => Promise.resolve({ error: v.message }) }
-    : { ok: true, status: 200, json: () => Promise.resolve(v) });
+  return v instanceof Error ? reply({ error: v.message }, false, 502) : reply(v);
 }; };
 
 await tAsync('справочник разделов приходит с сервера, а не вбит в страницу', async () => {
@@ -716,6 +716,31 @@ await tAsync('без справочника интерфейс работает 
   assert.strictEqual(api.catOf(st.items[0]).name, 'Холодильники', 'название берётся у товара');
 });
 globalThis.fetch = () => Promise.reject(new Error('сеть в тесте отключена'));
+
+console.log('\nОтвет сервера не JSON');
+// Ответ не-JSON интерфейс раньше отдавал пользователю как «Unexpected token 'Т'»:
+// r.json() падал раньше, чем доходило дело до проверки r.ok.
+await tAsync('401 объясняет, что нужен вход, а не ломается на разборе JSON', async () => {
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = () => reply('Требуется вход', false, 401);
+  try { await api.apiJson('/api/models'); assert.fail('ошибка должна была вылететь'); }
+  catch (e) { assert.match(e.message, /Требуется вход/); assert.doesNotMatch(e.message, /JSON\b.*not valid|Unexpected token/); }
+  finally { globalThis.fetch = realFetch; }
+});
+await tAsync('HTML шлюза вместо ответа — понятная ошибка', async () => {
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = () => reply('<html>504 Gateway Timeout</html>', false, 504);
+  try { await api.apiJson('/api/enrich'); assert.fail('ошибка должна была вылететь'); }
+  catch (e) { assert.match(e.message, /504/); }
+  finally { globalThis.fetch = realFetch; }
+});
+await tAsync('200 с пустым телом не выдаётся за успех', async () => {
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = () => reply('');
+  try { await api.apiJson('/api/categories'); assert.fail('ошибка должна была вылететь'); }
+  catch (e) { assert.match(e.message, /не JSON/); }
+  finally { globalThis.fetch = realFetch; }
+});
 
 
 console.log(`\n✅ ${n} проверок интерфейса пройдено\n`);

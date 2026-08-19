@@ -907,6 +907,22 @@ input[type=range]::-moz-range-thumb{
 let RUB = 80;
 let RUB_DATE = '—';
 
+// Сервер отвечает JSON не всегда: 401 отдаёт «Требуется вход» текстом, шлюз —
+// HTML, таймаут — пустое тело. r.json() на таком падает раньше проверки r.ok,
+// и пользователь получает «Unexpected token 'Т'» вместо причины. Разбираем
+// ответ в одном месте — все вызовы к /api идут через apiJson().
+async function apiJson(url,opts){
+  const r=await fetch(url,opts);
+  const text=await r.text();
+  let d=null; try{ d=JSON.parse(text); }catch{}
+  if(!r.ok){
+    if(r.status===401) throw new Error('Требуется вход — обновите страницу и введите пароль');
+    throw new Error(d?.error?.message||d?.error||`HTTP ${r.status}: ${text.slice(0,120)}`);
+  }
+  if(d===null) throw new Error(`сервер вернул не JSON: ${text.slice(0,120)||'пустой ответ'}`);
+  return d;
+}
+
 // ── MODELS DATABASE ──────────────────────────────────────────
 // Внесено вручную и НЕ обновляется автоматически. Цены с пометкой unverified
 // не сверены с прайсом провайдера — не принимайте по ним решений, пока не
@@ -987,10 +1003,8 @@ async function loadQuality(){
   quality=[];
   if(!items.length){ renderDates(); renderList(); return; }
   try{
-    const r=await fetch('/api/quality',{method:'POST',headers:{'Content-Type':'application/json'},
+    const d=await apiJson('/api/quality',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({products:items,category:runCat()})});
-    const d=await r.json();
-    if(!r.ok) throw new Error(d.error||`HTTP ${r.status}`);
     if(my!==qSeq) return;                   // ответ на прошлый список — выбрасываем
     quality=d.quality||[];
   }catch(e){
@@ -1140,9 +1154,7 @@ function applyRate(){
 async function init(){
   setSt('ld','Загружаем модели...');
   try{
-    const r=await fetch('/api/models');
-    const data=await r.json();
-    if(!r.ok) throw new Error(data.error||`HTTP ${r.status}`);
+    const data=await apiJson('/api/models');
     if(typeof data.rub_per_usd==='number'&&data.rub_per_usd>0){
       RUB=data.rub_per_usd;
       RUB_DATE=data.rub_rate_date||'—';
@@ -1393,9 +1405,7 @@ let categories=[], schemas={};
 
 async function loadCategories(){
   try{
-    const r=await fetch('/api/categories');
-    const d=await r.json();
-    if(!r.ok) throw new Error(d.error||`HTTP ${r.status}`);
+    const d=await apiJson('/api/categories');
     categories=d.categories||[];
     schemas=d.schemas||{};
     if(!categories.length) throw new Error('сервер не вернул разделы');
@@ -1415,9 +1425,7 @@ async function fetchProducts(){
   try{
     let fetchUrl=url;
     if(!fetchUrl.includes('limit=')) fetchUrl+=(fetchUrl.includes('?')?'&':'?')+'limit='+selCnt;
-    const r=await fetch('/api/product?url='+encodeURIComponent(fetchUrl));
-    const data=await r.json();
-    if(!r.ok) throw new Error(data.error||`HTTP ${r.status}`);
+    const data=await apiJson('/api/product?url='+encodeURIComponent(fetchUrl));
     const all=Array.isArray(data)?data:(data.items??data.products??data.data??[data]);
     if(!Array.isArray(all)||!all.length) throw new Error('В ответе нет товаров');
     setSource(all);
@@ -1780,10 +1788,8 @@ async function run(){
     if(curIdx===prev||curIdx===i) selectResult(i);
     prev=i;
     try{
-      const r=await fetch('/api/enrich',{method:'POST',headers:{'Content-Type':'application/json'},
+      const d=await apiJson('/api/enrich',{method:'POST',headers:{'Content-Type':'application/json'},
         body:JSON.stringify({model:selModel.id,product:items[i],category:runCat()})});
-      const d=await r.json();
-      if(!r.ok) throw new Error(d.error?.message||d.error||`HTTP ${r.status}`);
       const iT=d.usage?.prompt_tokens??0,oT=d.usage?.completion_tokens??0;
       // Стоимость приходит с сервера от OpenRouter; тариф модели — резерв.
       const cost=typeof d.usage?.cost==='number'?d.usage.cost:iT*ip+oT*op;
@@ -2008,20 +2014,14 @@ async function downloadV2(){
 }
 
 async function serverV2(products){
-  const r=await fetch('/api/export-v2',{method:'POST',headers:{'Content-Type':'application/json'},
+  return await apiJson('/api/export-v2',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({products})});
-  const d=await r.json();
-  if(!r.ok) throw new Error(d.error||`HTTP ${r.status}`);
-  return d;
 }
 
 /** Фильтры считает сервер: buildFilters живёт там, дублировать её здесь нельзя. */
 async function serverFilters(cat,products){
-  const r=await fetch('/api/filters',{method:'POST',headers:{'Content-Type':'application/json'},
+  return await apiJson('/api/filters',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({category_id:cat.id,category:cat.name,url:cat.url,products})});
-  const d=await r.json();
-  if(!r.ok) throw new Error(d.error||`HTTP ${r.status}`);
-  return d;
 }
 function copyJSON(){
   if(!results[curIdx]?.enriched)return;

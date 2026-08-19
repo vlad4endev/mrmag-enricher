@@ -69,16 +69,17 @@ async function models() {
   if (modelsCache.list && Date.now() - modelsCache.at < MODELS_TTL) return modelsCache.list;
   if (!modelsInflight) {
     modelsInflight = (async () => {
-      let r;
+      let r, text;
       try {
         r = await fetch('https://openrouter.ai/api/v1/models', {
           headers: { Authorization: `Bearer ${API_KEY}` },
           signal:  AbortSignal.timeout(20_000),
         });
+        // Тело читаем внутри try: таймаут прерывает и его.
+        text = await r.text();
       } catch (e) {
         throw new Error(`не достучались до openrouter.ai — ${netError(e)}`);
       }
-      const text = await r.text();
       if (!r.ok) throw new Error(explainUpstream(r, text));
       let data;
       try { data = JSON.parse(text); } catch { throw new Error('OpenRouter вернул не JSON'); }
@@ -282,7 +283,7 @@ async function apiProduct(res, target) {
 
   let text;
   try { text = await readCapped(r, MAX_PROXY_BYTES); }
-  catch (e) { return json(res, 502, { error: e.message }); }
+  catch (e) { return json(res, 502, { error: netError(e) }); }
   try {
     json(res, 200, JSON.parse(text));
   } catch {

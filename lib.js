@@ -1337,7 +1337,7 @@ export async function enrichProduct(product, opts) {
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     await limiter.wait(ms => onNote(`rate limit ${ms}ms`));
 
-    let res, data;
+    let res, data, bodyText;
     try {
       res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
         method:  'POST',
@@ -1350,6 +1350,10 @@ export async function enrichProduct(product, opts) {
         body:   JSON.stringify(buildRequestBody(model, userContent, tokenBudget, schema)),
         signal: AbortSignal.timeout(timeoutMs),
       });
+      // Шлюз может ответить HTML — читаем текстом, чтобы res.json() не съел ошибку.
+      // Читаем здесь же: таймаут прерывает и чтение тела, а снаружи try такой
+      // сбой уходит мимо ретрая голым «The operation was aborted due to timeout».
+      bodyText = await res.text();
     } catch (e) {
       // Таймаут и сетевой сбой — имеет смысл повторить.
       lastErr = new Error(e.name === 'TimeoutError' ? `таймаут ${timeoutMs}ms` : netError(e));
@@ -1357,8 +1361,6 @@ export async function enrichProduct(product, opts) {
       fail(lastErr);
     }
 
-    // Шлюз может ответить HTML — читаем текстом, чтобы res.json() не съел ошибку.
-    const bodyText = await res.text();
     try { data = JSON.parse(bodyText); } catch { data = null; }
 
     if (!res.ok || data?.error) {

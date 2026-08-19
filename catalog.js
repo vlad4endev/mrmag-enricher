@@ -72,14 +72,15 @@ export async function fetchPage(url, { noCache = false } = {}) {
   if (gap > 0) await sleep(gap);
   lastFetch = Date.now();
 
-  let res;
+  let res, html;
   try {
     res = await fetch(url, { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(45_000) });
+    if (!res.ok) throw new Error(`HTTP ${res.status} на ${url}`);
+    // Тело читаем внутри try: таймаут прерывает и его.
+    html = await res.text();
   } catch (e) {
-    throw new Error(`${url} — ${netError(e)}`);
+    throw new Error(/^HTTP /.test(e.message) ? e.message : `${url} — ${netError(e)}`);
   }
-  if (!res.ok) throw new Error(`HTTP ${res.status} на ${url}`);
-  const html = await res.text();
   fs.mkdirSync(CACHE_DIR, { recursive: true });
   fs.writeFileSync(file, html, 'utf-8');
   return html;

@@ -38,7 +38,7 @@ import {
 } from './lib.js';
 import {
   CATEGORIES, findCategory, crawlCategory, loadFeed,
-  buildFilters, writeCategoryFiles,
+  buildFilters, writeCategoryFiles, ensureSource,
 } from './catalog.js';
 import { setupProxy } from './socks.js';
 
@@ -275,16 +275,26 @@ async function main() {
     process.stdout.write(`  [${String(i + 1).padStart(4)}/${todo.length}] ${name.padEnd(48)}...`);
 
     // Нечего извлекать — не платим за запрос, помечаем и идём дальше.
-    const gate = isEnrichable(p, schema);
-    if (!gate.ok) {
-      write({ original: p, enriched: null, skipped: gate.reason, _meta: {} });
-      skipped++;
-      console.log(` ⊘  пропущен — ${gate.reason}`);
-      continue;
+    // Пустая карточка сначала добирается из сети: у товара есть артикул, а
+    // значит есть и чужая карточка с характеристиками (ensureSource).
+    let item = p, sourceUrl = null;
+    const first = isEnrichable(p, schema);
+    if (!first.ok) {
+      const found = first.web
+        ? await ensureSource(p, schema, { onNote: n => process.stdout.write(` [${n}]`) })
+        : { product: p, gate: first };
+      if (!found.gate.ok) {
+        write({ original: p, enriched: null, skipped: found.gate.reason, _meta: {} });
+        skipped++;
+        console.log(` ⊘  пропущен — ${found.gate.reason}`);
+        continue;
+      }
+      item = found.product;
+      sourceUrl = found.source ?? null;
     }
 
     try {
-      const { enriched, iT, oT, cost, costSource } = await enrichProduct(p, {
+      const { enriched, iT, oT, cost, costSource } = await enrichProduct(item, {
         model: MODEL, apiKey: API_KEY, limiter, pricing, schema,
         maxRetries: MAX_RETRIES,
         onNote: n => process.stdout.write(` [${n}]`),
@@ -294,10 +304,11 @@ async function main() {
       if (enriched.warnings.length) warned++;
 
       write({
-        original: p,
+        original: item,          // то, что реально ушло в модель: с добранным текстом
         enriched,
         _meta: {
           model:         MODEL,
+          ...(sourceUrl ? { source_url: sourceUrl } : {}),
           input_tokens:  iT,
           output_tokens: oT,
           cost_usd:      cost == null ? null : +cost.toFixed(6),

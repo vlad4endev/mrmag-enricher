@@ -1651,7 +1651,7 @@ function renderList(){
     const name=it.name||it.title||it.sku||`Товар №${i+1}`;
     // Причину «без данных» пишем в строку: иначе непонятно, почему товар в
     // фильтре и что с ним делать — она же уйдёт в skipped при прогоне.
-    const why=!results[i]&&isThin(i)?` · без данных: ${quality[i].reason}`
+    const why=!results[i]&&isThin(i)?` · без данных: ${quality[i].reason}${quality[i].web?' · поищем описание в сети':''}`
       :(confOf(i).length?` · каталог противоречит себе: ${confOf(i).map(c=>label(c.field)).join(', ')}`:'');
     const d=dateKey?dateOf(it):null;
     return `<button class="ri s-${st.cls}${i===curIdx?' on':''}" onclick="selectResult(${i})" title="${esc(String(name))}${why?esc(why):''}">`
@@ -1711,7 +1711,8 @@ function renderDetail(){
       return;
     }
     setP('detail',conf+`<div class="seobox"><div class="st">Исходный текст — ${src.length} символов</div>${esc(src||'пусто')}</div>`
-      +`<div class="hint">Товар ещё не обработан. Нажмите «Обогатить через ИИ».</div>`);
+      +`<div class="hint">Товар ещё не обработан. Нажмите «Обогатить через ИИ».`
+      +`${!src&&quality[curIdx]?.web?' Своего текста нет — описание будет найдено в сети по артикулу из названия.':''}</div>`);
     return;
   }
   if(r.skipped){
@@ -1729,7 +1730,11 @@ function renderDetail(){
     b.textContent=`уверенность ${(r.enriched.confidence*100).toFixed(0)}%`;
     show('confBdg');
   }
-  setP('detail',curTab==='json'?`<div class="jv">${hl(r.enriched)}</div>`:renderVis(r.enriched));
+  // Откуда взялся исходный текст, видно на самой карточке: часть товаров
+  // описана не магазином, а найденной страницей того же артикула.
+  const from=r.source?`<div class="hint">Исходного текста в карточке не было — описание добрано из сети: `
+    +`<a href="${esc(r.source)}" target="_blank" rel="noopener noreferrer">${esc(hostOf(r.source))}</a></div>`:'';
+  setP('detail',from+(curTab==='json'?`<div class="jv">${hl(r.enriched)}</div>`:renderVis(r.enriched)));
 }
 
 function showActions(){
@@ -1825,7 +1830,7 @@ async function run(){
       const iT=d.usage?.prompt_tokens??0,oT=d.usage?.completion_tokens??0;
       // Стоимость приходит с сервера от OpenRouter; тариф модели — резерв.
       const cost=typeof d.usage?.cost==='number'?d.usage.cost:iT*ip+oT*op;
-      results[i]={original:items[i],enriched:d.enriched??null,skipped:d.skipped,iT,oT,cost};
+      results[i]={original:items[i],enriched:d.enriched??null,skipped:d.skipped,source:d.source_url??null,iT,oT,cost};
     }catch(e){
       results[i]={original:items[i],enriched:null,error:e.message};
     }
@@ -1897,6 +1902,7 @@ function downloadAll(fmt='json'){
         out.push(Array.isArray(v)?v.map(x=>`  • ${x}`).join('\n'):`  ${typeof v==='object'?JSON.stringify(v):v}`);
       }
       if(d.confidence!=null) out.push('',`Confidence: ${(d.confidence*100).toFixed(0)}%`);
+      if(r.source) out.push('',`Источник описания: ${r.source}`);
       if(r.cost!=null) out.push('',`Токены: ${r.iT??0}↑ ${r.oT??0}↓ | $${r.cost.toFixed(6)}`);
       return out.join('\n')+'\n';
     });
@@ -1910,6 +1916,7 @@ function downloadAll(fmt='json'){
     // Необработанные позиции в выгрузку не попадают — их просто нет.
     content=JSON.stringify({model:selModel?.id||null,rub_per_usd:RUB,rub_rate_date:RUB_DATE,
       items:doneRes().map(r=>({original:r.original,enriched:r.enriched,skipped:r.skipped,error:r.error,
+        ...(r.source?{source_url:r.source}:{}),
         _meta:r.cost!=null?{input_tokens:r.iT,output_tokens:r.oT,cost_usd:+r.cost.toFixed(6)}:{}}))},null,2);
     filename=`enriched_${Date.now()}.json`;
     type='application/json';
@@ -1955,6 +1962,7 @@ function fileRow(p,r){
     enriched:r?.enriched??null,
     ...(r?.skipped?{skipped:r.skipped}:{}),
     ...(r?.error?{error:r.error}:{}),
+    ...(r?.source?{source_url:r.source}:{}),
     ...(r?.cost!=null?{_meta:{input_tokens:r.iT??0,output_tokens:r.oT??0,cost_usd:+r.cost.toFixed(6)}}:{}),
   };
 }
@@ -2241,6 +2249,8 @@ function hl(obj){
     });
 }
 function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+/** Домен источника: в карточке важно «откуда», а не весь адрес со всеми хвостами. */
+function hostOf(u){return String(u).replace(/^[a-z]+:\/\//i,'').replace(/^www\./,'').split(/[/?#]/)[0]||String(u);}
 function setP(id,html){document.getElementById(id).innerHTML=html;}
 function show(id){document.getElementById(id).style.display='inline-block';}
 function hide(id){document.getElementById(id).style.display='none';}

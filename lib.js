@@ -1343,16 +1343,48 @@ export function sourceText(product) {
 }
 
 /**
+ * Артикул из названия: «Холодильник LG GC-Q247CAMT» → «GC-Q247CAMT».
+ *
+ * По нему проверяется, что найденная в сети страница описывает именно этот
+ * товар, а не соседнюю модель того же бренда. Скобки выбрасываем: там обычно
+ * внутренний код магазина («HBD 1182.3 M NF H (78091)»), которого на чужом
+ * сайте нет и быть не может. Артикул — слово с буквами и не меньше чем двумя
+ * цифрами: «2-камерный» цифрой не отличается от «2862-90», а двумя — да.
+ */
+export function modelToken(name) {
+  const words = String(name || '')
+    .replace(/\([^)]*\)/g, ' ')
+    .replace(/["«»,;]/g, ' ')
+    .split(/\s+/);
+  let best = null;
+  for (const w of words) {
+    const token = w.replace(/[.:]+$/, '');
+    if (!/^[\p{L}\d][\p{L}\d./_-]*$/u.test(token)) continue;
+    const norm = token.replace(/[^\p{L}\d]/gu, '');
+    if (norm.length < 4) continue;
+    if ((norm.match(/\d/g) || []).length < 2) continue;
+    if (!best || norm.length > best.norm.length) best = { token, norm };
+  }
+  return best ? best.token : null;
+}
+
+/**
  * Стоит ли платить за запрос по этому товару.
  * Короткий текст сам по себе не приговор — важно, есть ли в нём что извлекать.
  * Возвращает { ok } либо { ok:false, reason } для пометки в выгрузке.
+ *
+ * Отказ с web:true — это «своего текста нет, но товар опознаваем по артикулу»:
+ * такой товар до модели ещё может дойти, если описание найдётся в сети
+ * (ensureSource в catalog.js). Сеть здесь не трогается: фильтр в интерфейсе
+ * обязан считаться мгновенно и на любом количестве товаров.
  */
 export function isEnrichable(product, schemaKey) {
+  const web = Boolean(modelToken(product.name));
   const text = sourceText(product);
-  if (!text) return { ok: false, reason: 'нет ни description, ни annotation' };
+  if (!text) return { ok: false, reason: 'нет ни description, ни annotation', web };
   const factCount = Object.keys(extractFacts(text, schemaKey)).length;
   if (text.length < MIN_SOURCE_CHARS && factCount === 0) {
-    return { ok: false, reason: `текст ${text.length} симв. и ни одной распознанной характеристики` };
+    return { ok: false, reason: `текст ${text.length} симв. и ни одной распознанной характеристики`, web };
   }
   return { ok: true };
 }

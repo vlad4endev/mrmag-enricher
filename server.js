@@ -20,6 +20,10 @@
  *   POST /api/quality         качество исходных данных по списку товаров
  *   POST /api/enrich          обогащение одного товара {model, product, category?}
  *
+ * Товар без description и annotation не пропускается молча: если в названии
+ * есть артикул, описание ищется в сети (ensureSource), и адрес найденной
+ * страницы возвращается в source_url. Отключается WEB_LOOKUP=0.
+ *
  * Ответ /api/enrich: { enriched, usage:{prompt_tokens, completion_tokens, cost,
  * cost_source, attempts} }. Токены и стоимость — сумма по всем попыткам, включая
  * ретраи; при провале usage приходит вместе с полем error, чтобы потраченное
@@ -37,7 +41,7 @@ import {
   RateLimiter, enrichProduct, rpmFor, schemaFor, SCHEMAS, netError,
   RUB_PER_USD, RUB_RATE_DATE, MISMATCH_POLICY, isEnrichable, productFacts,
 } from './lib.js';
-import { CATEGORIES, findCategory, crawlCategory, loadFeed, buildFilters } from './catalog.js';
+import { CATEGORIES, findCategory, crawlCategory, loadFeed, buildFilters, ensureSource } from './catalog.js';
 import { buildV2 } from './export_v2.js';
 
 const API_KEY = process.env.OPENROUTER_API_KEY;
@@ -368,14 +372,16 @@ async function apiEnrich(req, res) {
   // category самого товара — её проставляет и фид, и обход раздела.
   const schema = schemaFor(category || product.category);
 
-  const gate = isEnrichable(product, schema);
-  if (!gate.ok) {
-    return json(res, 200, {
-      enriched: null,
-      skipped:  gate.reason,
-      usage:    { prompt_tokens: 0, completion_tokens: 0, cost: 0 },
-    });
-  }
+  const skip = reason => json(res, 200, {
+    enriched: null,
+    skipped:  reason,
+    usage:    { prompt_tokens: 0, completion_tokens: 0, cost: 0 },
+  });
+
+  // Дешёвый вердикт без сети: своего текста нет и артикула в названии тоже —
+  // искать нечего и не по чему.
+  const first = isEnrichable(product, schema);
+  if (!first.ok && !first.web) return skip(first.reason);
 
   // Опечатка в id модели иначе уходит в OpenRouter и возвращается как 404 —
   // и попутно плодит запись в limiters на каждую несуществующую строку.
@@ -386,8 +392,19 @@ async function apiEnrich(req, res) {
     if (!entry) return json(res, 400, { error: `Модель "${model}" не найдена в OpenRouter` });
   } catch { /* список недоступен — не блокируем работу, шлём как есть */ }
 
+  // Пустая карточка — не приговор: тот же артикул описан у производителя и
+  // других продавцов. Ищем описание в сети и работаем с ним как со своим;
+  // адрес страницы уходит в ответ, чтобы источник был виден, а не подразумевался.
+  let filled = product, sourceUrl = null;
+  if (!first.ok) {
+    const found = await ensureSource(product, schema);
+    if (!found.gate.ok) return skip(found.gate.reason);
+    filled = found.product;
+    sourceUrl = found.source ?? null;
+  }
+
   try {
-    const { enriched, iT, oT, cost, costSource, attempts } = await enrichProduct(product, {
+    const { enriched, iT, oT, cost, costSource, attempts } = await enrichProduct(filled, {
       model, apiKey: API_KEY, schema,
       limiter: limiterFor(model),
       pricing: pricingOf(entry),
@@ -395,6 +412,7 @@ async function apiEnrich(req, res) {
     json(res, 200, {
       enriched,
       schema: schema.slug,
+      ...(sourceUrl ? { source_url: sourceUrl } : {}),
       usage: { prompt_tokens: iT, completion_tokens: oT, cost, cost_source: costSource, attempts },
     });
   } catch (e) {

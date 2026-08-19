@@ -26,7 +26,7 @@ import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 import { fileURLToPath } from 'url';
-import { netError } from './lib.js';
+import { netError, isEnrichable, modelToken, MIN_SOURCE_CHARS } from './lib.js';
 
 export const ORIGIN = 'https://mrmag.ru';
 export const FEED_URL = `${ORIGIN}/scripts/sync_local/products.json`;
@@ -63,7 +63,7 @@ let lastFetch = 0;
 const MIN_GAP_MS = Number(process.env.CRAWL_GAP_MS || 250); // ~4 запроса в секунду
 
 /** GET с кэшем на диске и минимальной паузой между обращениями к сайту. */
-export async function fetchPage(url, { noCache = false } = {}) {
+export async function fetchPage(url, { noCache = false, ua = UA, timeoutMs = 45_000 } = {}) {
   const file = cachePath(url);
   if (!noCache && fs.existsSync(file) && Date.now() - fs.statSync(file).mtimeMs < CACHE_TTL) {
     return fs.readFileSync(file, 'utf-8');
@@ -74,7 +74,10 @@ export async function fetchPage(url, { noCache = false } = {}) {
 
   let res, html;
   try {
-    res = await fetch(url, { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(45_000) });
+    res = await fetch(url, {
+      headers: { 'User-Agent': ua, 'Accept-Language': 'ru,en;q=0.8' },
+      signal: AbortSignal.timeout(timeoutMs),
+    });
     if (!res.ok) throw new Error(`HTTP ${res.status} на ${url}`);
     // Тело читаем внутри try: таймаут прерывает и его.
     html = await res.text();
@@ -274,6 +277,249 @@ export async function crawlCategory(url, { limit = Infinity, offset = 0, feed = 
     items,
     products,
   };
+}
+
+// ── ТОВАР БЕЗ ОПИСАНИЯ: ПОИСК В СЕТИ ─────────────────────────
+/**
+ * Часть карточек магазина пуста и в фиде, и на самой странице товара
+ * (проверено: у 41 холодильника из 1654 нет ни description, ни annotation, а
+ * на странице нет даже таблицы характеристик). Модели такой товар показывать
+ * нечего — он уходит в «пропущен». Но сам товар существует: та же модель
+ * описана у производителя и у других продавцов.
+ *
+ * Поэтому: ищем карточку по названию, читаем таблицу характеристик и
+ * нейтральную часть текста, и отдаём их как обычный исходный текст. Дальше
+ * работает всё то же самое — extractFacts, гейт, промпт.
+ *
+ * Чужая страница — источник недоверенный, отсюда три ограничения:
+ *   1. страница принимается, только если на ней есть артикул из названия,
+ *      иначе в карточку уедут характеристики соседней модели;
+ *   2. торговые фразы («купить», «доставка», цена в рублях) выбрасываются —
+ *      это реклама чужого магазина, ей в нашем описании не место;
+ *   3. адрес страницы записывается в source_url и виден в выгрузке: откуда
+ *      взялся текст, должно быть видно, а не подразумеваться.
+ */
+const WEB_UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 '
+             + '(KHTML, like Gecko) Chrome/126.0 Safari/537.36';
+const WEB_TRIES = Number(process.env.WEB_LOOKUP_TRIES || 3);   // страниц на товар
+export const WEB_LOOKUP = process.env.WEB_LOOKUP !== '0';
+
+/** Сравнение артикулов: «GC-Q247CAMT», «GC Q247CAMT» и «gcq247camt» — одно и то же. */
+const squash = s => String(s || '').toLowerCase().replace(/[^\p{L}\d]/gu, '');
+
+const htmlText = h => decode(String(h || '')
+  .replace(/<(script|style|noscript|svg|template)[\s\S]*?<\/\1>/gi, ' ')
+  .replace(/<[^>]+>/g, ' '));
+
+/** Реклама чужого магазина: в описание нашей карточки такие фразы не идут. */
+const SALES_RE = /куп(и|ить|лю)|цена|руб|₽|достав|магазин|заказ|скидк|акци|кредит|рассрочк|отзыв|корзин|самовывоз/i;
+
+/**
+ * Характеристики и проза с произвольной страницы товара.
+ * Таблица «подпись / значение» есть почти у всех — она же самая ценная часть,
+ * потому что из неё extractFacts достаёт факты так же, как из annotation.
+ */
+export function parseAnyProductPage(html) {
+  const body = String(html || '').replace(/<(script|style|noscript|svg|template)[\s\S]*?<\/\1>/gi, ' ');
+  const attributes = [];
+  const seen = new Set();
+  const add = (name, value) => {
+    if (!name || !value || name === value) return;
+    if (name.length > 60 || value.length > 160 || /^https?:/i.test(value)) return;
+    const key = name.toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    attributes.push({ name, value });
+  };
+  for (const row of body.matchAll(/<tr[^>]*>([\s\S]*?)<\/tr>/gi)) {
+    const cells = [...row[1].matchAll(/<t[dh][^>]*>([\s\S]*?)<\/t[dh]>/gi)].map(m => htmlText(m[1]));
+    if (cells.length === 2) add(cells[0], cells[1]);
+  }
+  for (const pair of body.matchAll(/<dt[^>]*>([\s\S]*?)<\/dt>\s*<dd[^>]*>([\s\S]*?)<\/dd>/gi)) {
+    add(htmlText(pair[1]), htmlText(pair[2]));
+  }
+
+  const meta = body.match(/<meta[^>]+(?:name|property)="(?:og:)?description"[^>]*content="([^"]*)"/i)?.[1] ?? '';
+  const prose = [decode(meta), ...[...body.matchAll(/<p[^>]*>([\s\S]*?)<\/p>/gi)].map(m => htmlText(m[1]))]
+    .join(' ')
+    .split(/(?<=[.!?])\s+/)
+    .filter(sent => sent.length > 40 && !SALES_RE.test(sent))
+    .join(' ')
+    .slice(0, 2000);
+
+  return {
+    description: prose,
+    // Тот же вид, в котором характеристики приходят из фида и со страницы
+    // магазина: «подпись - значение» через пробел.
+    annotation: attributes.map(a => `${a.name} - ${a.value}`).join(' '),
+    attributes,
+  };
+}
+
+/**
+ * Поисковики без ключа и без JS. Первый, который ответил ссылками, и
+ * используется; остальные — на случай, когда предыдущий отдал «аномалию»
+ * (так DuckDuckGo встречает частые запросы с одного адреса).
+ *
+ * SEARCH_URL со своим SearxNG ставится перед ними: у себя лимитов нет.
+ */
+const ENGINES = [
+  process.env.SEARCH_URL || null,                 // шаблон с %s вместо запроса
+  'https://html.duckduckgo.com/html/?q=%s',
+  'https://lite.duckduckgo.com/lite/?q=%s',
+  'https://www.mojeek.com/search?q=%s',
+].filter(Boolean);
+
+// Выдача — не карточка товара: чужой сервер терпит 4 запроса в секунду, а
+// поисковик за такое отдаёт заглушку. Пауза только перед реальным запросом,
+// повтор из кэша её не ждёт.
+const SEARCH_GAP_MS = Number(process.env.SEARCH_GAP_MS || 3000);
+let lastSearch = 0;
+
+const fresh = url => {
+  const file = cachePath(url);
+  return fs.existsSync(file) && Date.now() - fs.statSync(file).mtimeMs < CACHE_TTL;
+};
+/** Заглушка поисковика не должна лежать в кэше сутки. */
+const forget = url => { try { fs.unlinkSync(cachePath(url)); } catch { /* нечего забывать */ } };
+
+/**
+ * Адреса выдачи по запросу. Ссылки в выдаче — обычные <a href>, у DuckDuckGo
+ * завёрнутые в редирект /l/?uddg=..., поэтому разворачиваем.
+ * По одному адресу на домен: три страницы одного магазина — это одна и та же
+ * карточка трижды.
+ */
+/**
+ * Адрес из выдачи — недоверенный: чужая или подсунутая ссылка на 127.0.0.1 или
+ * 169.254.169.254 превратила бы обогащение в чтение внутренней сети и
+ * метаданных облака (тот же риск, из-за которого /api/product ходит по
+ * списку хостов). Поэтому локальные и служебные адреса не читаются вовсе.
+ * WEB_ALLOW_LOCAL=1 снимает запрет — он нужен только тестам с локальной
+ * заглушкой поисковика.
+ */
+const ALLOW_LOCAL = process.env.WEB_ALLOW_LOCAL === '1';
+const PRIVATE_HOST = new RegExp([
+  '^localhost$', '\\.local$', '^\\[?::1\\]?$', '^\\[?f[cd]', '^\\[?fe80:',
+  '^127\\.', '^10\\.', '^192\\.168\\.', '^169\\.254\\.', '^0\\.',
+  '^172\\.(1[6-9]|2\\d|3[01])\\.',
+].join('|'), 'i');
+
+export function parseSearchResults(html, engineHost = '') {
+  const urls = [];
+  const hosts = new Set();
+  const own = new URL(ORIGIN).hostname;
+  for (const m of String(html).matchAll(/href="([^"]+)"/g)) {
+    const href = m[1].replace(/&amp;/g, '&');
+    let u;
+    try { u = new URL(href.startsWith('//') ? 'https:' + href : href); } catch { continue; }
+    if (!/^https?:$/.test(u.protocol)) continue;
+    if (/(^|\.)duckduckgo\.com$/i.test(u.hostname)) {
+      const target = u.searchParams.get('uddg');
+      if (!target) continue;
+      try { u = new URL(target); } catch { continue; }
+    }
+    const host = u.hostname.replace(/^www\./, '');
+    if (host === own) continue;                          // наша же пустая карточка
+    if (engineHost && host.endsWith(engineHost)) continue;
+    if (!ALLOW_LOCAL && PRIVATE_HOST.test(host)) continue;
+    if (/^(yastatic|gstatic|googleusercontent)\./i.test(host)) continue;
+    if (u.pathname === '/' && !u.search) continue;       // главная страница — не карточка
+    if (hosts.has(host)) continue;
+    hosts.add(host);
+    urls.push(u.href);
+  }
+  return urls;
+}
+
+// Поисковик, закрывшийся от нас, закрыт и для следующего товара. Без этого
+// сорок пустых карточек подряд превращаются в сорок бесполезных обходов всех
+// поисковиков — это десятки минут ожидания ни за чем.
+const SEARCH_GIVE_UP = Number(process.env.SEARCH_GIVE_UP || 3);
+let searchFails = 0;
+
+export async function searchWeb(query) {
+  if (searchFails >= SEARCH_GIVE_UP) {
+    throw new Error(`поиск отключён после ${searchFails} неудач подряд — перезапустите прогон`);
+  }
+  let lastError = null;
+  for (const template of ENGINES) {
+    const url = template.replace('%s', encodeURIComponent(query));
+    const host = new URL(url).hostname.replace(/^www\./, '');
+    try {
+      if (!fresh(url)) {
+        const gap = SEARCH_GAP_MS - (Date.now() - lastSearch);
+        if (gap > 0) await sleep(gap);
+        lastSearch = Date.now();
+      }
+      const urls = parseSearchResults(await fetchPage(url, { ua: WEB_UA, timeoutMs: 20_000 }), host);
+      if (urls.length) { searchFails = 0; return urls; }
+      forget(url);                                       // заглушка вместо выдачи
+      lastError = `${host}: выдача без ссылок`;
+    } catch (e) {
+      forget(url);
+      lastError = `${host}: ${e.message}`;
+    }
+  }
+  searchFails++;
+  throw new Error(lastError || 'поисковики не настроены');
+}
+
+/**
+ * Товар с описанием: своим, если оно есть, иначе найденным в сети.
+ * Возвращает { product, gate, source }: product — то, что уходит в модель,
+ * gate — вердикт по нему, source — адрес страницы, откуда добран текст.
+ *
+ * Атрибуты магазина остаются нетронутыми: они задают фасеты каталога, и
+ * подмешивать в них чужую таблицу нельзя — спор «каталога с самим собой»
+ * должен оставаться спором каталога.
+ */
+export async function ensureSource(product, schema, { onNote = () => {} } = {}) {
+  const gate = isEnrichable(product, schema);
+  if (gate.ok || !WEB_LOOKUP || !gate.web) return { product, gate };
+
+  const token = modelToken(product.name);
+  const query = `${String(product.name).replace(/["«»]/g, ' ')} ${product.brand || ''} характеристики`
+    .replace(/\s+/g, ' ').trim();
+
+  let urls = [];
+  try {
+    onNote(`ищем в сети: ${token}`);
+    urls = await searchWeb(query);
+  } catch (e) {
+    return { product, gate: { ...gate, reason: `${gate.reason}; поиск в сети не удался: ${e.message}` } };
+  }
+
+  const tried = [];
+  for (const url of urls.slice(0, WEB_TRIES)) {
+    const host = new URL(url).hostname.replace(/^www\./, '');
+    let html;
+    try { html = await fetchPage(url, { ua: WEB_UA, timeoutMs: 20_000 }); }
+    catch { tried.push(`${host}: не открылась`); continue; }
+
+    // Не тот товар — не наш случай: лучше пропуск, чем чужие характеристики.
+    if (!squash(htmlText(html)).includes(squash(token))) {
+      tried.push(`${host}: нет артикула ${token}`);
+      continue;
+    }
+    const found = parseAnyProductPage(html);
+    if (!found.annotation && found.description.length < MIN_SOURCE_CHARS) {
+      tried.push(`${host}: нечего взять`);
+      continue;
+    }
+    const merged = {
+      ...product,
+      description: String(product.description || '').trim() || found.description,
+      annotation:  [product.annotation, found.annotation].filter(Boolean).join(' ').trim(),
+      source_url:  url,
+    };
+    const after = isEnrichable(merged, schema);
+    if (!after.ok) { tried.push(`${host}: ${after.reason}`); continue; }
+    onNote(`описание из сети: ${host}`);
+    return { product: merged, gate: after, source: url };
+  }
+
+  const why = tried.length ? tried.join('; ') : 'выдача пуста';
+  return { product, gate: { ...gate, reason: `${gate.reason}; в сети не нашлось (${why})` } };
 }
 
 // ── АВТОФИЛЬТРЫ ──────────────────────────────────────────────

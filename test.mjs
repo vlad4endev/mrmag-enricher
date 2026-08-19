@@ -10,7 +10,7 @@ import path from 'path';
 import {
   coerceNumber, extractFacts as extractFactsIn, crossCheck, parseResponse,
   normalizeResponse as normalizeResponseIn, stripHtml, RateLimiter, isEnrichable,
-  buildUserContent, rpmFor, attrFacts, productFacts,
+  buildUserContent, rpmFor, attrFacts, productFacts, modelToken,
   SCHEMAS, GENERIC_SCHEMA, schemaFor, buildSystemPrompt, enrichProduct,
 } from './lib.js';
 
@@ -20,10 +20,17 @@ import {
 const extractFacts = (text, key = 'kholodilniki') => extractFactsIn(text, key);
 const normalizeResponse = (data, src = '', key = 'kholodilniki', attrs = []) => normalizeResponseIn(data, src, key, attrs);
 const attr = (name, value) => ({ name, value });
-import { parseListing, parseProductPage, buildFilters, assignMissingBrands, writeCategoryFiles } from './catalog.js';
+import { parseListing, parseProductPage, buildFilters, assignMissingBrands, writeCategoryFiles,
+  parseSearchResults, parseAnyProductPage } from './catalog.js';
+import http from 'http';
 import { buildV2, splitKey } from './export_v2.js';
 import { parseProxy, startBridge, setupProxy } from './socks.js';
 import net from 'net';
+
+// fetch подменяется в разделе про запросы к модели. Возвращаем именно исходный,
+// а не удаляем: delete снимает встроенный fetch на весь процесс, и тесты,
+// которым нужна настоящая сеть (поиск товара), падают на «fetch is not defined».
+const nativeFetch = globalThis.fetch;
 
 let n = 0;
 const t = (name, fn) => { fn(); n++; console.log(`  ✓ ${name}`); };
@@ -813,7 +820,7 @@ console.log('\nЗапрос к модели');
     assert.strictEqual(+e.usage.cost.toFixed(6), 0.0015, 'деньги за неудачу не должны исчезать');
   });
 
-  delete globalThis.fetch;
+  globalThis.fetch = nativeFetch;
 }
 
 // ── ПРОКСИ ───────────────────────────────────────────────────
@@ -1030,6 +1037,121 @@ console.log('\nОграничитель частоты под параллель
   stamps.sort((a, b) => a - b);
   assert.ok(stamps[2] >= 15, `третий вызов прошёл на ${stamps[2]}мс — очередь не работает`);
   n++; console.log('  ✓ параллельные вызовы встают в очередь');
+}
+
+console.log('\nТовар без описания: поиск в сети');
+{
+  // Артикул из названия — единственная проверка, что найденная страница про
+  // этот товар. Ошибётся она — в карточку уедут характеристики соседней модели.
+  t('артикул узнаётся в названии, а слова с одной цифрой — нет', () => {
+    assert.strictEqual(modelToken('Холодильник LG GC-Q247CAMT'), 'GC-Q247CAMT');
+    assert.strictEqual(modelToken('Холодильник "Атлант" 2862-90'), '2862-90');
+    // В скобках — внутренний код магазина, на чужом сайте его нет.
+    assert.strictEqual(modelToken('Холодильник HOTPOINT-ARISTON HBD 1182.3 M NF H (78091)'), '1182.3');
+    assert.strictEqual(modelToken('Холодильник 2-камерный белый'), null);
+    assert.strictEqual(modelToken(''), null);
+  });
+  t('пустой товар с артикулом помечается как «можно найти в сети»', () => {
+    assert.strictEqual(isEnrichable({ name: 'Холодильник LG GC-Q247CAMT' }).web, true);
+    assert.strictEqual(isEnrichable({ name: 'Холодильник белый' }).web, false);
+  });
+
+  t('выдача разворачивается в адреса: по одному на домен, без своего магазина', () => {
+    const serp = `<a href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fshop.example%2Fcard&amp;rut=x">1</a>
+      <a href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fshop.example%2Fdrugoy">тот же домен</a>
+      <a href="https://mrmag.ru/shop/kholodilniki/x">наша пустая карточка</a>
+      <a href="https://html.duckduckgo.com/settings">сам поисковик</a>
+      <a href="https://second.example/">главная, не карточка</a>
+      <a href="https://second.example/tovar">2</a>
+      <a href="http://169.254.169.254/latest/meta-data/">метаданные облака</a>
+      <a href="http://127.0.0.1:8080/admin">внутренняя сеть</a>
+      <a href="/relative">не адрес</a>`;
+    assert.deepStrictEqual(parseSearchResults(serp, 'html.duckduckgo.com'),
+      ['https://shop.example/card', 'https://second.example/tovar'],
+      'локальные и служебные адреса из выдачи не читаются: это доступ во внутреннюю сеть');
+  });
+
+  t('с чужой карточки берутся характеристики, а не реклама магазина', () => {
+    const page = `<table><tr><td>Общий объём</td><td>310 л</td></tr>
+        <tr><td>Класс энергопотребления</td><td>A+</td></tr>
+        <tr><td>Ссылка</td><td>https://example/x</td></tr></table>
+      <dl><dt>Система разморозки</dt><dd>No Frost</dd></dl>
+      <p>Двухкамерный холодильник с нижней морозильной камерой и инверторным компрессором.</p>
+      <p>Купить холодильник по цене 124420 руб. с доставкой в интернет-магазине БыстроТехника.</p>`;
+    const got = parseAnyProductPage(page);
+    assert.deepStrictEqual(got.attributes, [
+      { name: 'Общий объём', value: '310 л' },
+      { name: 'Класс энергопотребления', value: 'A+' },
+      { name: 'Система разморозки', value: 'No Frost' },
+    ], 'адрес в значении — не характеристика');
+    assert.strictEqual(got.annotation,
+      'Общий объём - 310 л Класс энергопотребления - A+ Система разморозки - No Frost',
+      'вид тот же, что у annotation из фида');
+    assert.match(got.description, /инверторным компрессором/);
+    assert.doesNotMatch(got.description, /БыстроТехника|руб/, 'чужая реклама в описание не идёт');
+  });
+
+  // Прогон целиком на своих «поисковике» и «чужой карточке»: сеть не трогаем,
+  // но проходим тот же путь, что и на живом сайте.
+  const pages = {
+    '/wrong': '<table><tr><td>Общий объём</td><td>200 л</td></tr></table>'
+            + '<p>Холодильник другой модели с другими характеристиками внутри.</p>',
+    '/right': '<h1>Холодильник LG GC Q247CAMT</h1>'
+            + '<table><tr><td>Общий объём</td><td>310 л</td></tr>'
+            + '<tr><td>Система разморозки</td><td>No Frost</td></tr>'
+            + '<tr><td>Ширина</td><td>59.5 см</td></tr>'
+            + '<tr><td>Высота</td><td>190 см</td></tr></table>',
+  };
+  const srv = http.createServer((req, res) => {
+    const url = new URL(req.url, 'http://x');
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+    if (url.pathname === '/serp') {
+      // localhost и [::1] — разные домены для дедупликации, оба сюда же.
+      return res.end(`<a href="http://localhost:${port}/wrong">1</a><a href="http://[::1]:${port}/right">2</a>`);
+    }
+    res.end(pages[url.pathname] ?? 'нет такой страницы');
+  });
+  await new Promise(r => srv.listen(0, r));
+  const port = srv.address().port;
+
+  const cacheDir = fs.mkdtempSync(path.join(os.tmpdir(), 'web-lookup-'));
+  process.env.SEARCH_URL     = `http://127.0.0.1:${port}/serp?q=%s`;
+  process.env.PAGE_CACHE_DIR = cacheDir;
+  process.env.SEARCH_GAP_MS  = '0';
+  process.env.CRAWL_GAP_MS   = '0';
+  process.env.WEB_ALLOW_LOCAL = '1';   // заглушки живут на 127.0.0.1, в бою такие адреса запрещены
+  // Отдельный экземпляр модуля: адрес поисковика и кэш читаются при загрузке.
+  const web = await import('./catalog.js?web-lookup');
+
+  await tAsync('страница без артикула отвергается, следующая — принимается', async () => {
+    const product = { sku: '320420', name: 'Холодильник LG GC-Q247CAMT', description: '', annotation: '' };
+    const got = await web.ensureSource(product, 'kholodilniki');
+    assert.strictEqual(got.gate.ok, true, got.gate.reason);
+    assert.strictEqual(got.source, `http://[::1]:${port}/right`);
+    assert.match(got.product.annotation, /Общий объём - 310 л/);
+    assert.strictEqual(got.product.source_url, got.source, 'источник обязан ехать вместе с текстом');
+    assert.deepStrictEqual(product.description, '', 'исходный товар не переписывается на месте');
+  });
+
+  await tAsync('чужие характеристики без совпадения артикула не подставляются', async () => {
+    const got = await web.ensureSource(
+      { sku: '1', name: 'Холодильник LG GC-X999ZZZ', description: '' }, 'kholodilniki');
+    assert.strictEqual(got.gate.ok, false);
+    assert.match(got.gate.reason, /нет артикула|в сети не нашлось/);
+    assert.strictEqual(got.source, undefined);
+  });
+
+  await tAsync('WEB_LOOKUP=0 возвращает прежний пропуск без единого запроса', async () => {
+    process.env.WEB_LOOKUP = '0';
+    const off = await import('./catalog.js?web-off');
+    const got = await off.ensureSource({ name: 'Холодильник LG GC-Q247CAMT' }, 'kholodilniki');
+    assert.strictEqual(got.gate.ok, false);
+    assert.strictEqual(got.gate.reason, 'нет ни description, ни annotation');
+    delete process.env.WEB_LOOKUP;
+  });
+
+  await new Promise(r => srv.close(r));
+  fs.rmSync(cacheDir, { recursive: true, force: true });
 }
 
 console.log(`\n✅ ${n} проверок пройдено\n`);

@@ -464,6 +464,21 @@ t('расхождения выводятся первым блоком', () => {
   assert.match(G('detail').innerHTML, /warnbox/);
   assert.strictEqual(G('rtabs').style.display, 'flex');
 });
+t('описание, добранное из сети, показывает источник, а не выдаёт его за свой', () => {
+  st.results = [{ ...ok(), source: 'https://shop.example/card?utm=1' }];
+  api.renderDetail();
+  const h = G('detail').innerHTML;
+  assert.match(h, /добрано из сети/);
+  assert.match(h, /shop\.example<\/a>/, 'в карточке домен, а не адрес целиком');
+  assert.match(h, /href="https:\/\/shop\.example\/card\?utm=1"/);
+});
+t('источник уезжает в выгрузку JSON', () => {
+  let captured = null;
+  const RealBlob = globalThis.Blob;
+  globalThis.Blob = class { constructor(p) { captured = p[0]; } };
+  try { api.downloadAll('json'); } finally { globalThis.Blob = RealBlob; }
+  assert.strictEqual(JSON.parse(captured).items[0].source_url, 'https://shop.example/card?utm=1');
+});
 
 console.log('\nЧастично завершённый прогон (здесь ранее было два падения)');
 t('восстановление прогона с пропусками не роняет страницу', () => {

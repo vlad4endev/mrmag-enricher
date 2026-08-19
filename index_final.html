@@ -991,7 +991,7 @@ async function loadQuality(){
   if(!items.length){ renderDates(); renderList(); return; }
   try{
     const r=await fetch('/api/quality',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({products:items,category:curCat?.slug})});
+      body:JSON.stringify({products:items,category:runCat()})});
     const d=await r.json();
     if(!r.ok) throw new Error(d.error||`HTTP ${r.status}`);
     if(my!==qSeq) return;                   // ответ на прошлый список — выбрасываем
@@ -1279,6 +1279,15 @@ function setCntFree(inp){
 // Поэтому загруженное хранится целиком в srcItems, а items — это срез: сначала
 // выбранная категория, потом лимит.
 const catKey=p=>String(p?.category??'').trim();
+
+/**
+ * Категория прогона. Обход раздела знает её точно; для файла и адреса это
+ * выбранный чип — одна схема полей на весь прогон вместо схемы на товар.
+ * Ответ один и тот же для /api/quality и /api/enrich: разойдись они, фильтр
+ * «Без данных» считал бы по одной схеме, а прогон шёл по другой. Пустая строка
+ * («без категории») уходит как есть — сервер вернётся к категории товара.
+ */
+const runCat=()=>curCat?.slug??pickCat??undefined;
 
 /** Единственное место, где items получает значение. */
 function applySource(){
@@ -1815,7 +1824,7 @@ async function run(){
     prev=i;
     try{
       const r=await fetch('/api/enrich',{method:'POST',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({model:selModel.id,product:items[i],category:curCat?.slug})});
+        body:JSON.stringify({model:selModel.id,product:items[i],category:runCat()})});
       const d=await r.json();
       if(!r.ok) throw new Error(d.error?.message||d.error||`HTTP ${r.status}`);
       const iT=d.usage?.prompt_tokens??0,oT=d.usage?.completion_tokens??0;

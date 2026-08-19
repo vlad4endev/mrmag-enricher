@@ -89,7 +89,7 @@ const script = html.match(/<script>\n([\s\S]*)<\/script>/)[1]
   .replace(/\ncalcUpdate\(\);/, '');
 
 const EXPORTS = `
-export const api={syncSteps,setCnt,setCntFree,applyCnt,applySource,setSource,pickDataCat,renderDataCats,readProd,renderList,statusOf,selectResult,renderDetail,plural,
+export const api={syncSteps,setCnt,setCntFree,applyCnt,applySource,setSource,pickDataCat,renderDataCats,runCat,readProd,renderList,statusOf,selectResult,renderDetail,plural,
   renderEstimate,setFilter,stepError,pick,sumRun,renderFoot,clearResults,restoreResults,saveResults,
   downloadAll,downloadCategoryFiles,downloadV2,initTheme,toggleTheme,applyTheme,dur,renderRunline,
   loadCategories,loadCategory,renderModelList,filterModels,
@@ -295,6 +295,18 @@ t('лимит режет уже выбранную категорию', () => {
   api.setCnt(CNT('1'));
   assert.strictEqual(st.items.length, 1);
   api.setCnt(CNT('10'));
+});
+t('выбранная категория уходит на сервер одна на весь прогон', () => {
+  api.setSource([{ name: 'A', category: 'Холодильники' }, { name: 'B', category: 'Посуда' }]);
+  assert.strictEqual(api.runCat(), undefined, 'ничего не выбрано — схему подбирает сервер по товару');
+  api.pickDataCat('Холодильники');
+  assert.strictEqual(api.runCat(), 'Холодильники');
+  st.curCat = { slug: 'kholodilniki' };
+  assert.strictEqual(api.runCat(), 'kholodilniki', 'обход раздела знает категорию точнее чипа');
+  st.curCat = null;
+  api.pickDataCat('');
+  assert.strictEqual(api.runCat(), '', '«без категории» — сервер вернётся к категории товара');
+  api.pickDataCat(null);
 });
 t('без категорий выбирать нечего — блок скрыт', () => {
   api.setSource([{ name: 'A' }, { name: 'B' }]);

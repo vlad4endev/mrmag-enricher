@@ -165,24 +165,49 @@ export function startBridge(cfg, port = 0, host = '127.0.0.1') {
 }
 
 /**
- * Поднимает мост, если задан SOCKS_PROXY, и направляет в него весь исходящий
- * https. Вызывать до первого fetch: переменные окружения Node читает при
- * создании соединения, поэтому выставленные на старте они подхватываются.
+ * Поднимает мост, если задан SOCKS_PROXY.
+ *
+ * Порт фиксированный, а не случайный, и это принципиально: Node фиксирует
+ * настройки прокси не позже первого запроса, а разные версии делают это в
+ * разный момент. Выставленный из кода HTTPS_PROXY может не подхватиться —
+ * на Node 24 в контейнере запрос уходил мимо моста. Поэтому HTTPS_PROXY
+ * должен стоять в .env и указывать сюда же, до старта процесса. То же нужно
+ * и для CLI: docker exec не проходит через ENTRYPOINT и берёт окружение
+ * контейнера как есть.
  */
 export async function setupProxy(log = () => {}) {
   const raw = process.env.SOCKS_PROXY;
   if (!raw) return null;
 
   const cfg = parseProxy(raw);
-  const bridge = await startBridge(cfg);
+  const port = Number(process.env.SOCKS_BRIDGE_PORT || 18080);
+  const expected = `http://127.0.0.1:${port}`;
+  const preset = process.env.HTTPS_PROXY || process.env.https_proxy;
+
+  let bridge;
+  try {
+    bridge = await startBridge(cfg, port);
+  } catch (e) {
+    throw new Error(e.code === 'EADDRINUSE'
+      ? `порт моста ${port} занят — задайте другой в SOCKS_BRIDGE_PORT`
+      : e.message);
+  }
+
   process.env.NODE_USE_ENV_PROXY = '1';
   process.env.HTTPS_PROXY = bridge.url;
-  // Каталог магазина через заграничный прокси гонять незачем — лишний крюк и
-  // лишняя точка отказа. Свой список, если задан, не трогаем.
   if (!process.env.NO_PROXY && !process.env.no_proxy) {
+    // Каталог магазина через заграничный прокси гонять незачем.
     process.env.NO_PROXY = 'mrmag.ru,localhost,127.0.0.1';
   }
+
   log(`  Прокси: SOCKS5 ${cfg.host}:${cfg.port}${cfg.user ? ` (логин ${cfg.user})` : ''} → ${bridge.url}`);
   log(`  Мимо прокси: ${process.env.NO_PROXY || process.env.no_proxy}`);
-  return { cfg, ...bridge };
+  if (!preset) {
+    log(`  ⚠  HTTPS_PROXY не был задан до старта. Часть версий Node это уже не`);
+    log(`     подхватит, и запросы уйдут мимо прокси. Добавьте в .env строку:`);
+    log(`       HTTPS_PROXY=${expected}`);
+  } else if (preset !== expected) {
+    log(`  ⚠  HTTPS_PROXY=${preset} не совпадает с мостом ${expected}`);
+  }
+  return { cfg, ...bridge, ok: preset === expected };
 }

@@ -786,6 +786,7 @@ input[type=range]::-moz-range-thumb{
         <button class="fbtn on" data-f="all" onclick="setFilter(this)" disabled>Все</button>
         <button class="fbtn" data-f="thin" onclick="setFilter(this)" disabled title="Нет описания и характеристик — такой товар модели обогащать не из чего">Без данных</button>
         <button class="fbtn" data-f="warn" onclick="setFilter(this)" disabled>Расхождения</button>
+        <button class="fbtn" data-f="conf" onclick="setFilter(this)" disabled title="Текст карточки и атрибуты магазина говорят разное — ошибка в самом каталоге, модель тут ни при чём">Ошибки каталога</button>
         <button class="fbtn" data-f="err" onclick="setFilter(this)" disabled>Ошибки</button>
       </div>
       <div class="dfilter" id="dateFilter" style="display:none">
@@ -1036,6 +1037,19 @@ function loadQualitySoon(){
 }
 
 const isThin=i=>quality[i]?.ok===false;
+// Спор текста с атрибутами магазина. Считается из исходных данных, поэтому
+// известен сразу после загрузки — прогон для этого не нужен.
+const confOf=i=>quality[i]?.conflicts||[];
+
+/** Блок «каталог противоречит сам себе». Пусто — значит спора нет. */
+function confBox(i){
+  const conf=confOf(i);
+  if(!conf.length) return '';
+  return `<div class="warnbox"><div class="wt">⚠ Каталог противоречит сам себе (${conf.length})</div>`
+    +conf.map(c=>`<div class="wi">${esc(label(c.field))}: в тексте <code>${esc(String(c.text))}</code>,`
+      +` в атрибутах <code>${esc(String(c.attr||'—'))}</code></div>`).join('')
+    +`<div class="wi">Модель по этому полю не проверяется, пока источники спорят. Исправьте карточку в магазине.</div></div>`;
+}
 
 // Поле с датой у каждого фида своё, а у mrmag его нет вовсе. Поэтому не
 // хардкодим одно имя, а берём первое подходящее — и показываем в подсказке,
@@ -1549,6 +1563,7 @@ function passesFilter(i){
   if(!inDateRange(items[i])) return false;
   if(filter==='all')  return true;
   if(filter==='thin') return isThin(i);
+  if(filter==='conf') return confOf(i).length>0;
   const st=statusOf(i);
   return filter==='warn'?st.cls==='wa':st.cls==='er';
 }
@@ -1604,10 +1619,10 @@ function renderList(){
   (items.length?show:hide)('dlCatBtn');
 
   // Счётчики на фильтрах: сразу видно, сколько требует внимания.
-  const cnt={all:items.length,thin:0,warn:0,err:0};
+  const cnt={all:items.length,thin:0,warn:0,err:0,conf:0};
   results.forEach((_,i)=>{const c=statusOf(i).cls; if(c==='wa')cnt.warn++; if(c==='er')cnt.err++;});
-  items.forEach((_,i)=>{ if(isThin(i)) cnt.thin++; });
-  const LBL={all:'Все',thin:'Без данных',warn:'Расхождения',err:'Ошибки'};
+  items.forEach((_,i)=>{ if(isThin(i)) cnt.thin++; if(confOf(i).length) cnt.conf++; });
+  const LBL={all:'Все',thin:'Без данных',warn:'Расхождения',err:'Ошибки',conf:'Ошибки каталога'};
   document.querySelectorAll('.fbtn').forEach(b=>{
     const f=b.dataset.f;
     if(!f) return;
@@ -1636,7 +1651,8 @@ function renderList(){
     const name=it.name||it.title||it.sku||`Товар №${i+1}`;
     // Причину «без данных» пишем в строку: иначе непонятно, почему товар в
     // фильтре и что с ним делать — она же уйдёт в skipped при прогоне.
-    const why=!results[i]&&isThin(i)?` · без данных: ${quality[i].reason}`:'';
+    const why=!results[i]&&isThin(i)?` · без данных: ${quality[i].reason}`
+      :(confOf(i).length?` · каталог противоречит себе: ${confOf(i).map(c=>label(c.field)).join(', ')}`:'');
     const d=dateKey?dateOf(it):null;
     return `<button class="ri s-${st.cls}${i===curIdx?' on':''}" onclick="selectResult(${i})" title="${esc(String(name))}${why?esc(why):''}">`
       +`<span class="ri-st ${st.cls}">${st.cls==='run'?flake('spinning'):st.sym}</span>`
@@ -1676,6 +1692,9 @@ function renderDetail(){
     +(meta.length?`<span class="pt-meta">${meta.join('<span style="color:var(--b2)">·</span>')}</span>`:'');
 
   hide('confBdg');
+  // Противоречие каталога видно до всего остального и независимо от того,
+  // обработан товар или нет: это ошибка в исходных данных, а не в ответе.
+  const conf=confBox(curIdx);
   const showTabs=!!r?.enriched;
   document.getElementById('rtabs').style.display=showTabs?'flex':'none';
 
@@ -1691,17 +1710,17 @@ function renderDetail(){
         +`</div>`);
       return;
     }
-    setP('detail',`<div class="seobox"><div class="st">Исходный текст — ${src.length} символов</div>${esc(src||'пусто')}</div>`
+    setP('detail',conf+`<div class="seobox"><div class="st">Исходный текст — ${src.length} символов</div>${esc(src||'пусто')}</div>`
       +`<div class="hint">Товар ещё не обработан. Нажмите «Обогатить через ИИ».</div>`);
     return;
   }
   if(r.skipped){
-    setP('detail',`<div class="warnbox"><div class="wt">⊘ Пропущен без обращения к модели</div><div class="wi">${esc(r.skipped)}</div></div>`
+    setP('detail',conf+`<div class="warnbox"><div class="wt">⊘ Пропущен без обращения к модели</div><div class="wi">${esc(r.skipped)}</div></div>`
       +`<div class="hint">Запрос не отправлялся, деньги не потрачены. Допишите описание товара в источнике.</div>`);
     return;
   }
   if(!r.enriched){
-    setP('detail',`<div class="errbox">${esc(r.error||'Ошибка')}</div>`
+    setP('detail',conf+`<div class="errbox">${esc(r.error||'Ошибка')}</div>`
       +`<div class="hint">Повторный запуск обработает товар заново.</div>`);
     return;
   }
@@ -2082,7 +2101,7 @@ function isEmpty(v){
 
 function renderVis(d){
   if(!d||typeof d!=='object') return '<div class="empty"><p>Нет данных</p></div>';
-  let out='';
+  let out=confBox(curIdx);
 
   // Расхождения с текстом источника — вперёд всего: это причина не доверять полю.
   if(Array.isArray(d.warnings)&&d.warnings.length){

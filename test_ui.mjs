@@ -55,7 +55,7 @@ for (const n of ['step1', 'step2', 'step3']) store.get(n).appendChild(new El(n +
 
 const groups = { '.cnt-grid .cnt-btn': [], '.fbtn': [], '.rtab': [], '.mitem': [], '.page': [], '.ntab': [] };
 for (const n of ['1', '10', '50', '100', '500']) { const e = new El('cnt' + n); e.dataset.n = n; groups['.cnt-grid .cnt-btn'].push(e); }
-for (const f of ['all', 'thin', 'warn', 'err'])  { const e = new El('f' + f);  e.dataset.f = f; groups['.fbtn'].push(e); }
+for (const f of ['all', 'thin', 'warn', 'err', 'conf'])  { const e = new El('f' + f);  e.dataset.f = f; groups['.fbtn'].push(e); }
 groups['.rtab'].push(new El('rt1'), new El('rt2'));
 
 globalThis.document = {
@@ -177,6 +177,50 @@ t('фильтр оставляет только товары без нормал
   assert.deepStrictEqual(api.queued(), [1, 2]);
   assert.match(G('midList').innerHTML, /нет ни description/, 'причина видна в строке товара');
   assert.ok(!/>A</.test(G('midList').innerHTML), 'товар с данными в фильтр попасть не должен');
+});
+t('спор текста с атрибутами виден до прогона', () => {
+  // conflicts приходят из /api/quality вместе с ok/reason: это свойство
+  // исходных данных, и знать его надо ДО того, как потрачены деньги.
+  st.items = [{ name: 'A' }, { name: 'B' }, { name: 'C' }];
+  st.results = [];
+  st.quality = [
+    { ok: true },
+    { ok: true, conflicts: [{ field: 'высота_мм', text: 1947, attr: 'Высота холодильника: От 181 до 190 см' }] },
+    { ok: true, conflicts: [] },
+  ];
+  api.setFilter(F('all'));
+  api.renderList();
+  assert.strictEqual(F('conf').textContent, 'Ошибки каталога 1');
+  api.setFilter(F('conf'));
+  assert.deepStrictEqual(api.queued(), [1]);
+  assert.match(G('midList').innerHTML, /каталог противоречит себе/, 'причина видна в строке');
+  api.setFilter(F('all'));
+});
+t('карточка необработанного товара объясняет, что именно спорит', () => {
+  st.items = [{ name: 'A', description: 'Высота 194.7 см' }];
+  st.results = [];
+  st.quality = [{ ok: true, conflicts: [{ field: 'высота_мм', text: 1947, attr: 'Высота холодильника: От 181 до 190 см' }] }];
+  api.selectResult(0);
+  const html = G('detail').innerHTML;
+  assert.match(html, /Каталог противоречит сам себе \(1\)/);
+  assert.match(html, /1947/);
+  assert.match(html, /От 181 до 190 см/, 'видно обе стороны спора, а не только вердикт');
+  assert.match(html, /Товар ещё не обработан/, 'спор показан вместе с обычным содержимым карточки');
+});
+t('без спора блок не появляется', () => {
+  st.quality = [{ ok: true, conflicts: [] }];
+  api.selectResult(0);
+  assert.ok(!/противоречит/.test(G('detail').innerHTML));
+  st.quality = [];
+  api.selectResult(0);
+  assert.ok(!/противоречит/.test(G('detail').innerHTML), 'старый ответ сервера без поля conflicts не должен ронять карточку');
+
+  // Возвращаем состояние, на котором стоит следующая проверка: набор тестов
+  // идёт по одному и тому же интерфейсу, а не пересоздаёт его на каждый случай.
+  st.items = [{ name: 'A' }, { name: 'B' }, { name: 'C' }];
+  st.quality = [{ ok: true }, { ok: false, reason: 'нет ни description, ни annotation' }, { ok: false, reason: 'текст 12 симв.' }];
+  api.renderList();
+  api.setFilter(F('thin'));
 });
 t('прогон обещает ровно то, что в фильтре', () => {
   api.syncSteps();

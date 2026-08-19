@@ -1070,10 +1070,14 @@ export function extractFacts(text, schemaKey) {
   return f;
 }
 
-/** Атрибуты товара → { facts, bounds }. Оба ключа по полям схемы. */
+/**
+ * Атрибуты товара → { facts, bounds, sources }. Первые два по полям схемы,
+ * sources хранит исходную строку атрибута: без неё расхождение показывается
+ * числом без объяснения, откуда оно взялось.
+ */
 export function attrFacts(attributes, schemaKey) {
   const s = schemaFor(schemaKey);
-  const facts = {}, bounds = {};
+  const facts = {}, bounds = {}, sources = {};
   for (const a of Array.isArray(attributes) ? attributes : []) {
     const name = String(a?.name ?? '');
     const spec = s.attrs.find(([, re]) => re.test(name));
@@ -1081,10 +1085,11 @@ export function attrFacts(attributes, schemaKey) {
     const [key, , parse] = spec;
     const got = parse(String(a?.value ?? ''));
     if (got == null) continue;
-    if (typeof got === 'object') bounds[key] = { ...got, source: `${name}: ${a.value}` };
+    sources[key] = `${name}: ${a.value}`;
+    if (typeof got === 'object') bounds[key] = { ...got, source: sources[key] };
     else if (typeof got === 'string' || inRange(key, got, s.ranges)) facts[key] = got;
   }
-  return { facts, bounds };
+  return { facts, bounds, sources };
 }
 
 /**
@@ -1094,19 +1099,27 @@ export function attrFacts(attributes, schemaKey) {
  */
 export function productFacts(product, schemaKey) {
   const facts = extractFacts(sourceText(product), schemaKey);
-  const { facts: attr, bounds } = attrFacts(product?.attributes, schemaKey);
+  const { facts: attr, bounds, sources } = attrFacts(product?.attributes, schemaKey);
+  // Спор не проглатывается молча: это ошибка в самом каталоге, и её владелец —
+  // магазин, а не модель. Собираем отдельно от warnings, которые про модель.
+  const conflicts = [];
+  const drop = (field, text) => {
+    conflicts.push({ field, text, attr: sources[field] });
+    delete facts[field];
+    delete bounds[field];
+  };
 
   for (const [k, v] of Object.entries(attr)) {
     if (!(k in facts)) { facts[k] = v; continue; }
-    if (!sameFact(k, facts[k], v)) delete facts[k];
+    if (!sameFact(k, facts[k], v)) drop(k, facts[k]);
   }
   // Число из текста вне интервала атрибута — тот же спор источников.
   for (const [k, b] of Object.entries(bounds)) {
     if (facts[k] == null) continue;
     if (withinBound(k, Number(facts[k]), b)) delete bounds[k];  // интервал уже подтверждён точным числом
-    else { delete facts[k]; delete bounds[k]; }
+    else drop(k, facts[k]);
   }
-  return { facts, bounds };
+  return { facts, bounds, conflicts };
 }
 
 const sameFact = (key, a, b) => (typeof a === 'number' && typeof b === 'number'
@@ -1269,7 +1282,7 @@ export function normalizeResponse(data, sourceText = '', schemaKey, attributes =
 
   // Источника два: проза и атрибуты магазина. productFacts сводит их вместе и
   // молчит там, где они спорят друг с другом.
-  const { facts, bounds } = productFacts({ description: sourceText, attributes }, schema);
+  const { facts, bounds, conflicts } = productFacts({ description: sourceText, attributes }, schema);
   const warnings = crossCheck(specs, facts, bounds).concat(enumIssues);
 
   // Пропуск модели — не повод терять факт: если поле null, а в тексте значение
@@ -1303,6 +1316,7 @@ export function normalizeResponse(data, sourceText = '', schemaKey, attributes =
     search_aliases:  arr(data.search_aliases),
     seo_keywords:    arr(data.seo_keywords),
     source_facts:    facts,
+    source_conflicts: conflicts,
     filled_from_text,
     warnings,
     seo_issues,

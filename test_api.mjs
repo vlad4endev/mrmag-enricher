@@ -136,6 +136,26 @@ try {
     assert.strictEqual(e.skipped, d.quality[1].reason, 'фильтр и прогон обязаны говорить одно и то же');
   });
 
+  await t('спор текста с атрибутами доезжает до интерфейса без прогона', async () => {
+    // Товар 561253 из products_523.json: в тексте 194,7 см, а в фильтре
+    // магазина полка «От 181 до 190 см». Ошибка каталога, а не модели.
+    const products = [
+      { sku: '561253', category: 'Холодильники',
+        description: 'Двухкамерный холодильник, общий объем 310 л, No Frost, высота 194.7 см, ширина 59.5 см',
+        attributes: [{ name: 'Высота холодильника', value: 'От 181 до 190 см' }] },
+      { sku: 'ok', category: 'Холодильники',
+        description: 'Двухкамерный холодильник, общий объем 310 л, No Frost, высота 185 см, ширина 59.5 см',
+        attributes: [{ name: 'Высота холодильника', value: 'От 181 до 190 см' }] },
+    ];
+    const d = await (await postQuality({ products })).json();
+    assert.strictEqual(d.quality[0].conflicts.length, 1);
+    assert.strictEqual(d.quality[0].conflicts[0].field, 'высота_мм');
+    assert.strictEqual(d.quality[0].conflicts[0].text, 1947);
+    assert.match(d.quality[0].conflicts[0].attr, /От 181 до 190 см/);
+    assert.strictEqual(d.quality[0].ok, true, 'спор источников не повод не обогащать товар');
+    assert.deepStrictEqual(d.quality[1].conflicts, [], 'согласованный товар в список не попадает');
+  });
+
   console.log('\nФильтры по списку товаров');
   const postFilters = body => fetch(url('/api/filters'), {
     method: 'POST',

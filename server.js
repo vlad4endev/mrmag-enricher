@@ -35,7 +35,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import {
   RateLimiter, enrichProduct, rpmFor, schemaFor, SCHEMAS, netError,
-  RUB_PER_USD, RUB_RATE_DATE, MISMATCH_POLICY, isEnrichable,
+  RUB_PER_USD, RUB_RATE_DATE, MISMATCH_POLICY, isEnrichable, productFacts,
 } from './lib.js';
 import { CATEGORIES, findCategory, crawlCategory, loadFeed, buildFilters } from './catalog.js';
 import { buildV2 } from './export_v2.js';
@@ -325,8 +325,13 @@ async function apiQuality(req, res) {
   if (!Array.isArray(products) || !products.length) {
     return json(res, 400, { error: 'Не передан список товаров' });
   }
+  // Противоречия каталога считаются здесь же: это свойство исходных данных, а
+  // не ответа модели, — значит видно до прогона и без единого запроса к ней.
   json(res, 200, {
-    quality: products.map(p => isEnrichable(p || {}, schemaFor(category || p?.category))),
+    quality: products.map(p => {
+      const schema = schemaFor(category || p?.category);
+      return { ...isEnrichable(p || {}, schema), conflicts: productFacts(p || {}, schema).conflicts };
+    }),
   });
 }
 

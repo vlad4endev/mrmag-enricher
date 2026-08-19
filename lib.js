@@ -240,7 +240,21 @@ const RE_NOISE_BARE = /(\d+)\s*д[Бб]/;
 const RE_CHAMBERS_W = /(одно|двух|тр[ёе]х|четыр[ёе]х)камерн/i;
 const CHAMBER_N = { 'одно': 1, 'двух': 2, 'трёх': 3, 'трех': 3, 'четырёх': 4, 'четырех': 4 };
 // «Без No Frost» — это НЕ No Frost. Прежняя регулярка читала отрицание как факт.
-const RE_NOFROST = /(без\s*[:\-–]?\s*)?(full\s*no\s*frost|no\s*frost|ноу\s*фрост)/i;
+// Отрицание стоит и после подписи: описание — склеенная таблица «признак
+// значение», и в ней встречается «No Frost Нет.», «No Frost - Нет Цвет».
+const RE_NOFROST = /(без\s*[:\-–—]?\s*)?(full\s*no\s*frost|no\s*frost|ноу\s*фрост)([\s\S]{0,14})/gi;
+
+/**
+ * Отрицание ли «нет» сразу за подписью. Форм две, и они противоположны:
+ * «No Frost Нет.» — значение таблицы, а «No Frost — нет наледи в отделении» —
+ * фраза о том, что No Frost как раз есть. Отличаем по тому, что идёт дальше:
+ * строчная буква продолжает фразу, точка и заглавная закрывают значение.
+ * Регистр здесь и есть признак, поэтому проверка хвоста идёт БЕЗ флага i.
+ */
+function negatedTail(tail) {
+  const m = /^\s*[:\-–—]?\s*(нет|отсутствует)/i.exec(tail);
+  return Boolean(m) && !/^\s*[а-яё]/.test(tail.slice(m[0].length));
+}
 const RE_REFRIG = /хладагент[^0-9A-Za-z\n]{0,14}(R\s?\d{3}\s?[a-z]?)/i;
 
 function fridgeFacts(t, f, ranges) {
@@ -255,9 +269,14 @@ function fridgeFacts(t, f, ranges) {
 
   // Система охлаждения: при противоречии («No Frost» и «капельная» рядом) или
   // при отрицании факта не выставляем — лучше не проверить, чем проверить ложью.
+  // Упоминаний бывает несколько; утверждение и отрицание рядом — то же
+  // противоречие, что No Frost с капельной, и разрешать его догадкой нельзя.
   const drip = /капельн/i.test(t);
-  const nf = RE_NOFROST.exec(t);
-  const hasNF = Boolean(nf && !nf[1]);
+  let says = false, denies = false;
+  for (const m of t.matchAll(RE_NOFROST)) {
+    if (m[1] || negatedTail(m[3])) denies = true; else says = true;
+  }
+  const hasNF = says && !denies;
   if (drip !== hasNF) f.система_охлаждения = drip ? 'капельная' : 'No Frost';
 
   const r = t.match(RE_REFRIG);

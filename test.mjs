@@ -272,6 +272,24 @@ t('«без No Frost» — это НЕ No Frost', () => {
   assert.strictEqual(extractFacts('Система охлаждения - без NO FROST Цвет').система_охлаждения, undefined);
   assert.strictEqual(extractFacts('Система охлаждения -  Без No Frost Количество').система_охлаждения, undefined);
 });
+t('«No Frost Нет» в таблице характеристик — тоже отрицание', () => {
+  // Описания mrmag — склеенная таблица «признак значение»: отрицание стоит
+  // после подписи, а не перед ней. Эти три формы взяты из products_523.json.
+  assert.strictEqual(extractFacts('Объем 140 л. No Frost Нет. Цвет Графит').система_охлаждения, undefined);
+  assert.strictEqual(extractFacts('No Frost - Нет Климатический класс N').система_охлаждения, undefined);
+  assert.strictEqual(extractFacts('No Frost НетЦвет Белое стекло').система_охлаждения, undefined);
+});
+t('«No Frost — нет наледи» — утверждение, а не отрицание', () => {
+  // Обратная форма из того же каталога: «нет» продолжает фразу, а не закрывает
+  // значение. Отличие одно — дальше идёт строчное слово.
+  assert.strictEqual(extractFacts('No Frost — нет наледи в отделении').система_охлаждения, 'No Frost');
+  assert.strictEqual(extractFacts('No Frost – нет инея на стенках').система_охлаждения, 'No Frost');
+});
+t('утверждение и отрицание рядом — факт не выставляется', () => {
+  assert.strictEqual(
+    extractFacts('No Frost — нет наледи. Ниже: No Frost Нет. Цвет Белый').система_охлаждения, undefined,
+    'противоречие разрешать догадкой нельзя — так же, как No Frost с капельной');
+});
 t('положительный No Frost и капельная', () => {
   assert.strictEqual(extractFacts('система No Frost').система_охлаждения, 'No Frost');
   assert.strictEqual(extractFacts('капельная разморозка').система_охлаждения, 'капельная');

@@ -53,7 +53,7 @@ const ids = [...new Set([...html.slice(0, html.indexOf('<script>')).matchAll(/id
 const store = new Map(ids.map(id => [id, new El(id)]));
 for (const n of ['step1', 'step2', 'step3']) store.get(n).appendChild(new El(n + '-b', 'step-b'));
 
-const groups = { '.cnt-grid .cnt-btn': [], '.cat-btn': [], '.fbtn': [], '.rtab': [], '.mitem': [], '.page': [], '.ntab': [] };
+const groups = { '.cnt-grid .cnt-btn': [], '.fbtn': [], '.rtab': [], '.mitem': [], '.page': [], '.ntab': [] };
 for (const n of ['1', '10', '50', '100', '500']) { const e = new El('cnt' + n); e.dataset.n = n; groups['.cnt-grid .cnt-btn'].push(e); }
 for (const f of ['all', 'thin', 'warn', 'err'])  { const e = new El('f' + f);  e.dataset.f = f; groups['.fbtn'].push(e); }
 groups['.rtab'].push(new El('rt1'), new El('rt2'));
@@ -92,7 +92,7 @@ const EXPORTS = `
 export const api={syncSteps,setCnt,setCntFree,applyCnt,applySource,setSource,pickDataCat,renderDataCats,runCat,readProd,renderList,statusOf,selectResult,renderDetail,plural,
   renderEstimate,setFilter,stepError,pick,sumRun,renderFoot,clearResults,restoreResults,saveResults,
   downloadAll,downloadCategoryFiles,downloadV2,initTheme,toggleTheme,applyTheme,dur,renderRunline,
-  loadCategories,loadCategory,renderModelList,filterModels,
+  loadCategories,catOf,renderModelList,filterModels,
   applyDates,clearDates,renderDates,passesFilter,queued,onProdInput};
 export const st={get items(){return items},set items(v){items=v},
   get srcItems(){return srcItems},set srcItems(v){srcItems=v},
@@ -102,7 +102,6 @@ export const st={get items(){return items},set items(v){items=v},
   get curIdx(){return curIdx},get filter(){return filter},
   get running(){return running},set running(v){running=v},
   get runIdx(){return runIdx},set runIdx(v){runIdx=v},
-  get curCat(){return curCat},set curCat(v){curCat=v},
   get categories(){return categories},set categories(v){categories=v},
   set schemas(v){schemas=v},
   set runT0(v){runT0=v},
@@ -301,9 +300,6 @@ t('выбранная категория уходит на сервер одна
   assert.strictEqual(api.runCat(), undefined, 'ничего не выбрано — схему подбирает сервер по товару');
   api.pickDataCat('Холодильники');
   assert.strictEqual(api.runCat(), 'Холодильники');
-  st.curCat = { slug: 'kholodilniki' };
-  assert.strictEqual(api.runCat(), 'kholodilniki', 'обход раздела знает категорию точнее чипа');
-  st.curCat = null;
   api.pickDataCat('');
   assert.strictEqual(api.runCat(), '', '«без категории» — сервер вернётся к категории товара');
   api.pickDataCat(null);
@@ -467,28 +463,28 @@ const catchFiles = async fn => {
   return files;
 };
 
-await tAsync('раздел выгружается парой products/filters с фильтром всего раздела', async () => {
-  st.curCat = {
-    category_id: 523, category: 'Холодильники', slug: 'kholodilniki', url: 'https://mrmag.ru/shop/kholodilniki',
-    filters_file: { category_id: 523, products_total: 256, filters: [{ code: 'brand', values: [{ value: 'DON' }] }] },
-  };
+await tAsync('одна категория выгружается парой products/filters с её id', async () => {
+  st.categories = [{ slug: 'kholodilniki', name: 'Холодильники', id: 523, url: 'u1' }];
   st.items = [{ sku: '1', name: 'A', category: 'Холодильники' }, { sku: '2', name: 'B', category: 'Холодильники' }];
   st.results = [{ enriched: { specs: {}, warnings: [] }, iT: 10, oT: 5, cost: 0.001 }, null];
 
-  const files = await catchFiles(() => api.downloadCategoryFiles());
-  assert.deepStrictEqual(files.map(f => f.name), ['products_523.json', 'filters_523.json']);
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = () => Promise.resolve({ ok: true,
+    json: () => Promise.resolve({ category_id: 523, products_total: 2, filters: [] }) });
+  let files;
+  try { files = await catchFiles(() => api.downloadCategoryFiles()); }
+  finally { globalThis.fetch = realFetch; }
 
+  // id раздела — из справочника с сервера, по названию категории товара.
+  assert.deepStrictEqual(files.map(f => f.name), ['products_523.json', 'filters_523.json']);
   const products = JSON.parse(files[0].body);
   assert.strictEqual(products.length, 2, 'в файл идут все загруженные товары, не только обработанные');
   assert.ok(products[0].enriched, 'обогащённый товар несёт enriched');
   assert.strictEqual(products[0]._meta.cost_usd, 0.001);
   assert.strictEqual(products[1].enriched, null, 'необработанный — enriched: null, как в файле из CLI');
-  // Фильтр раздела, а не окна: товаров загружено 2, а в фильтре 256.
-  assert.strictEqual(JSON.parse(files[1].body).products_total, 256);
 });
 
 await tAsync('товары из фида идут одной парой файлов, фильтры считает сервер', async () => {
-  st.curCat = null;
   st.categories = [{ slug: 'kholodilniki', name: 'Холодильники', id: 523, url: 'u1' }];
   st.schemas = { posuda: { id: null, name: 'Посуда' } };
   st.items = [
@@ -515,7 +511,6 @@ await tAsync('товары из фида идут одной парой файл
 });
 
 await tAsync('сбой фильтров не оставляет половину пары', async () => {
-  st.curCat = null;
   st.items = [{ sku: '1', name: 'X', category: 'Посуда' }];
   st.results = [null];
   const realFetch = globalThis.fetch;
@@ -528,7 +523,7 @@ await tAsync('сбой фильтров не оставляет половину
 
 console.log('\nВыгрузка JSON v2');
 await tAsync('три файла: категории, фасеты диапазонами и товары', async () => {
-  st.curCat = { category_id: 523, category: 'Холодильники', slug: 'kholodilniki', url: 'u' };
+  st.categories = [{ slug: 'kholodilniki', name: 'Холодильники', id: 523, url: 'u' }];
   st.items = [
     { sku: '1', name: 'Холодильник A', category: 'Холодильники' },
     { sku: '2', name: 'Холодильник B', category: 'Холодильники' },
@@ -690,23 +685,11 @@ t('модель из справочника по-прежнему показыв
   assert.match(G('mselPrice').textContent, /за 1M/);
 });
 
-console.log('\nРазделы каталога');
+console.log('\nСправочник разделов');
 const CATS = {
   categories: [
     { slug: 'kholodilniki', name: 'Холодильники', url: 'u1', id: 523, spec_keys: ['бренд', 'объем_общий_л'] },
     { slug: 'stiralnye_mashiny', name: 'Стиральные машины', url: 'u2', id: 467, spec_keys: ['бренд'] },
-  ],
-};
-const CATALOG = {
-  category_id: 467, category: 'Стиральные машины', slug: 'stiralnye_mashiny',
-  count: 153, loaded: 2, partial: true,
-  filters: [
-    { code: 'brand', values: [{ value: 'Haier', count: 1 }, { value: 'LG', count: 1 }] },
-    { code: 'price', min: 8999, max: 149999 },
-  ],
-  products: [
-    { sku: '1', name: 'Стиральная машина Haier', description: 'Тип загрузки - фронтальная' },
-    { sku: '2', name: 'Стиральная машина LG', description: 'Тип загрузки - вертикальная' },
   ],
 };
 const stubFetch = map => { globalThis.fetch = url => {
@@ -718,42 +701,19 @@ const stubFetch = map => { globalThis.fetch = url => {
     : { ok: true, status: 200, json: () => Promise.resolve(v) });
 }; };
 
-await tAsync('разделы приходят с сервера, а не вбиты в страницу', async () => {
+await tAsync('справочник разделов приходит с сервера, а не вбит в страницу', async () => {
+  st.categories = []; st.schemas = {};
   stubFetch({ '/api/categories': CATS });
   await api.loadCategories();
-  const html = G('catRow').innerHTML;
-  assert.match(html, /Холодильники/);
-  assert.match(html, /Стиральные машины/);
-  assert.match(html, /id 467/, 'id раздела виден пользователю');
-  assert.match(html, /data-slug="kholodilniki"/);
+  assert.deepStrictEqual(st.categories.map(c => c.slug), ['kholodilniki', 'stiralnye_mashiny']);
 });
-await tAsync('сервер без разделов не ломает шаг — остаётся ввод адреса', async () => {
-  stubFetch({ '/api/categories': new Error('OpenRouter недоступен') });
+await tAsync('без справочника интерфейс работает — он нужен только именам файлов', async () => {
+  st.categories = [];
+  stubFetch({ '/api/categories': new Error('сервер лёг') });
   await api.loadCategories();
-  assert.match(G('catRow').innerHTML, /Разделы недоступны/);
-  assert.match(G('catRow').innerHTML, /адрес JSON/);
-});
-await tAsync('выбор раздела грузит товары и показывает автофильтры', async () => {
-  stubFetch({ '/api/categories': CATS, '/api/catalog': CATALOG });
-  await api.loadCategories();
-  st.items = []; st.results = [];
-  await api.loadCategory('stiralnye_mashiny');
-  assert.strictEqual(st.items.length, 2);
-  assert.strictEqual(st.curCat.slug, 'stiralnye_mashiny', 'категория нужна для схемы полей на сервере');
-  const hint = G('fetchHint').innerHTML;
-  assert.match(hint, /из 153 в разделе/, 'итог — по всему разделу, а не по загруженному окну');
-  assert.match(hint, /id 467/);
-  assert.match(hint, /брендов 2/);
-  assert.match(hint, /8[\s\u00a0]999/, 'цена из автофильтра (пробел неразрывный)');
-});
-await tAsync('ошибка раздела не затирает загруженные товары', async () => {
-  stubFetch({ '/api/categories': CATS, '/api/catalog': new Error('Не удалось обойти раздел') });
-  await api.loadCategories();
-  st.items = [{ sku: 'x', name: 'Старый товар', description: 'общий объем 300 л' }];
-  await api.loadCategory('kholodilniki');
-  assert.strictEqual(st.items.length, 1, 'прежние товары должны остаться');
-  assert.strictEqual(st.curCat, null);
-  assert.match(G('step2').querySelector('.inline-err').textContent, /обойти раздел/);
+  st.items = [{ sku: '1', name: 'X', category: 'Холодильники' }];
+  assert.strictEqual(api.catOf(st.items[0]).id, null, 'без id раздела файл назовётся по all');
+  assert.strictEqual(api.catOf(st.items[0]).name, 'Холодильники', 'название берётся у товара');
 });
 globalThis.fetch = () => Promise.reject(new Error('сеть в тесте отключена'));
 

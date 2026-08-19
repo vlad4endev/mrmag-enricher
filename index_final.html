@@ -192,11 +192,11 @@ textarea{
 .cnt-in:hover{border-color:var(--ac-b)}
 .cnt-in:focus{outline:none;border-style:solid;border-color:var(--ac);background:var(--bg3)}
 .cnt-in.on{border-style:solid;border-color:var(--ac);color:var(--ac);box-shadow:var(--sh1)}
-/* Разделы каталога: названия длинные, поэтому строка, а не сетка на 5 */
+/* Категории из данных: названия длинные, поэтому строка, а не сетка на 5 */
 .cat-row{display:flex;flex-wrap:wrap;gap:5px;margin-top:2px}
-.cat-btn,.dcat-btn{flex:1 1 140px;font-family:inherit;font-size:12px;font-weight:600;text-align:left;padding:8px 10px}
-.cat-btn .cat-n,.dcat-btn .cat-n{display:block;font-size:10.5px;font-weight:500;color:var(--t3);margin-top:2px}
-.cat-btn.on .cat-n,.dcat-btn.on .cat-n{color:rgba(255,255,255,.85)}
+.dcat-btn{flex:1 1 140px;font-family:inherit;font-size:12px;font-weight:600;text-align:left;padding:8px 10px}
+.dcat-btn .cat-n{display:block;font-size:10.5px;font-weight:500;color:var(--t3);margin-top:2px}
+.dcat-btn.on .cat-n{color:rgba(255,255,255,.85)}
 #fileIn{width:100%;margin-top:2px;font-size:11.5px;color:var(--t2);font-family:inherit}
 #fileIn::file-selector-button{
   padding:6px 10px;margin-right:8px;border-radius:var(--r2);border:1px solid var(--b2);
@@ -730,10 +730,7 @@ input[type=range]::-moz-range-thumb{
                  oninput="setCntFree(this)" aria-label="Своё количество товаров">
         </div>
 
-        <div class="flbl" style="margin-top:12px">Раздел каталога</div>
-        <div class="cat-row" id="catRow"><div class="hint" style="margin:0">Загружаем разделы…</div></div>
-
-        <div class="flbl" style="margin-top:12px">Или свой адрес JSON</div>
+        <div class="flbl" style="margin-top:12px">Адрес JSON</div>
         <div class="irow">
           <input type="text" id="urlIn" placeholder="https://mrmag.ru/scripts/sync_local/products.json" aria-label="URL каталога товаров">
           <button class="ibtn" id="fetchBtn" onclick="fetchProducts()" title="Загрузить товары" aria-label="Загрузить товары">
@@ -965,7 +962,7 @@ const flake=cls=>FLAKE_SVG.replace('class="flake"',`class="flake ${cls}"`);
 
 // ── ENRICHER STATE ───────────────────────────────────────────
 let allModels=[], selModel=null;
-let srcItems=[];     // всё загруженное: файл, адрес или обход раздела целиком
+let srcItems=[];     // всё загруженное из файла или по адресу, целиком
 let pickCat=null;    // выбранная категория из данных; null — все
 let items=[];        // товары, которые пойдут в обработку: срез srcItems
 let results=[];      // результаты, индексы совпадают с items
@@ -1239,8 +1236,8 @@ document.addEventListener('click',e=>{
 });
 
 // ── ШАГ 2: ТОВАРЫ ────────────────────────────────────────────
-// Селектор со скобкой: у разделов тот же класс .cnt-btn, и без скобки выбор
-// количества снимал подсветку с выбранного раздела.
+// Селектор со скобкой: у чипов категорий тот же класс .cnt-btn, и без скобки
+// выбор количества снимал бы подсветку с выбранной категории.
 const cntBtns=()=>document.querySelectorAll('.cnt-grid .cnt-btn');
 
 /** Количество ограничивает и уже загруженный список — смысл настройки один. */
@@ -1249,8 +1246,6 @@ function applyCnt(n){
   document.getElementById('fetchHint').textContent=`Загрузит первые ${selCnt} ${plural(selCnt,'товар','товара','товаров')} по адресу`;
   applySource();
   if(srcItems.length) document.getElementById('prod').value=JSON.stringify(items,null,2);
-  // Раздел обходился под прежнее число: чтобы товаров стало больше, нужен новый обход.
-  if(curCat&&srcItems.length<selCnt) loadCategory(curCat.slug);
   syncSteps();
 }
 
@@ -1281,13 +1276,13 @@ function setCntFree(inp){
 const catKey=p=>String(p?.category??'').trim();
 
 /**
- * Категория прогона. Обход раздела знает её точно; для файла и адреса это
- * выбранный чип — одна схема полей на весь прогон вместо схемы на товар.
- * Ответ один и тот же для /api/quality и /api/enrich: разойдись они, фильтр
- * «Без данных» считал бы по одной схеме, а прогон шёл по другой. Пустая строка
- * («без категории») уходит как есть — сервер вернётся к категории товара.
+ * Категория прогона — выбранный чип: одна схема полей на весь прогон вместо
+ * схемы на товар. Ответ один и тот же для /api/quality и /api/enrich: разойдись
+ * они, фильтр «Без данных» считал бы по одной схеме, а прогон шёл по другой.
+ * Пустая строка («без категории») уходит как есть — сервер вернётся к категории
+ * самого товара, ничего не выбрано — тоже.
  */
-const runCat=()=>curCat?.slug??pickCat??undefined;
+const runCat=()=>pickCat??undefined;
 
 /** Единственное место, где items получает значение. */
 function applySource(){
@@ -1298,7 +1293,7 @@ function applySource(){
   renderList();
 }
 
-/** Новый источник: файл, адрес или обход раздела. */
+/** Новый источник товаров: файл с диска или адрес фида. */
 function setSource(all){
   srcItems=Array.isArray(all)?all:[];
   pickCat=null;
@@ -1343,8 +1338,6 @@ async function loadFile(inp){
   const f=inp.files&&inp.files[0];
   if(!f) return;
   stepError(2,null);
-  curCat=null;
-  document.querySelectorAll('.cat-btn').forEach(b=>b.classList.remove('on'));
   try{
     const parsed=JSON.parse(await f.text());
     const all=Array.isArray(parsed)?parsed:(parsed.items??parsed.products??parsed.data??[parsed]);
@@ -1391,13 +1384,14 @@ function onProdInput(){
   syncSteps();
 }
 
-// ── РАЗДЕЛЫ КАТАЛОГА ─────────────────────────────────────────
-// Разделы приходят с сервера (/api/categories), а не вбиты в страницу: id и
-// набор полей знает бэкенд, и расходиться им нельзя.
-let categories=[], curCat=null, schemas={};
+// ── СПРАВОЧНИК РАЗДЕЛОВ ──────────────────────────────────────
+// Разделы и схемы приходят с сервера (/api/categories), а не вбиты в страницу:
+// id и набор полей знает бэкенд, и расходиться им нельзя. Товары интерфейс
+// больше не обходит — справочник нужен, чтобы категория товара получила id
+// раздела в имени файла выгрузки (products_523.json, а не products_all.json).
+let categories=[], schemas={};
 
 async function loadCategories(){
-  const box=document.getElementById('catRow');
   try{
     const r=await fetch('/api/categories');
     const d=await r.json();
@@ -1405,52 +1399,15 @@ async function loadCategories(){
     categories=d.categories||[];
     schemas=d.schemas||{};
     if(!categories.length) throw new Error('сервер не вернул разделы');
-    box.innerHTML=categories.map(c=>
-      `<button class="cnt-btn cat-btn" data-slug="${esc(c.slug)}" onclick="loadCategory(this.dataset.slug)">`+
-      `${esc(c.name)}<span class="cat-n">id ${c.id} · ${c.spec_keys.length} полей</span></button>`).join('');
   }catch(e){
-    box.innerHTML=`<div class="hint" style="margin:0">Разделы недоступны: ${esc(e.message)}. Ниже можно указать адрес JSON.</div>`;
+    // Не помеха работе: без справочника выгрузка просто назовёт файлы по all.
+    console.warn('Справочник разделов недоступен:',e.message);
   }
-}
-
-/** Обход раздела на сервере. Первый заход по разделу небыстрый — страницы там кэшируются. */
-async function loadCategory(slug){
-  const cat=categories.find(c=>c.slug===slug);
-  if(!cat) return;
-  const hint=document.getElementById('fetchHint');
-  document.querySelectorAll('.cat-btn').forEach(b=>b.classList.toggle('on',b.dataset.slug===slug));
-  stepError(2,null);
-  hint.textContent=`Обходим «${cat.name}» — первый раз это до минуты…`;
-  setSt('ld',`Раздел ${cat.name}`);
-  try{
-    const r=await fetch(`/api/catalog?category=${encodeURIComponent(slug)}&limit=${selCnt}`);
-    const d=await r.json();
-    if(!r.ok) throw new Error(d.error||`HTTP ${r.status}`);
-    if(!Array.isArray(d.products)||!d.products.length) throw new Error('в разделе нет товаров');
-    curCat=d;
-    setSource(d.products);
-    document.getElementById('urlIn').value='';
-    const br=d.filters?.find(f=>f.code==='brand'), pr=d.filters?.find(f=>f.code==='price');
-    // d.count — весь раздел, поэтому «10 из 256» уже говорит, что загружено не всё.
-    hint.innerHTML=`Загружено <b>${items.length}</b> из ${d.count} в разделе · id ${d.category_id}`+
-      (br?` · брендов ${br.values.length}`:'')+
-      (pr&&pr.min!=null?` · цена ${pr.min.toLocaleString('ru')}–${pr.max.toLocaleString('ru')} ₽`:'');
-    setSt('ok',`${cat.name}: ${items.length}`);
-  }catch(e){
-    curCat=null;
-    document.querySelectorAll('.cat-btn').forEach(b=>b.classList.remove('on'));
-    hint.textContent=`Загрузит первые ${selCnt} ${plural(selCnt,'товар','товара','товаров')} по адресу`;
-    setSt('er','Раздел не загружен');
-    stepError(2,e.message);
-  }
-  syncSteps();
 }
 
 async function fetchProducts(){
   const url=document.getElementById('urlIn').value.trim();
   stepError(2,null);
-  curCat=null;
-  document.querySelectorAll('.cat-btn').forEach(b=>b.classList.remove('on'));
   if(!url){ stepError(2,'Укажите адрес каталога товаров'); return; }
 
   const btn=document.getElementById('fetchBtn'),hint=document.getElementById('fetchHint');
@@ -1940,16 +1897,12 @@ function saveFile(content,filename,type='application/json'){
  * 1. В products попадают ВСЕ загруженные товары, а не только обработанные:
  *    у необработанного enriched = null, ровно как в файле из CLI. Выгрузка
  *    «JSON» рядом — про прогон, эта — про раздел.
- * 2. Фильтр берётся из ответа обхода (filters_file): он описывает весь раздел.
- *    Пересчитать его по загруженным 10 товарам значило бы отдать фильтр окна.
+ * 2. Фильтр считает сервер по загруженным товарам (POST /api/filters) — той же
+ *    buildFilters, что пишет файл в CLI. Копии этой логики в браузере нет.
  * 3. Товары по адресу фида приходят вперемешку по категориям, но выгрузка
- *    отдаёт одну пару файлов на прогон (см. mergeGroups), а фильтр по этому
- *    набору считает сервер (POST /api/filters) — той же функцией, что пишет
- *    файл в CLI.
+ *    отдаёт одну пару файлов на прогон (см. mergeGroups).
  */
 function catOf(p){
-  // Обход раздела отдаёт товары одного раздела — гадать по названию не нужно.
-  if(curCat) return {id:curCat.category_id,name:curCat.category,url:curCat.url,slug:curCat.slug};
   const name=p?.category||'';
   const c=categories.find(x=>x.name===name||x.slug===name);
   if(c) return {id:c.id,name:c.name,url:c.url,slug:c.slug};
@@ -2009,9 +1962,7 @@ async function downloadCategoryFiles(){
     // не отдать ничего, чем отдать половину пары.
     const files=[
       [`products_${key}.json`,g.rows],
-      [`filters_${key}.json`, curCat&&String(curCat.category_id)===key&&curCat.filters_file
-        ? curCat.filters_file
-        : await serverFilters(g.cat,g.rows)],
+      [`filters_${key}.json`, await serverFilters(g.cat,g.rows)],
     ];
     files.forEach(([name,data])=>saveFile(JSON.stringify(data,null,2),name));
     setSt('ok',`Файлов: ${files.length}`);

@@ -27,6 +27,7 @@
 import http from 'http';
 import crypto from 'crypto';
 import dns from 'dns';
+import { setupProxy } from './socks.js';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -373,6 +374,16 @@ function safeEqual(a, b) {
   return x.length === y.length && crypto.timingSafeEqual(x, y);
 }
 
+// Мост поднимаем до старта приёма запросов: первый же /api/models должен уйти
+// уже через прокси, иначе первый пользователь получит 403 на ровном месте.
+const proxyLines = [];
+try {
+  await setupProxy(l => proxyLines.push(l));
+} catch (e) {
+  console.error(`❌ SOCKS_PROXY: ${e.message}`);
+  process.exit(1);
+}
+
 const server = http.createServer(async (req, res) => {
   const started = Date.now();
   const u = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
@@ -419,6 +430,7 @@ server.listen(PORT, HOST, () => {
   console.log(`  Прокси разрешён для: ${ALLOWED_HOSTS.join(', ')}`);
   console.log(`  Курс: ${RUB_PER_USD} ₽/$ на ${RUB_RATE_DATE} | политика расхождений: ${MISMATCH_POLICY}`);
   console.log(`  Вход: ${APP_PASSWORD ? `Basic, пользователь ${APP_USER}` : 'ОТКРЫТ'}`);
+  for (const l of proxyLines) console.log(l);
 
   // Прокси задаётся окружением, а не кодом — но молча это оставлять нельзя:
   // «не достучались до openrouter.ai» и «прокси не отвечает» лечатся по-разному.
@@ -430,7 +442,8 @@ server.listen(PORT, HOST, () => {
     console.log(`  openrouter.ai → ${addrs.map(a => a.address).join(', ')}`);
   });
 
-  const proxy = process.env.HTTPS_PROXY || process.env.https_proxy;
+  // Мост уже отчитался выше — второй строкой про тот же прокси лог не засоряем.
+  const proxy = process.env.SOCKS_PROXY ? null : (process.env.HTTPS_PROXY || process.env.https_proxy);
   if (proxy) {
     console.log(`  Прокси: ${proxy.replace(/\/\/[^@]*@/, '//***@')}`);
     if (Number(process.versions.node.split('.')[0]) < 24) {

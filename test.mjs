@@ -14,6 +14,8 @@ import {
   SCHEMAS, schemaFor, buildSystemPrompt, enrichProduct,
 } from './lib.js';
 import { parseListing, parseProductPage, buildFilters, assignMissingBrands, writeCategoryFiles } from './catalog.js';
+import { parseProxy, startBridge, setupProxy } from './socks.js';
+import net from 'net';
 
 let n = 0;
 const t = (name, fn) => { fn(); n++; console.log(`  ✓ ${name}`); };
@@ -599,6 +601,127 @@ console.log('\nЗапрос к модели');
   });
 
   delete globalThis.fetch;
+}
+
+// ── ПРОКСИ ───────────────────────────────────────────────────
+console.log('\nАдрес прокси');
+t('разбирает три формы записи', () => {
+  assert.deepStrictEqual(parseProxy('tg://socks?server=1.2.3.4&port=3443&user=u&pass=p'),
+    { host: '1.2.3.4', port: 3443, user: 'u', pass: 'p' });
+  assert.deepStrictEqual(parseProxy('socks5://u:p@1.2.3.4:1080'),
+    { host: '1.2.3.4', port: 1080, user: 'u', pass: 'p' });
+  assert.deepStrictEqual(parseProxy('1.2.3.4:1080'),
+    { host: '1.2.3.4', port: 1080, user: null, pass: null });
+  assert.strictEqual(parseProxy(''), null);
+});
+t('мусор не проглатывается молча', () => {
+  assert.throws(() => parseProxy('tg://socks?server=1.2.3.4'), /port/);
+  assert.throws(() => parseProxy('socks5://1.2.3.4'), /порт/);
+});
+
+console.log('\nМост SOCKS5 → HTTP CONNECT');
+{
+  // Поддельный SOCKS5-сервер: нужен, чтобы проверять мост без сети и без
+  // чужого прокси. Логин и пароль он тоже требует — иначе ветка авторизации
+  // осталась бы непроверенной.
+  const fakeSocks = (creds) => net.createServer(sock => {
+    let stage = 'greet';
+    sock.on('data', async d => {
+      if (stage === 'greet') {
+        const methods = [...d.subarray(2, 2 + d[1])];
+        if (creds && methods.includes(2)) { sock.write(Buffer.from([5, 2])); stage = 'auth'; }
+        else if (!creds && methods.includes(0)) { sock.write(Buffer.from([5, 0])); stage = 'req'; }
+        else sock.write(Buffer.from([5, 0xff]));
+        return;
+      }
+      if (stage === 'auth') {
+        const ulen = d[1], user = d.subarray(2, 2 + ulen).toString();
+        const plen = d[2 + ulen], pass = d.subarray(3 + ulen, 3 + ulen + plen).toString();
+        const ok = user === creds.user && pass === creds.pass;
+        sock.write(Buffer.from([1, ok ? 0 : 1]));
+        stage = ok ? 'req' : 'dead';
+        return;
+      }
+      if (stage === 'req') {
+        const host = d.subarray(5, 5 + d[4]).toString();
+        const port = d.readUInt16BE(5 + d[4]);
+        const up = net.connect(port, host === 'target.test' ? '127.0.0.1' : host, () => {
+          sock.write(Buffer.from([5, 0, 0, 1, 0, 0, 0, 0, 0, 0]));
+          sock.pipe(up); up.pipe(sock);
+        });
+        up.on('error', () => sock.write(Buffer.from([5, 5, 0, 1, 0, 0, 0, 0, 0, 0])));
+        stage = 'piped';
+      }
+    });
+  });
+
+  const listen = (srv, ...a) => new Promise(r => srv.listen(...a, () => r(srv.address().port)));
+  /** Один запрос через мост: CONNECT, затем обмен байтами. */
+  const throughBridge = (bridgeUrl, target) => new Promise((resolve, reject) => {
+    const u = new URL(bridgeUrl);
+    const c = net.connect(Number(u.port), u.hostname, () => {
+      c.write(`CONNECT target.test:${target} HTTP/1.1\r\nHost: target.test:${target}\r\n\r\n`);
+    });
+    let buf = '', tunnelled = false;
+    c.setTimeout(5000, () => { c.destroy(); reject(new Error('таймаут моста')); });
+    c.on('error', reject);
+    c.on('data', d => {
+      buf += d.toString('latin1');
+      if (!tunnelled && buf.includes('\r\n\r\n')) {
+        const status = buf.split('\r\n')[0];
+        if (!/200/.test(status)) { c.destroy(); return resolve({ status, echo: null }); }
+        tunnelled = true; buf = '';
+        c.write('ping-pong');            // ASCII: сравниваем побайтово, без кодировок
+      } else if (tunnelled && buf.length >= 9) {
+        c.destroy();
+        resolve({ status: 'HTTP/1.1 200', echo: buf });
+      }
+    });
+  });
+
+  // Цель туннеля — эхо-сервер.
+  const echo = net.createServer(s => s.pipe(s));
+  const echoPort = await listen(echo, 0, '127.0.0.1');
+
+  await tAsync('туннель с логином и паролем доносит байты', async () => {
+    const socks = fakeSocks({ user: 'u', pass: 'p' });
+    const sp = await listen(socks, 0, '127.0.0.1');
+    const b = await startBridge({ host: '127.0.0.1', port: sp, user: 'u', pass: 'p' });
+    const r = await throughBridge(b.url, echoPort);
+    assert.match(r.status, /200/);
+    assert.strictEqual(r.echo, 'ping-pong', 'данные должны пройти в обе стороны');
+    await b.close(); socks.close();
+  });
+
+  await tAsync('неверный пароль — 502, а не молчание', async () => {
+    const socks = fakeSocks({ user: 'u', pass: 'p' });
+    const sp = await listen(socks, 0, '127.0.0.1');
+    const b = await startBridge({ host: '127.0.0.1', port: sp, user: 'u', pass: 'НЕВЕРНЫЙ' });
+    const r = await throughBridge(b.url, echoPort);
+    assert.match(r.status, /502/, 'клиент обязан узнать о провале авторизации');
+    await b.close(); socks.close();
+  });
+
+  await tAsync('мост без прокси не поднимается сам по себе', async () => {
+    delete process.env.SOCKS_PROXY;
+    assert.strictEqual(await setupProxy(), null);
+    assert.strictEqual(process.env.HTTPS_PROXY, undefined);
+  });
+
+  await tAsync('setupProxy направляет https в мост, а mrmag мимо', async () => {
+    const socks = fakeSocks(null);
+    const sp = await listen(socks, 0, '127.0.0.1');
+    process.env.SOCKS_PROXY = `socks5://127.0.0.1:${sp}`;
+    const p = await setupProxy();
+    assert.match(process.env.HTTPS_PROXY, /^http:\/\/127\.0\.0\.1:\d+$/);
+    assert.strictEqual(process.env.NODE_USE_ENV_PROXY, '1');
+    assert.match(process.env.NO_PROXY, /mrmag\.ru/, 'каталог не должен ходить через заграничный прокси');
+    await p.close(); socks.close();
+    delete process.env.SOCKS_PROXY; delete process.env.HTTPS_PROXY;
+    delete process.env.NODE_USE_ENV_PROXY; delete process.env.NO_PROXY;
+  });
+
+  echo.close();
 }
 
 console.log('\nОграничитель частоты под параллелью');

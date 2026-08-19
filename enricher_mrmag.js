@@ -40,6 +40,7 @@ import {
   CATEGORIES, findCategory, crawlCategory, loadFeed,
   buildFilters, writeCategoryFiles,
 } from './catalog.js';
+import { setupProxy } from './socks.js';
 
 // ── КОНФИГ ───────────────────────────────────────────────────
 const API_KEY    = process.env.OPENROUTER_API_KEY;
@@ -190,6 +191,16 @@ async function main() {
     console.error('❌ Установите OPENROUTER_API_KEY');
     process.exit(1);
   }
+
+  // До первого запроса: и каталог, и модель ходят через fetch.
+  const proxyNotes = [];
+  try {
+    await setupProxy(l => proxyNotes.push(l.trim()));
+  } catch (err) {
+    console.error(`❌ SOCKS_PROXY: ${err.message}`);
+    process.exit(1);
+  }
+  for (const n of proxyNotes) console.log(n);
 
   const { cat, window: products, total } = await fetchProducts();
   const schema = schemaFor(cat.slug) ;

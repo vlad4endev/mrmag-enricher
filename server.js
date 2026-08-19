@@ -189,7 +189,10 @@ function apiCategories(res) {
         products_url: `${c.url}`, spec_keys: s.specKeys,
       };
     }),
-    schemas: Object.fromEntries(Object.entries(SCHEMAS).map(([k, v]) => [k, { id: v.id, name: v.name, spec_keys: v.specKeys }])),
+    // enums отдаём наружу: это готовые значения фасетов, по ним строится фильтр
+    // на витрине — иначе фронт угадывает список допустимых значений сам.
+    schemas: Object.fromEntries(Object.entries(SCHEMAS).map(([k, v]) =>
+      [k, { id: v.id, name: v.name, spec_keys: v.specKeys, numeric_keys: v.numericKeys, enums: v.enums }])),
   });
 }
 

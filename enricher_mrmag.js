@@ -163,9 +163,26 @@ function saveTXT(results, filename, schema, cat) {
       }
     }
 
-    if (d.seo_description) lines.push('', 'SEO-ОПИСАНИЕ:', `  ${d.seo_description}`);
+    // SEO-пакет для страницы товара. Длина рядом со значением: title и meta
+    // режутся поисковиком, и проверять их глазами по символам — лишняя работа.
+    const seo = [
+      ['Title',             'seo_title'],
+      ['H1',                'h1'],
+      ['Meta description',  'meta_description'],
+      ['Краткое описание',  'short_description'],
+      ['SEO-описание',      'seo_description'],
+    ].filter(([, k]) => d[k]);
+    if (seo.length) {
+      lines.push('', 'SEO:');
+      for (const [title, k] of seo) lines.push(`  ${title} (${d[k].length}): ${d[k]}`);
+    }
+    if (d.seo_issues?.length) {
+      lines.push('', 'ЗАМЕТКИ ПО SEO:');
+      for (const x of d.seo_issues) lines.push(`  · ${x}`);
+    }
 
     for (const [title, key] of [
+      ['ПРЕИМУЩЕСТВА', 'bullets'],
       ['СИНОНИМЫ', 'synonyms'],
       ['ПСЕВДОНИМЫ ПОИСКА', 'search_aliases'],
       ['SEO КЛЮЧИ', 'seo_keywords'],

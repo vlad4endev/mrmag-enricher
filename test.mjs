@@ -8,11 +8,17 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import {
-  coerceNumber, extractFacts, crossCheck, parseResponse,
-  normalizeResponse, stripHtml, RateLimiter, isEnrichable,
+  coerceNumber, extractFacts as extractFactsIn, crossCheck, parseResponse,
+  normalizeResponse as normalizeResponseIn, stripHtml, RateLimiter, isEnrichable,
   buildUserContent, rpmFor,
-  SCHEMAS, schemaFor, buildSystemPrompt, enrichProduct,
+  SCHEMAS, GENERIC_SCHEMA, schemaFor, buildSystemPrompt, enrichProduct,
 } from './lib.js';
+
+// Схема по умолчанию — универсальная, а не холодильник: неизвестная категория
+// не должна молча получать чужие поля. Тесты холодильника называют схему сами,
+// а сам дефолт проверяется отдельно в разделе «Схемы категорий».
+const extractFacts = (text, key = 'kholodilniki') => extractFactsIn(text, key);
+const normalizeResponse = (data, src = '', key = 'kholodilniki') => normalizeResponseIn(data, src, key);
 import { parseListing, parseProductPage, buildFilters, assignMissingBrands, writeCategoryFiles } from './catalog.js';
 import { parseProxy, startBridge, setupProxy } from './socks.js';
 import net from 'net';
@@ -323,18 +329,105 @@ t('схема находится по slug, id и названию', () => {
   assert.strictEqual(schemaFor('stiralnye_mashiny').id, 467);
   assert.strictEqual(schemaFor(467).slug, 'stiralnye_mashiny');
   assert.strictEqual(schemaFor('Холодильники').id, 523);
-  assert.strictEqual(schemaFor('чего-то нет').slug, 'kholodilniki', 'неизвестная категория — холодильники');
+  assert.strictEqual(schemaFor('чего-то нет').slug, '_generic', 'неизвестная категория — универсальная схема');
+  assert.strictEqual(schemaFor('').slug, '_generic');
+  assert.strictEqual(schemaFor('Техника для дома/Холодильники').slug, 'kholodilniki',
+    'из пути категории берётся самый точный раздел');
+  assert.strictEqual(schemaFor('Посуда').slug, 'posuda');
 });
 t('поля категорий не пересекаются по смыслу', () => {
   const f = SCHEMAS.kholodilniki.specKeys, w = SCHEMAS.stiralnye_mashiny.specKeys;
   assert.ok(f.includes('объем_морозильной_камеры_л') && !w.includes('объем_морозильной_камеры_л'));
   assert.ok(w.includes('скорость_отжима_об_мин') && !f.includes('скорость_отжима_об_мин'));
 });
+t('реестр схем целостен', () => {
+  for (const [key, s] of Object.entries({ ...SCHEMAS, _generic: GENERIC_SCHEMA })) {
+    const keys = new Set(s.specKeys);
+    assert.strictEqual(keys.size, s.specKeys.length, `${key}: повтор поля`);
+    for (const k of s.numericKeys) assert.ok(keys.has(k), `${key}: numeric ${k} вне specKeys`);
+    for (const k of Object.keys(s.enums)) {
+      assert.ok(keys.has(k), `${key}: enum ${k} вне specKeys`);
+      assert.ok(s.enums[k].length >= 2, `${key}: список ${k} короче двух значений`);
+      assert.ok(!s.numericKeys.includes(k), `${key}: ${k} и число, и список`);
+    }
+    for (const [k] of s.labels) assert.ok(keys.has(k), `${key}: подпись ${k} вне specKeys`);
+    // Диапазоны общие для всех разделов (COMMON_RANGE), поэтому лишний ключ —
+    // не ошибка. Ошибка — перевёрнутый или пустой диапазон: он молча отсечёт всё.
+    for (const [k, r] of Object.entries(s.ranges)) {
+      assert.ok(Array.isArray(r) && r.length === 2 && r[0] < r[1], `${key}: диапазон ${k} нерабочий`);
+    }
+    assert.ok(s.name && s.subject, `${key}: нет имени или предмета`);
+  }
+});
+t('все шестнадцать разделов магазина покрыты схемой', () => {
+  const sections = [
+    'tekhnika_dlya_doma', 'tekhnika_dlya_kukhni', 'audio_videotekhnika', 'posuda',
+    'santekhnika', 'instrument_i_oborudovanie', 'stroitelnye_materialy',
+    'otdelochnye_materialy', 'lakokrasochnaya_produktsiya', 'dveri',
+    'gazovoe_oborudovanie', 'elektro_elementy', 'sadovyy_inventar',
+    'tovary_dlya_uyuta', 'otdyh-na-prirode', 'rasprodazha-skidki',
+  ];
+  for (const slug of sections) assert.ok(SCHEMAS[slug], `нет схемы раздела ${slug}`);
+});
+t('«самое большое — высота» только там, где это правда', () => {
+  const tv = 'Габариты 960x560x80 мм';
+  assert.strictEqual(extractFacts(tv, 'audio_videotekhnika').высота_мм, undefined,
+    'у телевизора наибольшая сторона — ширина, гадать нельзя');
+  assert.deepStrictEqual(extractFacts(tv, 'audio_videotekhnika').размеры_мм, [80, 560, 960],
+    'тройка при этом сохраняется — оси распределит модель');
+  assert.strictEqual(extractFacts('Габариты 600x650x2000 мм', 'kholodilniki').высота_мм, 2000);
+  assert.strictEqual(SCHEMAS.audio_videotekhnika.tallest, false);
+  assert.strictEqual(GENERIC_SCHEMA.tallest, false, 'категория неизвестна — не гадаем');
+  assert.ok(!buildSystemPrompt('audio_videotekhnika').includes('самое большое число это высота'));
+});
+t('чужие поля не протекают между разделами', () => {
+  const tv = SCHEMAS.audio_videotekhnika.specKeys;
+  assert.ok(tv.includes('диагональ_дюйм'));
+  assert.ok(!tv.some(k => /морозил|отжим|загрузк/.test(k)), 'телевизору достались поля техники');
+  assert.ok(!GENERIC_SCHEMA.specKeys.some(k => /морозил|отжим|диагонал/.test(k)),
+    'универсальная схема не должна тянуть поля конкретной категории');
+});
 t('промпт называет категорию и её поля', () => {
   const p = buildSystemPrompt('stiralnye_mashiny');
   assert.match(p, /Категория: Стиральные машины/);
   assert.match(p, /"скорость_отжима_об_мин": null/);
   assert.ok(!/морозил/i.test(p), 'в промпте машины не должно быть морозильной камеры');
+});
+
+t('промпт универсальной схемы не подсовывает чужие поля', () => {
+  const p = buildSystemPrompt('чего-то нет');
+  assert.match(p, /Категория: Товары/);
+  assert.ok(!/морозил|отжим|диагонал/i.test(p));
+});
+t('промпт перечисляет значения фасетов и SEO-пакет', () => {
+  const p = buildSystemPrompt('kholodilniki');
+  assert.match(p, /система_охлаждения: "No Frost" \| "капельная" \| "ручная разморозка"/);
+  for (const k of ['seo_title', 'h1', 'meta_description', 'short_description', 'bullets']) {
+    assert.ok(p.includes(k), `в промпте нет ${k}`);
+  }
+  assert.match(p, /ЗНАЧЕНИЯ ДЛЯ ФИЛЬТРОВ/);
+});
+t('значение вне списка не попадает в фасет', () => {
+  const r = normalizeResponse({ specs: { тип_загрузки: 'Фронтальная', сушка: 'есть', дисплей: 'иногда' } },
+    '', 'stiralnye_mashiny');
+  assert.strictEqual(r.specs.тип_загрузки, 'фронтальная', 'регистр не должен плодить фасеты');
+  assert.strictEqual(r.specs.сушка, 'да', '«есть» — это «да»');
+  assert.strictEqual(r.specs.дисплей, null, 'своё значение в списке недопустимо');
+  assert.strictEqual(r.warnings.filter(w => w.field === 'дисплей').length, 1);
+});
+t('SEO-пакет нормализуется, длины проверяются', () => {
+  const r = normalizeResponse({
+    specs: {},
+    seo_title: '  Холодильник LG GA-B419SQGL No Frost 302 л  ',
+    h1: 'Холодильник LG GA-B419SQGL',
+    meta_description: 'к',
+    bullets: ['  Объём 302 л  ', ''],
+  });
+  assert.strictEqual(r.seo_title, 'Холодильник LG GA-B419SQGL No Frost 302 л');
+  assert.deepStrictEqual(r.bullets, ['Объём 302 л']);
+  assert.ok(r.seo_issues.some(x => x.startsWith('meta_description: 1 симв.')));
+  assert.ok(r.seo_issues.some(x => x === 'short_description: пусто'));
+  assert.ok(!r.seo_issues.some(x => x.startsWith('seo_title:')), 'нормальный title не повод для заметки');
 });
 
 console.log('\nФакты стиральных машин');
@@ -524,7 +617,8 @@ console.log('\nЗапрос к модели');
     record.length = 0;
     stub([reply(answer({ объем_общий_л: '310 л', бренд: 'DON' }),
       { usage: { prompt_tokens: 1000, completion_tokens: 500, cost: 0.002 } })]);
-    const r = await run({ name: 'Холодильник DON', description: 'Общий объем, л 310 Вес (кг) - 62' });
+    const r = await run({ name: 'Холодильник DON', category: 'Холодильники',
+      description: 'Общий объем, л 310 Вес (кг) - 62' });
 
     const [{ url, body }] = record;
     assert.match(url, /openrouter\.ai/);

@@ -1585,7 +1585,11 @@ function downloadAll(fmt='json'){
         out.push('','РАСХОЖДЕНИЯ С ТЕКСТОМ:');
         out.push(d.warnings.map(w=>`  ⚠ ${w.field}: модель "${w.model}"${w.source!=null?`, в тексте "${w.source}"`:''} — ${w.note}`).join('\n'));
       }
-      if(d.seo_description) out.push('','SEO-ОПИСАНИЕ:',`  ${d.seo_description}`);
+      const seoTxt=SEO_TEXTS.filter(([k])=>!isEmpty(d[k]));
+      if(seoTxt.length){
+        out.push('','SEO:');
+        out.push(seoTxt.map(([k,t])=>`  ${t} (${String(d[k]).length}): ${d[k]}`).join('\n'));
+      }
 
       for(const [k,v] of Object.entries(d)){
         if(META_FIELDS.has(k)||isEmpty(v)) continue;
@@ -1635,11 +1639,19 @@ const FIELD_LABELS={
   assembly_group:'Группа', system:'Система', placement:'Расположение',
   material:'Материал', kit_contents:'Комплект', cross_numbers:'Кросс-номера',
   synonyms:'Синонимы', search_aliases:'Псевдонимы поиска', seo_keywords:'SEO ключи',
+  seo_title:'Title', h1:'H1', meta_description:'Meta description',
+  short_description:'Краткое описание', bullets:'Преимущества',
+  // Заметки о длине SEO-текстов: не ошибка модели, а повод причесать руками.
+  seo_issues:'Заметки по SEO',
   // Поля, которые модель оставила пустыми, а детерминированный разбор текста заполнил.
   filled_from_text:'Добрано из текста',
 };
 // Служебные поля: выводятся отдельными блоками, не как обычные карточки.
-const META_FIELDS=new Set(['specs','technical_specs','dimensions','thread','source_facts','warnings','seo_description','confidence']);
+const META_FIELDS=new Set(['specs','technical_specs','dimensions','thread','source_facts','warnings','confidence',
+  'seo_title','h1','meta_description','short_description','seo_description']);
+// Порядок как на странице товара: title → H1 → meta → карточка → текст.
+const SEO_TEXTS=[['seo_title','Title'],['h1','H1'],['meta_description','Meta description'],
+  ['short_description','Краткое описание'],['seo_description','SEO-описание']];
 
 function label(k){
   return FIELD_LABELS[k] || (k.charAt(0).toUpperCase()+k.slice(1)).replace(/_/g,' ');
@@ -1664,8 +1676,10 @@ function renderVis(d){
       +`</div>`;
   }
 
-  if(d.seo_description){
-    out+=`<div class="seobox"><div class="st">SEO-описание</div>${esc(d.seo_description)}</div>`;
+  // SEO-пакет — то, что уезжает на страницу товара: тег title, H1, meta и тексты.
+  const seo=SEO_TEXTS.filter(([k])=>!isEmpty(d[k]));
+  if(seo.length){
+    out+=seo.map(([k,t])=>`<div class="seobox"><div class="st">${t} · ${String(d[k]).length} симв.</div>${esc(d[k])}</div>`).join('');
   }
 
   // Характеристики: и новая схема (specs), и прежняя (technical_specs/dimensions/thread).

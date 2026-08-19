@@ -4,7 +4,7 @@
  * Единственный источник истины по схеме. И CLI (enricher_mrmag.js), и сервер
  * (server.js) берут промпт и нормализацию отсюда — иначе форматы расходятся.
  *
- * Факты из текста (extractFacts) работают в три стороны:
+ * Факты товара (productFacts) работают в три стороны:
  *   1) уезжают модели в промпте как проверенные значения,
  *   2) сверяют её ответ (crossCheck → warnings),
  *   3) добирают поля, которые она оставила null (filled_from_text).
@@ -12,6 +12,12 @@
  * помечает верный ответ расхождением. Отсюда диапазоны правдоподобия,
  * недоверие к подписи осей, не прошедшей эти диапазоны, и отказ выставлять
  * систему охлаждения при отрицании или противоречии в тексте.
+ *
+ * Источников два, и они разного сорта. Проза (extractFacts) даёт точные
+ * значения. Атрибуты магазина (attrFacts) — те же поля, но половина значений
+ * там не характеристика, а корзина фильтра: «От 181 до 190 см» подставить
+ * некуда, зато выход за её границы — расхождение. Спорят между собой — не
+ * утверждаем ничего: магазин противоречит сам себе примерно в 2% карточек.
  */
 
 // ── КУРС ─────────────────────────────────────────────────────
@@ -426,6 +432,7 @@ function defineSchema(s) {
   return {
     slug: s.slug, id: s.id ?? null, name: s.name, subject: s.subject,
     specKeys, numericKeys, enums, labels,
+    attrs:     s.attrs || [],
     ranges:    { ...COMMON_RANGE, ...(s.ranges || {}) },
     tallest:   s.tallest !== false,
     extra:     s.extra || NOOP,
@@ -447,6 +454,65 @@ const POWER = ['сеть 220 В', 'аккумулятор', 'батарейки'
 const MOUNT = ['напольный', 'настенный', 'подвесной', 'встраиваемый', 'настольный'];
 
 const BASE_LABELS = ['вес_кг', 'гарантия_мес'];
+
+// ── АТРИБУТЫ МАГАЗИНА ────────────────────────────────────────
+/**
+ * Атрибуты товара — структурные поля, по которым работает фильтр сайта:
+ * «Система разморозки: Total No Frost», «Высота холодильника: От 181 до 190 см».
+ * Источник не хуже прозы: описание пишет копирайтер, атрибут проставляет
+ * товаровед, и модель видит оба.
+ *
+ * Но половина значений — не характеристика, а интервал фильтра. Подставить его
+ * в поле нельзя («От 181 до 190 см» — это сколько?), а проверить попадание
+ * можно. Поэтому разбор даёт два разных результата: точный факт и границу.
+ */
+
+/** Число, интервал или ничего. `mul` переводит единицы атрибута в единицы поля. */
+function parseRange(value, mul = 1) {
+  const nums = String(value).match(/\d+(?:[.,]\d+)?/g);
+  if (!nums) return null;
+  const n = nums.map(x => Number(x.replace(',', '.')) * mul);
+  // Границы слова здесь только через lookahead: \b в JS считает кириллицу
+  // неслововой, и /от\b/ не срабатывает вообще ни разу. С \b «От 201 см»
+  // молча становилось точной высотой 2010 мм и ссорило проверку с текстом.
+  if (/^\s*до(?![а-яё])/i.test(value)) return { lo: 0, hi: n[0] };
+  // «От 201 см» — верхней границы нет, и придумывать её нельзя.
+  if (/^\s*от(?![а-яё])/i.test(value)) return n.length > 1 ? { lo: n[0], hi: n[1] } : { lo: n[0], hi: Infinity };
+  return n.length === 1 ? n[0] : null;
+}
+
+/**
+ * Значение из списка — только если оно опознано однозначно. «Капельная
+ * система/ручная» и «Автоматическая/ручная» называют две системы сразу: это
+ * фасет фильтра «или то, или другое», а не характеристика товара.
+ */
+function pickEnum(value, variants) {
+  const v = String(value).toLowerCase();
+  const hit = [...new Set(variants.filter(([re]) => re.test(v)).map(([, out]) => out))];
+  return hit.length === 1 ? hit[0] : null;
+}
+
+// «Автоматическая» в атрибутах магазина — та же No Frost. Без этой строки
+// «Автоматическая/ручная» опознавалась бы как однозначно ручная.
+const COOLING_VARIANTS = [
+  [/no\s*frost|автоматическ/i, 'No Frost'],
+  [/капельн/i,                  'капельная'],
+  [/ручн/i,                     'ручная разморозка'],
+];
+const CHAMBER_VARIANTS = [[/одноками/i, 1], [/двухками/i, 2], [/тр[ёе]хками/i, 3]];
+const LOAD_VARIANTS    = [[/фронтал/i, 'фронтальная'], [/вертикал/i, 'вертикальная']];
+
+const FRIDGE_ATTRS = [
+  ['система_охлаждения', /разморозк|охлажд/i,   v => pickEnum(v, COOLING_VARIANTS)],
+  ['количество_камер',   /тип\s*холодильник/i,  v => pickEnum(v, CHAMBER_VARIANTS)],
+  ['высота_мм',          /высота/i,             v => parseRange(v, 10)],
+  ['объем_общий_л',      /общий\s*объ[её]м/i,   v => parseRange(v)],
+];
+const WASHER_ATTRS = [
+  ['тип_загрузки',             /тип\s*загрузки/i,   v => pickEnum(v, LOAD_VARIANTS)],
+  ['максимальная_загрузка_кг', /загрузка\s*белья/i, v => parseRange(v)],
+  ['глубина_мм',               /глубина/i,          v => parseRange(v, 10)],
+];
 
 // ── РЕЕСТР СХЕМ ──────────────────────────────────────────────
 /**
@@ -478,10 +544,11 @@ export const SCHEMAS = {
       ...DIMS,
       ['цвет', 'str'], ['тип_ручек', 'str'],
     ],
-    ranges: FRIDGE_RANGE, labels: FRIDGE_LABELS, extra: fridgeFacts,
+    ranges: FRIDGE_RANGE, labels: FRIDGE_LABELS, extra: fridgeFacts, attrs: FRIDGE_ATTRS,
     unitNotes: [
       'Поля _л — целые литры, _кг — килограммы, _дб — децибелы',
       'система_охлаждения: "Без No Frost" — это капельная, НЕ No Frost',
+      'Высота и объём в виде "От 181 до 190 см", "От 301л до 400л" — корзины фильтра магазина, а не размер: бери значение из текста или ставь null',
     ],
   }),
 
@@ -500,7 +567,7 @@ export const SCHEMAS = {
       ['дисплей', YESNO], ['сушка', YESNO], ['защита_от_протечек', 'str'],
       ...DIMS, ['цвет', 'str'],
     ],
-    ranges: WASHER_RANGE, labels: WASHER_LABELS, extra: washerFacts,
+    ranges: WASHER_RANGE, labels: WASHER_LABELS, extra: washerFacts, attrs: WASHER_ATTRS,
     unitNotes: [
       'скорость_отжима_об_мин — оборотов в минуту, только число',
       'максимальная_загрузка_кг — килограммы сухого белья',
@@ -1003,14 +1070,66 @@ export function extractFacts(text, schemaKey) {
   return f;
 }
 
-// ── СВЕРКА ОТВЕТА С ФАКТАМИ ──────────────────────────────────
-const NUM_TOLERANCE = { высота_мм: 20, ширина_мм: 20, глубина_мм: 20, вес_кг: 1 }; // округления в описаниях
+/** Атрибуты товара → { facts, bounds }. Оба ключа по полям схемы. */
+export function attrFacts(attributes, schemaKey) {
+  const s = schemaFor(schemaKey);
+  const facts = {}, bounds = {};
+  for (const a of Array.isArray(attributes) ? attributes : []) {
+    const name = String(a?.name ?? '');
+    const spec = s.attrs.find(([, re]) => re.test(name));
+    if (!spec) continue;
+    const [key, , parse] = spec;
+    const got = parse(String(a?.value ?? ''));
+    if (got == null) continue;
+    if (typeof got === 'object') bounds[key] = { ...got, source: `${name}: ${a.value}` };
+    else if (typeof got === 'string' || inRange(key, got, s.ranges)) facts[key] = got;
+  }
+  return { facts, bounds };
+}
 
 /**
- * Сравнивает specs модели с фактами из текста. Возвращает список расхождений;
- * при MISMATCH_POLICY='strict' спорное поле модели обнуляется.
+ * Факты товара из обоих источников сразу. Расходятся — не утверждаем ничего:
+ * тот же принцип, что и с «No Frost» рядом с «капельной» внутри одного текста.
+ * Спор магазина с самим собой не разрешается догадкой в нашу пользу.
  */
-export function crossCheck(specs, facts) {
+export function productFacts(product, schemaKey) {
+  const facts = extractFacts(sourceText(product), schemaKey);
+  const { facts: attr, bounds } = attrFacts(product?.attributes, schemaKey);
+
+  for (const [k, v] of Object.entries(attr)) {
+    if (!(k in facts)) { facts[k] = v; continue; }
+    if (!sameFact(k, facts[k], v)) delete facts[k];
+  }
+  // Число из текста вне интервала атрибута — тот же спор источников.
+  for (const [k, b] of Object.entries(bounds)) {
+    if (facts[k] == null) continue;
+    if (withinBound(k, Number(facts[k]), b)) delete bounds[k];  // интервал уже подтверждён точным числом
+    else { delete facts[k]; delete bounds[k]; }
+  }
+  return { facts, bounds };
+}
+
+const sameFact = (key, a, b) => (typeof a === 'number' && typeof b === 'number'
+  ? Math.abs(a - b) <= tolerance(key, b)
+  : String(a).toLowerCase() === String(b).toLowerCase());
+
+// ── СВЕРКА ОТВЕТА С ФАКТАМИ ──────────────────────────────────
+const NUM_TOLERANCE = { высота_мм: 20, ширина_мм: 20, глубина_мм: 20, вес_кг: 1 }; // округления в описаниях
+const tolerance = (key, v) => NUM_TOLERANCE[key] ?? Math.max(1, Math.abs(v) * 0.02);
+// Границу тоже берём с допуском: магазин относит холодильник 1800 мм к полке
+// «От 181 до 190 см» просто округлив, и придираться к этому нечестно.
+const withinBound = (key, v, b) => {
+  const tol = tolerance(key, v);
+  return v >= b.lo - tol && v <= b.hi + tol;
+};
+
+/**
+ * Сравнивает specs модели с фактами источника. `bounds` — интервалы из
+ * атрибутов магазина: точного значения там нет, но выход за границы — такое же
+ * расхождение. Возвращает список расхождений; при MISMATCH_POLICY='strict'
+ * спорное поле модели обнуляется.
+ */
+export function crossCheck(specs, facts, bounds = {}) {
   const warnings = [];
   const flagged = new Set();
   const flag = (field, got, expected, note) => {
@@ -1027,11 +1146,18 @@ export function crossCheck(specs, facts) {
     if (got == null) continue;
 
     if (typeof exp === 'number') {
-      const tol = NUM_TOLERANCE[key] ?? Math.max(1, Math.abs(exp) * 0.02);
-      if (Math.abs(Number(got) - exp) > tol) flag(key, got, exp, 'не совпало с текстом');
+      if (Math.abs(Number(got) - exp) > tolerance(key, exp)) flag(key, got, exp, 'не совпало с текстом');
     } else if (String(got).toLowerCase() !== String(exp).toLowerCase()) {
       flag(key, got, exp, 'не совпало с текстом');
     }
+  }
+
+  // Интервалы из атрибутов: поле, у которого есть точный факт, уже сверено выше.
+  for (const [key, b] of Object.entries(bounds)) {
+    if (key in facts) continue;
+    const got = Number(specs[key]);
+    if (specs[key] == null || !Number.isFinite(got) || withinBound(key, got, b)) continue;
+    flag(key, specs[key], null, `вне значения атрибута магазина («${b.source}»)`);
   }
 
   // Оси без подписи: какая из трёх — не знаем, но само число обязано быть в тройке.
@@ -1114,7 +1240,7 @@ const RICH_SPECS = 5;
 const seoFloor = (key, filled) =>
   (key === 'seo_description' && filled < RICH_SPECS ? 400 : SEO_LIMITS[key][0]);
 
-export function normalizeResponse(data, sourceText = '', schemaKey) {
+export function normalizeResponse(data, sourceText = '', schemaKey, attributes = []) {
   if (!data || typeof data !== 'object' || Array.isArray(data)) {
     throw new Error('Ответ не объект');
   }
@@ -1141,8 +1267,10 @@ export function normalizeResponse(data, sourceText = '', schemaKey) {
     }
   }
 
-  const facts = extractFacts(sourceText, schema);
-  const warnings = crossCheck(specs, facts).concat(enumIssues);
+  // Источника два: проза и атрибуты магазина. productFacts сводит их вместе и
+  // молчит там, где они спорят друг с другом.
+  const { facts, bounds } = productFacts({ description: sourceText, attributes }, schema);
+  const warnings = crossCheck(specs, facts, bounds).concat(enumIssues);
 
   // Пропуск модели — не повод терять факт: если поле null, а в тексте значение
   // разобрано однозначно, подставляем его и перечисляем, что подставили.
@@ -1343,7 +1471,7 @@ export async function enrichProduct(product, opts) {
   // в промпте объём морозильной камеры.
   const schema = schemaFor(schemaOpt || product.category);
   const src = sourceText(product);
-  const facts = extractFacts(src, schema);
+  const { facts } = productFacts(product, schema);
   const userContent = buildUserContent(product, facts);
   let tokenBudget = maxTokens;
   let lastErr;
@@ -1426,7 +1554,7 @@ export async function enrichProduct(product, opts) {
 
     let enriched;
     try {
-      enriched = normalizeResponse(parseResponse(choice.message?.content ?? ''), src, schema);
+      enriched = normalizeResponse(parseResponse(choice.message?.content ?? ''), src, schema, product.attributes);
     } catch (err) {
       lastErr = err;
       if (attempt < maxRetries) { onNote(`parse err, retry ${attempt}`); await sleep(2000); continue; }

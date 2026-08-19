@@ -10,7 +10,7 @@ import path from 'path';
 import {
   coerceNumber, extractFacts as extractFactsIn, crossCheck, parseResponse,
   normalizeResponse as normalizeResponseIn, stripHtml, RateLimiter, isEnrichable,
-  buildUserContent, rpmFor,
+  buildUserContent, rpmFor, attrFacts, productFacts,
   SCHEMAS, GENERIC_SCHEMA, schemaFor, buildSystemPrompt, enrichProduct,
 } from './lib.js';
 
@@ -18,7 +18,8 @@ import {
 // не должна молча получать чужие поля. Тесты холодильника называют схему сами,
 // а сам дефолт проверяется отдельно в разделе «Схемы категорий».
 const extractFacts = (text, key = 'kholodilniki') => extractFactsIn(text, key);
-const normalizeResponse = (data, src = '', key = 'kholodilniki') => normalizeResponseIn(data, src, key);
+const normalizeResponse = (data, src = '', key = 'kholodilniki', attrs = []) => normalizeResponseIn(data, src, key, attrs);
+const attr = (name, value) => ({ name, value });
 import { parseListing, parseProductPage, buildFilters, assignMissingBrands, writeCategoryFiles } from './catalog.js';
 import { buildV2, splitKey } from './export_v2.js';
 import { parseProxy, startBridge, setupProxy } from './socks.js';
@@ -180,6 +181,86 @@ t('расхождение доезжает до warnings', () => {
   const r = normalizeResponse({ specs: { объем_общий_л: 250 } }, 'общий объем 310 л');
   assert.strictEqual(r.warnings.length, 1);
   assert.strictEqual(r.source_facts.объем_общий_л, 310);
+});
+
+console.log('\nАтрибуты магазина как источник фактов');
+// Все значения ниже взяты дословно из products_523.json и products_467.json.
+t('однозначное значение атрибута становится фактом', () => {
+  const f = k => attrFacts([attr('Система разморозки', k)], 'kholodilniki').facts.система_охлаждения;
+  assert.strictEqual(f('Total No Frost'), 'No Frost');
+  assert.strictEqual(f('Full No Frost'), 'No Frost');
+  assert.strictEqual(f('Капельная система'), 'капельная');
+  assert.strictEqual(f('Ручная разморозка'), 'ручная разморозка');
+  // «Автоматическая» в атрибутах магазина — та же No Frost.
+  assert.strictEqual(f('Автоматическая/ No Frost'), 'No Frost');
+});
+t('атрибут с двумя системами сразу — это фасет фильтра, а не характеристика', () => {
+  const f = k => attrFacts([attr('Система разморозки', k)], 'kholodilniki').facts.система_охлаждения;
+  // 75 товаров каталога: «или капельная, или ручная» — какая именно, неизвестно.
+  assert.strictEqual(f('Капельная система/ручная'), undefined);
+  assert.strictEqual(f('Автоматическая/ручная'), undefined, '«автоматическая» тоже вариант, значит их два');
+  assert.strictEqual(f('No Frost/капельная'), undefined);
+});
+t('интервал фильтра не выдаётся за точное значение', () => {
+  const { facts, bounds } = attrFacts([attr('Высота холодильника', 'От 181 до 190 см')], 'kholodilniki');
+  assert.strictEqual(facts.высота_мм, undefined, 'подставить интервал в поле нельзя');
+  assert.deepStrictEqual([bounds.высота_мм.lo, bounds.высота_мм.hi], [1810, 1900]);
+});
+t('открытый интервал не получает выдуманной второй границы', () => {
+  // Регрессия: с /от\b/ проверка не срабатывала — в JS кириллица неслововая, —
+  // и «От 201 см» молча становилось точной высотой 2010 мм.
+  const { facts, bounds } = attrFacts([attr('Высота холодильника', 'От 201 см')], 'kholodilniki');
+  assert.strictEqual(facts.высота_мм, undefined);
+  assert.deepStrictEqual([bounds.высота_мм.lo, bounds.высота_мм.hi], [2010, Infinity]);
+  const до = attrFacts([attr('Общий Объем', 'До 100л')], 'kholodilniki').bounds.объем_общий_л;
+  assert.deepStrictEqual([до.lo, до.hi], [0, 100]);
+});
+t('число без «от/до» — точное значение', () => {
+  const f = v => attrFacts([attr('Мax загрузка белья, (кг)', v)], 'stiralnye_mashiny').facts;
+  assert.strictEqual(f('7').максимальная_загрузка_кг, 7);
+  assert.strictEqual(f('5.5').максимальная_загрузка_кг, 5.5);
+  const b = attrFacts([attr('Глубина, (см)', 'от 40,5 до 50')], 'stiralnye_mashiny').bounds;
+  assert.deepStrictEqual([b.глубина_мм.lo, b.глубина_мм.hi], [405, 500], 'запятая как разделитель, см → мм');
+});
+t('спор текста с атрибутом снимает факт, а не выбирает победителя', () => {
+  // Товар 561253: в тексте 194,7 см, в фильтре полка «От 181 до 190 см».
+  // Магазин противоречит сам себе — сверять модель по такому нельзя.
+  const p = { description: 'Высота 194.7 см', attributes: [attr('Высота холодильника', 'От 181 до 190 см')] };
+  const { facts, bounds } = productFacts(p, 'kholodilniki');
+  assert.strictEqual(facts.высота_мм, undefined);
+  assert.strictEqual(bounds.высота_мм, undefined);
+});
+t('точное число из текста подтверждает интервал и снимает его', () => {
+  const p = { description: 'Высота 185 см', attributes: [attr('Высота холодильника', 'От 181 до 190 см')] };
+  const { facts, bounds } = productFacts(p, 'kholodilniki');
+  assert.strictEqual(facts.высота_мм, 1850);
+  assert.strictEqual(bounds.высота_мм, undefined, 'сверять дважды одно и то же незачем');
+});
+
+console.log('\nСверка по интервалу атрибута');
+t('значение внутри интервала расхождением не считается', () => {
+  const r = normalizeResponse({ specs: { объем_общий_л: 350 } }, 'Холодильник',
+    'kholodilniki', [attr('Общий Объем', 'От 301л до 400л')]);
+  assert.deepStrictEqual(r.warnings, []);
+});
+t('значение вне интервала попадает в расхождения', () => {
+  const r = normalizeResponse({ specs: { объем_общий_л: 180 } }, 'Холодильник',
+    'kholodilniki', [attr('Общий Объем', 'От 301л до 400л')]);
+  assert.strictEqual(r.warnings.length, 1);
+  assert.strictEqual(r.warnings[0].field, 'объем_общий_л');
+  assert.match(r.warnings[0].note, /От 301л до 400л/, 'в тексте расхождения видно, чем именно недоволен');
+});
+t('округление магазина по границе не придирка', () => {
+  // 1800 мм в полке «От 181 до 190 см» — товаровед округлил, а не ошибся.
+  const r = normalizeResponse({ specs: { высота_мм: 1800 } }, 'Холодильник',
+    'kholodilniki', [attr('Высота холодильника', 'От 181 до 190 см')]);
+  assert.deepStrictEqual(r.warnings, []);
+});
+t('атрибут добирает поле, которое модель оставила пустым', () => {
+  const r = normalizeResponse({ specs: { система_охлаждения: null } }, 'Холодильник',
+    'kholodilniki', [attr('Система разморозки', 'Total No Frost')]);
+  assert.strictEqual(r.specs.система_охлаждения, 'No Frost');
+  assert.ok(r.filled_from_text.includes('система_охлаждения'));
 });
 
 console.log('\nОграничитель частоты');

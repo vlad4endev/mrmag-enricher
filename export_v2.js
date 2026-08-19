@@ -130,10 +130,17 @@ const keywords = e => {
  * Необработанные позиции пропускаются — без enriched у товара нет ни
  * description_html, ни характеристик, то есть в v2 ему нечем быть.
  */
-export function buildV2(rows) {
-  const enriched = (rows || []).filter(r => r && r.enriched && r.enriched.specs);
+export const enrichedRows = rows => (rows || []).filter(r => r && r.enriched && r.enriched.specs);
 
-  // Диапазон нельзя выбрать по одному товару: сначала весь разброс раздела.
+/**
+ * Разброс числовых полей по всему набору и функция «число → подпись фасета».
+ * Диапазон нельзя выбрать по одному товару, поэтому сначала весь набор.
+ *
+ * Отдаётся наружу, потому что фасеты считают двое: выгрузка v2 и
+ * filters_(id).json. Посчитай каждый по-своему — округление разойдётся, и товар
+ * не попадёт в свой же фильтр.
+ */
+export function facetScale(enriched) {
   const nums = new Map();
   for (const r of enriched) {
     for (const [k, v] of Object.entries(r.enriched.specs)) {
@@ -149,6 +156,57 @@ export function buildV2(rows) {
   const bucket = new Map([...nums].map(([name, vs]) => [name, bucketize(vs)]));
   const valueOf = (name, v) =>
     typeof v === 'number' ? bucket.get(name)(v) : (YESNO[String(v).toLowerCase()] || String(v));
+  return { nums, valueOf };
+}
+
+/**
+ * Фасеты из обогащения со счётчиками — для filters_(id).json, где у фильтра есть
+ * код поля, тип и количество товаров на значение. В v2 та же раскладка идёт без
+ * счётчиков: там формат импорта, а не витрина.
+ */
+export function specFacets(rows) {
+  const enriched = enrichedRows(rows);
+  if (!enriched.length) return [];
+  const { nums, valueOf } = facetScale(enriched);
+
+  // Порядок полей — как в схеме: он осмысленный, и фильтр читается сверху вниз.
+  const facets = new Map();
+  for (const r of enriched) {
+    for (const k of Object.keys(r.enriched.specs)) {
+      if (!facets.has(k)) facets.set(k, new Map());
+    }
+  }
+  for (const r of enriched) {
+    for (const [k, v] of Object.entries(r.enriched.specs)) {
+      if (v == null || v === '') continue;
+      const counts = facets.get(k);
+      const label = valueOf(facetName(k), v);
+      counts.set(label, (counts.get(label) || 0) + 1);
+    }
+  }
+
+  const lead = s => parseFloat(s);
+  return [...facets].filter(([, counts]) => counts.size).map(([key, counts]) => {
+    const name = facetName(key);
+    const numeric = nums.has(name);
+    const raw = numeric ? enriched.map(r => r.enriched.specs[key]).filter(v => typeof v === 'number') : [];
+    const filled = [...counts.values()].reduce((a, b) => a + b, 0);
+    return {
+      code: key, name, type: 'checkbox', source: 'enriched',
+      values: [...counts].map(([value, count]) => ({ value, count }))
+        .sort((a, b) => (numeric ? lead(a.value) - lead(b.value)
+          : b.count - a.count || String(a.value).localeCompare(String(b.value), 'ru'))),
+      // Крайние значения по сырым числам: подписи фасета — это уже интервалы,
+      // и слайдер по ним не построить.
+      ...(numeric ? { min: Math.min(...raw), max: Math.max(...raw) } : {}),
+      ...(filled < enriched.length ? { without_value: enriched.length - filled } : {}),
+    };
+  });
+}
+
+export function buildV2(rows) {
+  const enriched = enrichedRows(rows);
+  const { nums, valueOf } = facetScale(enriched);
 
   const products = enriched.map(r => {
     const e = r.enriched;

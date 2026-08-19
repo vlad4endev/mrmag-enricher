@@ -27,6 +27,7 @@ import path from 'path';
 import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 import { netError, isEnrichable, modelToken, MIN_SOURCE_CHARS } from './lib.js';
+import { specFacets, enrichedRows } from './export_v2.js';
 
 export const ORIGIN = 'https://mrmag.ru';
 export const FEED_URL = `${ORIGIN}/scripts/sync_local/products.json`;
@@ -528,19 +529,48 @@ export async function ensureSource(product, schema, { onNote = () => {} } = {}) 
  * магазин, цена — фактический диапазон. Ничего вручную не задаётся, поэтому
  * файл не расходится с каталогом.
  */
-export function buildFilters(category, products) {
+/**
+ * Бренд товара: сначала классификация магазина, потом обогащение.
+ *
+ * Второй источник появился не для красоты: листинг отдаёт бренд классом
+ * mr-brand, а фид products.json — нет. Прогон по фиду давал фильтр «Бренд» с
+ * пустым списком и «без значения: 259», потому что assignMissingBrands строит
+ * словарь из тех же товаров и без единого бренда ему не с чего начать.
+ * В обогащении бренд уже разобран — не использовать его было бы расточительно.
+ */
+const brandOf = p => {
+  const shop = p.brand || p.brand_slug;
+  if (shop) return { value: p.brand || p.brand_slug, slug: p.brand_slug || null, source: p.brand_source || 'shop' };
+  const ai = p.enriched?.specs?.бренд;
+  return ai ? { value: String(ai).trim(), slug: null, source: 'enriched' } : null;
+};
+
+/**
+ * Фильтры раздела: бренд и цена магазина плюс фасеты из обогащения.
+ *
+ * facetsFrom нужен CLI: бренд и цена считаются по всему листингу раздела, а
+ * фасеты — только по обогащённым товарам, и это разные наборы. Без него файл
+ * из CLI знал бы про раздел меньше, чем файл из интерфейса.
+ */
+export function buildFilters(category, products, { facetsFrom = products } = {}) {
   const brands = new Map();
   for (const p of products) {
-    const key = p.brand_slug || p.brand;
-    if (!key) continue;
-    const b = brands.get(key) || { value: p.brand || key, slug: p.brand_slug || null, count: 0 };
+    const b0 = brandOf(p);
+    if (!b0) continue;
+    const key = b0.slug || b0.value;
+    const b = brands.get(key) || { value: b0.value, slug: b0.slug, count: 0 };
     b.count++;
     brands.set(key, b);
   }
 
   const prices = products.map(p => p.price).filter(v => Number.isFinite(v) && v > 0);
-  const noBrand = products.filter(p => !(p.brand_slug || p.brand)).length;
+  const noBrand = products.filter(p => !brandOf(p)).length;
   const byName = products.filter(p => p.brand_source === 'name').length;
+  const byAI = products.filter(p => brandOf(p)?.source === 'enriched').length;
+
+  // Бренд из обогащения уже учтён в фасете «Бренд» — вторым списком он не нужен.
+  const specs = specFacets(facetsFrom).filter(f => f.code !== 'бренд');
+  const enrichedTotal = enrichedRows(facetsFrom).length;
 
   return {
     category_id: category.id,
@@ -548,6 +578,7 @@ export function buildFilters(category, products) {
     url:         category.url,
     generated_at: new Date().toISOString(),
     products_total: products.length,
+    enriched_total: enrichedTotal,
     filters: [
       {
         code: 'brand', name: 'Бренд', type: 'checkbox',
@@ -555,6 +586,7 @@ export function buildFilters(category, products) {
         values: [...brands.values()].sort((a, b) => b.count - a.count || a.value.localeCompare(b.value, 'ru')),
         ...(noBrand ? { without_value: noBrand } : {}),
         ...(byName ? { assigned_by_name: byName } : {}),
+        ...(byAI ? { assigned_by_ai: byAI } : {}),
       },
       {
         code: 'price', name: 'Цена', type: 'range', unit: '₽',
@@ -565,6 +597,7 @@ export function buildFilters(category, products) {
         step: prices.length ? priceStep(Math.max(...prices) - Math.min(...prices)) : null,
         ...(prices.length < products.length ? { without_price: products.length - prices.length } : {}),
       },
+      ...specs,
     ],
   };
 }
@@ -596,7 +629,8 @@ export function writeCategoryFiles(category, products, { dir = '.', filterProduc
   const filtersFile = path.join(dir, `filters_${category.id}.json`);
   // Фильтр описывает раздел, а не окно: бренд и цена есть у всех товаров
   // листинга, поэтому ограничивать их окном незачем и неверно.
-  fs.writeFileSync(filtersFile, JSON.stringify(buildFilters(category, filterProducts || products), null, 2), 'utf-8');
+  fs.writeFileSync(filtersFile, JSON.stringify(
+    buildFilters(category, filterProducts || products, { facetsFrom: products }), null, 2), 'utf-8');
 
   return { productsFile, filtersFile };
 }

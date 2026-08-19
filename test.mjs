@@ -683,6 +683,55 @@ t('бренд из названия по словарю категории', () 
   assert.strictEqual(items[4].brand, undefined);
   assert.strictEqual(items[0].brand_source, undefined, 'бренду от магазина пометка не нужна');
 });
+t('бренд берётся из обогащения, когда магазин его не отдал', () => {
+  // Так выглядит прогон по фиду: brand в товарах нет вовсе, и словарю
+  // assignMissingBrands не с чего начать — раньше фильтр выходил пустым.
+  const f = buildFilters({ id: 523, name: 'Холодильники', url: 'u' }, [
+    { sku: '1', price: 30000, enriched: { specs: { бренд: 'LG' } } },
+    { sku: '2', price: 45000, enriched: { specs: { бренд: 'LG' } } },
+    { sku: '3', price: 18000, enriched: { specs: { бренд: 'DON' } } },
+    { sku: '4', price: 1624, enriched: null },
+  ]);
+  const brand = f.filters.find(x => x.code === 'brand');
+  assert.deepStrictEqual(brand.values.map(v => [v.value, v.count]), [['LG', 2], ['DON', 1]]);
+  assert.strictEqual(brand.without_value, 1, 'товар без прогона остаётся без бренда');
+  assert.strictEqual(brand.assigned_by_ai, 3, 'источник бренда должен быть виден в файле');
+  assert.ok(!f.filters.some(x => x.code === 'бренд'), 'бренд не должен идти вторым фасетом');
+});
+t('фасеты обогащения попадают в файл фильтров со счётчиками', () => {
+  const row = (sku, specs, price) => ({ sku, name: 'Товар ' + sku, price, enriched: { specs } });
+  const f = buildFilters({ id: 523, name: 'Холодильники', url: 'u' }, [
+    row('1', { система_охлаждения: 'No Frost', объем_общий_л: 310, высота_мм: 1900 }, 30000),
+    row('2', { система_охлаждения: 'No Frost', объем_общий_л: 365 }, 45000),
+    row('3', { система_охлаждения: 'капельная', объем_общий_л: 419, высота_мм: 1880 }, 18000),
+  ]);
+  assert.strictEqual(f.enriched_total, 3, 'файл должен говорить, сколько товаров обогащено');
+
+  const cool = f.filters.find(x => x.code === 'система_охлаждения');
+  assert.strictEqual(cool.name, 'Система охлаждения');
+  assert.strictEqual(cool.source, 'enriched', 'видно, что фасет из прогона, а не из магазина');
+  assert.deepStrictEqual(cool.values, [{ value: 'No Frost', count: 2 }, { value: 'капельная', count: 1 }]);
+
+  const vol = f.filters.find(x => x.code === 'объем_общий_л');
+  assert.strictEqual(vol.name, 'Объем общий, л', 'единица уезжает в имя фасета');
+  assert.strictEqual(vol.min, 310, 'крайние значения по сырым числам — по подписям слайдер не построить');
+  assert.strictEqual(vol.max, 419);
+
+  const h = f.filters.find(x => x.code === 'высота_мм');
+  assert.strictEqual(h.without_value, 1, 'у одного товара высоты нет');
+});
+t('фасеты считаются по обогащённым, бренд и цена — по всему разделу', () => {
+  // CLI пишет фильтры по листингу раздела, а прогон бывает по окну.
+  const listing = [
+    { sku: '1', brand: 'LG', brand_slug: 'lg', price: 30000 },
+    { sku: '2', brand: 'DON', brand_slug: 'don', price: 45000 },
+  ];
+  const run = [{ sku: '1', brand: 'LG', brand_slug: 'lg', price: 30000, enriched: { specs: { цвет: 'белый' } } }];
+  const f = buildFilters({ id: 523, name: 'Х', url: 'u' }, listing, { facetsFrom: run });
+  assert.strictEqual(f.products_total, 2, 'бренд и цена — по разделу');
+  assert.strictEqual(f.enriched_total, 1);
+  assert.deepStrictEqual(f.filters.find(x => x.code === 'цвет').values, [{ value: 'белый', count: 1 }]);
+});
 t('пустая категория не роняет фильтры', () => {
   const f = buildFilters({ id: 1, name: 'X', url: 'u' }, []);
   assert.deepStrictEqual(f.filters[0].values, []);

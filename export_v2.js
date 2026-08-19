@@ -86,9 +86,9 @@ const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(
 const idOf = p => (/^\d+$/.test(String(p.sku ?? '')) ? Number(p.sku) : (p.sku ?? null));
 
 /**
- * Описание + характеристики одним html: абзац, список характеристик, абзац.
- * ponytail: bullets в файл не идут — заказчик просил описание и точные
- * характеристики; добавить как <ul> после списка, если понадобятся.
+ * Описание + характеристики одним html: абзац, список характеристик, плюсы
+ * товара, абзац. Плюсы идут отдельным <ul> после характеристик: смешивать их
+ * со списком нельзя — там точные значения, а здесь текст модели.
  */
 function descHtml(e) {
   const out = [];
@@ -105,6 +105,9 @@ function descHtml(e) {
       return `<li>${esc(label)}: ${esc(val)}</li>`;
     });
   if (li.length) out.push(`<ul>${li.join('')}</ul>`);
+
+  const bullets = (e.bullets || []).map(b => String(b).trim()).filter(Boolean);
+  if (bullets.length) out.push(`<ul>${bullets.map(b => `<li>${esc(b)}</li>`).join('')}</ul>`);
 
   if (e.seo_description && e.seo_description !== intro) out.push(`<p>${esc(e.seo_description)}</p>`);
   return out.join('');

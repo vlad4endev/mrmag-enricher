@@ -416,6 +416,25 @@ t('значение вне списка не попадает в фасет', ()
   assert.strictEqual(r.specs.дисплей, null, 'своё значение в списке недопустимо');
   assert.strictEqual(r.warnings.filter(w => w.field === 'дисплей').length, 1);
 });
+t('основной текст: порог длины зависит от того, есть ли о чём писать', () => {
+  const rich = { тип_товара: 'холодильник', бренд: 'LG', модель: 'GA-B419', цвет: 'белый',
+    объем_общий_л: 310, вес_кг: 62, высота_мм: 1900, система_охлаждения: 'No Frost' };
+  const issue = (specs, len) => normalizeResponse({ specs, seo_description: 'к'.repeat(len) })
+    .seo_issues.find(x => x.startsWith('seo_description'));
+
+  assert.match(issue(rich, 500), /рекомендуется 900–2200/, 'на восьми характеристиках 500 символов — мало');
+  assert.strictEqual(issue(rich, 1200), undefined);
+  assert.strictEqual(issue({ бренд: 'LG' }, 500), undefined,
+    'на одной характеристике 900 символов честно не написать — порог ниже');
+});
+t('промпт требует основной текст первым и абзацами', () => {
+  const p = buildSystemPrompt('kholodilniki');
+  assert.match(p, /900–1800 символов, ТРИ абзаца/);
+  // Порядок ключей: длинный текст раньше короткого, иначе короткий забирает суть.
+  assert.ok(p.indexOf('"seo_description": ""') < p.indexOf('"short_description": ""'));
+  assert.ok(p.indexOf('"seo_description": ""') < p.indexOf('"seo_title": ""'));
+  assert.match(p, /Вода запрещена/);
+});
 t('SEO-пакет нормализуется, длины проверяются', () => {
   const r = normalizeResponse({
     specs: {},

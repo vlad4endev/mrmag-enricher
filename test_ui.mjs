@@ -80,6 +80,48 @@ globalThis.fetch = () => Promise.reject(new Error('сеть в тесте отк
 const reply = (data, ok = true, status = ok ? 200 : 500) =>
   Promise.resolve({ ok, status, text: () => Promise.resolve(typeof data === 'string' ? data : JSON.stringify(data)) });
 globalThis.URL = { createObjectURL: () => 'blob:', revokeObjectURL: () => {} };
+/**
+ * Заглушка фонового прогона. Цикл по товарам считает сервер (POST /api/jobs и
+ * опрос состояния), поэтому вкладка проверяется как его клиент: задача ставится,
+ * а опрос отдаёт результаты. tail — сколько товаров ещё не обработано: дырка в
+ * конце ответа, по ней клиент понимает, докуда двигать курсор.
+ */
+function fakeJobs(make, { status = 'done', tail = 0, id = 'job-test', seed = null } = {}) {
+  let job = seed, polls = 0;
+  const at = () => (typeof status === 'function' ? status(polls) : status);
+  const fn = (url, opts) => {
+    if (url === '/api/jobs' && opts?.method === 'POST') {
+      job = JSON.parse(opts.body);
+      return reply({ id, status: 'running', total: job.products.length, done: 0, indices: job.indices });
+    }
+    if (url.startsWith(`/api/jobs/${id}/stop`)) { fn.stopped = true; return reply({ id, status: 'running' }); }
+    if (url.startsWith(`/api/jobs/${id}`)) {
+      const from = Number(new URLSearchParams(url.split('?')[1] || '').get('from') || 0);
+      const st = at();
+      polls++;
+      // Пока прогон идёт, готово столько, сколько успел сервер: последний
+      // опрос отдаёт всё.
+      const hole = st === 'running' ? Math.max(tail, 1) : tail;
+      const results = job.products.map((p, k) => k < job.products.length - hole ? make(p, k) : null);
+      const done = results.filter(Boolean).length;
+      return reply({
+        id, status: st, model: job.model, total: results.length, done, indices: job.indices,
+        from, results: results.slice(from), products: job.products,
+        started_at: 1000, finished_at: 2000,
+        usage: {
+          prompt_tokens: 0, completion_tokens: 0, cost: 0,
+          ok:   results.filter(r => r?.enriched).length,
+          skip: results.filter(r => r?.skipped).length,
+          err:  results.filter(r => r && !r.enriched && !r.skipped).length,
+        },
+      });
+    }
+    if (url === '/api/jobs') return reply({ jobs: job ? [{ id, status: at() }] : [] });
+    return Promise.reject(new Error(`неожиданный запрос ${url}`));
+  };
+  fn.job = () => job;
+  return fn;
+}
 globalThis.Blob = class { constructor(a) { this.parts = a; } };
 Object.defineProperty(globalThis, 'navigator', {
   value: { clipboard: { writeText: () => Promise.resolve() } }, configurable: true,
@@ -96,7 +138,8 @@ export const api={syncSteps,setCnt,setCntFree,applyCnt,applySource,setSource,pic
   renderEstimate,setFilter,stepError,pick,sumRun,renderFoot,clearResults,restoreResults,saveResults,
   downloadAll,downloadCategoryFiles,downloadV2,initTheme,toggleTheme,applyTheme,dur,renderRunline,
   loadCategories,catOf,renderModelList,filterModels,
-  applyDates,clearDates,renderDates,passesFilter,queued,onProdInput,apiJson,run};
+  applyDates,clearDates,renderDates,passesFilter,queued,onProdInput,apiJson,run,
+  stopJob,follow,attachJob,resumeJob,applyJob,finishRun};
 export const st={get items(){return items},set items(v){items=v},
   get srcItems(){return srcItems},set srcItems(v){srcItems=v},
   get pickCat(){return pickCat},set pickCat(v){pickCat=v},get selCnt(){return selCnt},get results(){return results},
@@ -110,6 +153,9 @@ export const st={get items(){return items},set items(v){items=v},
   set runT0(v){runT0=v},
   get quality(){return quality},set quality(v){quality=v},
   get runStore(){return runStore},
+  get jobId(){return jobId},set jobId(v){jobId=v},
+  get jobPos(){return jobPos},set jobPos(v){jobPos=v},
+  get following(){return following},set following(v){following=v},
   get dateKey(){return dateKey}};
 `;
 const tmp = path.join(ROOT, '.ui_under_test.mjs');
@@ -587,8 +633,8 @@ await tAsync('окно сузилось после прогона — в фай�
                  { sku: '3', name: 'C', category: 'Холодильники' }]);
 
   const realFetch = globalThis.fetch;
-  globalThis.fetch = () => reply({ enriched: { specs: { цвет: 'белый' }, warnings: [] },
-    usage: { prompt_tokens: 10, completion_tokens: 5, cost: 0.001 } });
+  globalThis.fetch = fakeJobs(() => ({ enriched: { specs: { цвет: 'белый' }, warnings: [] },
+    iT: 10, oT: 5, cost: 0.001 }));
   try { await api.run(); } finally { globalThis.fetch = realFetch; }
   assert.strictEqual(st.results.filter(Boolean).length, 3, 'прогон прошёл по всем трём');
 
@@ -809,6 +855,133 @@ await tAsync('без справочника интерфейс работает 
   assert.strictEqual(api.catOf(st.items[0]).name, 'Холодильники', 'название берётся у товара');
 });
 globalThis.fetch = () => Promise.reject(new Error('сеть в тесте отключена'));
+
+console.log('\nПрогон считает сервер, а не вкладка');
+t('первый заход без сохранений ничего не ломает', () => {
+  // Падение здесь обрывало весь init — вместе с подхватом идущего прогона.
+  localStorage.removeItem('enricher.lastRun');
+  api.restoreResults();
+});
+
+// Раньше цикл по товарам крутила эта страница: закрытая вкладка обрывала работу
+// на середине. Теперь она ставит задачу и опрашивает прогресс.
+const THREE = () => [{ sku: '1', name: 'A', category: 'Холодильники' },
+                     { sku: '2', name: 'B', category: 'Холодильники' },
+                     { sku: '3', name: 'C', category: 'Холодильники' }];
+const DONE = () => ({ enriched: { specs: { цвет: 'белый' }, warnings: [] }, iT: 10, oT: 5, cost: 0.001 });
+
+await tAsync('вкладка ставит задачу на сервер и помнит её id, пока она идёт', async () => {
+  st.runStore.clear();
+  st.allModels = [MODEL]; api.pick(MODEL.id);
+  api.setSource(THREE());
+
+  let idWhileRunning = null;
+  const f = fakeJobs(() => { idWhileRunning = localStorage.getItem('enricher.jobId'); return DONE(); });
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = f;
+  try { await api.run(); } finally { globalThis.fetch = realFetch; }
+
+  assert.strictEqual(f.job().model, MODEL.id, 'модель уходит на сервер, а не остаётся в браузере');
+  assert.deepStrictEqual(f.job().indices, [0, 1, 2], 'по ним результат вернётся в свою строку');
+  assert.strictEqual(f.job().products.length, 3);
+  assert.strictEqual(idWhileRunning, 'job-test', 'id сохранён сразу: без него закрытую вкладку не вернуть к прогону');
+  assert.strictEqual(localStorage.getItem('enricher.jobId'), null, 'прогон кончился — следить больше не за чем');
+  assert.strictEqual(st.results.filter(Boolean).length, 3);
+  assert.strictEqual(st.running, false);
+});
+
+await tAsync('необработанный хвост не выдаётся за готовый', async () => {
+  st.runStore.clear();
+  api.setSource(THREE());
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = fakeJobs(DONE, { tail: 1 });
+  try { await api.run(); } finally { globalThis.fetch = realFetch; }
+  assert.strictEqual(st.results.filter(Boolean).length, 2, 'третий товар сервер не отдал — значит, его нет');
+  assert.strictEqual(st.results[2], undefined, 'дырка в конце ответа — это очередь, а не пропуск');
+});
+
+await tAsync('прогон ещё идёт — вкладка дожидается конца и показывает прогресс', async () => {
+  st.runStore.clear();
+  api.setSource(THREE());
+  const realFetch = globalThis.fetch;
+  // Первый опрос застаёт прогон в работе, следующий — законченным.
+  globalThis.fetch = fakeJobs(DONE, { status: n => (n === 0 ? 'running' : 'done') });
+  const run = api.run();
+  // Пока опрос в паузе, интерфейс уже показывает работу и предлагает остановку.
+  await new Promise(r => setTimeout(r, 50));
+  assert.strictEqual(st.running, true);
+  api.renderRunline();
+  assert.match(G('runline').innerHTML, /Остановить/, 'остановка должна быть под рукой');
+  assert.match(G('runline').innerHTML, /закрыть/, 'вкладку закрывать можно — об этом надо сказать');
+  api.syncSteps();
+  assert.strictEqual(G('runBtn').disabled, false, 'та же кнопка останавливает');
+  await run;
+  assert.strictEqual(st.results.filter(Boolean).length, 3, 'дождались всех');
+  assert.strictEqual(st.running, false);
+});
+
+await tAsync('во время прогона кнопка останавливает, а не ставит второй', async () => {
+  const realFetch = globalThis.fetch;
+  const f = fakeJobs(DONE);
+  globalThis.fetch = f;
+  st.running = true; st.jobId = 'job-test';
+  try { await api.run(); } finally { globalThis.fetch = realFetch; st.running = false; st.jobId = null; }
+  assert.strictEqual(f.stopped, true, 'нажали во время работы — значит, остановить');
+  assert.strictEqual(f.job(), null, 'второй прогон по тем же товарам — двойная оплата');
+});
+
+await tAsync('открыли страницу заново — результат забирается с сервера', async () => {
+  // Прогон закончился, пока вкладка была закрыта. Своих товаров здесь нет —
+  // очистили localStorage или зашли с другой машины: берём их из прогона.
+  st.runStore.clear();
+  api.setSource([]);
+  st.results = [];
+  localStorage.setItem('enricher.jobId', 'job-test');
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = fakeJobs(DONE, { seed: { model: MODEL.id, products: THREE(), indices: [4, 9, 11] } });
+  try { await api.resumeJob(); } finally { globalThis.fetch = realFetch; }
+
+  assert.strictEqual(st.items.length, 3, 'товары пришли из прогона');
+  assert.strictEqual(st.results.filter(Boolean).length, 3, 'и результаты вместе с ними');
+  assert.deepStrictEqual(st.results.map(r => r.enriched.specs.цвет), ['белый', 'белый', 'белый']);
+  assert.strictEqual(st.results.length, 3,
+    'индексы чужой вкладки (4, 9, 11) здесь не значат ничего — результат ложится по очереди');
+});
+
+await tAsync('прогон запустили в другом браузере — здесь виден его процесс', async () => {
+  // Своего id в этой вкладке нет, но на сервере что-то идёт: показываем это,
+  // иначе прогон работает вслепую.
+  st.runStore.clear();
+  api.setSource([]);
+  st.results = [];
+  localStorage.removeItem('enricher.jobId');
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = fakeJobs(DONE, {
+    status: n => (n === 0 ? 'running' : 'done'),
+    seed: { model: MODEL.id, products: THREE(), indices: [0, 1, 2] },
+  });
+  try {
+    await api.resumeJob();
+    assert.strictEqual(st.jobId, 'job-test', 'идущий прогон подхвачен по списку /api/jobs');
+    assert.strictEqual(st.running, true, 'и показан как идущий');
+    // Опрос продолжается сам — ждём его конца, как ждал бы человек у экрана.
+    const until = Date.now() + 8000;
+    while (st.following && Date.now() < until) await new Promise(r => setTimeout(r, 100));
+  } finally { globalThis.fetch = realFetch; }
+  assert.strictEqual(st.running, false, 'прогон дошёл до конца');
+  assert.strictEqual(st.results.filter(Boolean).length, 3);
+});
+
+await tAsync('прогон уже забыт сервером — сохранённое остаётся, id убирается', async () => {
+  st.runStore.clear();
+  api.setSource(THREE());
+  localStorage.setItem('enricher.jobId', 'job-test');
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = () => reply({ error: 'Прогон не найден — возможно, он уже удалён' }, false, 404);
+  try { await api.resumeJob(); } finally { globalThis.fetch = realFetch; }
+  assert.strictEqual(localStorage.getItem('enricher.jobId'), null, 'следить не за чем — и незачем пытаться при каждом входе');
+  assert.strictEqual(st.running, false);
+});
 
 console.log('\nОтвет сервера не JSON');
 // Ответ не-JSON интерфейс раньше отдавал пользователю как «Unexpected token 'Т'»:

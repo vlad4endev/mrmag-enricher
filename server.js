@@ -19,6 +19,13 @@
  *   POST /api/filters         фильтры по переданному списку товаров
  *   POST /api/quality         качество исходных данных по списку товаров
  *   POST /api/enrich          обогащение одного товара {model, product, category?}
+ *   POST /api/jobs            фоновый прогон {model, products[], indices?, category?}
+ *   GET  /api/jobs            список прогонов: что идёт сейчас и что уже прошло
+ *   GET  /api/jobs/:id[?from=N&products=1]
+ *                             состояние прогона; from — сколько результатов уже
+ *                             у клиента, отдаётся только хвост
+ *   POST /api/jobs/:id/stop   остановить прогон после текущего товара
+ *   DELETE /api/jobs/:id      забыть прогон вместе с файлом на диске
  *
  * Товар без description и annotation не пропускается молча: если в названии
  * есть артикул, описание ищется в сети (ensureSource), и адрес найденной
@@ -43,6 +50,7 @@ import {
 } from './lib.js';
 import { CATEGORIES, findCategory, crawlCategory, loadFeed, buildFilters, ensureSource } from './catalog.js';
 import { buildV2 } from './export_v2.js';
+import { createJobStore } from './jobs.js';
 
 const API_KEY = process.env.OPENROUTER_API_KEY;
 const PORT    = Number(process.env.PORT || 3000);
@@ -359,20 +367,17 @@ async function apiExportV2(req, res) {
   json(res, 200, out);
 }
 
-async function apiEnrich(req, res) {
-  const raw = await readBody(req);
-  let body;
-  try { body = JSON.parse(raw); } catch { return json(res, 400, { error: 'Тело запроса не JSON' }); }
-
-  const { model, product, category } = body || {};
-  if (!model || typeof model !== 'string') return json(res, 400, { error: 'Не передана модель' });
-  if (!product || typeof product !== 'object') return json(res, 400, { error: 'Не передан товар' });
-
+/**
+ * Обогащение одного товара — один путь для /api/enrich и для фонового прогона
+ * (jobs.js). Возвращает то же тело, что уходит в браузер; при провале бросает
+ * ошибку с .status и .usage, чтобы потраченное на неудачные попытки не терялось.
+ */
+async function enrichOne(product, { model, category } = {}) {
   // Категория определяет схему полей и промпт. Явное поле важнее, иначе берём
   // category самого товара — её проставляет и фид, и обход раздела.
   const schema = schemaFor(category || product.category);
 
-  const skip = reason => json(res, 200, {
+  const skip = reason => ({
     enriched: null,
     skipped:  reason,
     usage:    { prompt_tokens: 0, completion_tokens: 0, cost: 0 },
@@ -389,8 +394,16 @@ async function apiEnrich(req, res) {
   try {
     const list = await models();
     entry = list.find(m => m.id === model) || null;
-    if (!entry) return json(res, 400, { error: `Модель "${model}" не найдена в OpenRouter` });
-  } catch { /* список недоступен — не блокируем работу, шлём как есть */ }
+    if (!entry) {
+      const e = new Error(`Модель "${model}" не найдена в OpenRouter`);
+      e.status = 400;
+      throw e;
+    }
+  } catch (e) {
+    // Список недоступен — не блокируем работу, шлём как есть. А вот вердикт
+    // «модели нет» — это ответ, а не сбой справочника.
+    if (e.status === 400) throw e;
+  }
 
   // Пустая карточка — не приговор: тот же артикул описан у производителя и
   // других продавцов. Ищем описание в сети и работаем с ним как со своим;
@@ -403,27 +416,71 @@ async function apiEnrich(req, res) {
     sourceUrl = found.source ?? null;
   }
 
+  const { enriched, iT, oT, cost, costSource, attempts } = await enrichProduct(filled, {
+    model, apiKey: API_KEY, schema,
+    limiter: limiterFor(model),
+    pricing: pricingOf(entry),
+  });
+  return {
+    enriched,
+    schema: schema.slug,
+    ...(sourceUrl ? { source_url: sourceUrl } : {}),
+    usage: { prompt_tokens: iT, completion_tokens: oT, cost, cost_source: costSource, attempts },
+  };
+}
+
+async function apiEnrich(req, res) {
+  const raw = await readBody(req);
+  let body;
+  try { body = JSON.parse(raw); } catch { return json(res, 400, { error: 'Тело запроса не JSON' }); }
+
+  const { model, product, category } = body || {};
+  if (!model || typeof model !== 'string') return json(res, 400, { error: 'Не передана модель' });
+  if (!product || typeof product !== 'object') return json(res, 400, { error: 'Не передан товар' });
+
   try {
-    const { enriched, iT, oT, cost, costSource, attempts } = await enrichProduct(filled, {
-      model, apiKey: API_KEY, schema,
-      limiter: limiterFor(model),
-      pricing: pricingOf(entry),
-    });
-    json(res, 200, {
-      enriched,
-      schema: schema.slug,
-      ...(sourceUrl ? { source_url: sourceUrl } : {}),
-      usage: { prompt_tokens: iT, completion_tokens: oT, cost, cost_source: costSource, attempts },
-    });
+    json(res, 200, await enrichOne(product, { model, category }));
   } catch (e) {
     // Неудачные попытки тоже оплачены — отдаём их, чтобы итог не занижался.
-    json(res, 502, {
+    json(res, e.status || 502, {
       error: e.message,
       usage: e.usage
         ? { prompt_tokens: e.usage.iT, completion_tokens: e.usage.oT, cost: e.usage.cost }
         : undefined,
     });
   }
+}
+
+// ── ФОНОВЫЕ ПРОГОНЫ ──────────────────────────────────────────
+// Цикл по товарам крутит сервер, а не вкладка: закрытый браузер больше не
+// обрывает работу на середине. Подробности и формат — в jobs.js.
+const store = createJobStore({ enrichOne });
+
+async function apiJobCreate(req, res) {
+  // Прогон на 259 товаров — это больше мегабайта тела: общий лимит здесь мал.
+  const raw = await readBody(req, BULK_BODY_LIMIT);
+  let body;
+  try { body = JSON.parse(raw); } catch { return json(res, 400, { error: 'Тело запроса не JSON' }); }
+
+  const { model, category, products, indices } = body || {};
+  if (!model || typeof model !== 'string') return json(res, 400, { error: 'Не передана модель' });
+  if (!Array.isArray(products) || !products.length) return json(res, 400, { error: 'Не переданы товары' });
+  if (products.some(p => !p || typeof p !== 'object')) return json(res, 400, { error: 'В списке товаров есть не объект' });
+  if (indices != null && (!Array.isArray(indices) || indices.length !== products.length)) {
+    return json(res, 400, { error: 'indices не совпадает по длине со списком товаров' });
+  }
+
+  const job = store.create({ model, category, products, indices });
+  json(res, 202, store.summary(job));
+}
+
+function apiJobState(res, id, u) {
+  const job = store.get(id);
+  if (!job) return json(res, 404, { error: 'Прогон не найден — возможно, он уже удалён' });
+  json(res, 200, store.state(job, {
+    from:     u.searchParams.get('from'),
+    products: u.searchParams.get('products') === '1',
+  }));
 }
 
 // Интерфейс — один файл без внешних ресурсов, поэтому раздаём только его:
@@ -483,6 +540,10 @@ try {
   process.exit(1);
 }
 
+// Прерванные прогоны поднимаем с диска до приёма запросов: перезапуск сервера
+// не должен стоить оплаченных товаров.
+const resumedJobs = store.restore();
+
 const server = http.createServer(async (req, res) => {
   const started = Date.now();
   const u = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
@@ -516,6 +577,24 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'GET'  && u.pathname === '/api/catalog')    return await apiCatalog(res, u.searchParams.get('category'), u.searchParams.get('limit'));
     if (req.method === 'GET'  && u.pathname === '/api/product')    return await apiProduct(res, u.searchParams.get('url'));
     if (req.method === 'POST' && u.pathname === '/api/enrich')     return await apiEnrich(req, res);
+
+    // Фоновый прогон: поставить, посмотреть, остановить, забыть.
+    if (req.method === 'POST' && u.pathname === '/api/jobs')        return await apiJobCreate(req, res);
+    if (req.method === 'GET'  && u.pathname === '/api/jobs')        return json(res, 200, { jobs: store.list() });
+    const job = u.pathname.match(/^\/api\/jobs\/([\w-]+)(\/stop)?$/);
+    if (job) {
+      const [, id, stopping] = job;
+      if (req.method === 'GET'    && !stopping) return apiJobState(res, id, u);
+      if (req.method === 'DELETE' && !stopping) {
+        return store.remove(id) ? json(res, 200, { ok: true }) : json(res, 404, { error: 'Прогон не найден' });
+      }
+      if (req.method === 'POST' && stopping) {
+        const j = store.get(id);
+        if (!j) return json(res, 404, { error: 'Прогон не найден' });
+        return json(res, 200, store.stop(j));
+      }
+    }
+
     if (req.method === 'GET') return serveStatic(res, u.pathname);
     json(res, 405, { error: 'Метод не поддерживается' });
   } catch (e) {
@@ -532,6 +611,7 @@ server.listen(PORT, HOST, () => {
   console.log(`  Прокси разрешён для: ${ALLOWED_HOSTS.join(', ')}`);
   console.log(`  Курс: ${RUB_PER_USD} ₽/$ на ${RUB_RATE_DATE} | политика расхождений: ${MISMATCH_POLICY}`);
   console.log(`  Вход: ${APP_PASSWORD ? `Basic, пользователь ${APP_USER}` : 'ОТКРЫТ'}`);
+  if (resumedJobs.length) console.log(`  Продолжаем прерванные прогоны: ${resumedJobs.join(', ')}`);
   for (const l of proxyLines) console.log(l);
 
   // Прокси задаётся окружением, а не кодом — но молча это оставлять нельзя:

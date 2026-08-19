@@ -31,3 +31,6 @@ dist/
 
 # Мусор macOS
 .DS_Store
+
+# Фоновые прогоны обогащения (jobs.js)
+jobs/

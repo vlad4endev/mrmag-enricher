@@ -610,6 +610,14 @@ input[type=range]::-moz-range-thumb{
 }
 .runline .rl-n{font-family:var(--mono);font-variant-numeric:tabular-nums}
 .runline .rl-t{margin-left:auto;color:var(--t2);font-weight:500;font-family:var(--mono);font-variant-numeric:tabular-nums}
+/* Прогон идёт на сервере: подсказка про вкладку и остановка живут здесь же —
+   строка видна ровно тогда, когда прогон работает. */
+.runline .rl-hint{color:var(--t2);font-weight:500}
+.runline .rl-stop{
+  border:1px solid var(--ac-b);background:var(--card);color:var(--ac);
+  font:inherit;font-weight:600;padding:2px 8px;border-radius:var(--r3,6px);cursor:pointer;
+}
+.runline .rl-stop:hover{background:var(--ac-w);border-color:var(--ac)}
 
 /* Товар, который обрабатывается прямо сейчас */
 .ri.s-run{border-left-color:var(--ac);background:var(--ac-w);animation:breathe 1.6s ease-in-out infinite}
@@ -1161,8 +1169,10 @@ function restoreResults(){
   try{ saved=JSON.parse(localStorage.getItem(STORE_KEY)||'null'); }catch{ return; }
   // done — прогон целиком; results остался у сохранений прежней версии, там он
   // выровнен по saved.items.
-  const done=saved.done?.length ? saved.done
-    : (saved.results||[]).map((r,i)=>[rowKey(saved.items?.[i]||r?.original,i),r]).filter(([,r])=>r);
+  // Первый заход — сохранения нет вовсе: без ?. здесь падал весь init, и всё,
+  // что идёт после восстановления (подхват идущего прогона), не выполнялось.
+  const done=saved?.done?.length ? saved.done
+    : (saved?.results||[]).map((r,i)=>[rowKey(saved.items?.[i]||r?.original,i),r]).filter(([,r])=>r);
   if(!done.length) return;
   runStore.clear();
   for(const [k,r] of done) runStore.set(k,r);
@@ -1229,6 +1239,8 @@ async function init(){
   await loadCategories();
   restoreResults();
   syncSteps();
+  // Прогон живёт на сервере: если он идёт — подхватываем его и показываем.
+  await resumeJob();
 }
 
 // ── ШАГ 1: МОДЕЛЬ ────────────────────────────────────────────
@@ -1540,7 +1552,11 @@ function syncSteps(){
   const btn=document.getElementById('runBtn'), why=document.getElementById('runWhy');
   // В частично завершённом прогоне есть незаполненные позиции — их пропускаем.
   const done=doneRes().filter(r=>r.enriched||r.skipped).length;
-  if(running){ btn.disabled=true; why.textContent='Идёт обработка — прогресс виден в списке'; return; }
+  if(running){
+    btn.disabled=false;   // та же кнопка останавливает: run() это разводит
+    why.textContent='Обрабатывает сервер — вкладку можно закрыть, прогон не прервётся';
+    return;
+  }
   // Кнопка обещает ровно то, что уйдёт в прогон: фильтр сужает и его тоже.
   const q=hasItems?queued().length:0;
   btn.disabled=!(hasModel&&hasItems&&q);
@@ -1639,8 +1655,12 @@ function renderRunline(){
   const eta=done>0?(elapsed/done)*(total-done):null;
   el.style.display='flex';
   el.innerHTML=flake('spinning')
-    +`<span>Обрабатываем <span class="rl-n">${done+1} из ${total}</span></span>`
-    +`<span class="rl-t">${dur(elapsed)}${eta!=null?` · осталось ~${dur(eta)}`:''}</span>`;
+    +`<span>Обрабатываем <span class="rl-n">${Math.min(done+1,total)} из ${total}</span></span>`
+    +`<span class="rl-hint">· вкладку можно закрыть, считает сервер</span>`
+    +`<span class="rl-t">${dur(elapsed)}${eta!=null?` · осталось ~${dur(eta)}`:''}</span>`
+    // Остановка здесь, а не на большой кнопке: строка видна ровно тогда, когда
+    // прогон идёт.
+    +`<button type="button" class="rl-stop" onclick="stopJob()">Остановить</button>`;
   bar?.classList.add('running');
   document.getElementById('rbFill').style.width=total?`${Math.round(done/total*100)}%`:'0';
 }
@@ -1815,7 +1835,37 @@ function renderFoot(s,note){
 }
 
 
+// ── ПРОГОН: СЧИТАЕТ СЕРВЕР ───────────────────────────────────
+/**
+ * Цикл по товарам живёт на сервере (POST /api/jobs), а не в этой вкладке.
+ * Вкладка ставит задачу и спрашивает прогресс, поэтому её можно закрыть,
+ * перезагрузить или открыть с другого компьютера — прогон идёт дальше, и уже
+ * оплаченные товары не теряются. Раньше закрытая вкладка обрывала работу.
+ *
+ * Обратная дорога результата к строке на экране — indices: сервер получает их
+ * вместе с товарами и возвращает в ответе. Если товары в этой вкладке не
+ * загружены (зашли из другого браузера), они берутся из самого прогона, и
+ * тогда индекс — это позиция в очереди: jobPos.
+ */
+const JOB_KEY='enricher.jobId';
+const POLL_MS=1500;
+const POLL_GIVEUP=20;     // ~1 минута молчания сервера: дальше не мучаем
+let jobId=null;           // прогон, за которым следим
+let following=false;      // опрос уже идёт — второй не нужен
+let jobPos=false;         // товары взяты из прогона: индекс = позиция в очереди
+
+function saveJobId(id){
+  jobId=id||null;
+  try{ id?localStorage.setItem(JOB_KEY,id):localStorage.removeItem(JOB_KEY); }catch{}
+}
+
+/** Индекс товара в items по позиции в очереди прогона. */
+const qIdx=(d,pos)=>jobPos?pos:(d.indices?.[pos]??pos);
+
 async function run(){
+  // Кнопка одна: во время прогона она останавливает.
+  if(running) return stopJob();
+
   const err=readProd();
   if(err){ stepError(2,err); return; }
   if(!selModel||!items.length){ syncSteps(); return; }
@@ -1827,66 +1877,146 @@ async function run(){
   if(!queue.length){ stepError(2,'По текущему фильтру нечего обрабатывать'); return; }
   stepError(2,null);
 
-  running=true;
-  runQueue=queue;
-  runT0=Date.now();
-  runIdx=queue[0];
+  setSt('ld','Ставим прогон на сервер...');
+  let job;
+  try{
+    job=await apiJson('/api/jobs',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({model:selModel.id,category:runCat(),indices:queue,
+        products:queue.map(i=>items[i])})});
+  }catch(e){
+    setSt('er','Прогон не запустился');
+    stepError(2,`Прогон не запустился: ${e.message}`);
+    return;
+  }
+
   // Повторный прогон заменяет только выбранное: результаты остальных товаров
   // уже оплачены и остаются на месте.
   for(const i of queue) delete results[i];
+  saveResults();
+
+  jobPos=false;
+  saveJobId(job.id);
+  await follow(job.id);
+}
+
+/** Остановка: сервер доводит текущий товар и встаёт. */
+async function stopJob(){
+  if(!jobId) return;
+  setSt('ld','Останавливаем после текущего товара...');
+  try{ await apiJson(`/api/jobs/${jobId}/stop`,{method:'POST'}); }
+  catch(e){ setSt('er',`Не удалось остановить: ${e.message}`); }
+}
+
+/** Результаты из ответа сервера — в results, по индексам своей вкладки. */
+function applyJob(d){
+  runQueue=jobPos?d.indices.map((_,k)=>k):d.indices;
+  if(d.started_at) runT0=d.started_at;
+  d.results.forEach((r,k)=>{
+    if(!r) return;
+    const i=qIdx(d,d.from+k);
+    if(i==null) return;
+    results[i]={original:items[i]??null,enriched:r.enriched??null,skipped:r.skipped,
+      source:r.source??null,iT:r.iT??0,oT:r.oT??0,cost:r.cost??0,
+      ...(r.error?{error:r.error}:{})};
+    // Результат привязан к товару, а не к позиции: смена окна и категории не
+    // должна терять оплаченное (см. runStore).
+    runStore.set(rowKey(items[i],i),results[i]);
+  });
+}
+
+/**
+ * Опрос прогона до его конца. Сеть или сервер могут отвалиться (перезапуск
+ * контейнера, спящий ноутбук) — прогон от этого не прекращается, поэтому
+ * молчание пережидаем, а не считаем провалом.
+ */
+async function follow(id){
+  if(following) return;
+  following=true;
+  running=true;
+  runT0=Date.now();
   document.getElementById('runBtn').classList.add('working');
   document.getElementById('foot').classList.remove('done');
-  ['confBdg'].forEach(hide);
-
-  const btn=document.getElementById('runBtn');
+  hide('confBdg');
   document.getElementById('runTxt').innerHTML=`${flake('spinning')} Обрабатываем...`;
   // Таймер тикает сам, иначе «осталось ~» замирает между товарами.
   const tick=setInterval(renderRunline,1000);
   syncSteps();
   renderList();
-  selectResult(0);
 
-  const {ip,op}=priceOf(selModel);
-  const t0=Date.now();
+  let cursor=0, fails=0, last=null, prev=-1;
+  try{
+    for(;;){
+      let d;
+      try{
+        d=await apiJson(`/api/jobs/${id}?from=${cursor}`);
+        fails=0;
+      }catch(e){
+        if(/404/.test(e.message)||/не найден/i.test(e.message)){ last={status:'gone',error:e.message}; break; }
+        if(++fails>=POLL_GIVEUP){ last={status:'lost',error:e.message}; break; }
+        setSt('ld',`Сервер не отвечает (${fails}) — прогон продолжается, ждём`);
+        await sleep(POLL_MS*2);
+        continue;
+      }
+      applyJob(d);
+      // Двигаемся только по заполненному началу хвоста: дырка в конце — это
+      // ещё не обработанные товары, а не пропуск.
+      let k=0; while(k<d.results.length&&d.results[k]) k++;
+      cursor=d.from+k;
+      last=d;
 
-  let prev=-1;
-  for(let n=0;n<queue.length;n++){
-    const i=queue[n];
-    runIdx=i;
-    setSt('ld',`${n+1} / ${queue.length}`);
-    renderList();
-    // Если пользователь не ушёл смотреть другой товар — следим за текущим.
-    if(curIdx===prev||curIdx===i) selectResult(i);
-    prev=i;
-    try{
-      const d=await apiJson('/api/enrich',{method:'POST',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({model:selModel.id,product:items[i],category:runCat()})});
-      const iT=d.usage?.prompt_tokens??0,oT=d.usage?.completion_tokens??0;
-      // Стоимость приходит с сервера от OpenRouter; тариф модели — резерв.
-      const cost=typeof d.usage?.cost==='number'?d.usage.cost:iT*ip+oT*op;
-      results[i]={original:items[i],enriched:d.enriched??null,skipped:d.skipped,source:d.source_url??null,iT,oT,cost};
-    }catch(e){
-      results[i]={original:items[i],enriched:null,error:e.message};
+      runIdx=cursor<d.total?qIdx(d,cursor):-1;
+      setSt('ld',`${Math.min(cursor+1,d.total)} / ${d.total}`);
+      renderList();
+      // Если пользователь не ушёл смотреть другой товар — следим за текущим.
+      if(curIdx===prev||curIdx===runIdx) selectResult(runIdx>=0?runIdx:curIdx);
+      prev=runIdx;
+      if(curIdx>=0&&results[curIdx]) renderDetail();
+      saveResults();
+      renderFoot(sumRun());
+
+      if(d.status!=='running'&&d.status!=='queued') break;
+      await sleep(POLL_MS);
     }
-    runStore.set(rowKey(items[i],i),results[i]);
-    saveResults();
-    renderList();
-    if(curIdx===i) renderDetail();
-    renderFoot(sumRun());
+  }finally{
+    clearInterval(tick);
+    following=false;
+    finishRun(last);
   }
+}
 
+/** Конец прогона: итог, кнопка, переход к первой проблеме. */
+function finishRun(d){
+  running=false;
+  runIdx=-1;
   const s=sumRun();
-  const el=((Date.now()-t0)/1000).toFixed(1);
-  setSt('ok',`Готово: ${queue.filter(i=>results[i]?.enriched).length} / ${queue.length}`);
-  renderFoot(s,`за ${el}с`);
+  const total=d?.total??runQueue?.length??0;
+  const el=d?.started_at&&d?.finished_at?((d.finished_at-d.started_at)/1000).toFixed(1):null;
+
+  if(d?.status==='lost'){
+    setSt('er','Связь с сервером потеряна');
+    renderFoot(s,'прогон продолжается на сервере — обновите страницу');
+  }else if(d?.status==='gone'){
+    setSt('er','Прогон не найден на сервере');
+    renderFoot(s,'результаты ниже — из сохранённого');
+    saveJobId(null);
+  }else{
+    // Счётчики берём из самого прогона: результаты прошлых прогонов лежат
+    // рядом, и общий s.ok показал бы больше, чем было в этой очереди.
+    const okN=d?.usage?.ok??s.ok;
+    // У остановленного важно другое: сколько товаров успели пройти. «0 / 4»
+    // рядом с «Готово 3/4» в подвале выглядело так, будто не сделано ничего.
+    setSt(d?.status==='stopped'?'wa':'ok',
+      d?.status==='stopped'?`Остановлен: обработано ${d?.done??s.ok} из ${total}`
+                           :`Готово: ${okN} / ${total}`);
+    renderFoot(s,[d?.status==='stopped'?'остановлен':null,el?`за ${el}с`:null,d?.error||null]
+      .filter(Boolean).join(' · '));
+    saveJobId(null);
+  }
 
   // Прогноз в шаге 3 теперь опирается на факт, а не на допущение.
   if(s.ok>0){ estIn=Math.round(s.tIn/s.ok); estOut=Math.round(s.tOut/s.ok); estFromRun=true; }
 
-  running=false;
-  runIdx=-1;
   runQueue=null;
-  clearInterval(tick);
   renderRunline();
   renderList();
   document.getElementById('runBtn').classList.remove('working');
@@ -1897,10 +2027,64 @@ async function run(){
   setTimeout(()=>ft.classList.remove('done'),1200);
   showActions();
   syncSteps();
+  saveResults();
 
   // Если что-то требует внимания — сразу переводим на первую проблему.
   const firstBad=results.findIndex((_,i)=>['er','wa'].includes(statusOf(i).cls));
   if(firstBad>=0) selectResult(firstBad);
+}
+
+/**
+ * Подключение к прогону, который уже идёт (или уже прошёл) на сервере.
+ * Возвращает false, если такого прогона нет — тогда и следить не за чем.
+ */
+async function attachJob(id){
+  let d;
+  try{ d=await apiJson(`/api/jobs/${id}?from=0&products=1`); }
+  catch{ saveJobId(null); return false; }
+
+  // Зашли с другого браузера: товаров в этой вкладке нет — берём их из прогона.
+  jobPos=false;
+  if(!items.length&&Array.isArray(d.products)&&d.products.length){
+    items=d.products.slice();
+    srcItems=items; pickCat=null;
+    results=[];
+    jobPos=true;
+    renderDataCats();
+    document.getElementById('prod').value=JSON.stringify(items,null,2);
+    loadQuality();
+  }
+  if(!selModel&&d.model) pick(d.model);
+
+  saveJobId(id);
+  if(d.status==='running'||d.status==='queued'){
+    follow(id);
+    return true;
+  }
+  // Прогон закончился, пока вкладка была закрыта: забираем результат целиком.
+  applyJob(d);
+  saveResults();
+  renderList();
+  selectResult(0);
+  showActions();
+  finishRun(d);
+  return true;
+}
+
+/**
+ * Что делать при открытии страницы: продолжить свой прогон, а если своего нет —
+ * показать чужой идущий. Прогон запускали в другом браузере или он остался
+ * после перезапуска сервера — всё равно видно.
+ */
+async function resumeJob(){
+  let saved=null;
+  try{ saved=localStorage.getItem(JOB_KEY); }catch{}
+  if(saved&&await attachJob(saved)) return;
+  try{
+    const {jobs}=await apiJson('/api/jobs');
+    const live=(jobs||[]).find(j=>j.status==='running'||j.status==='queued');
+    if(live) await attachJob(live.id);
+  }catch{ /* списка нет — не беда, просто нечего продолжать */ }
 }
 
 

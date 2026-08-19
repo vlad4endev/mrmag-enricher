@@ -98,5 +98,33 @@ await check('обогащение отвечает и не тратит зря',
   return 'пропуск без оплаты работает';
 });
 
+await check('фоновый прогон ставится и доводится', async () => {
+  // Прогон живёт на сервере: вкладку можно закрыть. Проверяем весь путь —
+  // задача, прогресс, результат, уборка. Товар без текста пропускается до
+  // обращения к модели, поэтому проверка бесплатна.
+  const { r, body } = await get('/api/jobs', {
+    method: 'POST',
+    headers: { ...headers, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model: 'deepseek/deepseek-v3.2', products: [{ sku: 'smoke', name: 'Холодильник' }] }),
+  });
+  need(r.status === 202, `HTTP ${r.status}: ${body?.error || ''}`.slice(0, 120));
+  need(body.id, 'прогон без id не найти после перезагрузки страницы');
+
+  const until = Date.now() + 60_000;
+  let last;
+  for (;;) {
+    const { body: d } = await get(`/api/jobs/${body.id}?from=0`);
+    last = d;
+    if (d?.status !== 'running' && d?.status !== 'queued') break;
+    need(Date.now() < until, `прогон не закончился: ${d.status} ${d.done}/${d.total}`);
+    await new Promise(res => setTimeout(res, 500));
+  }
+  need(last.status === 'done', `статус ${last.status}: ${last.error || ''}`);
+  need(last.results?.[0]?.skipped, 'пустая карточка должна быть пропущена');
+  need(last.usage?.cost === 0, 'за пропуск списана стоимость');
+  await get(`/api/jobs/${body.id}`, { method: 'DELETE' });
+  return 'задача, прогресс и результат на месте';
+});
+
 console.log(failed ? `\n❌ Провалено проверок: ${failed}\n` : '\n✅ Развёрнутая версия отвечает как ожидается\n');
 process.exit(failed ? 1 : 0);

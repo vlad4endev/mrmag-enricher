@@ -9,8 +9,13 @@
 
 import assert from 'assert';
 import { spawn } from 'child_process';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
 
 const PORT = 3400 + Math.floor(process.uptime() * 7) % 100;
+// Фоновые прогоны пишутся на диск — в тесте в свой каталог, не в рабочий.
+const JOBS_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'enricher-jobs-'));
 const PASS = 'test-pass';
 const auth = 'Basic ' + Buffer.from(`admin:${PASS}`).toString('base64');
 
@@ -26,6 +31,7 @@ const srv = spawn(process.execPath, ['server.js'], {
     PORT: String(PORT),
     HOST: '127.0.0.1',
     PAGE_CACHE_DIR: '.page_cache',
+    JOBS_DIR,
   },
   stdio: ['ignore', 'pipe', 'pipe'],
 });
@@ -256,6 +262,95 @@ try {
     assert.strictEqual(d.usage.cost, 0, 'за пропуск платить нечем');
   });
 
+  console.log('\nФоновый прогон');
+  // Товар без пригодного текста пропускается до обращения к OpenRouter, поэтому
+  // весь жизненный цикл прогона проверяется без сети и без денег.
+  const EMPTY = [{ sku: 'a1', name: 'Холодильник' }, { sku: 'a2', name: 'Холодильник' }];
+  const postJob = body => fetch(url('/api/jobs'), {
+    method: 'POST',
+    headers: { authorization: auth, 'Content-Type': 'application/json' },
+    body: typeof body === 'string' ? body : JSON.stringify(body),
+  });
+  const getJob = (id, q = '') => fetch(url(`/api/jobs/${id}${q}`), { headers: { authorization: auth } });
+  /** Ждём конца прогона: он идёт в фоне, а не в ответе на запрос. */
+  const settle = async (id, timeoutMs = 20_000) => {
+    const until = Date.now() + timeoutMs;
+    for (;;) {
+      const d = await (await getJob(id, '?from=0')).json();
+      if (d.status !== 'running' && d.status !== 'queued') return d;
+      if (Date.now() > until) throw new Error(`прогон ${id} не закончился: ${d.status} ${d.done}/${d.total}`);
+      await new Promise(r => setTimeout(r, 100));
+    }
+  };
+
+  await t('без пароля прогон не поставить и не посмотреть', async () => {
+    assert.strictEqual((await fetch(url('/api/jobs'), { method: 'POST', body: '{}' })).status, 401);
+    assert.strictEqual((await fetch(url('/api/jobs'))).status, 401);
+    assert.strictEqual((await fetch(url('/api/jobs/nope'))).status, 401);
+  });
+  await t('битое тело, нет модели, нет товаров, кривые indices — 400', async () => {
+    assert.strictEqual((await postJob('{не json')).status, 400);
+    assert.strictEqual((await postJob({ products: EMPTY })).status, 400);
+    assert.strictEqual((await postJob({ model: 'x/y', products: [] })).status, 400);
+    assert.strictEqual((await postJob({ model: 'x/y', products: EMPTY, indices: [0] })).status, 400);
+  });
+  await t('чужого прогона нет — 404, а не пустой ответ', async () => {
+    assert.strictEqual((await getJob('нет-такого')).status, 404);
+  });
+
+  let jobId;
+  await t('прогон отвечает сразу, а работает после ответа', async () => {
+    const r = await postJob({ model: 'deepseek/deepseek-v3.2', products: EMPTY, indices: [4, 7] });
+    assert.strictEqual(r.status, 202, 'клиент не ждёт конца прогона — он получает id');
+    const d = await r.json();
+    jobId = d.id;
+    assert.ok(jobId, 'без id прогон не найти после перезагрузки страницы');
+    assert.strictEqual(d.total, 2);
+  });
+  await t('результаты доезжают, indices возвращаются как отданы', async () => {
+    const d = await settle(jobId);
+    assert.strictEqual(d.status, 'done');
+    assert.strictEqual(d.done, 2);
+    assert.deepStrictEqual(d.indices, [4, 7], 'по ним интерфейс кладёт результат в свою строку');
+    assert.strictEqual(d.results.length, 2);
+    assert.ok(d.results.every(x => x.enriched === null && x.skipped), 'пустые карточки пропущены');
+    assert.strictEqual(d.usage.cost, 0, 'за пропуск платить нечем');
+    assert.strictEqual(d.usage.skip, 2);
+  });
+  await t('from отдаёт только хвост — опрос не тащит одно и то же', async () => {
+    const d = await (await getJob(jobId, '?from=1')).json();
+    assert.strictEqual(d.from, 1);
+    assert.strictEqual(d.results.length, 1, 'первый результат у клиента уже есть');
+    const all = await (await getJob(jobId, '?from=0&products=1')).json();
+    assert.strictEqual(all.products.length, 2, 'товары нужны, если зашли из другого браузера');
+    const bare = await (await getJob(jobId, '?from=0')).json();
+    assert.strictEqual(bare.products, undefined, 'без запроса товары не гоняем');
+  });
+  await t('список прогонов показывает, что идёт и что прошло', async () => {
+    const { jobs } = await (await fetch(url('/api/jobs'), { headers: { authorization: auth } })).json();
+    const mine = jobs.find(j => j.id === jobId);
+    assert.ok(mine, 'иначе прогон, запущенный в другом браузере, не найти');
+    assert.strictEqual(mine.status, 'done');
+    assert.strictEqual(mine.results, undefined, 'в списке — сводка, а не мегабайты результатов');
+  });
+  await t('остановка отвечает и на уже законченном прогоне', async () => {
+    const r = await fetch(url(`/api/jobs/${jobId}/stop`), { method: 'POST', headers: { authorization: auth } });
+    assert.strictEqual(r.status, 200);
+    assert.strictEqual((await r.json()).status, 'done', 'законченный прогон не переписываем');
+  });
+  await t('прогон живёт на диске — перезапуск сервера его не теряет', async () => {
+    const file = path.join(JOBS_DIR, `${jobId}.json`);
+    assert.ok(fs.existsSync(file), 'без файла перезапуск потерял бы оплаченное');
+    const saved = JSON.parse(fs.readFileSync(file, 'utf-8'));
+    assert.strictEqual(saved.results.filter(Boolean).length, 2);
+  });
+  await t('удаление забирает и запись, и файл', async () => {
+    const r = await fetch(url(`/api/jobs/${jobId}`), { method: 'DELETE', headers: { authorization: auth } });
+    assert.strictEqual(r.status, 200);
+    assert.strictEqual((await getJob(jobId)).status, 404);
+    assert.ok(!fs.existsSync(path.join(JOBS_DIR, `${jobId}.json`)), 'файл тоже должен уйти');
+  });
+
   console.log('\nМаршрутизация');
   await t('неизвестный путь и метод', async () => {
     assert.strictEqual((await fetch(url('/секрет'), { headers: { authorization: auth } })).status, 404);
@@ -263,7 +358,47 @@ try {
     assert.strictEqual(r.status, 405);
   });
 
+  console.log('\nПерезапуск сервера доводит прерванный прогон');
+  await t('прогон со статусом running продолжается с недоделанного товара', async () => {
+    // Ровно то, что делает docker restart посреди прогона: половина товаров
+    // обработана, статус остался running. Новый процесс обязан довести остаток.
+    const id = 'resume-test';
+    const half = {
+      id, at: Date.now(), model: 'deepseek/deepseek-v3.2', category: null,
+      status: 'running', total: 2, done: 1, indices: [0, 1], products: EMPTY,
+      results: [{ enriched: null, skipped: 'пусто', iT: 0, oT: 0, cost: 0 }, null],
+    };
+    fs.writeFileSync(path.join(JOBS_DIR, `${id}.json`), JSON.stringify(half));
+
+    const port2 = PORT + 1;
+    const srv2 = spawn(process.execPath, ['server.js'], {
+      env: { ...process.env, OPENROUTER_API_KEY: 'sk-or-v1-test-not-a-real-key', APP_PASSWORD: PASS,
+             PORT: String(port2), HOST: '127.0.0.1', PAGE_CACHE_DIR: '.page_cache', JOBS_DIR },
+      stdio: ['ignore', 'ignore', 'ignore'],
+    });
+    try {
+      const until = Date.now() + 20_000;
+      for (;;) {
+        let d = null;
+        try {
+          const r = await fetch(`http://127.0.0.1:${port2}/api/jobs/${id}?from=0`, { headers: { authorization: auth } });
+          if (r.ok) d = await r.json();
+        } catch { /* сервер ещё поднимается */ }
+        if (d && d.status === 'done') {
+          assert.strictEqual(d.done, 2, 'второй товар обработан уже новым процессом');
+          assert.ok(d.results.every(Boolean));
+          break;
+        }
+        if (Date.now() > until) throw new Error(`прогон не продолжился: ${d?.status} ${d?.done}/${d?.total}`);
+        await new Promise(r => setTimeout(r, 150));
+      }
+    } finally {
+      srv2.kill('SIGTERM');
+    }
+  });
+
   console.log(`\n✅ ${n} проверок API пройдено\n`);
 } finally {
   srv.kill('SIGTERM');
+  fs.rmSync(JOBS_DIR, { recursive: true, force: true });
 }

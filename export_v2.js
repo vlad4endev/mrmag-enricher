@@ -82,6 +82,13 @@ function bucketize(values) {
 
 const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
+// Цена приходит не из обогащения, а из листинга магазина — но фасет каталога
+// без неё бесполезен, а checkbox-диапазоны ей считает та же bucketize. Ноль —
+// это отсутствие цены, как и в buildFilters: иначе «0-25000» соберёт весь
+// раздел без цены в один фильтр.
+const PRICE = 'Цена, ₽';
+const priceOf = p => (Number.isFinite(p.price) && p.price > 0 ? p.price : null);
+
 /** id товара — sku магазина; числовой отдаём числом, как в примере заказчика. */
 const idOf = p => (/^\d+$/.test(String(p.sku ?? '')) ? Number(p.sku) : (p.sku ?? null));
 
@@ -136,6 +143,9 @@ export function buildV2(rows) {
       nums.get(name).push(v);
     }
   }
+  const prices = enriched.map(priceOf).filter(v => v != null);
+  if (prices.length) nums.set(PRICE, prices);
+
   const bucket = new Map([...nums].map(([name, vs]) => [name, bucketize(vs)]));
   const valueOf = (name, v) =>
     typeof v === 'number' ? bucket.get(name)(v) : (YESNO[String(v).toLowerCase()] || String(v));
@@ -148,6 +158,8 @@ export function buildV2(rows) {
       const name = facetName(k);
       filters[name] = valueOf(name, v);
     }
+    const price = priceOf(r);
+    if (price != null) filters[PRICE] = valueOf(PRICE, price);
     return {
       id: idOf(r),
       name: r.name || e.seo_title || '',

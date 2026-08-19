@@ -852,6 +852,22 @@ t('мало значений — перечисление, а не диапаз�
   assert.deepStrictEqual(buildV2(rows).filters[0], { name: 'Объем, л', value: ['30', '40', '50'] });
 });
 
+t('цена — такой же checkbox-фасет диапазонами', () => {
+  const rows = [7000, 19990, 31000, 43790, 68000, 91000, 120000, 190000]
+    .map((price, i) => ({ ...v2row(String(i + 1), { цвет: 'белый' }), price }));
+  rows.push({ ...v2row('9', { цвет: 'белый' }), price: 0 });     // ноль — отсутствие цены
+  const { filters, products } = buildV2(rows);
+  const facet = filters.find(f => f.name === 'Цена, ₽');
+  assert.ok(facet, 'фасет цены обязателен: без него каталог не фильтруется');
+  assert.ok(facet.value.every(v => /^\d+-\d+$/.test(v)), `не диапазоны: ${facet.value}`);
+  assert.deepStrictEqual([...facet.value].sort((a, b) => parseFloat(a) - parseFloat(b)), facet.value);
+  for (const p of products.slice(0, 8)) {
+    assert.ok(facet.value.includes(p.filters['Цена, ₽']), `цена товара ${p.id} вне фасета`);
+  }
+  assert.ok(!('Цена, ₽' in products[8].filters), 'цена 0 не должна попадать в фильтр');
+  assert.strictEqual(Object.keys(products[0].filters).pop(), 'Цена, ₽', 'цена идёт после характеристик');
+});
+
 t('да/нет становится Есть/Нет и в фильтре, и в описании', () => {
   const { filters, products } = buildV2([v2row('1', { дисплей: 'да', сушка: 'нет' })]);
   assert.deepStrictEqual(filters.map(f => f.value), [['Есть'], ['Нет']]);

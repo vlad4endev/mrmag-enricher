@@ -53,8 +53,8 @@ const ids = [...new Set([...html.slice(0, html.indexOf('<script>')).matchAll(/id
 const store = new Map(ids.map(id => [id, new El(id)]));
 for (const n of ['step1', 'step2', 'step3']) store.get(n).appendChild(new El(n + '-b', 'step-b'));
 
-const groups = { '.cnt-btn': [], '.fbtn': [], '.rtab': [], '.mitem': [], '.page': [], '.ntab': [] };
-for (const n of ['1', '10', '50', '100', '500']) { const e = new El('cnt' + n); e.dataset.n = n; groups['.cnt-btn'].push(e); }
+const groups = { '.cnt-grid .cnt-btn': [], '.cat-btn': [], '.fbtn': [], '.rtab': [], '.mitem': [], '.page': [], '.ntab': [] };
+for (const n of ['1', '10', '50', '100', '500']) { const e = new El('cnt' + n); e.dataset.n = n; groups['.cnt-grid .cnt-btn'].push(e); }
 for (const f of ['all', 'thin', 'warn', 'err'])  { const e = new El('f' + f);  e.dataset.f = f; groups['.fbtn'].push(e); }
 groups['.rtab'].push(new El('rt1'), new El('rt2'));
 
@@ -89,12 +89,14 @@ const script = html.match(/<script>\n([\s\S]*)<\/script>/)[1]
   .replace(/\ncalcUpdate\(\);/, '');
 
 const EXPORTS = `
-export const api={syncSteps,setCnt,readProd,renderList,statusOf,selectResult,renderDetail,plural,
+export const api={syncSteps,setCnt,setCntFree,applyCnt,applySource,setSource,pickDataCat,renderDataCats,readProd,renderList,statusOf,selectResult,renderDetail,plural,
   renderEstimate,setFilter,stepError,pick,sumRun,renderFoot,clearResults,restoreResults,saveResults,
   downloadAll,downloadCategoryFiles,downloadV2,initTheme,toggleTheme,applyTheme,dur,renderRunline,
   loadCategories,loadCategory,renderModelList,filterModels,
   applyDates,clearDates,renderDates,passesFilter,queued,onProdInput};
-export const st={get items(){return items},set items(v){items=v},get results(){return results},
+export const st={get items(){return items},set items(v){items=v},
+  get srcItems(){return srcItems},set srcItems(v){srcItems=v},
+  get pickCat(){return pickCat},set pickCat(v){pickCat=v},get selCnt(){return selCnt},get results(){return results},
   set results(v){results=v},get selModel(){return selModel},
   get allModels(){return allModels},set allModels(v){allModels=v},
   get curIdx(){return curIdx},get filter(){return filter},
@@ -238,16 +240,66 @@ t('без модели или товаров — только пояснение
 });
 
 console.log('\n«Сколько обработать» — одна настройка с одним смыслом');
+const CNT = n => groups['.cnt-grid .cnt-btn'].find(b => b.dataset.n === n);
 t('урезает уже загруженный список', () => {
-  st.items = [{ name: 'A' }, { name: 'B' }, { name: 'C' }];
+  st.srcItems = [{ name: 'A' }, { name: 'B' }, { name: 'C' }];
   G('prod').value = '';
-  api.setCnt(groups['.cnt-btn'].find(b => b.dataset.n === '1'));
+  api.setCnt(CNT('1'));
   assert.strictEqual(st.items.length, 1);
   assert.match(G('fetchHint').textContent, /первые 1 товар/);
 });
+t('возвращает товары обратно, когда число снова растёт', () => {
+  api.setCnt(CNT('10'));
+  assert.strictEqual(st.items.length, 3, 'источник загружен целиком — срез должен вырасти');
+});
 t('не добавляет товаров, которых нет', () => {
-  api.setCnt(groups['.cnt-btn'].find(b => b.dataset.n === '500'));
-  assert.strictEqual(st.items.length, 1, 'выбор 500 не должен размножать 1 товар');
+  api.setCnt(CNT('500'));
+  assert.strictEqual(st.items.length, 3, 'выбор 500 не должен размножать 3 товара');
+});
+t('своё число подсвечивает поле и гасит кнопку', () => {
+  const inp = G('cntIn'); inp.value = '2';
+  api.setCntFree(inp);
+  assert.ok(inp.classList.contains('on'), 'поле подсвечивается как выбранное');
+  assert.ok(!CNT('500').classList.contains('on'), 'кнопка гаснет');
+});
+await tAsync('своё число применяется после паузы в наборе', async () => {
+  await new Promise(r => setTimeout(r, 450));   // «25» по дороге проходит через «2»
+  assert.strictEqual(st.selCnt, 2);
+  assert.strictEqual(st.items.length, 2);
+  const inp = G('cntIn'); inp.value = '-5';     // мусор не обнуляет список
+  api.setCntFree(inp);
+  await new Promise(r => setTimeout(r, 450));
+  assert.strictEqual(st.selCnt, 1, 'меньше одного товара обрабатывать нечего');
+  api.setCnt(CNT('10'));
+});
+
+console.log('\nКатегории берутся из самих товаров');
+t('чипы показывают, что есть в загруженном', () => {
+  api.setSource([{ name: 'A', category: 'Холодильники' }, { name: 'B', category: 'Посуда' },
+                 { name: 'C', category: 'Холодильники' }]);
+  const html = G('dataCatRow').innerHTML;
+  assert.match(html, /Холодильники/);
+  assert.match(html, /Посуда/);
+  assert.match(html, /3 товара/, 'у «Все категории» — весь источник');
+  assert.strictEqual(G('dataCats').style.display, '');
+});
+t('выбор категории оставляет только её товары', () => {
+  api.pickDataCat('Холодильники');
+  assert.strictEqual(st.items.length, 2);
+  assert.ok(st.items.every(p => p.category === 'Холодильники'));
+  api.pickDataCat(null);
+  assert.strictEqual(st.items.length, 3, 'возврат к «Все категории»');
+});
+t('лимит режет уже выбранную категорию', () => {
+  api.pickDataCat('Холодильники');
+  api.setCnt(CNT('1'));
+  assert.strictEqual(st.items.length, 1);
+  api.setCnt(CNT('10'));
+});
+t('без категорий выбирать нечего — блок скрыт', () => {
+  api.setSource([{ name: 'A' }, { name: 'B' }]);
+  assert.strictEqual(G('dataCats').style.display, 'none');
+  assert.strictEqual(st.items.length, 2);
 });
 
 console.log('\nОшибки показываются внутри шага, а не через alert()');

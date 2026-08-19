@@ -175,7 +175,7 @@ textarea{
 .ibtn:disabled{opacity:.45;cursor:not-allowed}
 
 /* Количество */
-.cnt-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:5px;margin-top:2px}
+.cnt-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:5px;margin-top:2px}
 .cnt-btn{
   padding:7px 4px;border-radius:var(--r2);border:1px solid var(--b2);background:var(--bg2);
   color:var(--t2);cursor:pointer;font-size:12px;font-family:var(--mono);
@@ -183,11 +183,26 @@ textarea{
 }
 .cnt-btn:hover{border-color:var(--ac-b);color:var(--t1);background:var(--bg3)}
 .cnt-btn.on{border-color:var(--ac);background:var(--ac);color:#fff;box-shadow:var(--sh1)}
+/* Своё число: кнопки покрывают частые случаи, поле — все остальные */
+.cnt-in{
+  padding:7px 4px;border-radius:var(--r2);border:1px dashed var(--b2);background:var(--bg2);
+  color:var(--t1);font-size:12px;font-family:var(--mono);font-variant-numeric:tabular-nums;
+  font-weight:600;text-align:center;width:100%;min-width:0;transition:all .15s;
+}
+.cnt-in:hover{border-color:var(--ac-b)}
+.cnt-in:focus{outline:none;border-style:solid;border-color:var(--ac);background:var(--bg3)}
+.cnt-in.on{border-style:solid;border-color:var(--ac);color:var(--ac);box-shadow:var(--sh1)}
 /* Разделы каталога: названия длинные, поэтому строка, а не сетка на 5 */
 .cat-row{display:flex;flex-wrap:wrap;gap:5px;margin-top:2px}
-.cat-btn{flex:1 1 140px;font-family:inherit;font-size:12px;font-weight:600;text-align:left;padding:8px 10px}
-.cat-btn .cat-n{display:block;font-size:10.5px;font-weight:500;color:var(--t3);margin-top:2px}
-.cat-btn.on .cat-n{color:rgba(255,255,255,.85)}
+.cat-btn,.dcat-btn{flex:1 1 140px;font-family:inherit;font-size:12px;font-weight:600;text-align:left;padding:8px 10px}
+.cat-btn .cat-n,.dcat-btn .cat-n{display:block;font-size:10.5px;font-weight:500;color:var(--t3);margin-top:2px}
+.cat-btn.on .cat-n,.dcat-btn.on .cat-n{color:rgba(255,255,255,.85)}
+#fileIn{width:100%;margin-top:2px;font-size:11.5px;color:var(--t2);font-family:inherit}
+#fileIn::file-selector-button{
+  padding:6px 10px;margin-right:8px;border-radius:var(--r2);border:1px solid var(--b2);
+  background:var(--bg2);color:var(--t2);font-family:inherit;font-size:11.5px;font-weight:600;cursor:pointer;
+}
+#fileIn::file-selector-button:hover{border-color:var(--ac-b);color:var(--t1);background:var(--bg3)}
 
 /* Выбор модели */
 .msel{
@@ -711,6 +726,8 @@ input[type=range]::-moz-range-thumb{
           <button class="cnt-btn" data-n="50" onclick="setCnt(this)">50</button>
           <button class="cnt-btn" data-n="100" onclick="setCnt(this)">100</button>
           <button class="cnt-btn" data-n="500" onclick="setCnt(this)">500</button>
+          <input type="number" class="cnt-in" id="cntIn" min="1" step="1" placeholder="своё"
+                 oninput="setCntFree(this)" aria-label="Своё количество товаров">
         </div>
 
         <div class="flbl" style="margin-top:12px">Раздел каталога</div>
@@ -724,6 +741,15 @@ input[type=range]::-moz-range-thumb{
           </button>
         </div>
         <div class="hint" id="fetchHint">Загрузит первые 10 товаров по адресу</div>
+
+        <div class="flbl" style="margin-top:12px">Или файл JSON с компьютера</div>
+        <input type="file" id="fileIn" accept=".json,application/json"
+               onchange="loadFile(this)" aria-label="Файл JSON с товарами">
+
+        <div id="dataCats" style="display:none">
+          <div class="flbl" style="margin-top:12px">Категории в загруженных товарах</div>
+          <div class="cat-row" id="dataCatRow"></div>
+        </div>
 
         <details class="adv" id="advBox">
           <summary id="advSum">JSON товаров — можно вставить вручную</summary>
@@ -939,7 +965,9 @@ const flake=cls=>FLAKE_SVG.replace('class="flake"',`class="flake ${cls}"`);
 
 // ── ENRICHER STATE ───────────────────────────────────────────
 let allModels=[], selModel=null;
-let items=[];        // товары, которые пойдут в обработку
+let srcItems=[];     // всё загруженное: файл, адрес или обход раздела целиком
+let pickCat=null;    // выбранная категория из данных; null — все
+let items=[];        // товары, которые пойдут в обработку: срез srcItems
 let results=[];      // результаты, индексы совпадают с items
 let curIdx=0, selCnt=10, curTab='vis', filter='all', running=false;
 let runIdx=-1, runT0=0;   // что обрабатывается сейчас и когда начали
@@ -1075,6 +1103,8 @@ function restoreResults(){
   if(!saved?.results?.length) return;
   results=saved.results;
   items=saved.items?.length?saved.items:doneRes().map(r=>r.original||{});
+  srcItems=items; pickCat=null;
+  renderDataCats();
   document.getElementById('prod').value=JSON.stringify(items,null,2);
   loadQuality();
   renderList();
@@ -1209,16 +1239,114 @@ document.addEventListener('click',e=>{
 });
 
 // ── ШАГ 2: ТОВАРЫ ────────────────────────────────────────────
-function setCnt(btn){
-  document.querySelectorAll('.cnt-btn').forEach(b=>b.classList.remove('on'));
-  btn.classList.add('on');
-  selCnt=parseInt(btn.dataset.n);
+// Селектор со скобкой: у разделов тот же класс .cnt-btn, и без скобки выбор
+// количества снимал подсветку с выбранного раздела.
+const cntBtns=()=>document.querySelectorAll('.cnt-grid .cnt-btn');
+
+/** Количество ограничивает и уже загруженный список — смысл настройки один. */
+function applyCnt(n){
+  selCnt=n;
   document.getElementById('fetchHint').textContent=`Загрузит первые ${selCnt} ${plural(selCnt,'товар','товара','товаров')} по адресу`;
-  // Количество ограничивает и уже загруженный список — смысл настройки один.
-  if(items.length>selCnt){
-    items=items.slice(0,selCnt);
-    document.getElementById('prod').value=JSON.stringify(items,null,2);
-    renderList();
+  applySource();
+  if(srcItems.length) document.getElementById('prod').value=JSON.stringify(items,null,2);
+  // Раздел обходился под прежнее число: чтобы товаров стало больше, нужен новый обход.
+  if(curCat&&srcItems.length<selCnt) loadCategory(curCat.slug);
+  syncSteps();
+}
+
+function setCnt(btn){
+  cntBtns().forEach(b=>b.classList.remove('on'));
+  btn.classList.add('on');
+  const inp=document.getElementById('cntIn');
+  inp.value=''; inp.classList.remove('on');
+  applyCnt(parseInt(btn.dataset.n));
+}
+
+/** Своё число. Ждём паузу в наборе: «25» по дороге проходит через «2». */
+let cntTimer=null;
+function setCntFree(inp){
+  const raw=String(inp.value).trim();
+  if(!raw) return;
+  const n=Math.max(1,Math.floor(Number(raw))||1);
+  cntBtns().forEach(b=>b.classList.remove('on'));
+  inp.classList.add('on');
+  clearTimeout(cntTimer);
+  cntTimer=setTimeout(()=>applyCnt(n),400);
+}
+
+// ── ИСТОЧНИК ТОВАРОВ И КАТЕГОРИИ В НЁМ ───────────────────────
+// Товары в фиде лежат вперемешку по категориям, а насыщать обычно нужно одну.
+// Поэтому загруженное хранится целиком в srcItems, а items — это срез: сначала
+// выбранная категория, потом лимит.
+const catKey=p=>String(p?.category??'').trim();
+
+/** Единственное место, где items получает значение. */
+function applySource(){
+  const pool=pickCat==null?srcItems:srcItems.filter(p=>catKey(p)===pickCat);
+  items=pool.slice(0,selCnt);
+  results=results.slice(0,items.length);   // индексы результатов совпадают с items
+  renderDataCats();
+  renderList();
+}
+
+/** Новый источник: файл, адрес или обход раздела. */
+function setSource(all){
+  srcItems=Array.isArray(all)?all:[];
+  pickCat=null;
+  results=[];
+  applySource();
+  document.getElementById('prod').value=JSON.stringify(items,null,2);
+  selectResult(0);
+  loadQuality();
+}
+
+/** Категории считаем по всему загруженному, а не по срезу: иначе счётчик врёт. */
+function renderDataCats(){
+  const box=document.getElementById('dataCats'), row=document.getElementById('dataCatRow');
+  const cnt=new Map();
+  for(const p of srcItems){ const k=catKey(p); cnt.set(k,(cnt.get(k)||0)+1); }
+  // Товары без категории показывать нечего: выбирать не из чего.
+  if(!srcItems.length||(cnt.size===1&&cnt.has(''))){ box.style.display='none'; row.innerHTML=''; return; }
+  box.style.display='';
+  const chip=(k,n,label)=>
+    `<button class="cnt-btn dcat-btn${pickCat===k?' on':''}"`+
+    (k==null?'':` data-cat="${esc(k)}"`)+
+    ` onclick="pickDataCat(this.dataset.cat??null)">${esc(label)}`+
+    `<span class="cat-n">${n} ${plural(n,'товар','товара','товаров')}</span></button>`;
+  row.innerHTML=chip(null,srcItems.length,'Все категории')+
+    [...cnt].sort((a,b)=>b[1]-a[1]||a[0].localeCompare(b[0]))
+      .map(([k,n])=>chip(k,n,k||'без категории')).join('');
+}
+
+/** Выбор категории меняет весь список — прежние результаты к нему не относятся. */
+function pickDataCat(name){
+  pickCat=name==null?null:String(name);
+  results=[];
+  applySource();
+  document.getElementById('prod').value=JSON.stringify(items,null,2);
+  selectResult(0);
+  loadQuality();
+  syncSteps();
+}
+
+/** Файл с диска: тот же JSON, что и по адресу, только без сети. */
+async function loadFile(inp){
+  const f=inp.files&&inp.files[0];
+  if(!f) return;
+  stepError(2,null);
+  curCat=null;
+  document.querySelectorAll('.cat-btn').forEach(b=>b.classList.remove('on'));
+  try{
+    const parsed=JSON.parse(await f.text());
+    const all=Array.isArray(parsed)?parsed:(parsed.items??parsed.products??parsed.data??[parsed]);
+    if(!Array.isArray(all)||!all.length) throw new Error('в файле нет товаров');
+    setSource(all);
+    document.getElementById('urlIn').value='';
+    document.getElementById('fetchHint').textContent=`Файл ${f.name}: загружено ${items.length} из ${all.length}`;
+    setSt('ok',`Файл: ${items.length}`);
+  }catch(e){
+    setSt('er','Файл не прочитан');
+    stepError(2,`Файл не читается: ${e.message}`);
   }
   syncSteps();
 }
@@ -1233,14 +1361,17 @@ function plural(n,one,few,many){
 /** Разбирает textarea в items. Возвращает текст ошибки либо null. */
 function readProd(){
   const raw=document.getElementById('prod').value.trim();
-  if(!raw){ items=[]; return null; }
+  pickCat=null;
+  const fail=msg=>{ srcItems=[]; applySource(); return msg; };
+  if(!raw) return fail(null);
   let parsed;
   try{ parsed=JSON.parse(raw); }
-  catch(e){ items=[]; return 'JSON товаров не разбирается: '+e.message; }
+  catch(e){ return fail('JSON товаров не разбирается: '+e.message); }
   const arr=Array.isArray(parsed)?parsed:[parsed];
   const bad=arr.findIndex(x=>!x||typeof x!=='object');
   if(bad>=0) return `Элемент №${bad+1} — не объект товара`;
-  items=arr.slice(0,selCnt);
+  srcItems=arr;
+  applySource();
   return null;
 }
 
@@ -1288,9 +1419,7 @@ async function loadCategory(slug){
     if(!r.ok) throw new Error(d.error||`HTTP ${r.status}`);
     if(!Array.isArray(d.products)||!d.products.length) throw new Error('в разделе нет товаров');
     curCat=d;
-    items=d.products.slice(0,selCnt);
-    results=[];
-    document.getElementById('prod').value=JSON.stringify(items,null,2);
+    setSource(d.products);
     document.getElementById('urlIn').value='';
     const br=d.filters?.find(f=>f.code==='brand'), pr=d.filters?.find(f=>f.code==='price');
     // d.count — весь раздел, поэтому «10 из 256» уже говорит, что загружено не всё.
@@ -1298,9 +1427,6 @@ async function loadCategory(slug){
       (br?` · брендов ${br.values.length}`:'')+
       (pr&&pr.min!=null?` · цена ${pr.min.toLocaleString('ru')}–${pr.max.toLocaleString('ru')} ₽`:'');
     setSt('ok',`${cat.name}: ${items.length}`);
-    renderList();
-    selectResult(0);
-    loadQuality();
   }catch(e){
     curCat=null;
     document.querySelectorAll('.cat-btn').forEach(b=>b.classList.remove('on'));
@@ -1328,13 +1454,8 @@ async function fetchProducts(){
     if(!r.ok) throw new Error(data.error||`HTTP ${r.status}`);
     const all=Array.isArray(data)?data:(data.items??data.products??data.data??[data]);
     if(!Array.isArray(all)||!all.length) throw new Error('В ответе нет товаров');
-    items=all.slice(0,selCnt);
-    results=[];
-    document.getElementById('prod').value=JSON.stringify(items,null,2);
+    setSource(all);
     hint.textContent=`Загружено ${items.length} из ${all.length} доступных`;
-    renderList();
-    selectResult(0);
-    loadQuality();
   }catch(e){
     hint.textContent=`Загрузит первые ${selCnt} ${plural(selCnt,'товар','товара','товаров')} по адресу`;
     stepError(2,e.message);

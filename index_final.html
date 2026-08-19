@@ -769,6 +769,7 @@ input[type=range]::-moz-range-thumb{
         <span class="bdg bdg-b" id="cpyBtn" style="display:none;cursor:pointer" onclick="copyJSON()" title="Скопировать JSON товара"><i class="ti ti-copy" aria-hidden="true"></i> Копировать</span>
         <span class="bdg bdg-b" id="dlBtn" style="display:none;cursor:pointer" onclick="downloadAll('json')" title="Выгрузить все результаты в JSON"><i class="ti ti-download" aria-hidden="true"></i> JSON</span>
         <span class="bdg bdg-g" id="dlTxtBtn" style="display:none;cursor:pointer" onclick="downloadAll('txt')" title="Выгрузить все результаты в TXT"><i class="ti ti-file-text" aria-hidden="true"></i> TXT</span>
+        <span class="bdg bdg-b" id="dlCatBtn" style="display:none;cursor:pointer" onclick="downloadCategoryFiles()" title="На каждый раздел два файла: products_(id).json и filters_(id).json"><i class="ti ti-files" aria-hidden="true"></i> 2 файла</span>
         <span class="bdg bdg-a" id="clrBtn" style="display:none;cursor:pointer" onclick="clearResults()" title="Удалить сохранённый прогон">✕ Сброс</span>
       </div>
     </div>
@@ -956,7 +957,8 @@ function clearResults(){
   if(!confirm('Удалить сохранённый прогон? Выгрузите его, если он ещё нужен.')) return;
   localStorage.removeItem(STORE_KEY);
   results=[];curIdx=0;filter='all';
-  ['cpyBtn','dlBtn','dlTxtBtn','clrBtn','confBdg'].forEach(hide);
+  ['cpyBtn','dlBtn','dlTxtBtn','confBdg'].forEach(hide);
+  hide('clrBtn');   // «2 файла» не прячем: товары остались, раздел выгрузить можно
   document.getElementById('rtabs').style.display='none';
   document.getElementById('foot').style.display='none';
   document.getElementById('midBarF').style.width='0';
@@ -1121,7 +1123,7 @@ function onProdInput(){
 // ── РАЗДЕЛЫ КАТАЛОГА ─────────────────────────────────────────
 // Разделы приходят с сервера (/api/categories), а не вбиты в страницу: id и
 // набор полей знает бэкенд, и расходиться им нельзя.
-let categories=[], curCat=null;
+let categories=[], curCat=null, schemas={};
 
 async function loadCategories(){
   const box=document.getElementById('catRow');
@@ -1130,6 +1132,7 @@ async function loadCategories(){
     const d=await r.json();
     if(!r.ok) throw new Error(d.error||`HTTP ${r.status}`);
     categories=d.categories||[];
+    schemas=d.schemas||{};
     if(!categories.length) throw new Error('сервер не вернул разделы');
     box.innerHTML=categories.map(c=>
       `<button class="cnt-btn cat-btn" data-slug="${esc(c.slug)}" onclick="loadCategory(this.dataset.slug)">`+
@@ -1339,6 +1342,10 @@ function renderRunline(){
 
 function renderList(){
   const el=document.getElementById('midList');
+
+  // Файлы раздела не ждут прогона: products_(id).json + filters_(id).json
+  // собираются и без ИИ, как это делает node catalog.js.
+  (items.length?show:hide)('dlCatBtn');
 
   // Счётчики на фильтрах: сразу видно, сколько требует внимания.
   const cnt={warn:0,err:0};
@@ -1614,10 +1621,93 @@ function downloadAll(fmt='json'){
     filename=`enriched_${Date.now()}.json`;
     type='application/json';
   }
-  const blob=new Blob([content],{type});
-  const url=URL.createObjectURL(blob);
+  saveFile(content,filename,type);
+}
+
+/** Один путь сохранения на все выгрузки: их теперь три, и расходиться им незачем. */
+function saveFile(content,filename,type='application/json'){
+  const url=URL.createObjectURL(new Blob([content],{type}));
   const a=document.createElement('a');a.href=url;a.download=filename;a.click();
-  URL.revokeObjectURL(url);
+  // Отзыв с задержкой: при выгрузке пары файлов подряд немедленный revoke
+  // успевает отменить ещё не начавшуюся загрузку. ponytail: 1 с хватает,
+  // на очень больших файлах поднять.
+  setTimeout(()=>URL.revokeObjectURL(url),1000);
+}
+
+// ── ДВА ФАЙЛА НА РАЗДЕЛ ──────────────────────────────────────
+/**
+ * products_(id).json и filters_(id).json — теми же именами и той же формы, что
+ * пишет CLI (enricher_mrmag.js). Отсюда три решения:
+ *
+ * 1. В products попадают ВСЕ загруженные товары, а не только обработанные:
+ *    у необработанного enriched = null, ровно как в файле из CLI. Выгрузка
+ *    «JSON» рядом — про прогон, эта — про раздел.
+ * 2. Фильтр берётся из ответа обхода (filters_file): он описывает весь раздел.
+ *    Пересчитать его по загруженным 10 товарам значило бы отдать фильтр окна.
+ * 3. Товары по адресу фида приходят вперемешку по категориям, поэтому файлы
+ *    раскладываются по разделам, а фильтр для таких групп считает сервер
+ *    (POST /api/filters) — той же функцией, что пишет файл в CLI.
+ */
+function catOf(p){
+  // Обход раздела отдаёт товары одного раздела — гадать по названию не нужно.
+  if(curCat) return {id:curCat.category_id,name:curCat.category,url:curCat.url,slug:curCat.slug};
+  const name=p?.category||'';
+  const c=categories.find(x=>x.name===name||x.slug===name);
+  if(c) return {id:c.id,name:c.name,url:c.url,slug:c.slug};
+  const sc=Object.entries(schemas).find(([slug,x])=>x.name===name||slug===name);
+  if(sc) return {id:sc[1].id,name:sc[1].name,url:null,slug:sc[0]};
+  return {id:null,name:name||'без раздела',url:null,slug:'bez_razdela'};
+}
+
+/** Запись товара в products_(id).json — форма один в один с CLI. */
+function fileRow(p,r){
+  return {...p,
+    enriched:r?.enriched??null,
+    ...(r?.skipped?{skipped:r.skipped}:{}),
+    ...(r?.error?{error:r.error}:{}),
+    ...(r?.cost!=null?{_meta:{input_tokens:r.iT??0,output_tokens:r.oT??0,cost_usd:+r.cost.toFixed(6)}}:{}),
+  };
+}
+
+async function downloadCategoryFiles(){
+  if(!items.length){ setSt('er','Нет загруженных товаров'); return; }
+  const b=document.getElementById('dlCatBtn'), was=b.innerHTML;
+  b.innerHTML='<span class="spin"></span> готовим';
+  try{
+    const groups=new Map();
+    items.forEach((p,i)=>{
+      const cat=catOf(p);
+      const key=String(cat.id??cat.slug);
+      const g=groups.get(key)||{cat,rows:[]};
+      g.rows.push(fileRow(p,results[i]));
+      groups.set(key,g);
+    });
+
+    // Сначала собираем всё, потом сохраняем: если фильтр для второй группы не
+    // посчитается, лучше не отдать ничего, чем отдать половину пары.
+    const files=[];
+    for(const [key,g] of groups){
+      files.push([`products_${key}.json`,g.rows]);
+      files.push([`filters_${key}.json`, curCat&&String(curCat.category_id)===key&&curCat.filters_file
+        ? curCat.filters_file
+        : await serverFilters(g.cat,g.rows)]);
+    }
+    files.forEach(([name,data])=>saveFile(JSON.stringify(data,null,2),name));
+    setSt('ok',`Файлов: ${files.length}`);
+  }catch(e){
+    setSt('er',`Выгрузка: ${e.message}`);
+  }finally{
+    b.innerHTML=was;
+  }
+}
+
+/** Фильтры считает сервер: buildFilters живёт там, дублировать её здесь нельзя. */
+async function serverFilters(cat,products){
+  const r=await fetch('/api/filters',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({category_id:cat.id,category:cat.name,url:cat.url,products})});
+  const d=await r.json();
+  if(!r.ok) throw new Error(d.error||`HTTP ${r.status}`);
+  return d;
 }
 function copyJSON(){
   if(!results[curIdx]?.enriched)return;

@@ -16,6 +16,7 @@
  *   GET  /api/categories      разделы из требований и схемы полей
  *   GET  /api/catalog?category=kholodilniki[&limit=N]
  *                             обход раздела: товары с описаниями + автофильтры
+ *   POST /api/filters         фильтры по переданному списку товаров
  *   POST /api/enrich          обогащение одного товара {model, product, category?}
  *
  * Ответ /api/enrich: { enriched, usage:{prompt_tokens, completion_tokens, cost,
@@ -228,14 +229,19 @@ async function apiCatalog(res, key, limitRaw) {
   try { cat = await job; }
   catch (e) { return json(res, 502, { error: `Не удалось обойти раздел: ${netError(e)}` }); }
 
+  // Фильтр по всему разделу: бренд и цена есть у каждого товара листинга.
+  const f = buildFilters(cat, cat.items);
   json(res, 200, {
     category_id: cat.id, category: cat.name, slug: cat.slug, url: cat.url,
     // count — весь раздел, loaded — сколько пришло с описаниями.
     count:   cat.listed,
     loaded:  cat.products.length,
     partial: cat.products.length < cat.listed,
-    // Фильтр по всему разделу: бренд и цена есть у каждого товара листинга.
-    filters: buildFilters(cat, cat.items).filters,
+    filters: f.filters,
+    // Готовое содержимое filters_(id).json — ровно то, что пишет CLI. Интерфейс
+    // выгружает его как есть: пересчитать фильтр по загруженному окну значило бы
+    // отдать фильтр окна вместо фильтра раздела.
+    filters_file: f,
     products: cat.products,
   });
 }
@@ -275,6 +281,24 @@ async function apiProduct(res, target) {
   } catch {
     json(res, 502, { error: 'Источник вернул не JSON' });
   }
+}
+
+/**
+ * Фильтры по переданному списку товаров: POST { products, category_id, category, url }.
+ * Нужно интерфейсу для выгрузки filters_(id).json, когда товары пришли не из
+ * раздела, а по адресу фида и лежат в нём вперемешку по категориям. Считает та
+ * же buildFilters, что пишет файл в CLI, — иначе два формата разъедутся.
+ */
+async function apiFilters(req, res) {
+  const raw = await readBody(req);
+  let body;
+  try { body = JSON.parse(raw); } catch { return json(res, 400, { error: 'Тело запроса не JSON' }); }
+
+  const { products, category_id = null, category = null, url = null } = body || {};
+  if (!Array.isArray(products) || !products.length) {
+    return json(res, 400, { error: 'Не передан список товаров' });
+  }
+  json(res, 200, buildFilters({ id: category_id, name: category, url }, products));
 }
 
 async function apiEnrich(req, res) {
@@ -414,6 +438,7 @@ const server = http.createServer(async (req, res) => {
 
     if (req.method === 'GET'  && u.pathname === '/api/models')     return await apiModels(res);
     if (req.method === 'GET'  && u.pathname === '/api/categories') return apiCategories(res);
+    if (req.method === 'POST' && u.pathname === '/api/filters')    return apiFilters(req, res);
     if (req.method === 'GET'  && u.pathname === '/api/catalog')    return await apiCatalog(res, u.searchParams.get('category'), u.searchParams.get('limit'));
     if (req.method === 'GET'  && u.pathname === '/api/product')    return await apiProduct(res, u.searchParams.get('url'));
     if (req.method === 'POST' && u.pathname === '/api/enrich')     return await apiEnrich(req, res);

@@ -91,14 +91,17 @@ const script = html.match(/<script>\n([\s\S]*)<\/script>/)[1]
 const EXPORTS = `
 export const api={syncSteps,setCnt,readProd,renderList,statusOf,selectResult,renderDetail,plural,
   renderEstimate,setFilter,stepError,pick,sumRun,renderFoot,clearResults,restoreResults,saveResults,
-  downloadAll,initTheme,toggleTheme,applyTheme,dur,renderRunline,loadCategories,loadCategory,
-  renderModelList,filterModels};
+  downloadAll,downloadCategoryFiles,initTheme,toggleTheme,applyTheme,dur,renderRunline,
+  loadCategories,loadCategory,renderModelList,filterModels};
 export const st={get items(){return items},set items(v){items=v},get results(){return results},
   set results(v){results=v},get selModel(){return selModel},
   get allModels(){return allModels},set allModels(v){allModels=v},
   get curIdx(){return curIdx},get filter(){return filter},
   get running(){return running},set running(v){running=v},
-  get runIdx(){return runIdx},set runIdx(v){runIdx=v},get curCat(){return curCat},
+  get runIdx(){return runIdx},set runIdx(v){runIdx=v},
+  get curCat(){return curCat},set curCat(v){curCat=v},
+  get categories(){return categories},set categories(v){categories=v},
+  set schemas(v){schemas=v},
   set runT0(v){runT0=v}};
 `;
 const tmp = path.join(ROOT, '.ui_under_test.mjs');
@@ -319,6 +322,82 @@ t('выгрузка TXT не падает на пропусках', () => {
   assert.match(captured, /AI ENRICHER/);
   assert.match(captured, /Курс: 80/);
 });
+console.log('\nДва файла на раздел');
+// Ловим и содержимое (Blob), и имя (a.download): пара файлов на раздел — это
+// про имена не меньше, чем про содержимое.
+const catchFiles = async fn => {
+  const files = [];
+  const RealBlob = globalThis.Blob, realCreate = document.createElement;
+  let last = null;
+  globalThis.Blob = class { constructor(p) { last = p[0]; } };
+  document.createElement = () => {
+    const a = new El('a');
+    Object.defineProperty(a, 'download', { set(v) { files.push({ name: v, body: last }); }, configurable: true });
+    return a;
+  };
+  try { await fn(); } finally { globalThis.Blob = RealBlob; document.createElement = realCreate; }
+  return files;
+};
+
+await tAsync('раздел выгружается парой products/filters с фильтром всего раздела', async () => {
+  st.curCat = {
+    category_id: 523, category: 'Холодильники', slug: 'kholodilniki', url: 'https://mrmag.ru/shop/kholodilniki',
+    filters_file: { category_id: 523, products_total: 256, filters: [{ code: 'brand', values: [{ value: 'DON' }] }] },
+  };
+  st.items = [{ sku: '1', name: 'A', category: 'Холодильники' }, { sku: '2', name: 'B', category: 'Холодильники' }];
+  st.results = [{ enriched: { specs: {}, warnings: [] }, iT: 10, oT: 5, cost: 0.001 }, null];
+
+  const files = await catchFiles(() => api.downloadCategoryFiles());
+  assert.deepStrictEqual(files.map(f => f.name), ['products_523.json', 'filters_523.json']);
+
+  const products = JSON.parse(files[0].body);
+  assert.strictEqual(products.length, 2, 'в файл идут все загруженные товары, не только обработанные');
+  assert.ok(products[0].enriched, 'обогащённый товар несёт enriched');
+  assert.strictEqual(products[0]._meta.cost_usd, 0.001);
+  assert.strictEqual(products[1].enriched, null, 'необработанный — enriched: null, как в файле из CLI');
+  // Фильтр раздела, а не окна: товаров загружено 2, а в фильтре 256.
+  assert.strictEqual(JSON.parse(files[1].body).products_total, 256);
+});
+
+await tAsync('товары из фида раскладываются по разделам, фильтры считает сервер', async () => {
+  st.curCat = null;
+  st.categories = [{ slug: 'kholodilniki', name: 'Холодильники', id: 523, url: 'u1' }];
+  st.schemas = { posuda: { id: null, name: 'Посуда' } };
+  st.items = [
+    { sku: '1', name: 'Холодильник', category: 'Холодильники' },
+    { sku: '2', name: 'Кастрюля',    category: 'Посуда' },
+  ];
+  st.results = [null, null];
+
+  const asked = [];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (url, opts) => {
+    asked.push(JSON.parse(opts.body));
+    return Promise.resolve({ ok: true, json: () => Promise.resolve({ category_id: null, filters: [] }) });
+  };
+  let files;
+  try { files = await catchFiles(() => api.downloadCategoryFiles()); }
+  finally { globalThis.fetch = realFetch; }
+
+  assert.deepStrictEqual(files.map(f => f.name),
+    ['products_523.json', 'filters_523.json', 'products_posuda.json', 'filters_posuda.json'],
+    'без id раздела имя файла берёт slug схемы — молча склеивать разделы нельзя');
+  assert.strictEqual(asked.length, 2, 'фильтры считает сервер, а не копия buildFilters в браузере');
+  assert.deepStrictEqual(asked.map(a => a.products.length), [1, 1]);
+});
+
+await tAsync('сбой фильтров не оставляет половину пары', async () => {
+  st.curCat = null;
+  st.items = [{ sku: '1', name: 'X', category: 'Посуда' }];
+  st.results = [null];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = () => Promise.resolve({ ok: false, json: () => Promise.resolve({ error: 'сервер лёг' }) });
+  let files;
+  try { files = await catchFiles(() => api.downloadCategoryFiles()); }
+  finally { globalThis.fetch = realFetch; }
+  assert.strictEqual(files.length, 0, 'products без filters выгружать нельзя');
+});
+
 t('сброс очищает состояние и прячет кнопки', () => {
   api.clearResults();
   assert.strictEqual(st.results.length, 0);

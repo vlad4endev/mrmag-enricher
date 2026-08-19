@@ -101,6 +101,44 @@ try {
     }
   });
 
+  console.log('\nФильтры по списку товаров');
+  const postFilters = body => fetch(url('/api/filters'), {
+    method: 'POST',
+    headers: { authorization: auth, 'Content-Type': 'application/json' },
+    body: typeof body === 'string' ? body : JSON.stringify(body),
+  });
+  await t('без пароля не считает', async () => {
+    const r = await fetch(url('/api/filters'), { method: 'POST', body: '{}' });
+    assert.strictEqual(r.status, 401);
+  });
+  await t('битое тело и пустой список — 400', async () => {
+    assert.strictEqual((await postFilters('{не json')).status, 400);
+    assert.strictEqual((await postFilters({ products: [] })).status, 400);
+    assert.strictEqual((await postFilters({})).status, 400);
+  });
+  await t('фильтры считаются той же функцией, что пишет файл', async () => {
+    const r = await postFilters({
+      category_id: 523, category: 'Холодильники', url: 'https://mrmag.ru/shop/kholodilniki',
+      products: [
+        { sku: '1', brand: 'DON', brand_slug: 'don', price: 30000 },
+        { sku: '2', brand: 'DON', brand_slug: 'don', price: 45000 },
+        { sku: '3', brand: 'LG',  brand_slug: 'lg',  price: 90000 },
+        { sku: '4', price: 0 },
+      ],
+    });
+    assert.strictEqual(r.status, 200);
+    const d = await r.json();
+    assert.strictEqual(d.category_id, 523);
+    assert.strictEqual(d.products_total, 4);
+    const brand = d.filters.find(f => f.code === 'brand');
+    const price = d.filters.find(f => f.code === 'price');
+    assert.deepStrictEqual(brand.values.map(v => v.value), ['DON', 'LG'], 'сначала частые бренды');
+    assert.strictEqual(brand.without_value, 1, 'товар без бренда должен быть посчитан');
+    assert.strictEqual(price.min, 30000);
+    assert.strictEqual(price.max, 90000);
+    assert.strictEqual(price.without_price, 1, 'цена 0 — это отсутствие цены');
+  });
+
   console.log('\nВалидация обогащения');
   const post = body => fetch(url('/api/enrich'), {
     method: 'POST',

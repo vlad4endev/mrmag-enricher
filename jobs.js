@@ -82,7 +82,7 @@ export function createJobStore({
 
   function summary(job) {
     return {
-      id: job.id, at: job.at, model: job.model, category: job.category ?? null,
+      id: job.id, at: job.at, model: job.model, provider: job.provider ?? null, category: job.category ?? null,
       status: job.status, total: job.total, done: job.done,
       started_at: job.started_at ?? null, finished_at: job.finished_at ?? null,
       error: job.error ?? null, note: job.note ?? null, usage: usageOf(job),
@@ -154,7 +154,7 @@ export function createJobStore({
       if (job.results[k]) continue;                    // возобновление после перезапуска
       job.at_position = k;
       try {
-        const d = await enrichOne(job.products[k], { model: job.model, category: job.category });
+        const d = await enrichOne(job.products[k], { model: job.model, category: job.category, provider: job.provider });
         job.results[k] = {
           enriched: d.enriched ?? null,
           ...(d.skipped ? { skipped: d.skipped } : {}),
@@ -188,12 +188,13 @@ export function createJobStore({
    * Новая задача. Товары приходят из интерфейса уже отфильтрованными, вместе с
    * их индексами в списке — обратная дорога результата к строке на экране.
    */
-  function create({ model, category, products, indices }) {
+  function create({ model, category, products, indices, provider }) {
     prune();
     const job = {
       id: crypto.randomUUID(),
       at: now(),
       model,
+      provider: provider || null,
       category: category ?? null,
       status: 'queued',
       total: products.length,

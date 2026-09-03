@@ -42,6 +42,7 @@ services:
       PAGE_CACHE_DIR: /data/cache
       OUT_DIR: /data/out
       JOBS_DIR: /data/jobs           # фоновые прогоны на томе: restart их доводит
+      SETTINGS_PATH: /data/config.json
     volumes:
       - enricher-data:/data
     restart: unless-stopped

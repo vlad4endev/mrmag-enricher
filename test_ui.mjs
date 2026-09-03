@@ -139,7 +139,8 @@ export const api={syncSteps,setCnt,setCntFree,applyCnt,applySource,setSource,pic
   downloadAll,downloadCategoryFiles,downloadV2,initTheme,toggleTheme,applyTheme,dur,renderRunline,
   loadCategories,catOf,renderModelList,filterModels,renderParser,loadParser,
   applyDates,clearDates,renderDates,passesFilter,queued,onProdInput,apiJson,run,
-  stopJob,follow,attachJob,resumeJob,applyJob,finishRun};
+  stopJob,follow,attachJob,resumeJob,applyJob,finishRun,
+  showPage,setTab,renderSettings,addProvider,removeProvider,addEngine,readSettingsPatch};
 export const st={get items(){return items},set items(v){items=v},
   get srcItems(){return srcItems},set srcItems(v){srcItems=v},
   get pickCat(){return pickCat},set pickCat(v){pickCat=v},get selCnt(){return selCnt},get results(){return results},
@@ -349,6 +350,51 @@ t('выключенный парсер не притворяется работ�
   assert.match(G('parserSub').textContent, /выключен/);
   assert.match(G('parserBox').innerHTML, /пропускает пустые/);
   assert.ok(!G('parserStep').classList.contains('done'));
+});
+
+console.log('\nНастройки: провайдеры, парсеры, условия');
+t('вкладка «Настройки» есть на странице', () => {
+  assert.ok(G('page-settings'));
+  assert.ok(G('setProvList'));
+  assert.ok(G('setMismatch'));
+});
+t('рисует провайдеров и условия из ответа сервера', () => {
+  api.renderSettings({
+    settings: {
+      providers: [{ id: 'openrouter', name: 'OpenRouter', enabled: true, default: true, has_key: true, key_hint: '••••v1-abc', key_from: 'env', base_url: 'https://openrouter.ai/api/v1', models: [] }],
+      search: { enabled: true, tries: 3, gap_ms: 3000, timeout_ms: 20000, query_suffix: 'характеристики', skip_hosts: ['mrmag.ru'], search_url: '', fallback_engines: ['mojeek', 'brave'], engines: [], duckduckgo: { enabled: true, method: 'POST', endpoint: 'html', region: 'ru-ru' } },
+      conditions: { mismatch_policy: 'flag', min_source_chars: 100, min_attrs: 5, facet_min_coverage: 70, target_coverage: 90, fuzzy_min_score: 0.93 },
+      model: { name: 'deepseek/deepseek-v3.2', prompt_version: 'dict-v1', max_retries: 3, timeout_ms: 60000, max_tokens: 3200 },
+    },
+    presets: [{ id: 'ollama', name: 'Ollama (локально)' }],
+    overrides: [],
+  });
+  assert.match(G('setProvList').innerHTML, /OpenRouter/);
+  assert.match(G('setProvList').innerHTML, /••••v1-abc/);
+  assert.ok(!/sk-or-v1-/.test(G('setProvList').innerHTML), 'ключ в разметку не попадает');
+  assert.strictEqual(G('setMismatch').value, 'flag');
+  assert.strictEqual(G('setTries').value, '3');
+  assert.strictEqual(G('setDdgRegion').value, 'ru-ru');
+  assert.ok(G('setSearchOn').checked);
+});
+t('добавляет провайдера из заготовки', () => {
+  api.addProvider('ollama');
+  assert.match(G('setProvList').innerHTML, /Ollama/);
+});
+t('собирает условия с формы в PATCH', () => {
+  G('setMismatch').value = 'strict';
+  G('setMinAttrs').value = '7';
+  const patch = api.readSettingsPatch();
+  assert.strictEqual(patch.conditions.mismatch_policy, 'strict');
+  assert.strictEqual(patch.conditions.min_attrs, 7);
+  assert.ok(patch.providers.some(p => p.id === 'openrouter'));
+});
+t('переключает разделы настроек', () => {
+  api.setTab('parse');
+  assert.ok(G('setParse').classList.contains('on'));
+  assert.ok(!G('setProv').classList.contains('on'));
+  assert.ok(G('snParse').classList.contains('on'));
+  api.setTab('prov');
 });
 
 console.log('\n«Сколько обработать» — одна настройка с одним смыслом');

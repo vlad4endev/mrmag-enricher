@@ -12,10 +12,14 @@ import { spawn } from 'child_process';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import { fileURLToPath } from 'url';
 
+const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PORT = 3400 + Math.floor(process.uptime() * 7) % 100;
 // Фоновые прогоны пишутся на диск — в тесте в свой каталог, не в рабочий.
 const JOBS_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'enricher-jobs-'));
+const SETTINGS_PATH = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'enricher-cfg-')), 'config.json');
+fs.copyFileSync(path.join(ROOT, 'config.json'), SETTINGS_PATH);
 const PASS = 'test-pass';
 const auth = 'Basic ' + Buffer.from(`admin:${PASS}`).toString('base64');
 
@@ -32,6 +36,7 @@ const srv = spawn(process.execPath, ['server.js'], {
     HOST: '127.0.0.1',
     PAGE_CACHE_DIR: '.page_cache',
     JOBS_DIR,
+    SETTINGS_PATH,
   },
   stdio: ['ignore', 'pipe', 'pipe'],
 });
@@ -57,7 +62,7 @@ try {
     assert.strictEqual((await r.json()).ok, true);
   });
   await t('без пароля закрыты и страница, и API', async () => {
-    for (const p of ['/', '/api/categories', '/api/models', '/api/parser', '/api/catalog?category=523']) {
+    for (const p of ['/', '/api/categories', '/api/models', '/api/parser', '/api/settings', '/api/catalog?category=523']) {
       assert.strictEqual((await fetch(url(p))).status, 401, `${p} должен требовать вход`);
     }
     const r = await fetch(url('/api/enrich'), { method: 'POST', body: '{}' });
@@ -127,6 +132,49 @@ try {
     assert.strictEqual(d.duckduckgo.region, 'ru-ru');
     assert.ok(d.tries >= 1);
     assert.match(d.label, /DuckDuckGo/i);
+  });
+  await t('/api/settings отдаёт провайдеров без ключей и заготовки', async () => {
+    const r = await fetch(url('/api/settings'), { headers: { authorization: auth } });
+    assert.strictEqual(r.status, 200);
+    const d = await r.json();
+    assert.ok(d.settings.providers.some(p => p.id === 'openrouter'));
+    assert.ok(d.presets.some(p => p.id === 'ollama'));
+    assert.ok(d.settings.providers.every(p => !('api_key' in p) || !p.api_key), 'секрет не должен уезжать в браузер');
+    assert.strictEqual(d.conditions.items.find(i => i.id === 'mismatch_policy').value, 'flag');
+    assert.ok(d.parsers.parsers.some(p => p.kind === 'duckduckgo'));
+  });
+  await t('PUT /api/settings сохраняет условие и не затирает ключ пустой строкой', async () => {
+    const cur = await (await fetch(url('/api/settings'), { headers: { authorization: auth } })).json();
+    const providers = cur.settings.providers.map(p => ({ ...p, api_key: '' }));
+    const r = await fetch(url('/api/settings'), {
+      method: 'PUT',
+      headers: { authorization: auth, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        providers,
+        conditions: { ...cur.settings.conditions, mismatch_policy: 'strict' },
+        search: cur.settings.search,
+        model: cur.settings.model,
+      }),
+    });
+    assert.strictEqual(r.status, 200, (await r.clone().text()).slice(0, 200));
+    const d = await r.json();
+    assert.strictEqual(d.settings.conditions.mismatch_policy, 'strict');
+    const saved = JSON.parse(fs.readFileSync(SETTINGS_PATH, 'utf-8'));
+    assert.strictEqual(saved.conditions.mismatch_policy, 'strict');
+    assert.strictEqual(saved.providers[0].api_key, '', 'пустой ключ в PATCH не должен ничего записать');
+  });
+  await t('PUT с некорректным URL провайдера — 400', async () => {
+    const cur = await (await fetch(url('/api/settings'), { headers: { authorization: auth } })).json();
+    const r = await fetch(url('/api/settings'), {
+      method: 'PUT',
+      headers: { authorization: auth, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        providers: [{ ...cur.settings.providers[0], base_url: 'not-a-url' }],
+      }),
+    });
+    assert.strictEqual(r.status, 400);
+    const d = await r.json();
+    assert.match(d.error, /base_url/i);
   });
   await t('неизвестный раздел — 400 со списком доступных', async () => {
     const r = await fetch(url('/api/catalog?category=zzz'), { headers: { authorization: auth } });
@@ -415,7 +463,7 @@ try {
     const port2 = PORT + 1;
     const srv2 = spawn(process.execPath, ['server.js'], {
       env: { ...process.env, OPENROUTER_API_KEY: 'sk-or-v1-test-not-a-real-key', APP_PASSWORD: PASS,
-             PORT: String(port2), HOST: '127.0.0.1', PAGE_CACHE_DIR: '.page_cache', JOBS_DIR },
+             PORT: String(port2), HOST: '127.0.0.1', PAGE_CACHE_DIR: '.page_cache', JOBS_DIR, SETTINGS_PATH },
       stdio: ['ignore', 'ignore', 'ignore'],
     });
     try {

@@ -28,9 +28,13 @@ import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 import { netError, isEnrichable, modelToken, MIN_SOURCE_CHARS } from './lib.js';
 import { specFacets, enrichedRows } from './export_v2.js';
+import { loadConfig } from './pipeline/dict.js';
 import {
-  isDuckDuckGoBlocked, isJunkHost, parseDuckDuckGoResults, searchDuckDuckGo,
+  isDuckDuckGoBlocked, isJunkHost, parseDuckDuckGoResults,
+  searchWeb as pipelineSearchWeb,
 } from './pipeline/search.js';
+
+const ROOT = path.dirname(fileURLToPath(import.meta.url));
 
 export const ORIGIN = 'https://mrmag.ru';
 export const FEED_URL = `${ORIGIN}/scripts/sync_local/products.json`;
@@ -361,32 +365,6 @@ export function parseAnyProductPage(html) {
 }
 
 /**
- * Поисковики без ключа и без JS. Первый, который ответил ссылками, и
- * используется; остальные — на случай, когда предыдущий отдал «аномалию»
- * (так DuckDuckGo встречает частые запросы с одного адреса).
- *
- * SEARCH_URL со своим SearxNG ставится перед ними: у себя лимитов нет.
- */
-const ENGINES = [
-  process.env.SEARCH_URL || null,                 // шаблон с %s вместо запроса
-  'https://lite.duckduckgo.com/lite/?q=%s',
-  'https://www.mojeek.com/search?q=%s',
-].filter(Boolean);
-
-// Выдача — не карточка товара: чужой сервер терпит 4 запроса в секунду, а
-// поисковик за такое отдаёт заглушку. Пауза только перед реальным запросом,
-// повтор из кэша её не ждёт.
-const SEARCH_GAP_MS = Number(process.env.SEARCH_GAP_MS || 3000);
-let lastSearch = 0;
-
-const fresh = url => {
-  const file = cachePath(url);
-  return fs.existsSync(file) && Date.now() - fs.statSync(file).mtimeMs < CACHE_TTL;
-};
-/** Заглушка поисковика не должна лежать в кэше сутки. */
-const forget = url => { try { fs.unlinkSync(cachePath(url)); } catch { /* нечего забывать */ } };
-
-/**
  * Адреса выдачи по запросу. Ссылки в выдаче — обычные <a href>, у DuckDuckGo
  * завёрнутые в редирект /l/?uddg=..., поэтому разворачиваем.
  * По одному адресу на домен: три страницы одного магазина — это одна и та же
@@ -456,40 +434,16 @@ export async function searchWeb(query) {
   if (searchFails >= SEARCH_GIVE_UP) {
     throw new Error(`поиск отключён после ${searchFails} неудач подряд — перезапустите прогон`);
   }
-  let lastError = null;
-
-  // GET html.duckduckgo.com часто отдаёт заглушку. Раньше её футер
-  // (mastodon, buttondown) считался выдачей, и Mojeek уже не вызывался.
-  if (!process.env.SEARCH_URL) {
-    try {
-      const urls = await searchDuckDuckGo(query);
-      if (urls.length) { searchFails = 0; return urls; }
-      lastError = 'DuckDuckGo: выдача без ссылок';
-    } catch (e) {
-      lastError = e.message;
-    }
+  let config = {};
+  try { config = loadConfig(ROOT); } catch { /* значения по умолчанию в resolveSearchSettings */ }
+  try {
+    const urls = await pipelineSearchWeb(query, config);
+    searchFails = 0;
+    return urls;
+  } catch (e) {
+    searchFails++;
+    throw e;
   }
-
-  for (const template of ENGINES) {
-    const url = template.replace('%s', encodeURIComponent(query));
-    const host = new URL(url).hostname.replace(/^www\./, '');
-    try {
-      if (!fresh(url)) {
-        const gap = SEARCH_GAP_MS - (Date.now() - lastSearch);
-        if (gap > 0) await sleep(gap);
-        lastSearch = Date.now();
-      }
-      const urls = parseSearchResults(await fetchPage(url, { ua: WEB_UA, timeoutMs: 20_000 }), host);
-      if (urls.length) { searchFails = 0; return urls; }
-      forget(url);                                       // заглушка вместо выдачи
-      lastError = `${host}: выдача без ссылок`;
-    } catch (e) {
-      forget(url);
-      lastError = `${host}: ${e.message}`;
-    }
-  }
-  searchFails++;
-  throw new Error(lastError || 'поисковики не настроены');
 }
 
 /**

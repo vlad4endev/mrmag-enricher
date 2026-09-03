@@ -7,6 +7,7 @@ import assert from 'assert';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import { fileURLToPath } from 'url';
 import {
   coerceNumber, extractFacts as extractFactsIn, crossCheck, parseResponse,
   normalizeResponse as normalizeResponseIn, stripHtml, RateLimiter, isEnrichable,
@@ -1218,6 +1219,76 @@ console.log('\nТовар без описания: поиск в сети');
 
   await new Promise(r => srv.close(r));
   fs.rmSync(cacheDir, { recursive: true, force: true });
+}
+
+{
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'enricher-settings-'));
+  const prev = process.env.SETTINGS_PATH;
+  process.env.SETTINGS_PATH = path.join(dir, 'config.json');
+  fs.copyFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), 'config.json'), process.env.SETTINGS_PATH);
+  const {
+    loadSettings, applySettingsPatch, saveSettings, publicSettings, validateSettings,
+    resolveProvider, parsersView,
+  } = await import('./settings.js');
+
+  console.log('\nГибкие настройки');
+  t('старый config без секций получает провайдера OpenRouter', () => {
+    const s = loadSettings();
+    assert.ok(s.providers.some(p => p.id === 'openrouter' && p.default));
+    assert.strictEqual(s.conditions.mismatch_policy, 'flag');
+    assert.ok(Array.isArray(s.search.engines));
+  });
+  t('публичное представление скрывает ключ', () => {
+    const s = loadSettings();
+    s.providers[0].api_key = 'sk-secret-abcdefgh';
+    const pub = publicSettings(s);
+    assert.ok(!JSON.stringify(pub).includes('sk-secret-abcdefgh'));
+    assert.strictEqual(pub.providers[0].has_key, true);
+    assert.match(pub.providers[0].key_hint, /efgh$/);
+  });
+  t('пустой api_key в PATCH оставляет прежний', () => {
+    const cur = loadSettings();
+    cur.providers[0].api_key = 'sk-keep-me';
+    const next = applySettingsPatch(cur, {
+      providers: [{ ...cur.providers[0], api_key: '' }],
+    });
+    assert.strictEqual(next.providers[0].api_key, 'sk-keep-me');
+  });
+  t('null api_key стирает ключ', () => {
+    const cur = loadSettings();
+    cur.providers[0].api_key = 'sk-drop-me';
+    const next = applySettingsPatch(cur, {
+      providers: [{ ...cur.providers[0], api_key: null }],
+    });
+    assert.strictEqual(next.providers[0].api_key, '');
+  });
+  t('свой парсер без %s не проходит валидацию', () => {
+    const s = loadSettings();
+    s.search.engines = [{ id: 'bad', name: 'bad', url: 'https://example.com/search', enabled: true }];
+    assert.ok(validateSettings(s).some(e => /%s/.test(e)));
+  });
+  t('добавленный HTML-парсер сохраняется и виден в списке', () => {
+    const cur = loadSettings();
+    const next = applySettingsPatch(cur, {
+      search: {
+        ...cur.search,
+        engines: [{ id: 'searx', name: 'SearxNG', url: 'https://searx.example/search?q=%s', enabled: true }],
+      },
+    });
+    saveSettings(next);
+    const again = loadSettings();
+    assert.equal(again.search.engines[0].url, 'https://searx.example/search?q=%s');
+    assert.ok(parsersView(again.search).parsers.some(p => p.name === 'SearxNG' && !p.builtin));
+  });
+  t('провайдер по умолчанию — выбранный default', () => {
+    const s = loadSettings();
+    assert.equal(resolveProvider(s).id, 'openrouter');
+    assert.equal(resolveProvider(s, 'openrouter').name, 'OpenRouter');
+  });
+
+  if (prev === undefined) delete process.env.SETTINGS_PATH;
+  else process.env.SETTINGS_PATH = prev;
+  fs.rmSync(dir, { recursive: true, force: true });
 }
 
 console.log(`\n✅ ${n} проверок пройдено\n`);

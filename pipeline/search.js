@@ -101,6 +101,11 @@ export function resolveSearchSettings(config = {}) {
     skipHosts: Array.isArray(s.skip_hosts) && s.skip_hosts.length ? s.skip_hosts : ['mrmag.ru'],
     extraUrl: process.env.SEARCH_URL || s.search_url || '',
     fallback: Array.isArray(s.fallback_engines) ? s.fallback_engines : ['mojeek', 'brave'],
+    engines: Array.isArray(s.engines)
+      ? s.engines
+          .filter(e => e && e.enabled !== false && String(e.url || '').includes('%s'))
+          .map(e => ({ name: String(e.name || e.id || 'поиск'), url: String(e.url) }))
+      : [],
     duckduckgo: {
       enabled: ddg.enabled !== false,
       endpoint: String(process.env.DDG_ENDPOINT || ddg.endpoint || 'html').toLowerCase(),
@@ -135,6 +140,7 @@ export function publicParserStatus(config = {}) {
     skip_hosts: search.skipHosts,
     search_url: search.extraUrl || null,
     fallback: search.fallback,
+    engines: search.engines,
     duckduckgo: {
       enabled: ddg.enabled,
       method: ddg.method,
@@ -350,16 +356,24 @@ export async function searchWeb(query, config = {}) {
   const errors = [];
 
   const extra = String(settings.extraUrl || '').trim();
-  if (extra.includes('%s')) {
+  const custom = [
+    ...(extra.includes('%s') ? [{ name: 'свой поисковик', url: extra }] : []),
+    ...(settings.engines || []),
+  ];
+  const seenUrl = new Set();
+  for (const eng of custom) {
+    const template = String(eng.url || '');
+    if (!template.includes('%s') || seenUrl.has(template)) continue;
+    seenUrl.add(template);
     try {
-      const url = extra.replace('%s', encodeURIComponent(q));
+      const url = template.replace('%s', encodeURIComponent(q));
       const host = new URL(url).hostname.replace(/^www\./, '');
       await waitGap('search', settings.gapMs);
       const urls = parseSearchResults(await fetchPage(url, { timeoutMs: settings.timeoutMs }), host, settings);
       if (urls.length) return urls;
-      errors.push(`${host}: выдача без ссылок`);
+      errors.push(`${eng.name || host}: выдача без ссылок`);
     } catch (e) {
-      errors.push(e.message);
+      errors.push(`${eng.name || 'поиск'}: ${e.message}`);
     }
   }
 

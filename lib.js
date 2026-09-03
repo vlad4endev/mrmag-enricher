@@ -1142,14 +1142,14 @@ const withinBound = (key, v, b) => {
  * расхождение. Возвращает список расхождений; при MISMATCH_POLICY='strict'
  * спорное поле модели обнуляется.
  */
-export function crossCheck(specs, facts, bounds = {}) {
+export function crossCheck(specs, facts, bounds = {}, policy = MISMATCH_POLICY) {
   const warnings = [];
   const flagged = new Set();
   const flag = (field, got, expected, note) => {
     if (flagged.has(field)) return; // одно расхождение на поле, а не два по разным путям
     flagged.add(field);
     warnings.push({ field, model: got, source: expected, note });
-    if (MISMATCH_POLICY === 'strict') specs[field] = expected ?? null;
+    if (policy === 'strict') specs[field] = expected ?? null;
   };
 
   for (const [key, exp] of Object.entries(facts)) {
@@ -1253,7 +1253,7 @@ const RICH_SPECS = 5;
 const seoFloor = (key, filled) =>
   (key === 'seo_description' && filled < RICH_SPECS ? 400 : SEO_LIMITS[key][0]);
 
-export function normalizeResponse(data, sourceText = '', schemaKey, attributes = []) {
+export function normalizeResponse(data, sourceText = '', schemaKey, attributes = [], policy = MISMATCH_POLICY) {
   if (!data || typeof data !== 'object' || Array.isArray(data)) {
     throw new Error('Ответ не объект');
   }
@@ -1283,7 +1283,7 @@ export function normalizeResponse(data, sourceText = '', schemaKey, attributes =
   // Источника два: проза и атрибуты магазина. productFacts сводит их вместе и
   // молчит там, где они спорят друг с другом.
   const { facts, bounds, conflicts } = productFacts({ description: sourceText, attributes }, schema);
-  const warnings = crossCheck(specs, facts, bounds).concat(enumIssues);
+  const warnings = crossCheck(specs, facts, bounds, policy).concat(enumIssues);
 
   // Пропуск модели — не повод терять факт: если поле null, а в тексте значение
   // разобрано однозначно, подставляем его и перечисляем, что подставили.
@@ -1510,6 +1510,9 @@ export async function enrichProduct(product, opts) {
     model, apiKey, limiter, pricing = null, schema: schemaOpt = null,
     maxRetries = 3, maxTokens = 3200, timeoutMs = 60_000,
     onNote = () => {}, referer = 'https://mrmag.ru', title = 'mrmag enricher',
+    chatUrl = 'https://openrouter.ai/api/v1/chat/completions',
+    headers: extraHeaders = {},
+    mismatchPolicy = MISMATCH_POLICY,
   } = opts;
 
   // Схему берём из опции, иначе из категории самого товара. Молчаливого
@@ -1532,13 +1535,14 @@ export async function enrichProduct(product, opts) {
 
     let res, data, bodyText;
     try {
-      res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      res = await fetch(chatUrl, {
         method:  'POST',
         headers: {
           Authorization:    `Bearer ${apiKey}`,
           'Content-Type':   'application/json',
           'HTTP-Referer':   referer,
           'X-Title':        title,
+          ...extraHeaders,
         },
         body:   JSON.stringify(buildRequestBody(model, userContent, tokenBudget, schema)),
         signal: AbortSignal.timeout(timeoutMs),
@@ -1582,7 +1586,7 @@ export async function enrichProduct(product, opts) {
     oT += outTok;
     if (typeof data.usage?.cost === 'number') {
       cost += data.usage.cost;
-      costSource = 'openrouter';           // фактический счёт от OpenRouter
+      costSource = /openrouter\.ai/i.test(chatUrl) ? 'openrouter' : 'провайдер';
     } else if (pricing) {
       cost += inTok * pricing.prompt + outTok * pricing.completion;
       if (costSource === 'нет данных') costSource = 'тариф модели';
@@ -1600,7 +1604,7 @@ export async function enrichProduct(product, opts) {
 
     let enriched;
     try {
-      enriched = normalizeResponse(parseResponse(choice.message?.content ?? ''), src, schema, product.attributes);
+      enriched = normalizeResponse(parseResponse(choice.message?.content ?? ''), src, schema, product.attributes, mismatchPolicy);
     } catch (err) {
       lastErr = err;
       if (attempt < maxRetries) { onNote(`parse err, retry ${attempt}`); await sleep(2000); continue; }

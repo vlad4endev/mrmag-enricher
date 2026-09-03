@@ -14,7 +14,7 @@ COPY pipeline ./pipeline
 COPY config.json ./
 
 # Оборванный импорт должен падать на сборке, а не в рестарт-цикле на проде.
-RUN node -e "Promise.all([import('./lib.js'),import('./catalog.js'),import('./socks.js')]).then(()=>console.log('импорты на месте'))"
+RUN node -e "Promise.all([import('./lib.js'),import('./catalog.js'),import('./socks.js'),import('./settings.js')]).then(()=>console.log('импорты на месте'))"
 
 # Кэш страниц и выгрузки — на том, иначе перезапуск заставляет обходить раздел заново.
 # Там же фоновые прогоны: перезапуск контейнера обязан их доводить, а не терять
@@ -23,6 +23,7 @@ RUN mkdir -p /data/cache /data/out /data/jobs && chown -R node:node /data
 # Встроенная поддержка HTTPS_PROXY в fetch — появилась в Node 24. Нужна там,
 # где до openrouter.ai не достучаться напрямую: сам прокси задаётся в .env.
 ENV NODE_USE_ENV_PROXY=1 \
+    SETTINGS_PATH=/data/config.json \
     PAGE_CACHE_DIR=/data/cache \
     OUT_DIR=/data/out \
     JOBS_DIR=/data/jobs \

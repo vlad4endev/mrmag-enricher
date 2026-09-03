@@ -1215,6 +1215,252 @@ function showPage(id, btn){
   if(id==='settings') loadSettings();
 }
 
+const SET_TABS={prov:['setProv','snProv'],parse:['setParse','snParse'],cond:['setCond','snCond'],run:['setRun','snRun']};
+function setTab(id){
+  Object.entries(SET_TABS).forEach(([k,[panel,nav]])=>{
+    document.getElementById(panel).classList.toggle('on',k===id);
+    document.getElementById(nav).classList.toggle('on',k===id);
+  });
+}
+
+let setPayload=null;
+const setV=(id,v)=>{ const el=document.getElementById(id); if(el) el.value=v==null?'':String(v); };
+const setC=(id,on)=>{ const el=document.getElementById(id); if(el) el.checked=!!on; };
+const getV=id=>document.getElementById(id)?.value??'';
+const getC=id=>!!document.getElementById(id)?.checked;
+
+function renderSettings(d){
+  setPayload=d;
+  const s=d.settings||{};
+  const search=s.search||{};
+  const ddg=search.duckduckgo||{};
+  const cond=s.conditions||{};
+  const model=s.model||{};
+  const fb=search.fallback_engines||[];
+  setC('setSearchOn', search.enabled!==false);
+  setV('setTries', search.tries??3);
+  setV('setGap', search.gap_ms??3000);
+  setV('setTimeout', search.timeout_ms??20000);
+  setV('setSuffix', search.query_suffix??'характеристики');
+  setV('setSkipHosts', (search.skip_hosts||[]).join(', '));
+  setV('setSearchUrl', search.search_url||'');
+  setC('setDdgOn', ddg.enabled!==false);
+  setV('setDdgMethod', ddg.method||'POST');
+  setV('setDdgEndpoint', ddg.endpoint||'html');
+  setV('setDdgRegion', ddg.region||'ru-ru');
+  setV('setDdgSite', ddg.site_filter||'');
+  setV('setDdgUrl', ddg.url||'');
+  setC('setFbMojeek', fb.includes('mojeek'));
+  setC('setFbBrave', fb.includes('brave'));
+  setC('setFbLite', fb.includes('ddg_lite'));
+  setV('setMismatch', cond.mismatch_policy||'flag');
+  setV('setMinChars', cond.min_source_chars??100);
+  setV('setMinAttrs', cond.min_attrs??5);
+  setV('setFacetCov', cond.facet_min_coverage??70);
+  setV('setTargetCov', cond.target_coverage??90);
+  setV('setFuzzy', cond.fuzzy_min_score??0.93);
+  setV('setModelName', model.name||'');
+  setV('setPromptVer', model.prompt_version||'dict-v1');
+  setV('setRetries', model.max_retries??3);
+  setV('setAiTimeout', model.timeout_ms??60000);
+  setV('setMaxTokens', model.max_tokens??3200);
+  const ov=d.overrides||[];
+  document.getElementById('setOverrides').innerHTML=ov.length
+    ? `<div class="set-warn">${ov.map(o=>`${esc(o.key)}=${esc(o.value)} — ${esc(o.note)}`).join('<br>')}</div>`
+    : '';
+  document.getElementById('setPresets').innerHTML=(d.presets||[]).map(p=>
+    `<button type="button" class="sbtn ghost" data-preset="${esc(p.id)}">+ ${esc(p.name)}</button>`
+  ).join('')+`<button type="button" class="sbtn ghost" data-preset="custom">+ Свой endpoint</button>`;
+  document.getElementById('setPresets').querySelectorAll('[data-preset]').forEach(b=>
+    b.addEventListener('click',()=>addProvider(b.dataset.preset)));
+  renderProviderCards();
+  renderEngineCards();
+  document.getElementById('setStatus').textContent='Изменения сохраняются на сервере и действуют на следующий прогон.';
+}
+
+function renderProviderCards(){
+  const list=setPayload?.settings?.providers||[];
+  document.getElementById('setProvList').innerHTML=list.map((p,i)=>`
+    <div class="set-card" style="margin-bottom:10px" data-prov="${esc(p.id)}">
+      <div class="set-card-h">
+        <b>${esc(p.name||p.id)}</b>
+        <span class="set-badge${p.enabled?'':' off'}">${p.default?'по умолчанию':(p.enabled?'включён':'выключен')}</span>
+      </div>
+      <div class="set-grid">
+        <div class="set-row"><label>Название</label><input type="text" data-pk="name" data-i="${i}" value="${esc(p.name||'')}"></div>
+        <div class="set-row"><label>Id</label><input type="text" data-pk="id" data-i="${i}" value="${esc(p.id||'')}"></div>
+        <div class="set-row"><label>Base URL</label><input type="url" data-pk="base_url" data-i="${i}" value="${esc(p.base_url||'')}"></div>
+        <div class="set-row"><label>Переменная ключа</label><input type="text" data-pk="api_key_env" data-i="${i}" value="${esc(p.api_key_env||'')}" placeholder="OPENROUTER_API_KEY"></div>
+        <div class="set-row"><label>Ключ API ${p.has_key?`<span class="set-badge">${esc(p.key_from==='env'?'из env':'в файле')} ${esc(p.key_hint||'')}</span>`:'<span class="set-badge off">нет ключа</span>'}</label>
+          <input type="password" data-pk="api_key" data-i="${i}" placeholder="${p.has_key?'оставьте пустым, чтобы не менять':'sk-...'}" autocomplete="off">
+        </div>
+        <div class="set-row"><label>Модели вручную (по одной на строку)</label><textarea data-pk="models" data-i="${i}" style="min-height:64px" placeholder="если каталог /models недоступен">${esc((p.models||[]).join('\n'))}</textarea></div>
+      </div>
+      <label class="set-check"><input type="checkbox" data-pk="enabled" data-i="${i}" ${p.enabled?'checked':''}> Включён</label>
+      <label class="set-check"><input type="checkbox" data-pk="default" data-i="${i}" ${p.default?'checked':''}> Использовать по умолчанию</label>
+      <div class="set-actions">
+        <button type="button" class="sbtn danger" data-del="${i}">Удалить</button>
+      </div>
+    </div>`).join('')||'<div class="est-note">Нет провайдеров — добавьте OpenRouter или свой endpoint.</div>';
+  document.getElementById('setProvList').querySelectorAll('[data-del]').forEach(b=>
+    b.addEventListener('click',()=>removeProvider(Number(b.dataset.del))));
+}
+
+function renderEngineCards(){
+  const engines=setPayload?.settings?.search?.engines||[];
+  document.getElementById('setEngineList').innerHTML=engines.map((e,i)=>`
+    <div class="set-card" style="margin-bottom:8px">
+      <div class="set-grid">
+        <div class="set-row"><label>Имя</label><input type="text" data-ek="name" data-i="${i}" value="${esc(e.name||'')}"></div>
+        <div class="set-row"><label>URL с %s</label><input type="url" data-ek="url" data-i="${i}" value="${esc(e.url||'')}"></div>
+      </div>
+      <label class="set-check"><input type="checkbox" data-ek="enabled" data-i="${i}" ${e.enabled!==false?'checked':''}> Включён</label>
+      <button type="button" class="sbtn danger" data-edel="${i}">Удалить</button>
+    </div>`).join('')||'<div class="est-note">Своих парсеров нет. Добавьте SearxNG или любой HTML-поиск с %s в адресе.</div>';
+  document.getElementById('setEngineList').querySelectorAll('[data-edel]').forEach(b=>
+    b.addEventListener('click',()=>removeEngine(Number(b.dataset.edel))));
+}
+
+function collectKeyed(sel, keyAttr){
+  const nodes=[...document.querySelectorAll(sel)];
+  if(!nodes.length) return null;
+  const by={};
+  for(const el of nodes){
+    const i=Number(el.dataset.i);
+    if(!by[i]) by[i]={};
+    const k=el.dataset[keyAttr];
+    by[i][k]=el.type==='checkbox'?el.checked:el.value;
+  }
+  return Object.keys(by).sort((a,b)=>a-b).map(k=>by[k]);
+}
+
+function addProvider(presetId){
+  if(!setPayload) return;
+  const preset=(setPayload.presets||[]).find(p=>p.id===presetId)||{
+    id:'custom', name:'Свой endpoint', kind:'openai',
+    base_url:'https://api.example.com/v1', api_key_env:'', models_path:'/models', chat_path:'/chat/completions', headers:{},
+  };
+  const taken=new Set((setPayload.settings.providers||[]).map(p=>p.id));
+  let id=preset.id==='custom'?'custom':preset.id;
+  if(taken.has(id)){ let n=2; while(taken.has(id+'-'+n)) n++; id=id+'-'+n; }
+  setPayload.settings.providers=setPayload.settings.providers||[];
+  setPayload.settings.providers.push({
+    ...preset, id, name:preset.name, enabled:true, default:!setPayload.settings.providers.length,
+    api_key:'', models:preset.models||[], has_key:false, key_from:'none',
+  });
+  renderProviderCards();
+}
+
+function removeProvider(i){
+  if(!setPayload?.settings?.providers) return;
+  setPayload.settings.providers.splice(i,1);
+  if(setPayload.settings.providers.length && !setPayload.settings.providers.some(p=>p.default))
+    setPayload.settings.providers[0].default=true;
+  renderProviderCards();
+}
+
+function addEngine(){
+  if(!setPayload) return;
+  setPayload.settings.search=setPayload.settings.search||{};
+  setPayload.settings.search.engines=setPayload.settings.search.engines||[];
+  setPayload.settings.search.engines.push({id:'engine-'+(setPayload.settings.search.engines.length+1), name:'SearxNG', url:'https://searx.example/search?q=%s', enabled:true});
+  renderEngineCards();
+}
+function removeEngine(i){
+  setPayload?.settings?.search?.engines?.splice(i,1);
+  renderEngineCards();
+}
+
+function readSettingsPatch(){
+  const fallback=[];
+  if(getC('setFbMojeek')) fallback.push('mojeek');
+  if(getC('setFbBrave')) fallback.push('brave');
+  if(getC('setFbLite')) fallback.push('ddg_lite');
+  const fromDom=collectKeyed('#setProvList [data-pk]','pk');
+  const providers=(fromDom||setPayload?.settings?.providers||[]).map((p,i)=>{
+    const prev=setPayload?.settings?.providers?.[i]||{};
+    const models=typeof p.models==='string'?p.models.split(/\n+/).map(s=>s.trim()).filter(Boolean): (p.models||prev.models||[]);
+    const out={
+      id:p.id||prev.id, name:p.name||prev.name, kind:prev.kind||'openai',
+      base_url:p.base_url||prev.base_url, api_key_env:p.api_key_env??prev.api_key_env,
+      enabled:p.enabled??prev.enabled, default:p.default??prev.default,
+      models_path:prev.models_path, chat_path:prev.chat_path, headers:prev.headers||{},
+      models, notes:prev.notes||'',
+    };
+    if(p.api_key) out.api_key=p.api_key;
+    return out;
+  });
+  if(providers.filter(p=>p.default).length>1){
+    let first=true;
+    for(const p of providers){ if(p.default && !first) p.default=false; else if(p.default) first=false; }
+  }
+  const engDom=collectKeyed('#setEngineList [data-ek]','ek');
+  const engines=(engDom||setPayload?.settings?.search?.engines||[]).map((e,i)=>{
+    const prev=setPayload?.settings?.search?.engines?.[i]||{};
+    return { id:prev.id||('e'+i), name:e.name||prev.name, url:e.url||prev.url, enabled:e.enabled??prev.enabled };
+  });
+  return {
+    providers,
+    search:{
+      enabled:getC('setSearchOn'),
+      tries:Number(getV('setTries'))||3,
+      gap_ms:Number(getV('setGap'))||0,
+      timeout_ms:Number(getV('setTimeout'))||20000,
+      query_suffix:getV('setSuffix'),
+      skip_hosts:getV('setSkipHosts').split(/[,;\s]+/).map(s=>s.trim()).filter(Boolean),
+      search_url:getV('setSearchUrl'),
+      fallback_engines:fallback,
+      engines,
+      duckduckgo:{
+        enabled:getC('setDdgOn'),
+        method:getV('setDdgMethod')||'POST',
+        endpoint:getV('setDdgEndpoint')||'html',
+        region:getV('setDdgRegion')||'ru-ru',
+        site_filter:getV('setDdgSite'),
+        url:getV('setDdgUrl'),
+        safe_search:(setPayload?.settings?.search?.duckduckgo?.safe_search??-1),
+      },
+    },
+    conditions:{
+      mismatch_policy:getV('setMismatch')||'flag',
+      min_source_chars:Number(getV('setMinChars')),
+      min_attrs:Number(getV('setMinAttrs')),
+      facet_min_coverage:Number(getV('setFacetCov')),
+      target_coverage:Number(getV('setTargetCov')),
+      fuzzy_min_score:Number(getV('setFuzzy')),
+    },
+    model:{
+      name:getV('setModelName'),
+      prompt_version:getV('setPromptVer')||'dict-v1',
+      max_retries:Number(getV('setRetries'))||3,
+      timeout_ms:Number(getV('setAiTimeout'))||60000,
+      max_tokens:Number(getV('setMaxTokens'))||3200,
+    },
+  };
+}
+
+async function loadSettings(){
+  document.getElementById('setStatus').textContent='Загрузка…';
+  try{
+    renderSettings(await apiJson('/api/settings'));
+  }catch(e){
+    document.getElementById('setStatus').textContent='Не удалось прочитать настройки: '+e.message;
+  }
+}
+
+async function saveSettings(){
+  if(!setPayload){ await loadSettings(); if(!setPayload) return; }
+  document.getElementById('setStatus').textContent='Сохраняем…';
+  try{
+    const saved=await apiJson('/api/settings',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(readSettingsPatch())});
+    renderSettings(saved);
+    document.getElementById('setStatus').textContent='Сохранено. Новый прогон пойдёт с этими настройками.';
+    loadParser();
+  }catch(e){
+    document.getElementById('setStatus').textContent='Не сохранилось: '+e.message;
+  }
+}
+
 // Снежинка — знак «идёт работа». Предметная область — холодильники,
 // поэтому мотив не абстрактный кружок, а кристалл.
 const FLAKE_SVG=`<svg class="flake" viewBox="0 0 24 24" aria-hidden="true"><g><path d="M12 2v20M3.34 7l17.32 10M3.34 17L20.66 7"/><path d="M12 6.4 9.9 4.3M12 6.4l2.1-2.1M12 17.6l-2.1 2.1M12 17.6l2.1 2.1"/><path d="M7.3 9.3 4.4 8.5M7.3 9.3 6.5 6.4M16.7 14.7l2.9.8M16.7 14.7l.8 2.9"/><path d="M7.3 14.7l-2.9.8M7.3 14.7l.8-2.9M16.7 9.3l2.9-.8M16.7 9.3l-.8-2.9"/></g></svg>`;
@@ -1455,6 +1701,7 @@ function renderParser(p){
     ['Запасные', (p.fallback||[]).join(', ')||'нет'],
   ];
   if(p.search_url) rows.push(['Свой поисковик', p.search_url]);
+  if((p.engines||[]).length) rows.push(['Свои парсеры', p.engines.map(e=>e.name||e.url).join(', ')]);
   if(ddg.url) rows.push(['URL выдачи', ddg.url]);
   box.innerHTML=rows.map(([k,v])=>`<div class="parser-kv"><span>${esc(k)}</span><b>${esc(v)}</b></div>`).join('')
     +'<div class="est-note" style="margin-top:8px">Страница принимается, только если на ней есть артикул из названия. Соцсети и футер поисковика в выдачу не входят.</div>'
@@ -1487,9 +1734,11 @@ async function init(){
       applyRate();
       calcUpdate();
     }
-    allModels=(data.data||[]).filter(m=>m.id&&m.pricing).sort((a,b)=>(a.name||a.id).localeCompare(b.name||b.id));
+    allModels=(data.data||[]).filter(m=>m.id).sort((a,b)=>(a.name||a.id).localeCompare(b.name||b.id,'ru'));
     setSt('ok',`${allModels.length} моделей`);
     renderModelList(allModels.slice(0,60));
+    const def=allModels.find(m=>m.default) || allModels.find(m=>m.id===setPayload?.settings?.model?.name);
+    if(!selModel && def) pick(def.id, def.provider);
   }catch(e){
     setSt('er','Список моделей не загружен');
     setP('mdrop',`<div class="mi-empty">${esc(e.message)}<br>Модель можно ввести вручную: id вида deepseek/deepseek-v3.2</div>`);
@@ -1519,7 +1768,7 @@ function closeDrop(){
 
 function filterModels(){
   const q=document.getElementById('msrch').value.toLowerCase().trim();
-  const list=q?allModels.filter(m=>(m.id+(m.name||'')).toLowerCase().includes(q)):allModels.slice(0,60);
+  const list=q?allModels.filter(m=>(m.id+(m.name||'')+(m.provider_name||'')).toLowerCase().includes(q)):allModels.slice(0,60);
   renderModelList(list.slice(0,80));
   document.getElementById('mdrop').classList.add('open');
 }
@@ -1546,27 +1795,34 @@ function renderModelList(models){
       : '<div class="mi-empty">Список моделей не загрузился. Введите id вида deepseek/deepseek-v3.2</div>';
     return;
   }
+  const manyProv=new Set(allModels.map(m=>m.provider).filter(Boolean)).size>1;
   el.innerHTML=manual+models.map(m=>{
     const {ip,op}=priceOf(m);
-    const free=ip===0&&op===0;
-    const pr=free?'<span class="mi-f">БЕСПЛАТНО</span>'
+    const unknown=!m.pricing;
+    const free=!unknown&&ip===0&&op===0;
+    const pr=unknown?'<span class="mi-p">цена неизвестна</span>'
+      :free?'<span class="mi-f">БЕСПЛАТНО</span>'
       :`<span class="mi-p">$${(ip*1e6).toFixed(2)} / $${(op*1e6).toFixed(2)}</span>`;
-    return `<div class="mitem${selModel?.id===m.id?' on':''}" data-id="${esc(m.id)}"><span class="mi-n">${esc(m.name||m.id)}</span>${pr}</div>`;
+    const prov=manyProv&&m.provider_name?`<span class="mi-prov">${esc(m.provider_name)}</span>`:'';
+    return `<div class="mitem${selModel?.id===m.id&&selModel?.provider===m.provider?' on':''}" data-id="${esc(m.id)}" data-provider="${esc(m.provider||'')}"><span class="mi-n">${esc(m.name||m.id)}</span>${prov}${pr}</div>`;
   }).join('');
-  el.querySelectorAll('.mitem').forEach(x=>x.addEventListener('click',()=>pick(x.dataset.id||x.dataset.manual)));
+  el.querySelectorAll('.mitem').forEach(x=>x.addEventListener('click',()=>pick(x.dataset.id||x.dataset.manual,x.dataset.provider)));
 }
 
-function pick(id){
+function pick(id, provider){
   if(!id)return;
-  // Модель не из справочника — цену узнаем по факту, из usage ответа OpenRouter.
-  selModel=allModels.find(m=>m.id===id)||{id,name:id,pricing:null,manual:true};
+  // Модель не из справочника — цену узнаем по факту, из usage ответа.
+  selModel=allModels.find(m=>m.id===id && (!provider || m.provider===provider))
+    ||allModels.find(m=>m.id===id)
+    ||{id,name:id,pricing:null,manual:true,provider:provider||null};
   closeDrop();
   document.getElementById('msrch').value='';
   const {ip,op}=priceOf(selModel);
-  const free=ip===0&&op===0;
+  const unknown=!selModel.pricing;
+  const free=!unknown&&ip===0&&op===0;
   document.getElementById('msel').classList.remove('none');
-  document.getElementById('mselName').textContent=selModel.name||selModel.id;
-  document.getElementById('mselPrice').textContent=selModel.manual
+  document.getElementById('mselName').textContent=(selModel.provider_name?selModel.provider_name+' · ':'')+(selModel.name||selModel.id);
+  document.getElementById('mselPrice').textContent=selModel.manual||unknown
     ? 'цена по факту из ответа'
     : (free?'БЕСПЛАТНО':`${(ip*1e6).toFixed(2)}/${(op*1e6).toFixed(2)} за 1M`);
   syncSteps();
@@ -2143,7 +2399,7 @@ async function run(){
   let job;
   try{
     job=await apiJson('/api/jobs',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({model:selModel.id,category:runCat(),indices:queue,
+      body:JSON.stringify({model:selModel.id,provider:selModel.provider||null,category:runCat(),indices:queue,
         products:queue.map(i=>items[i])})});
   }catch(e){
     setSt('er','Прогон не запустился');

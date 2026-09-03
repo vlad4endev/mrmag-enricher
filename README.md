@@ -393,7 +393,10 @@ ranges:    { диагональ_дюйм: [1, 120] },       // диапазон 
 | маршрут | назначение |
 |---|---|
 | `GET /healthz` | проба живости, **без** аутентификации |
-| `GET /api/models` | модели OpenRouter с ценами (кэш 5 минут) |
+| `GET /api/models` | модели включённых провайдеров с ценами (кэш 5 минут) |
+| `GET /api/parser` | статус поиска пустых карточек |
+| `GET /api/settings` | провайдеры ИИ, парсеры, условия (ключи скрыты) |
+| `PUT /api/settings` | сохранить настройки; пустой `api_key` оставляет прежний |
 | `GET /api/categories` | разделы и поля схем |
 | `GET /api/catalog?category=…&limit=N` | обход раздела: товары + автофильтры (+ готовый `filters_file`) |
 | `POST /api/filters` | фильтры по переданному списку товаров |
@@ -567,9 +570,9 @@ scp products_*.json filters_*.json сервер:/opt/mrmag-enricher/
 Пакет релиза собирается в `dist/`:
 
 ```bash
-tar -czf dist/enricher-1.1.0.tar.gz package.json lib.js catalog.js server.js \
-  enricher_mrmag.js index_final.html login.html test*.mjs smoke.mjs \
-  Dockerfile docker-compose.yml .dockerignore .env.example README.md
+tar -czf dist/enricher-1.1.0.tar.gz package.json lib.js catalog.js server.js settings.js \
+  jobs.js socks.js config.json enricher_mrmag.js index_final.html login.html test*.mjs smoke.mjs \
+  Dockerfile docker-compose.yml .dockerignore .env.example README.md pipeline
 ```
 
 После распаковки на сервере — обязательно прогнать проверку живой установки:

@@ -3,56 +3,51 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>AI Enricher — mrmag.ru</title>
+<title>Enricher — обогащение каталога</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,500;0,600;0,700;1,500&family=IBM+Plex+Mono:wght@400;500;600&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.19.0/dist/tabler-icons.min.css">
 <style>
 /* ═══════════════════════════════════════════════════════════════════
-   AI Enricher — светлая тема «приборная панель».
-   Предметная область — холодильники и измерения, поэтому холодная
-   нейтральная база, один сигнальный цвет и табличные цифры в данных.
-   Цвета заданы токенами дважды: светлая по умолчанию, тёмная по
-   переключателю в шапке (значение хранится в localStorage).
+   Enricher — тёплая витрина: камень, золото, антикварный серif.
+   Светлая по умолчанию, тёмная по переключателю (localStorage).
+   Сигнальный цвет один; зелёный / янтарь / красный — только статусы.
    ═══════════════════════════════════════════════════════════════════ */
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 
 :root{
-  /* Поверхности: серая подложка, белые панели — панель «лежит» на столе */
-  --bg:#e9eef2;  --bg2:#ffffff; --bg3:#f5f8fa; --bg4:#edf3f6;
-  --b1:#e1e7ed;  --b2:#cbd5dd;
-  /* Текст: почти-чёрный с синим уклоном, не нейтральный серый */
-  --t1:#111a21;  --t2:#53616d; --t3:#83929e;
-  /* Единственный сигнальный цвет — глубокий циан-синий */
-  --ac:#0c6b91;  --ac-w:#e4f1f7; --ac-b:#a8d2e3;
+  /* Тёплый камень и золото: витрина, а не «ещё одна панель». */
+  --bg:#efe8dc;  --bg2:#fbf7f1; --bg3:#f4eee4; --bg4:#ece4d6;
+  --b1:#e4d9c8;  --b2:#d4c4aa;
+  --t1:#1a1612;  --t2:#5c5348; --t3:#8a7d6e;
+  --ac:#8b5e2a;  --ac-w:#f4ead8; --ac-b:#dfc7a0;
   --green:#14764c; --gbg:#e2f2e9; --gbd:#b3dbc6;
   --amber:#8b5506; --abg:#fbf0d9; --abd:#eed5a3;
   --red:#ac2e27;   --rbg:#fbe8e6; --rbd:#efc3be;
-  --blue-bg:#e4f1f7;
-  --sh1:0 1px 2px rgba(17,26,33,.05);
-  --sh2:0 2px 6px rgba(17,26,33,.06), 0 1px 2px rgba(17,26,33,.04);
-  --sh3:0 10px 28px rgba(17,26,33,.12);
-  --focus:0 0 0 3px rgba(12,107,145,.22);
-  /* Три голоса с разными ролями вместо одного шрифта на всё:
-     serif — заголовок записи каталога, sans — интерфейс, mono — данные. */
-  --serif:Georgia,"Iowan Old Style","Times New Roman",serif;
-  --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace;
-  --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
-  /* Скруглённая коробка с тенью на каждом элементе — признак шаблона.
-     Радиусы малые, тени только у того, что реально висит над страницей. */
-  --r:6px; --r2:4px; --r3:3px;
+  --blue-bg:#f4ead8;
+  --sh1:0 1px 2px rgba(26,22,18,.05);
+  --sh2:0 2px 8px rgba(26,22,18,.07), 0 1px 2px rgba(26,22,18,.04);
+  --sh3:0 14px 36px rgba(26,22,18,.12);
+  --focus:0 0 0 3px rgba(139,94,42,.22);
+  --serif:"Cormorant Garamond",Georgia,"Iowan Old Style","Times New Roman",serif;
+  --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+  --sans:"Manrope",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+  --r:10px; --r2:8px; --r3:5px;
 }
 :root[data-theme="dark"]{
-  --bg:#0d1319;  --bg2:#141c23; --bg3:#1a232b; --bg4:#212d36;
-  --b1:#253340;  --b2:#33434f;
-  --t1:#e7edf1;  --t2:#a1b0bb; --t3:#718493;
-  --ac:#4fb3d6;  --ac-w:#122b37; --ac-b:#1d5470;
+  --bg:#0e0c0a;  --bg2:#161310; --bg3:#1e1a16; --bg4:#28231d;
+  --b1:#2e2822;  --b2:#3d352c;
+  --t1:#f3ece3;  --t2:#b7ab9c; --t3:#8a7d6e;
+  --ac:#e0c49a;  --ac-w:#241c12; --ac-b:#5a4630;
   --green:#5cbd90; --gbg:#122a20; --gbd:#215139;
   --amber:#ddab5e; --abg:#2c2314; --abd:#59451f;
   --red:#e8887f;   --rbg:#2d1917; --rbd:#5b2c27;
-  --blue-bg:#12303d;
-  --sh1:0 1px 2px rgba(0,0,0,.3);
-  --sh2:0 2px 6px rgba(0,0,0,.34);
-  --sh3:0 10px 28px rgba(0,0,0,.45);
-  --focus:0 0 0 3px rgba(79,179,214,.26);
+  --blue-bg:#241c12;
+  --sh1:0 1px 2px rgba(0,0,0,.4);
+  --sh2:0 2px 8px rgba(0,0,0,.4);
+  --sh3:0 14px 36px rgba(0,0,0,.5);
+  --focus:0 0 0 3px rgba(224,196,154,.26);
 }
 
 /* ── БАЗА ─────────────────────────────────────────────────────── */
@@ -60,7 +55,7 @@ html,body{height:100%}
 body{
   font-family:var(--sans);background:var(--bg);color:var(--t1);
   font-size:13.5px;line-height:1.55;-webkit-font-smoothing:antialiased;
-  font-feature-settings:"kern" 1;
+  font-feature-settings:"kern" 1;letter-spacing:-.01em;
 }
 /* Цифры в интерфейсе постоянно пересчитываются — фиксированная ширина
    не даёт числам «прыгать» при каждом обновлении. */
@@ -80,21 +75,23 @@ button:focus-visible,input:focus-visible,textarea:focus-visible,[tabindex]:focus
 
 /* ── ШАПКА ────────────────────────────────────────────────────── */
 .nav{
-  height:54px;padding:0 18px;background:var(--bg2);
+  height:62px;padding:0 22px;background:var(--bg2);
   border-bottom:1px solid var(--b1);display:flex;align-items:center;
-  position:sticky;top:0;z-index:300;flex-shrink:0;box-shadow:var(--sh1);
+  position:sticky;top:0;z-index:300;flex-shrink:0;
 }
-.logo{display:flex;align-items:center;gap:10px;margin-right:22px;flex-shrink:0}
+.logo{display:flex;align-items:center;gap:12px;margin-right:26px;flex-shrink:0}
 .logo-icon{
-  width:29px;height:29px;background:var(--ac);color:#fff;border-radius:8px;
-  display:flex;align-items:center;justify-content:center;font-size:15px;flex-shrink:0;
+  width:32px;height:32px;background:transparent;color:var(--ac);border-radius:0;
+  display:flex;align-items:center;justify-content:center;flex-shrink:0;
 }
-.logo-name{font-weight:650;font-size:14px;letter-spacing:-.2px;white-space:nowrap;color:var(--t1)}
+.logo-icon svg{width:32px;height:32px;display:block}
+.logo-name{font-family:var(--serif);font-weight:600;font-size:22px;letter-spacing:-.03em;white-space:nowrap;color:var(--t1);line-height:1}
+.logo-name small{display:block;font-family:var(--sans);font-size:9px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:var(--ac);margin-top:3px}
 .nav-tabs{display:flex;gap:3px;flex:1;min-width:0}
 .ntab{
-  padding:7px 14px;border-radius:var(--r2);border:none;background:transparent;
+  padding:8px 14px;border-radius:var(--r2);border:none;background:transparent;
   color:var(--t2);cursor:pointer;font-size:13px;font-family:var(--sans);
-  font-weight:500;transition:background .15s,color .15s;white-space:nowrap;
+  font-weight:600;transition:background .15s,color .15s;white-space:nowrap;
   display:flex;align-items:center;gap:6px;
 }
 .ntab:hover{color:var(--t1);background:var(--bg3)}
@@ -110,14 +107,20 @@ button:focus-visible,input:focus-visible,textarea:focus-visible,[tabindex]:focus
 .sdot.er{background:var(--red)}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.28}}
 .themebtn{
-  width:32px;height:32px;border-radius:var(--r2);border:1px solid var(--b1);
+  width:34px;height:34px;border-radius:var(--r2);border:1px solid var(--b1);
   background:var(--bg3);color:var(--t2);cursor:pointer;font-size:14px;
   display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:all .15s;
 }
 .themebtn:hover{color:var(--ac);border-color:var(--ac-b);background:var(--ac-w)}
+.outbtn{
+  height:34px;padding:0 12px;border-radius:var(--r2);border:1px solid var(--b1);
+  background:var(--bg3);color:var(--t2);cursor:pointer;font-size:12px;font-weight:650;
+  font-family:var(--sans);display:flex;align-items:center;gap:6px;flex-shrink:0;transition:all .15s;
+}
+.outbtn:hover{color:var(--ac);border-color:var(--ac-b);background:var(--ac-w)}
 
 /* ── СТРАНИЦЫ ─────────────────────────────────────────────────── */
-.page{display:none;height:calc(100vh - 54px);overflow:hidden;width:100%}
+.page{display:none;height:calc(100vh - 62px);overflow:hidden;width:100%}
 .page.on{display:flex}
 .app{display:flex;width:100%;height:100%;overflow:hidden}
 
@@ -153,7 +156,7 @@ button:focus-visible,input:focus-visible,textarea:focus-visible,[tabindex]:focus
 .parser-kv b{color:var(--t1);font-weight:650;font-size:12px;text-align:right;word-break:break-word}
 
 /* Поля ввода */
-input[type=text],input[type=password],textarea,select{
+input[type=text],input[type=password],input[type=number],input[type=url],textarea,select{
   width:100%;background:var(--bg2);border:1px solid var(--b2);border-radius:var(--r2);
   color:var(--t1);padding:9px 11px;font-family:var(--sans);font-size:13px;
   outline:none;transition:border-color .15s,box-shadow .15s;
@@ -237,6 +240,7 @@ textarea{
   padding:1px 6px;border-radius:var(--r3);font-family:var(--mono);flex-shrink:0;font-weight:700;
 }
 .mi-empty{padding:16px;text-align:center;font-size:12px;color:var(--t3)}
+.mi-prov{font-size:9.5px;color:var(--t3);text-transform:uppercase;letter-spacing:.04em;font-weight:700;flex-shrink:0}
 
 /* Раскрывающийся JSON */
 .adv{margin-top:12px;border-top:1px solid var(--b1);padding-top:11px}
@@ -261,14 +265,23 @@ textarea{
   border-top:1px solid var(--b1);background:var(--bg3);position:sticky;bottom:0;
 }
 .run-btn{
-  width:100%;padding:13px;background:var(--ac);border:none;border-radius:var(--r);
-  color:#fff;font-family:var(--sans);font-size:14px;font-weight:650;cursor:pointer;
-  display:flex;align-items:center;justify-content:center;gap:9px;letter-spacing:-.1px;
+  width:100%;padding:14px;background:var(--ac);border:none;border-radius:var(--r);
+  color:#fff;font-family:var(--sans);font-size:14px;font-weight:700;cursor:pointer;
+  display:flex;align-items:center;justify-content:center;gap:9px;letter-spacing:.02em;
   transition:filter .15s,transform .1s;box-shadow:var(--sh2);
 }
 .run-btn:hover:not(:disabled){filter:brightness(1.12)}
 .run-btn:active:not(:disabled){transform:translateY(1px)}
 .run-btn:disabled{background:var(--b2);color:var(--bg2);cursor:not-allowed;box-shadow:none}
+:root[data-theme="dark"] .run-btn,
+:root[data-theme="dark"] .ibtn,
+:root[data-theme="dark"] .cnt-btn.on,
+:root[data-theme="dark"] .fbtn.on,
+:root[data-theme="dark"] .rtab.on{
+  color:#1a1612;
+}
+:root[data-theme="dark"] .run-btn:disabled{color:var(--bg2)}
+:root[data-theme="dark"] .dcat-btn.on .cat-n{color:rgba(26,22,18,.7)}
 .run-why{font-size:11.5px;color:var(--t3);margin-top:9px;text-align:center;line-height:1.5}
 .inline-err{
   background:var(--rbg);border:1px solid var(--rbd);border-radius:var(--r2);
@@ -361,8 +374,8 @@ textarea{
    работает серифный голос, поэтому он не спорит с интерфейсом. */
 .pt{display:flex;flex-direction:column;gap:3px;min-width:0;flex:1 1 240px}
 .pt-name{
-  font-family:var(--serif);font-size:18.5px;line-height:1.25;color:var(--t1);
-  font-weight:400;letter-spacing:-.1px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  font-family:var(--serif);font-size:22px;line-height:1.2;color:var(--t1);
+  font-weight:500;letter-spacing:-.03em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
 }
 .pt-meta{font-family:var(--mono);font-size:10.5px;color:var(--t3);font-variant-numeric:tabular-nums;display:flex;gap:8px;flex-wrap:wrap}
 .pt-meta b{color:var(--t2);font-weight:600}
@@ -388,11 +401,13 @@ textarea{
 
 /* Вводная подсказка */
 .guide{
-  max-width:430px;text-align:left;font-size:13px;color:var(--t2);line-height:1.7;
+  max-width:460px;text-align:left;font-size:14px;color:var(--t2);line-height:1.7;
   background:var(--bg2);border:1px solid var(--b1);border-radius:var(--r);
-  padding:22px 24px;box-shadow:var(--sh2);
+  padding:28px 28px 24px;box-shadow:var(--sh2);
 }
 .guide b{color:var(--t1);font-weight:650}
+.guide .guide-k{font-size:10px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:var(--ac);margin-bottom:8px}
+.guide h3{font-family:var(--serif);font-size:28px;font-weight:500;letter-spacing:-.03em;color:var(--t1);line-height:1.15;margin:0 0 10px}
 .guide ol{margin:12px 0 0;padding-left:20px;display:flex;flex-direction:column;gap:7px}
 .guide li{padding-left:2px}
 .guide li::marker{color:var(--ac);font-weight:700}
@@ -475,7 +490,7 @@ textarea{
 
 /* ── СТРАНИЦА КАЛЬКУЛЯТОРА ────────────────────────────────────── */
 .calc-page{flex-direction:column;width:100%}
-.calc-body{display:flex;flex:1;overflow:hidden;height:calc(100vh - 54px)}
+.calc-body{display:flex;flex:1;overflow:hidden;height:calc(100vh - 62px)}
 .calc-left{
   background:var(--bg2);border-right:1px solid var(--b1);padding:18px;display:flex;
   flex-direction:column;gap:14px;overflow-y:auto;width:308px;min-width:250px;flex-shrink:0;
@@ -542,6 +557,65 @@ input[type=range]::-moz-range-thumb{
 .tk-val.out{color:var(--green)}
 .tk-val.cst{color:var(--amber)}
 
+/* ── СТРАНИЦА НАСТРОЕК ─────────────────────────────────────────── */
+.set-page{flex-direction:column;width:100%}
+.set-body{display:flex;flex:1;overflow:hidden;height:calc(100vh - 54px)}
+.set-nav{
+  background:var(--bg2);border-right:1px solid var(--b1);padding:16px 12px;
+  display:flex;flex-direction:column;gap:4px;width:220px;min-width:180px;flex-shrink:0;
+}
+.set-nav button{
+  text-align:left;padding:9px 12px;border:none;border-radius:var(--r2);
+  background:transparent;color:var(--t2);cursor:pointer;font-size:13px;font-family:var(--sans);
+  font-weight:500;display:flex;align-items:center;gap:8px;
+}
+.set-nav button:hover{color:var(--t1);background:var(--bg3)}
+.set-nav button.on{color:var(--ac);background:var(--ac-w);font-weight:600}
+.set-main{flex:1;min-width:0;overflow-y:auto;padding:22px 28px 80px;background:var(--bg);display:flex;flex-direction:column;gap:16px}
+.set-panel{display:none}
+.set-panel.on{display:block}
+.set-h{font-size:18px;font-weight:650;letter-spacing:-.3px;margin-bottom:4px}
+.set-lead{font-size:12.5px;color:var(--t2);margin-bottom:16px;max-width:62ch;line-height:1.5}
+.set-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.set-card{
+  background:var(--bg2);border:1px solid var(--b1);border-radius:var(--r);padding:14px 16px;
+  box-shadow:var(--sh1);display:flex;flex-direction:column;gap:10px;
+}
+.set-card-h{display:flex;align-items:center;gap:8px;justify-content:space-between}
+.set-card-h b{font-size:13.5px;font-weight:650}
+.set-badge{font-size:10px;font-weight:700;padding:2px 7px;border-radius:20px;border:1px solid var(--gbd);background:var(--gbg);color:var(--green)}
+.set-badge.off{background:var(--bg3);border-color:var(--b1);color:var(--t3)}
+.set-row{display:flex;flex-direction:column;gap:4px}
+.set-row label{font-size:11.5px;color:var(--t2);font-weight:500}
+.set-check{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--t1)}
+.set-check input{width:auto;accent-color:var(--ac)}
+.set-actions{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.sbtn{
+  padding:8px 14px;border-radius:var(--r2);border:1px solid var(--b2);background:var(--bg2);
+  color:var(--t1);cursor:pointer;font-size:12.5px;font-family:var(--sans);font-weight:600;
+  display:inline-flex;align-items:center;gap:6px;
+}
+.sbtn:hover{border-color:var(--ac-b);background:var(--bg3)}
+.sbtn.primary{background:var(--ac);color:#fff;border-color:var(--ac)}
+.sbtn.primary:hover{filter:brightness(1.08)}
+.sbtn.danger{color:var(--red);border-color:var(--rbd)}
+.sbtn.ghost{color:var(--t2);font-weight:500}
+.set-foot{
+  position:sticky;bottom:0;margin:8px -28px -80px;padding:12px 28px;
+  background:var(--bg2);border-top:1px solid var(--b1);display:flex;align-items:center;gap:12px;
+  box-shadow:var(--sh2);
+}
+.set-note{font-size:12px;color:var(--t2);flex:1;min-width:0}
+.set-warn{background:var(--abg);border:1px solid var(--abd);border-radius:var(--r);padding:10px 12px;font-size:12px;color:var(--amber)}
+.set-presets{display:flex;flex-wrap:wrap;gap:6px}
+@media(max-width:768px){
+  .set-body{flex-direction:column;height:auto;overflow:visible}
+  .set-nav{width:100%;flex-direction:row;flex-wrap:wrap;border-right:none;border-bottom:1px solid var(--b1)}
+  .set-grid{grid-template-columns:1fr}
+  .set-main{padding:16px 14px 90px}
+  .set-foot{margin:8px -14px -90px;padding:12px 14px}
+}
+
 /* Текстовый резерв, если шрифт иконок с CDN не загрузился */
 .ico-fb{display:none}
 .no-icons .ti{display:none}
@@ -561,6 +635,7 @@ input[type=range]::-moz-range-thumb{
   .logo-name{display:none}
   .ntab{padding:7px 11px;font-size:12px}
   .spill{display:none}
+  .outbtn{padding:0 10px}
   .page{height:auto;overflow:visible;flex-direction:column}
   .app{flex-direction:column}
   .left{width:100%;max-width:100%;border-right:none;border-bottom:1px solid var(--b1)}
@@ -591,6 +666,7 @@ input[type=range]::-moz-range-thumb{
   transition:width .4s ease-out;z-index:-1;
 }
 .run-btn.working{background:var(--ac);color:#fff;cursor:progress}
+:root[data-theme="dark"] .run-btn.working{color:#1a1612}
 .run-btn.working .rb-fill{box-shadow:0 0 12px rgba(255,255,255,.35)}
 
 /* Полоса прогресса: заливка + бегущие полосы поверх, пока идёт работа */
@@ -677,17 +753,24 @@ input[type=range]::-moz-range-thumb{
 
 <nav class="nav">
   <div class="logo">
-    <div class="logo-icon">⚙</div>
-    <div class="logo-name">AI Enricher</div>
+    <div class="logo-icon" aria-hidden="true">
+      <svg viewBox="0 0 36 36" fill="none">
+        <path d="M18 3.5 32 14.2 18 32.5 4 14.2 18 3.5Z" stroke="currentColor" stroke-width="1.5"/>
+        <path d="M4 14.2h28M18 3.5v29M10.2 14.2 18 32.5l7.8-18.3" stroke="currentColor" stroke-width="1.15" opacity=".7"/>
+      </svg>
+    </div>
+    <div class="logo-name">Enricher<small>обогащение</small></div>
   </div>
   <div class="nav-tabs">
-    <button class="ntab on" onclick="showPage('enricher',this)"><i class="ti ti-sparkles"></i> Обогащение</button>
-    <button class="ntab" onclick="showPage('calc',this)"><i class="ti ti-calculator"></i> Калькулятор цен</button>
+    <button class="ntab on" data-page="enricher" onclick="showPage('enricher',this)"><i class="ti ti-sparkles"></i> Обогащение</button>
+    <button class="ntab" data-page="calc" onclick="showPage('calc',this)"><i class="ti ti-calculator"></i> Калькулятор цен</button>
+    <button class="ntab" data-page="settings" onclick="showPage('settings',this)"><i class="ti ti-settings"></i> Настройки</button>
   </div>
   <div class="nav-right">
     <button class="themebtn" id="themeBtn" onclick="toggleTheme()" title="Светлая / тёмная тема" aria-label="Переключить тему">
       <span id="themeIcon">☾</span>
     </button>
+    <button class="outbtn" id="logoutBtn" onclick="logout()" title="Завершить сессию">Выйти</button>
     <div class="spill">
       <span class="sdot" id="sdot"></span>
       <span id="stxt">Загрузка...</span>
@@ -846,7 +929,8 @@ input[type=range]::-moz-range-thumb{
       <div class="empty">
         <div class="guide">
           <svg class="flake frost" viewBox="0 0 24 24" aria-hidden="true"><g><path d="M12 2v20M3.34 7l17.32 10M3.34 17L20.66 7"/><path d="M12 6.4 9.9 4.3M12 6.4l2.1-2.1M12 17.6l-2.1 2.1M12 17.6l2.1 2.1"/><path d="M7.3 9.3 4.4 8.5M7.3 9.3 6.5 6.4M16.7 14.7l2.9.8M16.7 14.7l.8 2.9"/><path d="M7.3 14.7l-2.9.8M7.3 14.7l.8-2.9M16.7 9.3l2.9-.8M16.7 9.3l-.8-2.9"/></g></svg>
-          <b>Что делает эта страница</b><br>
+          <div class="guide-k">Сервис обогащения</div>
+          <h3>Каталог становится витриной</h3>
           Берёт товары с описаниями и достаёт из них характеристики, синонимы и SEO-текст.
           <ol>
             <li>Выберите <b>модель</b> — рядом видна её цена за 1M токенов.</li>
@@ -922,6 +1006,129 @@ input[type=range]::-moz-range-thumb{
   </div>
 </div>
 
+<!-- ===== PAGE: SETTINGS ===== -->
+<div class="page set-page" id="page-settings">
+  <div class="set-body">
+    <nav class="set-nav" aria-label="Разделы настроек">
+      <button type="button" class="on" id="snProv" onclick="setTab('prov')"><i class="ti ti-brain"></i> Провайдеры ИИ</button>
+      <button type="button" id="snParse" onclick="setTab('parse')"><i class="ti ti-world-search"></i> Парсеры</button>
+      <button type="button" id="snCond" onclick="setTab('cond')"><i class="ti ti-adjustments"></i> Условия</button>
+      <button type="button" id="snRun" onclick="setTab('run')"><i class="ti ti-player-play"></i> Прогон</button>
+    </nav>
+    <div class="set-main">
+      <div id="setOverrides"></div>
+
+      <section class="set-panel on" id="setProv">
+        <div class="set-h">Провайдеры ИИ</div>
+        <p class="set-lead">Шлюзы с API в формате OpenAI: OpenRouter, OpenAI, Groq, Together, локальная Ollama или свой endpoint. Ключ остаётся на сервере и в браузер не попадает.</p>
+        <div class="set-actions" style="margin-bottom:12px">
+          <span class="flbl" style="margin:0">Добавить</span>
+          <div class="set-presets" id="setPresets"></div>
+        </div>
+        <div id="setProvList"></div>
+      </section>
+
+      <section class="set-panel" id="setParse">
+        <div class="set-h">Парсеры поиска</div>
+        <p class="set-lead">Когда у карточки нет описания, сервер ищет ту же модель в сети. Движки пробуются по очереди: свой URL, затем DuckDuckGo, затем запасные. Страница принимается, только если на ней есть артикул из названия.</p>
+        <div class="set-card" style="margin-bottom:12px">
+          <label class="set-check"><input type="checkbox" id="setSearchOn"> Искать описания пустых карточек в сети</label>
+          <div class="set-grid">
+            <div class="set-row"><label for="setTries">Попыток на товар</label><input type="number" id="setTries" min="1" max="10"></div>
+            <div class="set-row"><label for="setGap">Пауза между запросами, мс</label><input type="number" id="setGap" min="0" max="60000" step="100"></div>
+            <div class="set-row"><label for="setTimeout">Таймаут страницы, мс</label><input type="number" id="setTimeout" min="1000" max="120000" step="1000"></div>
+            <div class="set-row"><label for="setSuffix">Суффикс запроса</label><input type="text" id="setSuffix" placeholder="характеристики"></div>
+          </div>
+          <div class="set-row"><label for="setSkipHosts">Не открывать хосты (через запятую)</label><input type="text" id="setSkipHosts" placeholder="mrmag.ru"></div>
+          <div class="set-row"><label for="setSearchUrl">Свой поисковик (URL с %s)</label><input type="url" id="setSearchUrl" placeholder="https://searx.example/search?q=%s"></div>
+        </div>
+        <div class="set-card" style="margin-bottom:12px">
+          <div class="set-card-h"><b>DuckDuckGo</b></div>
+          <label class="set-check"><input type="checkbox" id="setDdgOn"> Использовать DuckDuckGo</label>
+          <div class="set-grid">
+            <div class="set-row"><label for="setDdgMethod">Метод</label>
+              <select id="setDdgMethod"><option value="POST">POST</option><option value="GET">GET</option></select>
+            </div>
+            <div class="set-row"><label for="setDdgEndpoint">Выдача</label>
+              <select id="setDdgEndpoint"><option value="html">html</option><option value="lite">lite</option></select>
+            </div>
+            <div class="set-row"><label for="setDdgRegion">Регион</label><input type="text" id="setDdgRegion" placeholder="ru-ru"></div>
+            <div class="set-row"><label for="setDdgSite">site:</label><input type="text" id="setDdgSite" placeholder="пусто — без фильтра"></div>
+          </div>
+          <div class="set-row"><label for="setDdgUrl">Свой URL выдачи</label><input type="url" id="setDdgUrl" placeholder="пусто — html.duckduckgo.com"></div>
+        </div>
+        <div class="set-card" style="margin-bottom:12px">
+          <div class="set-card-h"><b>Запасные движки</b></div>
+          <label class="set-check"><input type="checkbox" id="setFbMojeek"> Mojeek</label>
+          <label class="set-check"><input type="checkbox" id="setFbBrave"> Brave</label>
+          <label class="set-check"><input type="checkbox" id="setFbLite"> DuckDuckGo Lite</label>
+        </div>
+        <div class="set-card-h" style="margin-bottom:8px">
+          <b>Свои парсеры</b>
+          <button type="button" class="sbtn ghost" onclick="addEngine()">+ HTML-поиск</button>
+        </div>
+        <div id="setEngineList"></div>
+      </section>
+
+      <section class="set-panel" id="setCond">
+        <div class="set-h">Условия и пороги</div>
+        <p class="set-lead">Правила, по которым прогон решает, что считать расхождением, короткой карточкой или фасетом витрины. Переменная окружения, если задана, перекрывает файл.</p>
+        <div class="set-grid">
+          <div class="set-card">
+            <div class="set-row"><label for="setMismatch">Расхождения модели с текстом</label>
+              <select id="setMismatch">
+                <option value="flag">flag — оставить и пометить</option>
+                <option value="strict">strict — обнулить спорное поле</option>
+              </select>
+            </div>
+            <div class="hint">flag пишет значение модели и факт из текста. strict оставляет только факт источника.</div>
+          </div>
+          <div class="set-card">
+            <div class="set-row"><label for="setMinChars">Минимум символов в описании</label><input type="number" id="setMinChars" min="0" max="10000"></div>
+            <div class="hint">Короткий текст без распознанных характеристик товар не обогащается.</div>
+          </div>
+          <div class="set-card">
+            <div class="set-row"><label for="setMinAttrs">Минимум характеристик в карточке</label><input type="number" id="setMinAttrs" min="0" max="50"></div>
+            <div class="hint">Ниже порога SEO-текст может быть короче: нет материала для трёх абзацев.</div>
+          </div>
+          <div class="set-card">
+            <div class="set-row"><label for="setFacetCov">Покрытие фасета, %</label><input type="number" id="setFacetCov" min="0" max="100"></div>
+            <div class="hint">Фильтр витрины появляется, когда поле заполнено у этой доли товаров.</div>
+          </div>
+          <div class="set-card">
+            <div class="set-row"><label for="setTargetCov">Целевое покрытие, %</label><input type="number" id="setTargetCov" min="0" max="100"></div>
+            <div class="hint">Ориентир для отчёта CLI, на сам прогон не влияет.</div>
+          </div>
+          <div class="set-card">
+            <div class="set-row"><label for="setFuzzy">Нечёткое совпадение ключа</label><input type="number" id="setFuzzy" min="0" max="1" step="0.01"></div>
+            <div class="hint">Порог сопоставления подписи характеристики со справочником (0–1).</div>
+          </div>
+        </div>
+      </section>
+
+      <section class="set-panel" id="setRun">
+        <div class="set-h">Параметры прогона</div>
+        <p class="set-lead">Модель по умолчанию подставляется в шаг 1, если список ещё не выбран. Лимиты запроса — на один товар.</p>
+        <div class="set-card">
+          <div class="set-grid">
+            <div class="set-row"><label for="setModelName">Модель по умолчанию</label><input type="text" id="setModelName" placeholder="deepseek/deepseek-v3.2"></div>
+            <div class="set-row"><label for="setPromptVer">Версия промпта</label><input type="text" id="setPromptVer" placeholder="dict-v1"></div>
+            <div class="set-row"><label for="setRetries">Повторов при сбое</label><input type="number" id="setRetries" min="1" max="8"></div>
+            <div class="set-row"><label for="setAiTimeout">Таймаут запроса, мс</label><input type="number" id="setAiTimeout" min="5000" max="300000" step="1000"></div>
+            <div class="set-row"><label for="setMaxTokens">max_tokens</label><input type="number" id="setMaxTokens" min="256" max="16000" step="64"></div>
+          </div>
+        </div>
+      </section>
+
+      <div class="set-foot">
+        <span class="set-note" id="setStatus">Загрузка…</span>
+        <button type="button" class="sbtn" onclick="loadSettings()">Отменить</button>
+        <button type="button" class="sbtn primary" id="setSave" onclick="saveSettings()">Сохранить</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <script>
 'use strict';
 
@@ -941,7 +1148,7 @@ async function apiJson(url,opts){
     // Свой сервер всегда отвечает JSON — если разобралось, причина уже в нём.
     const own=d?.error?.message||d?.error;
     if(own) throw new Error(own);
-    if(r.status===401) throw new Error('Требуется вход — обновите страницу и введите пароль');
+    if(r.status===401) throw new Error('Требуется вход — откройте страницу заново и введите пароль');
     // Не-JSON на 502/504 отдаёт шлюз перед сервером, а не сервер. Обогащение
     // одного товара занимает до трёх минут, nginx по умолчанию ждёт минуту.
     if(r.status===502||r.status===504) throw new Error(`шлюз не дождался ответа (HTTP ${r.status}) — поднимите proxy_read_timeout, обогащение товара идёт до 3 минут`);
@@ -1002,8 +1209,10 @@ function showPage(id, btn){
   document.querySelectorAll('.page').forEach(p=>p.classList.remove('on'));
   document.querySelectorAll('.ntab').forEach(b=>b.classList.remove('on'));
   document.getElementById('page-'+id).classList.add('on');
-  btn.classList.add('on');
+  if(btn) btn.classList.add('on');
+  else document.querySelectorAll('.ntab').forEach(b=>{ if(b.dataset.page===id) b.classList.add('on'); });
   if(id==='calc') calcUpdate();
+  if(id==='settings') loadSettings();
 }
 
 // Снежинка — знак «идёт работа». Предметная область — холодильники,
@@ -1248,7 +1457,8 @@ function renderParser(p){
   if(p.search_url) rows.push(['Свой поисковик', p.search_url]);
   if(ddg.url) rows.push(['URL выдачи', ddg.url]);
   box.innerHTML=rows.map(([k,v])=>`<div class="parser-kv"><span>${esc(k)}</span><b>${esc(v)}</b></div>`).join('')
-    +'<div class="est-note" style="margin-top:8px">Страница принимается, только если на ней есть артикул из названия. Соцсети и футер поисковика в выдачу не входят.</div>';
+    +'<div class="est-note" style="margin-top:8px">Страница принимается, только если на ней есть артикул из названия. Соцсети и футер поисковика в выдачу не входят.</div>'
+    +'<button type="button" class="sbtn ghost" style="margin-top:10px" onclick="showPage(\'settings\');setTab(\'parse\')">Настроить парсеры</button>';
 }
 
 async function loadParser(){
@@ -2557,6 +2767,10 @@ function toggleTheme(){
   const next=document.documentElement.getAttribute('data-theme')==='dark'?'light':'dark';
   try{ localStorage.setItem(THEME_KEY,next); }catch{}
   applyTheme(next);
+}
+
+function logout(){
+  fetch('/api/logout',{method:'POST',headers:{Accept:'application/json'}}).finally(()=>{ location.assign('/'); });
 }
 
 function initTheme(){

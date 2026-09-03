@@ -63,9 +63,42 @@ try {
     const r = await fetch(url('/api/enrich'), { method: 'POST', body: '{}' });
     assert.strictEqual(r.status, 401, 'тратящий деньги маршрут — тем более');
   });
-  await t('браузеру предлагается Basic', async () => {
+  await t('страница входа — HTML без системного диалога', async () => {
     const r = await fetch(url('/'));
+    assert.strictEqual(r.status, 401);
+    assert.match(r.headers.get('content-type') || '', /text\/html/);
+    assert.equal(r.headers.get('www-authenticate'), null, 'WWW-Authenticate вызвал бы окно браузера поверх формы');
+    assert.match(await r.text(), /Войти/);
+  });
+  await t('API предлагает Basic для скриптов', async () => {
+    const r = await fetch(url('/api/categories'));
+    assert.strictEqual(r.status, 401);
     assert.match(r.headers.get('www-authenticate') || '', /^Basic realm=/);
+  });
+  await t('форма входа ставит сессию', async () => {
+    const r = await fetch(url('/api/login'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({ user: 'admin', password: PASS }),
+    });
+    assert.strictEqual(r.status, 200);
+    const setCookie = typeof r.headers.getSetCookie === 'function'
+      ? (r.headers.getSetCookie()[0] || '')
+      : (r.headers.get('set-cookie') || '');
+    const cookie = setCookie.split(';')[0];
+    assert.match(cookie, /^enricher=/);
+    const page = await fetch(url('/'), { headers: { cookie } });
+    assert.strictEqual(page.status, 200);
+    assert.match(page.headers.get('content-type') || '', /text\/html/);
+  });
+  await t('неверный пароль формы не ставит сессию', async () => {
+    const r = await fetch(url('/api/login'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({ user: 'admin', password: 'nope' }),
+    });
+    assert.strictEqual(r.status, 401);
+    assert.equal((r.headers.getSetCookie?.() || []).length, 0, 'сессия не должна ставиться');
   });
   await t('неверный пароль не проходит', async () => {
     const bad = 'Basic ' + Buffer.from('admin:nope').toString('base64');

@@ -10,9 +10,18 @@ export function catIdFromFile(file) {
   return m[1];
 }
 
+/**
+ * Файл настроек. В контейнере это /data/config.json (SETTINGS_PATH), чтобы
+ * правки из интерфейса переживали пересборку образа. Локально — config.json
+ * в корне проекта.
+ */
+export function configPath(root = '.') {
+  if (process.env.SETTINGS_PATH) return process.env.SETTINGS_PATH;
+  return path.join(root, 'config.json');
+}
+
 export function loadConfig(root = '.') {
-  const p = path.join(root, 'config.json');
-  return JSON.parse(fs.readFileSync(p, 'utf-8'));
+  return JSON.parse(fs.readFileSync(configPath(root), 'utf-8'));
 }
 
 export function loadDictionary(catId, root = '.') {

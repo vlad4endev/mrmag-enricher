@@ -7,11 +7,14 @@
  *
  * Ключ OpenRouter остаётся здесь и в браузер не попадает. Перед публикацией
  * задайте APP_PASSWORD: /api/enrich тратит деньги, и открытый доступ к нему —
- * это открытый доступ к вашему счёту.
+ * это открытый доступ к вашему счёту. Браузер входит через форму (cookie),
+ * скрипты — по-прежнему Basic.
  *
  * Маршруты:
  *   GET  /healthz             проба живости, без аутентификации
- *   GET  /api/models          список моделей с актуальными ценами (кэш MODELS_TTL_MS)
+ *   GET  /api/models          список моделей включённых провайдеров (кэш MODELS_TTL_MS)
+ *   GET  /api/settings        провайдеры ИИ, парсеры, условия (ключи скрыты)
+ *   PUT  /api/settings        сохранить настройки; пустой api_key оставляет прежний
  *   GET  /api/parser          статус и настройки поиска пустых карточек
  *   GET  /api/product?url=... прокси к каталогу, только по разрешённым хостам
  *   GET  /api/categories      разделы из требований и схемы полей
@@ -47,59 +50,111 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import {
   RateLimiter, enrichProduct, rpmFor, schemaFor, SCHEMAS, netError,
-  RUB_PER_USD, RUB_RATE_DATE, MISMATCH_POLICY, isEnrichable, productFacts,
+  RUB_PER_USD, RUB_RATE_DATE, isEnrichable, productFacts,
 } from './lib.js';
 import { CATEGORIES, findCategory, crawlCategory, loadFeed, buildFilters, ensureSource, WEB_LOOKUP } from './catalog.js';
 import { buildV2 } from './export_v2.js';
 import { createJobStore } from './jobs.js';
 import { loadConfig } from './pipeline/dict.js';
 import { publicParserStatus } from './pipeline/search.js';
+import {
+  loadSettings, saveSettings, publicSettings, applySettingsPatch,
+  resolveProvider, providerEndpoint, providerKey,
+  bootstrapSettingsFile, PROVIDER_PRESETS, envOverrides,
+  parsersView, conditionsView,
+} from './settings.js';
 
-const API_KEY = process.env.OPENROUTER_API_KEY;
+const API_KEY = process.env.OPENROUTER_API_KEY || '';
 const PORT    = Number(process.env.PORT || 3000);
 const HOST    = process.env.HOST || '0.0.0.0';
 const ROOT    = path.dirname(fileURLToPath(import.meta.url));
 
-// Вход по Basic. Пусто — сервер открыт, при старте будет предупреждение.
+// Вход: форма ставит httpOnly-cookie, скрипты могут слать Basic. Пусто — сервер
+// открыт, при старте будет предупреждение.
 const APP_USER     = process.env.APP_USER || 'admin';
 const APP_PASSWORD = process.env.APP_PASSWORD || '';
+const SESSION_MS   = Number(process.env.SESSION_TTL_MS || 7 * 24 * 3600_000);
+const COOKIE_NAME  = 'enricher';
 
 // Прокси ходит только по этим хостам: свободный URL от клиента — это доступ
 // во внутреннюю сеть и к метаданным облака.
 const ALLOWED_HOSTS = (process.env.ALLOWED_HOSTS || 'mrmag.ru,adn-avto.ru')
   .split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
 
-if (!API_KEY) {
-  console.error('❌ Установите OPENROUTER_API_KEY');
-  process.exit(1);
+bootstrapSettingsFile(ROOT);
+{
+  const boot = loadSettings(ROOT);
+  const def = resolveProvider(boot);
+  if (!providerKey(def) && !API_KEY) {
+    console.error('❌ Нет ключа у провайдера по умолчанию — задайте его в настройках или OPENROUTER_API_KEY');
+    process.exit(1);
+  }
 }
 
-// Список моделей — 300+ КБ и один и тот же для /api/models и для тарифа. Тянем
-// его один раз на TTL, параллельные запросы ждут один и тот же промис.
+// Список моделей — 300+ КБ. Тянем раз на TTL; параллельные запросы ждут один промис.
 const MODELS_TTL = Number(process.env.MODELS_TTL_MS || 5 * 60_000);
-let modelsCache = { at: 0, list: null };
+let modelsCache = { at: 0, list: null, errors: [] };
 let modelsInflight = null;
+
+function tagModels(raw, p) {
+  return (raw || []).map(m => ({
+    ...m,
+    id: m.id || m.name,
+    provider: p.id,
+    provider_name: p.name,
+  })).filter(m => m.id);
+}
+
+async function fetchProviderModels(p) {
+  const ep = providerEndpoint(p);
+  const listed = tagModels((p.models || []).map(id => ({ id, name: id, pricing: null })), p);
+  if (!p.models_path) return listed;
+  const headers = { ...ep.headers };
+  if (ep.apiKey) headers.Authorization = `Bearer ${ep.apiKey}`;
+  let r, text;
+  try {
+    r = await fetch(ep.modelsUrl, { headers, signal: AbortSignal.timeout(20_000) });
+    text = await r.text();
+  } catch (e) {
+    if (listed.length) return listed;
+    const host = (() => { try { return new URL(ep.modelsUrl).hostname; } catch { return p.name; } })();
+    throw new Error(`не достучались до ${host} — ${netError(e)}`);
+  }
+  if (!r.ok) {
+    if (listed.length) return listed;
+    throw new Error(/openrouter\.ai/i.test(ep.modelsUrl) ? explainUpstream(r, text) : `${p.name} HTTP ${r.status}: ${text.slice(0, 200)}`);
+  }
+  let data;
+  try { data = JSON.parse(text); } catch {
+    if (listed.length) return listed;
+    throw new Error(`${p.name} вернул не JSON`);
+  }
+  const rows = data.data || data.models || (Array.isArray(data) ? data : []);
+  const fetched = tagModels(rows, p);
+  return fetched.length ? fetched : listed;
+}
 
 async function models() {
   if (modelsCache.list && Date.now() - modelsCache.at < MODELS_TTL) return modelsCache.list;
   if (!modelsInflight) {
     modelsInflight = (async () => {
-      let r, text;
-      try {
-        r = await fetch('https://openrouter.ai/api/v1/models', {
-          headers: { Authorization: `Bearer ${API_KEY}` },
-          signal:  AbortSignal.timeout(20_000),
-        });
-        // Тело читаем внутри try: таймаут прерывает и его.
-        text = await r.text();
-      } catch (e) {
-        throw new Error(`не достучались до openrouter.ai — ${netError(e)}`);
+      const settings = loadSettings(ROOT);
+      const enabled = settings.providers.filter(p => p.enabled);
+      if (!enabled.length) throw new Error('нет включённых провайдеров ИИ');
+      const errors = [];
+      const chunks = await Promise.all(enabled.map(async p => {
+        try { return await fetchProviderModels(p); }
+        catch (e) {
+          errors.push({ provider: p.id, name: p.name, error: e.message });
+          return [];
+        }
+      }));
+      const list = chunks.flat();
+      if (!list.length) {
+        throw new Error(errors[0]?.error || 'ни один провайдер не отдал модели');
       }
-      if (!r.ok) throw new Error(explainUpstream(r, text));
-      let data;
-      try { data = JSON.parse(text); } catch { throw new Error('OpenRouter вернул не JSON'); }
-      modelsCache = { at: Date.now(), list: data.data || [] };
-      return modelsCache.list;
+      modelsCache = { at: Date.now(), list, errors };
+      return list;
     })().finally(() => { modelsInflight = null; });
   }
   return modelsInflight;
@@ -197,7 +252,13 @@ function readBody(req, limit = 1_000_000) {
 // ── МАРШРУТЫ ─────────────────────────────────────────────────
 async function apiModels(res) {
   try {
-    json(res, 200, { data: await models(), rub_per_usd: RUB_PER_USD, rub_rate_date: RUB_RATE_DATE });
+    const list = await models();
+    json(res, 200, {
+      data: list,
+      errors: modelsCache.errors || [],
+      rub_per_usd: RUB_PER_USD,
+      rub_rate_date: RUB_RATE_DATE,
+    });
   } catch (e) {
     json(res, 502, { error: e.message });
   }
@@ -230,6 +291,41 @@ function apiParser(res) {
     parser.label = 'выключен (WEB_LOOKUP=0)';
   }
   json(res, 200, parser);
+}
+
+function apiSettingsGet(res) {
+  const settings = loadSettings(ROOT);
+  json(res, 200, {
+    settings: publicSettings(settings),
+    parsers: parsersView(settings.search),
+    conditions: conditionsView(settings.conditions),
+    presets: PROVIDER_PRESETS,
+    overrides: envOverrides(),
+  });
+}
+
+async function apiSettingsPut(req, res) {
+  const raw = await readBody(req, 1_000_000);
+  let patch;
+  try { patch = JSON.parse(raw); } catch { return json(res, 400, { error: 'Тело запроса не JSON' }); }
+  if (!patch || typeof patch !== 'object' || Array.isArray(patch)) {
+    return json(res, 400, { error: 'Ожидался объект настроек' });
+  }
+  try {
+    const next = applySettingsPatch(loadSettings(ROOT), patch);
+    saveSettings(next, ROOT);
+    modelsCache = { at: 0, list: null, errors: [] };
+    const settings = loadSettings(ROOT);
+    json(res, 200, {
+      settings: publicSettings(settings),
+      parsers: parsersView(settings.search),
+      conditions: conditionsView(settings.conditions),
+      presets: PROVIDER_PRESETS,
+      overrides: envOverrides(),
+    });
+  } catch (e) {
+    json(res, e.status || 400, { error: e.message, details: e.details });
+  }
 }
 
 /**
@@ -387,10 +483,14 @@ async function apiExportV2(req, res) {
  * (jobs.js). Возвращает то же тело, что уходит в браузер; при провале бросает
  * ошибку с .status и .usage, чтобы потраченное на неудачные попытки не терялось.
  */
-async function enrichOne(product, { model, category } = {}) {
+async function enrichOne(product, { model, category, provider } = {}) {
   // Категория определяет схему полей и промпт. Явное поле важнее, иначе берём
   // category самого товара — её проставляет и фид, и обход раздела.
   const schema = schemaFor(category || product.category);
+  const settings = loadSettings(ROOT);
+  const prov = resolveProvider(settings, provider);
+  const ep = providerEndpoint(prov);
+  const apiKey = ep.apiKey || API_KEY;
 
   const skip = reason => ({
     enriched: null,
@@ -403,14 +503,22 @@ async function enrichOne(product, { model, category } = {}) {
   const first = isEnrichable(product, schema);
   if (!first.ok && !first.web) return skip(first.reason);
 
-  // Опечатка в id модели иначе уходит в OpenRouter и возвращается как 404 —
+  if (!apiKey) {
+    const e = new Error(`нет ключа у провайдера «${prov.name}»`);
+    e.status = 400;
+    throw e;
+  }
+
+  // Опечатка в id модели иначе уходит в шлюз и возвращается как 404 —
   // и попутно плодит запись в limiters на каждую несуществующую строку.
   let entry = null;
   try {
     const list = await models();
-    entry = list.find(m => m.id === model) || null;
-    if (!entry) {
-      const e = new Error(`Модель "${model}" не найдена в OpenRouter`);
+    entry = list.find(m => m.id === model && (!provider || m.provider === provider))
+      || list.find(m => m.id === model)
+      || null;
+    if (!entry && list.some(m => m.provider === prov.id)) {
+      const e = new Error(`Модель «${model}» не найдена у провайдера «${prov.name}»`);
       e.status = 400;
       throw e;
     }
@@ -432,13 +540,22 @@ async function enrichOne(product, { model, category } = {}) {
   }
 
   const { enriched, iT, oT, cost, costSource, attempts } = await enrichProduct(filled, {
-    model, apiKey: API_KEY, schema,
-    limiter: limiterFor(model),
+    model, apiKey, schema,
+    limiter: limiterFor(`${prov.id}:${model}`),
     pricing: pricingOf(entry),
+    chatUrl: ep.chatUrl,
+    headers: ep.headers,
+    mismatchPolicy: process.env.MISMATCH_POLICY || settings.conditions.mismatch_policy,
+    maxRetries: settings.model.max_retries,
+    timeoutMs: settings.model.timeout_ms,
+    maxTokens: settings.model.max_tokens,
+    referer: ep.headers['HTTP-Referer'] || 'https://mrmag.ru',
+    title: ep.headers['X-Title'] || 'mrmag enricher',
   });
   return {
     enriched,
     schema: schema.slug,
+    provider: prov.id,
     ...(sourceUrl ? { source_url: sourceUrl } : {}),
     usage: { prompt_tokens: iT, completion_tokens: oT, cost, cost_source: costSource, attempts },
   };
@@ -449,12 +566,12 @@ async function apiEnrich(req, res) {
   let body;
   try { body = JSON.parse(raw); } catch { return json(res, 400, { error: 'Тело запроса не JSON' }); }
 
-  const { model, product, category } = body || {};
+  const { model, product, category, provider } = body || {};
   if (!model || typeof model !== 'string') return json(res, 400, { error: 'Не передана модель' });
   if (!product || typeof product !== 'object') return json(res, 400, { error: 'Не передан товар' });
 
   try {
-    json(res, 200, await enrichOne(product, { model, category }));
+    json(res, 200, await enrichOne(product, { model, category, provider }));
   } catch (e) {
     // Неудачные попытки тоже оплачены — отдаём их, чтобы итог не занижался.
     json(res, e.status || 502, {
@@ -477,7 +594,7 @@ async function apiJobCreate(req, res) {
   let body;
   try { body = JSON.parse(raw); } catch { return json(res, 400, { error: 'Тело запроса не JSON' }); }
 
-  const { model, category, products, indices } = body || {};
+  const { model, category, products, indices, provider } = body || {};
   if (!model || typeof model !== 'string') return json(res, 400, { error: 'Не передана модель' });
   if (!Array.isArray(products) || !products.length) return json(res, 400, { error: 'Не переданы товары' });
   if (products.some(p => !p || typeof p !== 'object')) return json(res, 400, { error: 'В списке товаров есть не объект' });
@@ -485,7 +602,7 @@ async function apiJobCreate(req, res) {
     return json(res, 400, { error: 'indices не совпадает по длине со списком товаров' });
   }
 
-  const job = store.create({ model, category, products, indices });
+  const job = store.create({ model, category, products, indices, provider });
   json(res, 202, store.summary(job));
 }
 
@@ -498,44 +615,101 @@ function apiJobState(res, id, u) {
   }));
 }
 
-// Интерфейс — один файл без внешних ресурсов, поэтому раздаём только его:
-// каталог проекта целиком отдавать наружу не нужно.
-const PAGE = 'index_final.html';
+// Интерфейс — страница приложения и страница входа. Каталог проекта целиком
+// отдавать наружу не нужно.
+const PAGE  = 'index_final.html';
+const LOGIN = 'login.html';
+
+function sendHtml(res, code, file, extra = {}) {
+  if (!fs.existsSync(file)) {
+    res.writeHead(500, { 'Content-Type': 'text/plain; charset=utf-8' });
+    return res.end(`Нет файла ${path.basename(file)}`);
+  }
+  res.writeHead(code, {
+    'Content-Type':  'text/html; charset=utf-8',
+    'Cache-Control': code === 200 ? 'no-cache' : 'no-store',
+    'X-Content-Type-Options': 'nosniff',
+    ...extra,
+  });
+  fs.createReadStream(file).pipe(res);
+}
 
 function serveStatic(res, urlPath) {
   if (urlPath !== '/' && urlPath !== '/' + PAGE) {
     res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
     return res.end('Не найдено');
   }
-  const file = path.join(ROOT, PAGE);
-  if (!fs.existsSync(file)) {
-    res.writeHead(500, { 'Content-Type': 'text/plain; charset=utf-8' });
-    return res.end(`Нет файла ${PAGE}`);
-  }
-  res.writeHead(200, {
-    'Content-Type':  'text/html; charset=utf-8',
-    // Одна страница целиком: без этого правки интерфейса не доходят до браузера.
-    'Cache-Control': 'no-cache',
-    'X-Content-Type-Options': 'nosniff',
-  });
-  fs.createReadStream(file).pipe(res);
+  sendHtml(res, 200, path.join(ROOT, PAGE));
 }
 
-// ── СЕРВЕР ───────────────────────────────────────────────────
+function serveLogin(res, code = 401) {
+  sendHtml(res, code, path.join(ROOT, LOGIN));
+}
+
+// ── АУТЕНТИФИКАЦИЯ ───────────────────────────────────────────
 /**
- * Basic-аутентификация. Ключ OpenRouter тратит тот, кто дотянулся до /api/enrich,
- * поэтому открытый наружу сервер — это открытый чужой кошелёк. Basic выбран
- * потому, что его делает сам браузер: не нужен ни вход, ни хранение токена в JS.
- * Пароля нет — сервер работает, но громко предупреждает при старте.
+ * Ключ OpenRouter тратит тот, кто дотянулся до /api/enrich, поэтому открытый
+ * наружу сервер — это открытый чужой кошелёк. Браузер входит формой и получает
+ * подписанную cookie: системный диалог Basic поверх своей страницы входа не
+ * всплывает. Скрипты и smoke по-прежнему шлют Basic. Пароля нет — сервер
+ * работает, но громко предупреждает при старте.
  */
+function sessionSecret() {
+  return crypto.createHash('sha256').update(`enricher|${APP_PASSWORD}`).digest();
+}
+
+function makeSession() {
+  const payload = Buffer.from(JSON.stringify({ u: APP_USER, exp: Date.now() + SESSION_MS })).toString('base64url');
+  const sig = crypto.createHmac('sha256', sessionSecret()).update(payload).digest('base64url');
+  return `${payload}.${sig}`;
+}
+
+function cookieValue(req, name) {
+  const m = new RegExp(`(?:^|;\\s*)${name}=([^;]*)`).exec(req.headers.cookie || '');
+  return m ? decodeURIComponent(m[1]) : '';
+}
+
+function validSession(token) {
+  const dot = token.lastIndexOf('.');
+  if (dot < 1) return false;
+  const payload = token.slice(0, dot);
+  const sig = token.slice(dot + 1);
+  const expect = crypto.createHmac('sha256', sessionSecret()).update(payload).digest('base64url');
+  const a = Buffer.from(sig);
+  const b = Buffer.from(expect);
+  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return false;
+  try {
+    const data = JSON.parse(Buffer.from(payload, 'base64url').toString('utf-8'));
+    return data.u === APP_USER && Number(data.exp) > Date.now();
+  } catch {
+    return false;
+  }
+}
+
+function cookieHeader(req, value, maxAgeSec) {
+  const parts = [
+    `${COOKIE_NAME}=${encodeURIComponent(value)}`,
+    'HttpOnly',
+    'Path=/',
+    'SameSite=Strict',
+    `Max-Age=${maxAgeSec}`,
+  ];
+  // За nginx с TLS cookie без Secure браузер на https не сохранит. Локальный
+  // http — наоборот, Secure сломал бы вход.
+  if (req.headers['x-forwarded-proto'] === 'https') parts.push('Secure');
+  return parts.join('; ');
+}
+
 function authorized(req) {
   if (!APP_PASSWORD) return true;
   const h = req.headers.authorization || '';
-  if (!/^Basic /i.test(h)) return false;
-  const [user, ...rest] = Buffer.from(h.slice(6), 'base64').toString('utf-8').split(':');
-  const pass = rest.join(':');
-  // Сравнение постоянного времени: иначе пароль подбирается по времени ответа.
-  return safeEqual(user, APP_USER) && safeEqual(pass, APP_PASSWORD);
+  if (/^Basic /i.test(h)) {
+    const [user, ...rest] = Buffer.from(h.slice(6), 'base64').toString('utf-8').split(':');
+    const pass = rest.join(':');
+    // Сравнение постоянного времени: иначе пароль подбирается по времени ответа.
+    return safeEqual(user, APP_USER) && safeEqual(pass, APP_PASSWORD);
+  }
+  return validSession(cookieValue(req, COOKIE_NAME));
 }
 
 function safeEqual(a, b) {
@@ -543,6 +717,105 @@ function safeEqual(a, b) {
   const y = Buffer.from(String(b));
   // Длины сравниваем отдельно: timingSafeEqual падает на разной длине.
   return x.length === y.length && crypto.timingSafeEqual(x, y);
+}
+
+function clientIp(req) {
+  const xf = req.headers['x-forwarded-for'];
+  if (typeof xf === 'string' && xf.trim()) return xf.split(',')[0].trim().slice(0, 64);
+  return req.socket.remoteAddress || 'unknown';
+}
+
+// Крышка на подбор пароля с одной машины. Карта маленькая — это не анти-DDoS.
+const loginFail = new Map();
+function loginLocked(ip) {
+  const rec = loginFail.get(ip);
+  if (!rec) return false;
+  if (rec.until && Date.now() < rec.until) return true;
+  if (rec.until && Date.now() >= rec.until) { loginFail.delete(ip); return false; }
+  return false;
+}
+function noteLoginFail(ip) {
+  if (loginFail.size > 4000) loginFail.clear();
+  const rec = loginFail.get(ip) || { n: 0, until: 0 };
+  rec.n += 1;
+  if (rec.n >= 8) rec.until = Date.now() + 60_000;
+  loginFail.set(ip, rec);
+}
+
+async function apiLogin(req, res) {
+  const ip = clientIp(req);
+  const wantsJson = /json/i.test(req.headers.accept || '') || /json/i.test(req.headers['content-type'] || '');
+  const fail = (code, message) => {
+    if (wantsJson) return json(res, code, { error: message });
+    return serveLogin(res, code);
+  };
+  if (!APP_PASSWORD) {
+    if (wantsJson) return json(res, 200, { ok: true });
+    res.writeHead(302, { Location: '/' });
+    return res.end();
+  }
+  if (loginLocked(ip)) return fail(429, 'Слишком много попыток — подождите минуту');
+
+  let user = '', pass = '';
+  try {
+    const raw = await readBody(req, 4000);
+    if (/json/i.test(req.headers['content-type'] || '')) {
+      const body = JSON.parse(raw || '{}');
+      user = String(body.user ?? '');
+      pass = String(body.password ?? '');
+    } else {
+      const p = new URLSearchParams(raw);
+      user = p.get('user') || '';
+      pass = p.get('password') || '';
+    }
+  } catch {
+    return fail(400, 'Не удалось прочитать данные входа');
+  }
+
+  if (!safeEqual(user, APP_USER) || !safeEqual(pass, APP_PASSWORD)) {
+    noteLoginFail(ip);
+    return fail(401, 'Неверный логин или пароль');
+  }
+  loginFail.delete(ip);
+  const cookie = cookieHeader(req, makeSession(), Math.round(SESSION_MS / 1000));
+  if (wantsJson) {
+    res.writeHead(200, {
+      'Content-Type': 'application/json; charset=utf-8',
+      'Cache-Control': 'no-store',
+      'Set-Cookie': cookie,
+    });
+    return res.end(JSON.stringify({ ok: true }));
+  }
+  res.writeHead(302, { Location: '/', 'Set-Cookie': cookie });
+  res.end();
+}
+
+function apiLogout(req, res) {
+  const cookie = cookieHeader(req, '', 0);
+  const wantsJson = /json/i.test(req.headers.accept || '') || /json/i.test(req.headers['content-type'] || '');
+  if (wantsJson || req.method === 'POST' && /json/i.test(req.headers['content-type'] || '')) {
+    res.writeHead(200, {
+      'Content-Type': 'application/json; charset=utf-8',
+      'Cache-Control': 'no-store',
+      'Set-Cookie': cookie,
+    });
+    return res.end(JSON.stringify({ ok: true }));
+  }
+  res.writeHead(302, { Location: '/', 'Set-Cookie': cookie });
+  res.end();
+}
+
+function deny(req, res, pathname) {
+  if (pathname.startsWith('/api/')) {
+    res.writeHead(401, {
+      'WWW-Authenticate': 'Basic realm="AI Enricher", charset="UTF-8"',
+      'Content-Type': 'application/json; charset=utf-8',
+      'Cache-Control': 'no-store',
+    });
+    return res.end(JSON.stringify({ error: 'Требуется вход' }));
+  }
+  // Без WWW-Authenticate браузер не рисует системный диалог поверх формы.
+  serveLogin(res, 401);
 }
 
 // Мост поднимаем до старта приёма запросов: первый же /api/models должен уйти
@@ -576,16 +849,17 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, { ok: true, uptime_s: Math.round(process.uptime()) });
     }
 
-    if (!authorized(req)) {
-      res.writeHead(401, {
-        'WWW-Authenticate': 'Basic realm="AI Enricher", charset="UTF-8"',
-        'Content-Type': 'text/plain; charset=utf-8',
-      });
-      return res.end('Требуется вход');
-    }
+    // Страница и форма входа доступны без сессии — иначе браузер нечем заполнить.
+    if (req.method === 'GET'  && (u.pathname === '/login' || u.pathname === '/login.html')) return serveLogin(res, 200);
+    if (req.method === 'POST' && u.pathname === '/api/login')  return await apiLogin(req, res);
+    if ((req.method === 'POST' || req.method === 'GET') && u.pathname === '/api/logout') return apiLogout(req, res);
+
+    if (!authorized(req)) return deny(req, res, u.pathname);
 
     if (req.method === 'GET'  && u.pathname === '/api/models')     return await apiModels(res);
     if (req.method === 'GET'  && u.pathname === '/api/parser')     return apiParser(res);
+    if (req.method === 'GET'  && u.pathname === '/api/settings')   return apiSettingsGet(res);
+    if (req.method === 'PUT'  && u.pathname === '/api/settings')   return await apiSettingsPut(req, res);
     if (req.method === 'GET'  && u.pathname === '/api/categories') return apiCategories(res);
     if (req.method === 'POST' && u.pathname === '/api/filters')    return apiFilters(req, res);
     if (req.method === 'POST' && u.pathname === '/api/quality')    return apiQuality(req, res);
@@ -625,14 +899,17 @@ server.listen(PORT, HOST, () => {
   console.log(`\n  AI Enricher → http://${shown}:${PORT}`);
   console.log(`  Разделы: ${CATEGORIES.map(c => `${c.name} (${c.id})`).join(', ')}`);
   console.log(`  Прокси разрешён для: ${ALLOWED_HOSTS.join(', ')}`);
-  console.log(`  Курс: ${RUB_PER_USD} ₽/$ на ${RUB_RATE_DATE} | политика расхождений: ${MISMATCH_POLICY}`);
-  console.log(`  Вход: ${APP_PASSWORD ? `Basic, пользователь ${APP_USER}` : 'ОТКРЫТ'}`);
+  console.log(`  Курс: ${RUB_PER_USD} ₽/$ на ${RUB_RATE_DATE} | политика расхождений: ${loadSettings(ROOT).conditions.mismatch_policy}`);
+  console.log(`  Вход: ${APP_PASSWORD ? `форма + Basic, пользователь ${APP_USER}` : 'ОТКРЫТ'}`);
   try {
-    const parser = publicParserStatus(loadConfig(ROOT));
+    const settings = loadSettings(ROOT);
+    const on = settings.providers.filter(p => p.enabled);
+    console.log(`  Провайдеры: ${on.map(p => `${p.name}${p.default ? ' (по умолч.)' : ''}`).join(', ') || 'нет'}`);
+    const parser = publicParserStatus(settings);
     if (!WEB_LOOKUP) parser.label = 'выключен (WEB_LOOKUP=0)';
     console.log(`  Парсер: ${parser.label}${parser.enabled ? `, регион ${parser.duckduckgo.region}, ${parser.tries} попытки` : ''}`);
   } catch {
-    console.log('  Парсер: config.json не прочитан, будут значения по умолчанию');
+    console.log('  Настройки: config.json не прочитан, будут значения по умолчанию');
   }
   if (resumedJobs.length) console.log(`  Продолжаем прерванные прогоны: ${resumedJobs.join(', ')}`);
   for (const l of proxyLines) console.log(l);

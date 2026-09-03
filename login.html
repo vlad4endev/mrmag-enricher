@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Вход — Enricher</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,500;0,600;0,700;1,500&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --ink:#14110e; --ink-2:#2a241e; --cream:#f6f0e6; --paper:#fbf7f1;
+  --gold:#c4a06a; --gold-d:#8b5e2a; --line:rgba(196,160,106,.28);
+  --mute:#8a7d6e; --err:#b42318;
+  --serif:"Cormorant Garamond",Georgia,"Iowan Old Style",serif;
+  --sans:"Manrope",-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+}
+html,body{height:100%}
+body{
+  font-family:var(--sans);background:var(--ink);color:var(--cream);
+  -webkit-font-smoothing:antialiased;min-height:100%;
+}
+.wrap{display:grid;grid-template-columns:1.15fr .85fr;min-height:100%}
+.stage{
+  position:relative;overflow:hidden;padding:48px 56px 40px;
+  display:flex;flex-direction:column;justify-content:space-between;
+  background:
+    radial-gradient(1200px 700px at -10% -20%, rgba(196,160,106,.16), transparent 55%),
+    radial-gradient(800px 500px at 110% 80%, rgba(139,94,42,.18), transparent 50%),
+    linear-gradient(165deg, #1a1612 0%, #0e0c0a 100%);
+}
+.stage::after{
+  content:"";position:absolute;inset:0;pointer-events:none;opacity:.07;
+  background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.8' numOctaves='4' stitchTiles='stitch'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+}
+.mark{display:flex;align-items:center;gap:12px;position:relative;z-index:1}
+.gem{width:36px;height:36px;flex-shrink:0}
+.brand{font-family:var(--serif);font-size:28px;font-weight:600;letter-spacing:-.02em;line-height:1}
+.brand small{display:block;font-family:var(--sans);font-size:10px;font-weight:700;letter-spacing:.18em;text-transform:uppercase;color:var(--gold);margin-top:4px}
+.hero{position:relative;z-index:1;max-width:540px;margin:48px 0}
+.kicker{font-size:11px;font-weight:700;letter-spacing:.2em;text-transform:uppercase;color:var(--gold);margin-bottom:18px}
+.hero h1{
+  font-family:var(--serif);font-weight:500;font-size:clamp(36px,5vw,58px);
+  line-height:.95;letter-spacing:-.03em;margin-bottom:22px;
+}
+.hero h1 em{font-style:italic;color:var(--gold)}
+.lede{font-size:15.5px;line-height:1.65;color:rgba(246,240,230,.72);max-width:420px}
+.proof{position:relative;z-index:1;display:flex;gap:28px;flex-wrap:wrap;padding-top:8px}
+.proof b{display:block;font-family:var(--serif);font-size:22px;font-weight:600;color:var(--cream);letter-spacing:-.02em}
+.proof span{font-size:11px;color:var(--mute);letter-spacing:.04em}
+.panel{
+  background:var(--paper);color:var(--ink);display:flex;align-items:center;justify-content:center;
+  padding:48px 40px;position:relative;
+}
+.card{width:100%;max-width:380px}
+.card h2{font-family:var(--serif);font-size:40px;font-weight:500;letter-spacing:-.03em;line-height:1}
+.card .sub{margin:10px 0 32px;color:var(--mute);font-size:13.5px;line-height:1.55}
+label{display:block;font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-2);margin:0 0 8px}
+.field{margin-bottom:18px;position:relative}
+input[type=text],input[type=password]{
+  width:100%;height:50px;padding:0 44px 0 16px;border:1px solid #e4d9c8;border-radius:10px;
+  background:#fff;color:var(--ink);font:500 15px/1 var(--sans);outline:none;
+  transition:border-color .15s, box-shadow .15s;
+}
+input:hover{border-color:#d3c4aa}
+input:focus{border-color:var(--gold-d);box-shadow:0 0 0 4px rgba(139,94,42,.12)}
+.eye{
+  position:absolute;right:8px;top:50%;transform:translateY(-50%);
+  width:34px;height:34px;border:0;background:transparent;color:var(--mute);cursor:pointer;border-radius:8px;
+}
+.eye:hover{color:var(--ink);background:rgba(0,0,0,.04)}
+.btn{
+  width:100%;height:52px;margin-top:8px;border:0;border-radius:10px;cursor:pointer;
+  background:linear-gradient(180deg,#b8893e,#8b5e2a);color:#fff;
+  font:700 14.5px/1 var(--sans);letter-spacing:.04em;
+  box-shadow:0 10px 24px rgba(139,94,42,.22);transition:filter .15s, transform .1s;
+}
+.btn:hover:not(:disabled){filter:brightness(1.06)}
+.btn:active:not(:disabled){transform:translateY(1px)}
+.btn:disabled{opacity:.55;cursor:progress;box-shadow:none}
+.err{
+  display:none;margin:0 0 16px;padding:10px 12px;border-radius:8px;
+  background:#fdecea;color:var(--err);font-size:13px;line-height:1.45;
+}
+.err.on{display:block}
+.foot{margin-top:22px;font-size:12px;color:var(--mute);line-height:1.5}
+.shake{animation:shake .38s ease-in-out}
+@keyframes shake{25%{transform:translateX(-4px)}75%{transform:translateX(4px)}}
+.watermark{
+  position:absolute;right:-80px;bottom:-90px;width:420px;height:420px;opacity:.07;pointer-events:none;
+}
+@media(max-width:900px){
+  .wrap{grid-template-columns:1fr}
+  .stage{min-height:280px;padding:28px 24px 24px}
+  .hero{margin:28px 0 20px}
+  .hero h1{font-size:36px}
+  .proof{gap:18px}
+  .panel{padding:36px 22px 48px}
+}
+@media(prefers-reduced-motion:reduce){.shake,.btn{animation:none;transition:none}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <section class="stage" aria-hidden="false">
+    <div class="mark">
+      <svg class="gem" viewBox="0 0 36 36" fill="none" aria-hidden="true">
+        <path d="M18 3.5 32 14.2 18 32.5 4 14.2 18 3.5Z" stroke="#c4a06a" stroke-width="1.4"/>
+        <path d="M4 14.2h28M18 3.5v29M10.2 14.2 18 32.5l7.8-18.3" stroke="#c4a06a" stroke-width="1.1" opacity=".7"/>
+      </svg>
+      <div class="brand">Enricher<small>каталог · модель · витрина</small></div>
+    </div>
+    <div class="hero">
+      <div class="kicker">Сервис обогащения</div>
+      <h1>Каталог, который <em>продаёт</em> сам себя</h1>
+      <p class="lede">Характеристики, синонимы и SEO-текст собираются из карточки товара — без домыслов и с понятной ценой прогона.</p>
+    </div>
+    <div class="proof">
+      <div><b>18</b><span>схем категорий</span></div>
+      <div><b>SEO</b><span>title, H1, описание</span></div>
+      <div><b>v2</b><span>фильтры и выгрузка</span></div>
+    </div>
+    <svg class="watermark" viewBox="0 0 36 36" fill="none" aria-hidden="true">
+      <path d="M18 3.5 32 14.2 18 32.5 4 14.2 18 3.5Z" stroke="#c4a06a" stroke-width=".6"/>
+      <path d="M4 14.2h28M18 3.5v29M10.2 14.2 18 32.5l7.8-18.3" stroke="#c4a06a" stroke-width=".5"/>
+    </svg>
+  </section>
+
+  <section class="panel">
+    <form class="card" id="form" method="post" action="/api/login" autocomplete="on">
+      <h2>Вход</h2>
+      <p class="sub">Пароль закрывает интерфейс и счёт модели. Basic для скриптов по-прежнему работает.</p>
+      <div class="err" id="err" role="alert"></div>
+      <div class="field">
+        <label for="user">Логин</label>
+        <input id="user" name="user" type="text" autocomplete="username" spellcheck="false" required value="admin">
+      </div>
+      <div class="field">
+        <label for="password">Пароль</label>
+        <input id="password" name="password" type="password" autocomplete="current-password" required>
+        <button class="eye" type="button" id="eye" title="Показать пароль" aria-label="Показать пароль">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></svg>
+        </button>
+      </div>
+      <button class="btn" id="btn" type="submit">Войти</button>
+      <p class="foot">Сессия живёт неделю и переживает закрытие вкладки. Выйти можно из шапки сервиса.</p>
+    </form>
+  </section>
+</div>
+<script>
+'use strict';
+const form=document.getElementById('form');
+const err=document.getElementById('err');
+const btn=document.getElementById('btn');
+const pass=document.getElementById('password');
+const eye=document.getElementById('eye');
+pass.focus();
+
+eye.addEventListener('click',()=>{
+  const show=pass.type==='password';
+  pass.type=show?'text':'password';
+  eye.title=show?'Скрыть пароль':'Показать пароль';
+  eye.setAttribute('aria-label',eye.title);
+  pass.focus();
+});
+
+form.addEventListener('submit',async e=>{
+  e.preventDefault();
+  err.classList.remove('on');
+  err.textContent='';
+  btn.disabled=true;
+  btn.textContent='Проверяем…';
+  try{
+    const r=await fetch('/api/login',{
+      method:'POST',
+      headers:{'Content-Type':'application/json','Accept':'application/json'},
+      body:JSON.stringify({
+        user:document.getElementById('user').value.trim(),
+        password:pass.value
+      })
+    });
+    const text=await r.text();
+    let d=null; try{d=JSON.parse(text)}catch{}
+    if(r.status===429) throw new Error(d?.error||'Слишком много попыток — подождите минуту');
+    if(!r.ok) throw new Error(d?.error||'Неверный логин или пароль');
+    location.assign('/');
+  }catch(ex){
+    err.textContent=ex.message||'Не удалось войти';
+    err.classList.add('on');
+    form.classList.remove('shake');
+    void form.offsetWidth;
+    form.classList.add('shake');
+    pass.select();
+  }finally{
+    btn.disabled=false;
+    btn.textContent='Войти';
+  }
+});
+</script>
+</body>
+</html>

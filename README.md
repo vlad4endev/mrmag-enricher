@@ -434,7 +434,7 @@ docker restart nginx_proxy_manager
 1. **Задать `APP_PASSWORD`.** `/api/enrich` тратит деньги, открытый доступ к нему
    — открытый доступ к вашему счёту. Без пароля сервер работает, но громко
    предупреждает при старте.
-2. **TLS терминирует nginx-proxy-manager.** Basic-пароль по HTTP уходит
+2. **TLS терминирует nginx-proxy-manager.** Пароль формы и Basic по HTTP уходят
    открытым текстом, поэтому домен должен быть только на https.
 3. **Том для кэша.** `/data` в контейнере: без него каждый перезапуск обходит
    раздел заново.
@@ -568,7 +568,7 @@ scp products_*.json filters_*.json сервер:/opt/mrmag-enricher/
 
 ```bash
 tar -czf dist/enricher-1.1.0.tar.gz package.json lib.js catalog.js server.js \
-  enricher_mrmag.js index_final.html test*.mjs smoke.mjs \
+  enricher_mrmag.js index_final.html login.html test*.mjs smoke.mjs \
   Dockerfile docker-compose.yml .dockerignore .env.example README.md
 ```
 

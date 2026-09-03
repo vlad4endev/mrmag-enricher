@@ -1228,7 +1228,7 @@ console.log('\nТовар без описания: поиск в сети');
   fs.copyFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), 'config.json'), process.env.SETTINGS_PATH);
   const {
     loadSettings, applySettingsPatch, saveSettings, publicSettings, validateSettings,
-    resolveProvider, parsersView,
+    resolveProvider, parsersView, PROVIDER_PRESETS,
   } = await import('./settings.js');
 
   console.log('\nГибкие настройки');
@@ -1284,6 +1284,17 @@ console.log('\nТовар без описания: поиск в сети');
     const s = loadSettings();
     assert.equal(resolveProvider(s).id, 'openrouter');
     assert.equal(resolveProvider(s, 'openrouter').name, 'OpenRouter');
+  });
+  t('заготовка DeepSeek — официальный API и текущие модели', () => {
+    const ds = PROVIDER_PRESETS.find(p => p.id === 'deepseek');
+    assert.ok(ds, 'нет заготовки deepseek');
+    assert.equal(ds.base_url, 'https://api.deepseek.com');
+    assert.equal(ds.api_key_env, 'DEEPSEEK_API_KEY');
+    assert.ok(ds.models.includes('deepseek-v4-flash'));
+    assert.ok(ds.models.includes('deepseek-v4-pro'));
+    const s = loadSettings();
+    assert.ok(s.providers.some(p => p.id === 'deepseek' && p.base_url === 'https://api.deepseek.com'));
+    assert.equal(resolveProvider(s, 'deepseek').name, 'DeepSeek');
   });
 
   if (prev === undefined) delete process.env.SETTINGS_PATH;

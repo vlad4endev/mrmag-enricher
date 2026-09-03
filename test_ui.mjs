@@ -366,7 +366,10 @@ t('рисует провайдеров и условия из ответа се�
       conditions: { mismatch_policy: 'flag', min_source_chars: 100, min_attrs: 5, facet_min_coverage: 70, target_coverage: 90, fuzzy_min_score: 0.93 },
       model: { name: 'deepseek/deepseek-v3.2', prompt_version: 'dict-v1', max_retries: 3, timeout_ms: 60000, max_tokens: 3200 },
     },
-    presets: [{ id: 'ollama', name: 'Ollama (локально)' }],
+    presets: [
+      { id: 'ollama', name: 'Ollama (локально)' },
+      { id: 'deepseek', name: 'DeepSeek', base_url: 'https://api.deepseek.com', models: ['deepseek-v4-flash', 'deepseek-v4-pro'] },
+    ],
     overrides: [],
   });
   assert.match(G('setProvList').innerHTML, /OpenRouter/);
@@ -380,6 +383,9 @@ t('рисует провайдеров и условия из ответа се�
 t('добавляет провайдера из заготовки', () => {
   api.addProvider('ollama');
   assert.match(G('setProvList').innerHTML, /Ollama/);
+  api.addProvider('deepseek');
+  assert.match(G('setProvList').innerHTML, /DeepSeek/);
+  assert.match(G('setProvList').innerHTML, /api\.deepseek\.com/);
 });
 t('собирает условия с формы в PATCH', () => {
   G('setMismatch').value = 'strict';

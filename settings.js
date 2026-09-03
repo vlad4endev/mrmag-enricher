@@ -42,6 +42,19 @@ export const PROVIDER_PRESETS = [
     headers: {},
   },
   {
+    id: 'deepseek',
+    name: 'DeepSeek',
+    kind: 'openai',
+    // Официальный OpenAI-совместимый URL без /v1: POST /chat/completions.
+    // deepseek-chat / deepseek-reasoner сняты 24.07.2026.
+    base_url: 'https://api.deepseek.com',
+    api_key_env: 'DEEPSEEK_API_KEY',
+    models_path: '/models',
+    chat_path: '/chat/completions',
+    headers: {},
+    models: ['deepseek-v4-flash', 'deepseek-v4-pro'],
+  },
+  {
     id: 'groq',
     name: 'Groq',
     kind: 'openai',

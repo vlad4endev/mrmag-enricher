@@ -40,6 +40,21 @@
       },
       "models": [],
       "notes": ""
+    },
+    {
+      "id": "deepseek",
+      "name": "DeepSeek",
+      "kind": "openai",
+      "base_url": "https://api.deepseek.com",
+      "api_key": "",
+      "api_key_env": "DEEPSEEK_API_KEY",
+      "enabled": true,
+      "default": false,
+      "models_path": "/models",
+      "chat_path": "/chat/completions",
+      "headers": {},
+      "models": ["deepseek-v4-flash", "deepseek-v4-pro"],
+      "notes": "Официальный API. Ключ — DEEPSEEK_API_KEY или поле ниже."
     }
   ],
   "search": {

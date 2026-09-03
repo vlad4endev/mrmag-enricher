@@ -139,6 +139,8 @@ try {
     const d = await r.json();
     assert.ok(d.settings.providers.some(p => p.id === 'openrouter'));
     assert.ok(d.presets.some(p => p.id === 'ollama'));
+    assert.ok(d.presets.some(p => p.id === 'deepseek' && p.base_url === 'https://api.deepseek.com'));
+    assert.ok(d.settings.providers.some(p => p.id === 'deepseek'));
     assert.ok(d.settings.providers.every(p => !('api_key' in p) || !p.api_key), 'секрет не должен уезжать в браузер');
     assert.strictEqual(d.conditions.items.find(i => i.id === 'mismatch_policy').value, 'flag');
     assert.ok(d.parsers.parsers.some(p => p.kind === 'duckduckgo'));

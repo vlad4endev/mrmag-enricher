@@ -446,6 +446,17 @@ textarea{
 .spec-title i{font-family:var(--mono);letter-spacing:0;font-weight:400;font-style:normal}
 .spec-title.mt{margin-top:26px}
 
+/* Страница товара во вкладке «Поля»: как эталон, а не простыня JSON. */
+.pcard{margin:0 0 22px}
+.pcard-title{font-family:var(--mono);font-size:11px;color:var(--t3);margin:0 0 8px;word-break:break-word}
+.pcard-h1{font-family:var(--serif);font-size:26px;font-weight:500;letter-spacing:-.03em;line-height:1.2;color:var(--t1);margin:0 0 10px}
+.pcard-meta{font-size:12.5px;color:var(--t3);line-height:1.55;margin:0 0 16px}
+.pcard-lead{font-size:15px;line-height:1.6;color:var(--t1);margin:0 0 16px}
+.pcard-body p{font-family:var(--serif);font-size:14.5px;line-height:1.75;color:var(--t2);margin:0 0 14px}
+.pcard-body p:last-child{margin-bottom:18px}
+.pcard-bullets{margin:0 0 22px;padding-left:18px;display:flex;flex-direction:column;gap:6px;font-size:13.5px;line-height:1.5;color:var(--t1)}
+.sp.empty .sp-v{color:var(--t3);font-weight:400}
+
 /* Блоки состояний */
 .warnbox{background:var(--abg);border:1px solid var(--abd);border-radius:var(--r);padding:12px 14px;margin-bottom:14px;font-size:12.5px}
 .warnbox .wt{font-weight:700;color:var(--amber);margin-bottom:8px;display:flex;align-items:center;gap:6px}
@@ -3089,10 +3100,31 @@ const FIELD_LABELS={
 };
 // Служебные поля: выводятся отдельными блоками, не как обычные карточки.
 const META_FIELDS=new Set(['specs','technical_specs','dimensions','thread','source_facts','warnings','confidence',
-  'seo_title','h1','meta_description','short_description','seo_description']);
+  'seo_title','h1','meta_description','short_description','seo_description','bullets',
+  'synonyms','search_aliases','seo_keywords','seo_issues','filled_from_text','source_conflicts']);
 // Порядок как на странице товара: title → H1 → meta → карточка → текст.
 const SEO_TEXTS=[['seo_title','Title'],['h1','H1'],['meta_description','Meta description'],
   ['short_description','Краткое описание'],['seo_description','SEO-описание']];
+const SEARCH_FIELDS=[['synonyms','Синонимы'],['search_aliases','Псевдонимы поиска'],['seo_keywords','SEO ключи']];
+const SPEC_UNIT={л:'л',мл:'мл',кг:'кг',г:'г',мм:'мм',см:'см',дб:'дБ',об_мин:'об/мин',кг_сут:'кг/сут',л_цикл:'л/цикл'};
+
+function specLabel(k){
+  if(FIELD_LABELS[k]) return FIELD_LABELS[k];
+  const parts=String(k).split('_');
+  for(const take of [2,1]){
+    if(parts.length<=take) continue;
+    const unit=SPEC_UNIT[parts.slice(-take).join('_')];
+    if(unit){
+      const name=parts.slice(0,-take).join(' ');
+      return name.charAt(0).toUpperCase()+name.slice(1)+', '+unit;
+    }
+  }
+  const name=parts.join(' ');
+  return name.charAt(0).toUpperCase()+name.slice(1);
+}
+function textBlocks(s){
+  return String(s||'').split(/\n{2,}/).map(x=>x.trim()).filter(Boolean);
+}
 
 function label(k){
   return FIELD_LABELS[k] || (k.charAt(0).toUpperCase()+k.slice(1)).replace(/_/g,' ');
@@ -3108,7 +3140,6 @@ function renderVis(d){
   if(!d||typeof d!=='object') return '<div class="empty"><p>Нет данных</p></div>';
   let out=confBox(curIdx);
 
-  // Расхождения с текстом источника — вперёд всего: это причина не доверять полю.
   if(Array.isArray(d.warnings)&&d.warnings.length){
     out+=`<div class="warnbox"><div class="wt">⚠ Расхождения с текстом источника (${d.warnings.length})</div>`
       +d.warnings.map(w=>`<div class="wi">${esc(label(w.field))}: модель <code>${esc(String(w.model))}</code>`
@@ -3116,30 +3147,70 @@ function renderVis(d){
         +` — ${esc(String(w.note||''))}</div>`).join('')
       +`</div>`;
   }
-
-  // SEO-пакет — то, что уезжает на страницу товара: тег title, H1, meta и тексты.
-  const seo=SEO_TEXTS.filter(([k])=>!isEmpty(d[k]));
-  if(seo.length){
-    out+=seo.map(([k,t])=>`<div class="seobox"><div class="st">${t} · ${String(d[k]).length} симв.</div>${esc(d[k])}</div>`).join('');
+  if(Array.isArray(d.seo_issues)&&d.seo_issues.length){
+    out+=`<div class="warnbox"><div class="wt">Заметки по SEO (${d.seo_issues.length})</div>`
+      +d.seo_issues.map(x=>`<div class="wi">${esc(String(x))}</div>`).join('')
+      +`</div>`;
   }
 
-  // Характеристики: и новая схема (specs), и прежняя (technical_specs/dimensions/thread).
+  const hasPage=!isEmpty(d.seo_title)||!isEmpty(d.h1)||!isEmpty(d.meta_description)
+    ||!isEmpty(d.short_description)||!isEmpty(d.seo_description)||(Array.isArray(d.bullets)&&d.bullets.length);
+  if(hasPage){
+    out+=`<article class="pcard">`;
+    if(!isEmpty(d.seo_title)) out+=`<div class="pcard-title">${esc(d.seo_title)}</div>`;
+    if(!isEmpty(d.h1)) out+=`<h1 class="pcard-h1">${esc(d.h1)}</h1>`;
+    if(!isEmpty(d.meta_description)) out+=`<div class="pcard-meta">${esc(d.meta_description)}</div>`;
+    if(!isEmpty(d.short_description)) out+=`<p class="pcard-lead">${esc(d.short_description)}</p>`;
+    if(!isEmpty(d.seo_description)&&d.seo_description!==d.short_description){
+      out+=`<div class="pcard-body">${textBlocks(d.seo_description).map(p=>`<p>${esc(p.replace(/\n+/g,' '))}</p>`).join('')}</div>`;
+    }
+    if(Array.isArray(d.bullets)&&d.bullets.length){
+      out+=`<ul class="pcard-bullets">${d.bullets.map(b=>`<li>${esc(String(b))}</li>`).join('')}</ul>`;
+    }
+    out+=`</article>`;
+  }
+
   const sp={...(d.specs||{}),...(d.technical_specs||{}),...(d.dimensions||{}),...(d.thread||{})};
-  const filled=Object.entries(sp).filter(([,v])=>!isEmpty(v));
-  if(filled.length){
-    // Поля с расхождением подсвечиваем прямо в строке: смотреть значение и
-    // отдельно сверяться со списком предупреждений — лишняя работа глазами.
+  const rows=Object.entries(sp);
+  if(rows.length){
     const bad=new Set((d.warnings||[]).map(w=>w.field));
-    out+=`<div class="spec-title">Характеристики <i>${filled.length}</i></div>`
-      +`<div class="specs">${filled.map(([k,v])=>
-          `<div class="sp${bad.has(k)?' bad':''}"><span class="sp-k">${esc(label(k))}</span>`
-          +`<span class="sp-d"></span><span class="sp-v">${esc(String(v))}</span></div>`).join('')}</div>`;
+    const filled=rows.filter(([,v])=>!isEmpty(v)).length;
+    out+=`<div class="spec-title">Характеристики <i>${filled}${rows.length!==filled?' / '+rows.length:''}</i></div>`
+      +`<div class="specs">${rows.map(([k,v])=>
+          `<div class="sp${bad.has(k)?' bad':''}${isEmpty(v)?' empty':''}"><span class="sp-k">${esc(specLabel(k))}</span>`
+          +`<span class="sp-d"></span><span class="sp-v">${isEmpty(v)?'—':esc(String(v))}</span></div>`).join('')}</div>`;
   }
 
-  // Всё остальное, что вернула модель, — чтобы новые поля не пропадали.
+  const search=SEARCH_FIELDS.filter(([k])=>!isEmpty(d[k]));
+  if(search.length){
+    out+=`<div class="spec-title mt">Поисковые и SEO-данные</div>`
+      +`<div class="fgrid">${search.map(([k,t])=>{
+        const v=d[k];
+        const inner=Array.isArray(v)?tags(v):`<div class="fv">${esc(String(v))}</div>`;
+        return `<div class="fc"><div class="fk">${esc(t)}</div>${inner}</div>`;
+      }).join('')}</div>`;
+  }
+
+  if(d.source_facts&&typeof d.source_facts==='object'&&!isEmpty(d.source_facts)){
+    const facts=Object.entries(d.source_facts).filter(([,v])=>!isEmpty(v));
+    if(facts.length){
+      out+=`<div class="spec-title mt">Факты из источника <i>${facts.length}</i></div>`
+        +`<div class="specs">${facts.map(([k,v])=>
+            `<div class="sp"><span class="sp-k">${esc(specLabel(k))}</span>`
+            +`<span class="sp-d"></span><span class="sp-v">${esc(Array.isArray(v)?v.join(' × '):String(v))}</span></div>`).join('')}</div>`;
+    }
+  }
+  if(Array.isArray(d.filled_from_text)&&d.filled_from_text.length){
+    out+=`<div class="spec-title mt">Добрано из текста</div>${tags(d.filled_from_text)}`;
+  }
+  if(Array.isArray(d.source_conflicts)&&d.source_conflicts.length){
+    out+=`<div class="warnbox" style="margin-top:16px"><div class="wt">Конфликты источника (${d.source_conflicts.length})</div>`
+      +d.source_conflicts.map(w=>`<div class="wi">${esc(JSON.stringify(w))}</div>`).join('')+'</div>';
+  }
+
   const rest=Object.entries(d).filter(([k,v])=>!META_FIELDS.has(k)&&!isEmpty(v));
   if(rest.length){
-    out+=`<div class="spec-title mt">Поисковые и SEO-данные</div>`
+    out+=`<div class="spec-title mt">Прочее</div>`
       +`<div class="fgrid">${rest.map(([k,v])=>{
       const inner=Array.isArray(v)?tags(v)
         :typeof v==='object'?`<div class="fv">${esc(JSON.stringify(v))}</div>`

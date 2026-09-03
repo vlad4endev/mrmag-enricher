@@ -92,15 +92,33 @@ const priceOf = p => (Number.isFinite(p.price) && p.price > 0 ? p.price : null);
 /** id товара — sku магазина; числовой отдаём числом, как в примере заказчика. */
 const idOf = p => (/^\d+$/.test(String(p.sku ?? '')) ? Number(p.sku) : (p.sku ?? null));
 
+/** Пустая строка в эталоне — граница абзаца, не пробел внутри одного <p>. */
+function paras(text) {
+  return String(text || '')
+    .split(/\n{2,}/)
+    .map(s => s.trim())
+    .filter(Boolean)
+    .map(s => `<p>${esc(s.replace(/\n+/g, ' '))}</p>`);
+}
+
 /**
- * Описание + характеристики одним html: абзац, список характеристик, плюсы
- * товара, абзац. Плюсы идут отдельным <ul> после характеристик: смешивать их
- * со списком нельзя — там точные значения, а здесь текст модели.
+ * Описание как страница товара из эталона: H1, лид, абзацы seo_description,
+ * плюсы, затем характеристики. Пустые строки в тексте — границы абзацев,
+ * иначе три абзаца эталона схлопнулись бы в один <p>.
  */
 function descHtml(e) {
   const out = [];
-  const intro = e.short_description || e.seo_description || '';
+  const h1 = String(e.h1 || '').trim();
+  if (h1) out.push(`<h1>${esc(h1)}</h1>`);
+
+  const intro = String(e.short_description || '').trim();
   if (intro) out.push(`<p>${esc(intro)}</p>`);
+
+  const long = String(e.seo_description || '').trim();
+  if (long && long !== intro) out.push(...paras(long));
+
+  const bullets = (e.bullets || []).map(b => String(b).trim()).filter(Boolean);
+  if (bullets.length) out.push(`<ul>${bullets.map(b => `<li>${esc(b)}</li>`).join('')}</ul>`);
 
   const li = Object.entries(e.specs || {})
     .filter(([, v]) => v != null && v !== '')
@@ -108,15 +126,10 @@ function descHtml(e) {
       const { label, unit } = splitKey(k);
       const val = typeof v === 'number'
         ? `${num(v)}${unit ? ` ${unit}` : ''}`
-        : (YESNO[String(v).toLowerCase()] || String(v));   // «да» и «Есть» в одном файле не соседствуют
+        : (YESNO[String(v).toLowerCase()] || String(v));
       return `<li>${esc(label)}: ${esc(val)}</li>`;
     });
   if (li.length) out.push(`<ul>${li.join('')}</ul>`);
-
-  const bullets = (e.bullets || []).map(b => String(b).trim()).filter(Boolean);
-  if (bullets.length) out.push(`<ul>${bullets.map(b => `<li>${esc(b)}</li>`).join('')}</ul>`);
-
-  if (e.seo_description && e.seo_description !== intro) out.push(`<p>${esc(e.seo_description)}</p>`);
   return out.join('');
 }
 

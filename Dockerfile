@@ -1,5 +1,10 @@
 # Зависимостей нет — образ это Node плюс исходники.
-FROM node:24-alpine
+#
+# Docker Hub с части сетей не открывается: Head на registry-1.docker.io
+# обрывается TLS handshake timeout — сборка не доходит даже до COPY.
+# Зеркало AWS — тот же официальный node:24-alpine. Свой тег: NODE_IMAGE=...
+ARG NODE_IMAGE=public.ecr.aws/docker/library/node:24-alpine
+FROM ${NODE_IMAGE}
 
 WORKDIR /app
 # Только то, что нужно в рантайме: тесты и кэши в образ не попадают.

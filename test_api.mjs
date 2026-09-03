@@ -131,7 +131,10 @@ try {
     assert.strictEqual(d.duckduckgo.endpoint, 'html');
     assert.strictEqual(d.duckduckgo.region, 'ru-ru');
     assert.ok(d.tries >= 1);
-    assert.match(d.label, /DuckDuckGo/i);
+    assert.ok(d.serpapi);
+    assert.strictEqual(d.serpapi.engine, 'google');
+    if (d.serpapi.has_key) assert.match(d.label, /SerpAPI/i);
+    else assert.match(d.label, /DuckDuckGo/i);
   });
   await t('/api/settings отдаёт провайдеров без ключей и заготовки', async () => {
     const r = await fetch(url('/api/settings'), { headers: { authorization: auth } });
@@ -144,6 +147,19 @@ try {
     assert.ok(d.settings.providers.every(p => !('api_key' in p) || !p.api_key), 'секрет не должен уезжать в браузер');
     assert.strictEqual(d.conditions.items.find(i => i.id === 'mismatch_policy').value, 'flag');
     assert.ok(d.parsers.parsers.some(p => p.kind === 'duckduckgo'));
+    assert.ok(d.parsers.parsers.some(p => p.kind === 'serpapi'));
+    assert.ok(!JSON.stringify(d).includes('serp-secret'), 'ключ SerpAPI не должен уезжать в браузер');
+    assert.ok(!('api_key' in (d.settings.search.serpapi || {})) || !d.settings.search.serpapi.api_key);
+    assert.ok(!('api_key' in (d.parsers.serpapi || {})) || !d.parsers.serpapi.api_key);
+  });
+  await t('/api/models отдаёт DeepSeek из карточки, не дожидаясь OpenRouter', async () => {
+    const t0 = Date.now();
+    const r = await fetch(url('/api/models'), { headers: { authorization: auth } });
+    const ms = Date.now() - t0;
+    assert.strictEqual(r.status, 200, await r.clone().text());
+    const d = await r.json();
+    assert.ok(d.data.some(m => m.id === 'deepseek-v4-flash' && m.provider === 'deepseek'));
+    assert.ok(ms < 3000, `справочник ждал сеть ${ms} мс`);
   });
   await t('PUT /api/settings сохраняет условие и не затирает ключ пустой строкой', async () => {
     const cur = await (await fetch(url('/api/settings'), { headers: { authorization: auth } })).json();

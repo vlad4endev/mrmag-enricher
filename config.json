@@ -68,6 +68,19 @@
     "search_url": "",
     "fallback_engines": ["mojeek", "brave"],
     "engines": [],
+    "serpapi": {
+      "enabled": true,
+      "api_key": "",
+      "api_key_env": "SERPAPI_KEY",
+      "engine": "google",
+      "gl": "ru",
+      "hl": "ru",
+      "google_domain": "google.ru",
+      "location": "Russia",
+      "num": 10,
+      "endpoint": "",
+      "site_filter": ""
+    },
     "duckduckgo": {
       "enabled": true,
       "endpoint": "html",

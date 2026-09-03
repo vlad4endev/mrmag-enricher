@@ -1030,7 +1030,7 @@ input[type=range]::-moz-range-thumb{
 
       <section class="set-panel" id="setParse">
         <div class="set-h">Парсеры поиска</div>
-        <p class="set-lead">Когда у карточки нет описания, сервер ищет ту же модель в сети. Движки пробуются по очереди: свой URL, затем DuckDuckGo, затем запасные. Страница принимается, только если на ней есть артикул из названия.</p>
+        <p class="set-lead">Когда у карточки нет описания, сервер ищет ту же модель в сети. Сначала SerpAPI (Google JSON), затем свой URL, DuckDuckGo и запасные HTML-движки. Страница принимается, только если на ней есть артикул из названия.</p>
         <div class="set-card" style="margin-bottom:12px">
           <label class="set-check"><input type="checkbox" id="setSearchOn"> Искать описания пустых карточек в сети</label>
           <div class="set-grid">
@@ -1041,6 +1041,29 @@ input[type=range]::-moz-range-thumb{
           </div>
           <div class="set-row"><label for="setSkipHosts">Не открывать хосты (через запятую)</label><input type="text" id="setSkipHosts" placeholder="mrmag.ru"></div>
           <div class="set-row"><label for="setSearchUrl">Свой поисковик (URL с %s)</label><input type="url" id="setSearchUrl" placeholder="https://searx.example/search?q=%s"></div>
+        </div>
+        <div class="set-card" style="margin-bottom:12px">
+          <div class="set-card-h"><b>SerpAPI</b></div>
+          <label class="set-check"><input type="checkbox" id="setSerpOn"> Использовать SerpAPI (основной поиск)</label>
+          <div class="set-grid">
+            <div class="set-row"><label for="setSerpEngine">Движок</label>
+              <select id="setSerpEngine">
+                <option value="google">Google</option>
+                <option value="bing">Bing</option>
+                <option value="yandex">Yandex</option>
+                <option value="duckduckgo">DuckDuckGo</option>
+              </select>
+            </div>
+            <div class="set-row"><label for="setSerpGl">Страна (gl)</label><input type="text" id="setSerpGl" placeholder="ru"></div>
+            <div class="set-row"><label for="setSerpHl">Язык (hl)</label><input type="text" id="setSerpHl" placeholder="ru"></div>
+            <div class="set-row"><label for="setSerpDomain">Домен Google</label><input type="text" id="setSerpDomain" placeholder="google.ru"></div>
+            <div class="set-row"><label for="setSerpLocation">Локация</label><input type="text" id="setSerpLocation" placeholder="Russia"></div>
+            <div class="set-row"><label for="setSerpKeyEnv">Переменная ключа</label><input type="text" id="setSerpKeyEnv" placeholder="SERPAPI_KEY"></div>
+          </div>
+          <div class="set-row"><label for="setSerpKey">Ключ API <span id="setSerpKeyHint" class="set-badge off">нет ключа</span></label>
+            <input type="password" id="setSerpKey" placeholder="оставьте пустым, чтобы не менять" autocomplete="off">
+          </div>
+          <div class="hint">Ключ остаётся на сервере. Без него SerpAPI пропускается, и поиск идёт через DuckDuckGo.</div>
         </div>
         <div class="set-card" style="margin-bottom:12px">
           <div class="set-card-h"><b>DuckDuckGo</b></div>
@@ -1213,6 +1236,7 @@ function showPage(id, btn){
   else document.querySelectorAll('.ntab').forEach(b=>{ if(b.dataset.page===id) b.classList.add('on'); });
   if(id==='calc') calcUpdate();
   if(id==='settings') loadSettings();
+  if(id==='enricher') applyDefaultProviderModels();
 }
 
 const SET_TABS={prov:['setProv','snProv'],parse:['setParse','snParse'],cond:['setCond','snCond'],run:['setRun','snRun']};
@@ -1234,6 +1258,7 @@ function renderSettings(d){
   const s=d.settings||{};
   const search=s.search||{};
   const ddg=search.duckduckgo||{};
+  const serp=search.serpapi||{};
   const cond=s.conditions||{};
   const model=s.model||{};
   const fb=search.fallback_engines||[];
@@ -1244,6 +1269,23 @@ function renderSettings(d){
   setV('setSuffix', search.query_suffix??'характеристики');
   setV('setSkipHosts', (search.skip_hosts||[]).join(', '));
   setV('setSearchUrl', search.search_url||'');
+  setC('setSerpOn', serp.enabled!==false);
+  setV('setSerpEngine', serp.engine||'google');
+  setV('setSerpGl', serp.gl||'ru');
+  setV('setSerpHl', serp.hl||'ru');
+  setV('setSerpDomain', serp.google_domain||'google.ru');
+  setV('setSerpLocation', serp.location||'Russia');
+  setV('setSerpKeyEnv', serp.api_key_env||'SERPAPI_KEY');
+  setV('setSerpKey', '');
+  const hint=document.getElementById('setSerpKeyHint');
+  if(hint){
+    hint.className='set-badge'+(serp.has_key?'':' off');
+    hint.textContent=serp.has_key
+      ? `${serp.key_from==='env'?'из env':'в файле'} ${serp.key_hint||''}`.trim()
+      : 'нет ключа';
+  }
+  const keyInput=document.getElementById('setSerpKey');
+  if(keyInput) keyInput.placeholder=serp.has_key?'оставьте пустым, чтобы не менять':'ключ с serpapi.com';
   setC('setDdgOn', ddg.enabled!==false);
   setV('setDdgMethod', ddg.method||'POST');
   setV('setDdgEndpoint', ddg.endpoint||'html');
@@ -1411,6 +1453,16 @@ function readSettingsPatch(){
       search_url:getV('setSearchUrl'),
       fallback_engines:fallback,
       engines,
+      serpapi:{
+        enabled:getC('setSerpOn'),
+        engine:getV('setSerpEngine')||'google',
+        gl:getV('setSerpGl')||'ru',
+        hl:getV('setSerpHl')||'ru',
+        google_domain:getV('setSerpDomain')||'google.ru',
+        location:getV('setSerpLocation'),
+        api_key_env:getV('setSerpKeyEnv')||'SERPAPI_KEY',
+        ...(getV('setSerpKey')?{api_key:getV('setSerpKey')}:{}),
+      },
       duckduckgo:{
         enabled:getC('setDdgOn'),
         method:getV('setDdgMethod')||'POST',
@@ -1456,6 +1508,7 @@ async function saveSettings(){
     renderSettings(saved);
     document.getElementById('setStatus').textContent='Сохранено. Новый прогон пойдёт с этими настройками.';
     loadParser();
+    applyDefaultProviderModels();
   }catch(e){
     document.getElementById('setStatus').textContent='Не сохранилось: '+e.message;
   }
@@ -1691,11 +1744,16 @@ function renderParser(p){
   document.getElementById('parserDot').textContent=on?'✓':'·';
   sub.textContent=on?'включён':'выключен';
   const ddg=p.duckduckgo||{};
+  const serp=p.serpapi||{};
+  const serpLine=!serp.enabled
+    ? 'выключен'
+    : `${serp.engine||'google'} ${serp.gl||'ru'}${serp.has_key?'':' — нет ключа'}`;
   const ddgLine=ddg.enabled===false
     ? 'выключен'
     : `${ddg.method||'POST'} ${ddg.endpoint||'html'}, ${ddg.region||'—'}`;
   const rows=[
     ['Статус', on?'ищет пустые карточки в сети':'пропускает пустые карточки'],
+    ['SerpAPI', serpLine],
     ['DuckDuckGo', ddgLine],
     ['Попыток на товар', String(p.tries??'—')],
     ['Запасные', (p.fallback||[]).join(', ')||'нет'],
@@ -1726,6 +1784,7 @@ function applyRate(){
 
 async function init(){
   setSt('ld','Загружаем модели...');
+  try{ setPayload=await apiJson('/api/settings'); }catch{ /* шаг модели умеет жить без настроек */ }
   try{
     const data=await apiJson('/api/models');
     if(typeof data.rub_per_usd==='number'&&data.rub_per_usd>0){
@@ -1734,24 +1793,91 @@ async function init(){
       applyRate();
       calcUpdate();
     }
-    allModels=(data.data||[]).filter(m=>m.id).sort((a,b)=>(a.name||a.id).localeCompare(b.name||b.id,'ru'));
+    allModels=orderModels(mergeModels(data.data, modelsFromSettings()));
     setSt('ok',`${allModels.length} моделей`);
     renderModelList(allModels.slice(0,60));
-    const def=allModels.find(m=>m.default) || allModels.find(m=>m.id===setPayload?.settings?.model?.name);
-    if(!selModel && def) pick(def.id, def.provider);
+    const er=(data.errors||[]).find(e=>e.provider===defaultProviderId());
+    if(er) stepError(1, `${er.name}: ${er.error}`);
   }catch(e){
-    setSt('er','Список моделей не загружен');
-    setP('mdrop',`<div class="mi-empty">${esc(e.message)}<br>Модель можно ввести вручную: id вида deepseek/deepseek-v3.2</div>`);
-    document.getElementById('mdrop').classList.add('open');
-    document.getElementById('msearch').classList.add('open');
-    stepError(1,`Справочник моделей недоступен: ${e.message}. Работать можно — введите id модели вручную в поиске выше.`);
+    allModels=orderModels(modelsFromSettings());
+    if(allModels.length){
+      setSt('ok',`${allModels.length} моделей`);
+      renderModelList(allModels.slice(0,60));
+    }else{
+      setSt('er','Список моделей не загружен');
+      setP('mdrop',`<div class="mi-empty">${esc(e.message)}<br>Модель можно ввести вручную: ${esc(catalogHint())}</div>`);
+      document.getElementById('mdrop').classList.add('open');
+      document.getElementById('msearch').classList.add('open');
+      stepError(1,`Справочник моделей недоступен: ${e.message}. Работать можно — введите id модели вручную в поиске выше.`);
+    }
   }
+  pickDefaultModel();
   await loadParser();
   await loadCategories();
   restoreResults();
   syncSteps();
   // Прогон живёт на сервере: если он идёт — подхватываем его и показываем.
   await resumeJob();
+}
+
+function defaultProviderId(){
+  return (setPayload?.settings?.providers||[]).find(p=>p.default && p.enabled!==false)?.id||'';
+}
+
+function modelsFromSettings(d=setPayload){
+  const providers=(d?.settings?.providers||[]).filter(p=>p.enabled!==false);
+  return providers.flatMap(p=>(p.models||[]).map(id=>({id,name:id,pricing:null,provider:p.id,provider_name:p.name})));
+}
+
+function mergeModels(a,b){
+  const seen=new Set();
+  const out=[];
+  for(const m of [...(a||[]),...(b||[])]){
+    const k=(m.provider||'')+'|'+(m.id||'');
+    if(!m.id||seen.has(k)) continue;
+    seen.add(k);
+    out.push(m);
+  }
+  return out;
+}
+
+function orderModels(list){
+  const def=defaultProviderId();
+  return (list||[]).slice().sort((a,b)=>{
+    const ad=a.provider===def?0:1, bd=b.provider===def?0:1;
+    if(ad!==bd) return ad-bd;
+    return String(a.name||a.id).localeCompare(String(b.name||b.id),'ru');
+  });
+}
+
+function catalogHint(){
+  const p=(setPayload?.settings?.providers||[]).find(x=>x.default && x.enabled!==false);
+  return (p?.models&&p.models[0]) || 'deepseek-v4-flash';
+}
+
+function pickDefaultModel(){
+  if(selModel) return;
+  const defProv=defaultProviderId();
+  const want=setPayload?.settings?.model?.name;
+  const def=(want&&allModels.find(m=>m.id===want&&(!defProv||m.provider===defProv)))
+    ||(want&&allModels.find(m=>m.id===want))
+    ||allModels.find(m=>defProv&&m.provider===defProv)
+    ||allModels[0];
+  if(def) pick(def.id, def.provider);
+}
+
+/** После смены провайдера по умолчанию список моделей должен совпасть с карточкой. */
+function applyDefaultProviderModels(){
+  if(!setPayload) return;
+  allModels=orderModels(mergeModels(allModels, modelsFromSettings()));
+  const def=defaultProviderId();
+  if(def && selModel && selModel.provider && selModel.provider!==def) selModel=null;
+  pickDefaultModel();
+  if(allModels.length){
+    setSt('ok',`${allModels.length} моделей`);
+    renderModelList(allModels.slice(0,60));
+  }
+  syncSteps();
 }
 
 // ── ШАГ 1: МОДЕЛЬ ────────────────────────────────────────────
@@ -1777,8 +1903,9 @@ function priceOf(m){
   return {ip:parseFloat(m?.pricing?.prompt||0),op:parseFloat(m?.pricing?.completion||0)};
 }
 
-/** Похоже на id модели OpenRouter: «vendor/model». */
-const looksLikeModelId=q=>/^[a-z0-9._-]+\/[a-z0-9._:-]+$/i.test(q);
+/** Похоже на id: OpenRouter «vendor/model» или прямой «deepseek-v4-flash». */
+const looksLikeModelId=q=>/^[a-z0-9._-]+\/[a-z0-9._:-]+$/i.test(q)
+  ||/^[a-z0-9]+(?:[._-][a-z0-9._:-]+)+$/i.test(q);
 
 function renderModelList(models){
   const el=document.getElementById('mdrop');
@@ -1792,7 +1919,7 @@ function renderModelList(models){
   if(!models.length&&!manual){
     el.innerHTML=allModels.length
       ? '<div class="mi-empty">Ничего не найдено</div>'
-      : '<div class="mi-empty">Список моделей не загрузился. Введите id вида deepseek/deepseek-v3.2</div>';
+      : `<div class="mi-empty">Список моделей не загрузился. Введите id вроде ${esc(catalogHint())}</div>`;
     return;
   }
   const manyProv=new Set(allModels.map(m=>m.provider).filter(Boolean)).size>1;

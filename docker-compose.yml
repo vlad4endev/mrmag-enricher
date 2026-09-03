@@ -8,7 +8,10 @@ name: enricher-docker
 
 services:
   enricher:
-    build: .
+    build:
+      context: .
+      args:
+        NODE_IMAGE: ${NODE_IMAGE:-public.ecr.aws/docker/library/node:24-alpine}
     container_name: ai-enricher      # по этому имени NPM ходит внутри сети
     ports:
       # Только loopback хоста: наружу сервис публикует nginx-proxy-manager, он

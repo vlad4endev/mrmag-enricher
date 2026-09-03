@@ -1,7 +1,8 @@
 /**
- * Поиск той же модели: DuckDuckGo (HTML POST, без ключа) и запасные движки.
+ * Поиск той же модели: SerpAPI (JSON Google/Bing/Yandex), затем DuckDuckGo
+ * HTML и запасные движки без ключа.
  *
- * Настройки — config.json → search / search.duckduckgo.
+ * Настройки — config.json → search / search.serpapi / search.duckduckgo.
  * Переменные окружения перекрывают их в момент вызова, не при загрузке модуля.
  */
 
@@ -18,7 +19,7 @@ const PRIVATE_HOST = new RegExp([
   '^172\\.(1[6-9]|2\\d|3[01])\\.',
 ].join('|'), 'i');
 
-const ENGINE_HOST = /(?:^|\.)(?:duckduckgo|google|gstatic|googleusercontent|yastatic|bing|brave|mojeek)\./i;
+const ENGINE_HOST = /(?:^|\.)(?:duckduckgo|google|gstatic|googleusercontent|yastatic|bing|brave|mojeek|serpapi)\./i;
 
 /** Футер поисковика и соцсети: это не карточка товара, даже если href на странице выдачи. */
 export const JUNK_HOST = /(?:^|\.)(?:mastodon\.social|buttondown\.email|spreadprivacy\.com|twitter\.com|x\.com|facebook\.com|fb\.com|instagram\.com|t\.me|telegram\.(?:me|org)|reddit\.com|tiktok\.com|pinterest\.com|linkedin\.com|threads\.net|bsky\.app|vk\.com|ok\.ru|youtube\.com|youtu\.be|dzen\.ru)$/i;
@@ -35,6 +36,8 @@ const FALLBACK = {
 
 const DDG_HTML = 'https://html.duckduckgo.com/html/';
 const DDG_LITE = 'https://lite.duckduckgo.com/lite/';
+const SERPAPI_JSON = 'https://serpapi.com/search.json';
+const SERPAPI_ENGINES = new Set(['google', 'bing', 'yandex', 'duckduckgo']);
 
 function num(...vals) {
   for (const v of vals) {
@@ -83,14 +86,22 @@ function isSkippedHost(host, settings) {
   return skipHostsOf(settings).some(own => h === own || h.endsWith('.' + own));
 }
 
+function resolveSerpapiKey(serp = {}) {
+  if (serp.api_key) return String(serp.api_key);
+  const envName = serp.api_key_env || 'SERPAPI_KEY';
+  return process.env[envName] || process.env.SERPAPI_API_KEY || process.env.SERPAPI_KEY || '';
+}
+
 /**
  * Сводит config.json.search и переменные окружения.
- * WEB_LOOKUP=0 / DDG_REGION / SEARCH_URL перекрывают файл.
+ * WEB_LOOKUP=0 / DDG_REGION / SEARCH_URL / SERPAPI_KEY перекрывают файл.
  */
 export function resolveSearchSettings(config = {}) {
   const s = config.search || {};
   const ddg = s.duckduckgo || {};
+  const serp = s.serpapi || {};
   const envOff = process.env.WEB_LOOKUP === '0';
+  const engine = String(process.env.SERPAPI_ENGINE || serp.engine || 'google').toLowerCase();
   return {
     enabled: !envOff && s.enabled !== false,
     tries: num(process.env.WEB_LOOKUP_TRIES, s.tries, 3),
@@ -106,6 +117,19 @@ export function resolveSearchSettings(config = {}) {
           .filter(e => e && e.enabled !== false && String(e.url || '').includes('%s'))
           .map(e => ({ name: String(e.name || e.id || 'поиск'), url: String(e.url) }))
       : [],
+    serpapi: {
+      enabled: serp.enabled !== false,
+      apiKey: resolveSerpapiKey(serp),
+      apiKeyEnv: serp.api_key_env || 'SERPAPI_KEY',
+      engine: SERPAPI_ENGINES.has(engine) ? engine : 'google',
+      gl: process.env.SERPAPI_GL || serp.gl || 'ru',
+      hl: process.env.SERPAPI_HL || serp.hl || 'ru',
+      googleDomain: process.env.SERPAPI_GOOGLE_DOMAIN || serp.google_domain || 'google.ru',
+      location: process.env.SERPAPI_LOCATION ?? (serp.location == null ? 'Russia' : serp.location),
+      num: num(serp.num, 10),
+      endpoint: process.env.SERPAPI_URL || serp.endpoint || serp.url || SERPAPI_JSON,
+      siteFilter: serp.site_filter || '',
+    },
     duckduckgo: {
       enabled: ddg.enabled !== false,
       endpoint: String(process.env.DDG_ENDPOINT || ddg.endpoint || 'html').toLowerCase(),
@@ -122,10 +146,12 @@ export function resolveSearchSettings(config = {}) {
 export function publicParserStatus(config = {}) {
   const search = resolveSearchSettings(config);
   const ddg = search.duckduckgo;
+  const serp = search.serpapi;
   const enabled = search.enabled;
   let engine = 'выключен';
   if (enabled) {
-    if (search.extraUrl) engine = 'свой поисковик';
+    if (serp.enabled && serp.apiKey) engine = `SerpAPI ${serp.engine} ${serp.gl}`;
+    else if (search.extraUrl) engine = 'свой поисковик';
     else if (ddg.enabled) engine = `DuckDuckGo ${ddg.method} ${ddg.endpoint}`;
     else engine = search.fallback[0] || 'поиск';
   }
@@ -141,6 +167,17 @@ export function publicParserStatus(config = {}) {
     search_url: search.extraUrl || null,
     fallback: search.fallback,
     engines: search.engines,
+    serpapi: {
+      enabled: serp.enabled,
+      has_key: !!serp.apiKey,
+      engine: serp.engine,
+      gl: serp.gl,
+      hl: serp.hl,
+      google_domain: serp.googleDomain,
+      location: serp.location || '',
+      num: serp.num,
+      site_filter: serp.siteFilter || '',
+    },
     duckduckgo: {
       enabled: ddg.enabled,
       method: ddg.method,
@@ -211,6 +248,37 @@ async function fetchForm(url, body, { timeoutMs = 20_000, cacheKey, gapMs } = {}
   fs.mkdirSync(cacheDir(), { recursive: true });
   fs.writeFileSync(file, html, 'utf-8');
   return html;
+}
+
+async function fetchJson(url, { timeoutMs = 20_000, cacheKey, gapMs } = {}) {
+  const file = cachePath(cacheKey || url);
+  if (fresh(file, ttlMs())) {
+    try { return JSON.parse(fs.readFileSync(file, 'utf-8')); } catch { forget(file); }
+  }
+
+  await waitGap('search', gapMs ?? Number(process.env.SEARCH_GAP_MS || 3000));
+
+  const res = await fetch(url, {
+    headers: {
+      'User-Agent': UA,
+      Accept: 'application/json',
+    },
+    signal: AbortSignal.timeout(timeoutMs),
+    redirect: 'follow',
+  });
+  const text = await res.text();
+  let data;
+  try { data = JSON.parse(text); } catch {
+    forget(file);
+    throw new Error(`ответ не JSON (HTTP ${res.status})`);
+  }
+  if (!res.ok || data.error) {
+    forget(file);
+    throw new Error(data.error || `HTTP ${res.status}`);
+  }
+  fs.mkdirSync(cacheDir(), { recursive: true });
+  fs.writeFileSync(file, text, 'utf-8');
+  return data;
 }
 
 export function unwrapDuckDuckGoUrl(href) {
@@ -306,10 +374,64 @@ function ddgEndpoint(ddg) {
   return ddg.endpoint === 'lite' ? DDG_LITE : DDG_HTML;
 }
 
-function withSiteFilter(query, ddg) {
+function withSiteFilter(query, filterSource) {
   const q = String(query || '').replace(/\s+/g, ' ').trim();
-  const site = String(ddg?.siteFilter || '').trim();
+  const site = String(filterSource?.siteFilter || '').trim();
   return site ? `${q} site:${site}` : q;
+}
+
+/**
+ * Organic-ссылки из JSON SerpAPI. Реклама (ads, shopping_results) не берётся.
+ */
+export function parseSerpApiResults(data, settings = resolveSearchSettings()) {
+  const urls = [];
+  const hosts = new Set();
+  const organic = Array.isArray(data?.organic_results) ? data.organic_results : [];
+  for (const item of organic) {
+    const href = item?.link || item?.url || '';
+    if (href) pushUrl(urls, hosts, href, settings, '');
+  }
+  return urls;
+}
+
+function serpapiSiteFilter(settings) {
+  return { siteFilter: settings.serpapi?.siteFilter || settings.duckduckgo?.siteFilter || '' };
+}
+
+/** Поиск через SerpAPI. Ключ — SERPAPI_KEY или search.serpapi.api_key. */
+export async function searchSerpApi(query, config = {}) {
+  const settings = resolveSearchSettings(config);
+  const serp = settings.serpapi;
+  if (!serp.enabled) throw new Error('SerpAPI выключен в настройках');
+  if (!serp.apiKey) throw new Error('SerpAPI: нет ключа (SERPAPI_KEY или поле в настройках)');
+  const q = withSiteFilter(query, serpapiSiteFilter(settings));
+  if (!q) throw new Error('пустой поисковый запрос');
+
+  const params = new URLSearchParams({
+    engine: serp.engine,
+    q,
+    api_key: serp.apiKey,
+    hl: serp.hl,
+    gl: serp.gl,
+    num: String(Math.min(100, Math.max(1, serp.num || 10))),
+  });
+  if (serp.engine === 'google' && serp.googleDomain) params.set('google_domain', serp.googleDomain);
+  if (serp.location) params.set('location', serp.location);
+
+  let endpoint;
+  try { endpoint = new URL(serp.endpoint || SERPAPI_JSON); } catch {
+    throw new Error('SerpAPI: некорректный endpoint');
+  }
+  for (const [k, v] of params) endpoint.searchParams.set(k, v);
+
+  const data = await fetchJson(endpoint.toString(), {
+    timeoutMs: settings.timeoutMs,
+    gapMs: settings.gapMs,
+    cacheKey: `serpapi:${serp.engine}:${serp.gl}:${serp.hl}:${q}`,
+  });
+  const urls = parseSerpApiResults(data, settings);
+  if (!urls.length) throw new Error('SerpAPI: выдача без ссылок');
+  return urls;
 }
 
 /** Поиск в DuckDuckGo HTML/lite. Без ключа API. */
@@ -354,6 +476,14 @@ export async function searchWeb(query, config = {}) {
   if (!settings.enabled) throw new Error('поиск выключен');
 
   const errors = [];
+
+  if (settings.serpapi.enabled && settings.serpapi.apiKey) {
+    try {
+      return await searchSerpApi(query, config);
+    } catch (e) {
+      errors.push(e.message);
+    }
+  }
 
   const extra = String(settings.extraUrl || '').trim();
   const custom = [

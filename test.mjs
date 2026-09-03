@@ -1182,6 +1182,9 @@ console.log('\nТовар без описания: поиск в сети');
   const port = srv.address().port;
 
   const cacheDir = fs.mkdtempSync(path.join(os.tmpdir(), 'web-lookup-'));
+  const prevSerp = { SERPAPI_KEY: process.env.SERPAPI_KEY, SERPAPI_API_KEY: process.env.SERPAPI_API_KEY };
+  delete process.env.SERPAPI_KEY;
+  delete process.env.SERPAPI_API_KEY;
   process.env.SEARCH_URL     = `http://127.0.0.1:${port}/serp?q=%s`;
   process.env.PAGE_CACHE_DIR = cacheDir;
   process.env.SEARCH_GAP_MS  = '0';
@@ -1219,6 +1222,10 @@ console.log('\nТовар без описания: поиск в сети');
 
   await new Promise(r => srv.close(r));
   fs.rmSync(cacheDir, { recursive: true, force: true });
+  for (const [k, v] of Object.entries(prevSerp)) {
+    if (v === undefined) delete process.env[k];
+    else process.env[k] = v;
+  }
 }
 
 {
@@ -1280,6 +1287,34 @@ console.log('\nТовар без описания: поиск в сети');
     assert.equal(again.search.engines[0].url, 'https://searx.example/search?q=%s');
     assert.ok(parsersView(again.search).parsers.some(p => p.name === 'SearxNG' && !p.builtin));
   });
+  t('публичное представление скрывает ключ SerpAPI', () => {
+    const s = loadSettings();
+    s.search.serpapi.api_key = 'serp-secret-xyz9';
+    const pub = publicSettings(s);
+    assert.ok(!JSON.stringify(pub).includes('serp-secret-xyz9'));
+    assert.strictEqual(pub.search.serpapi.has_key, true);
+    assert.match(pub.search.serpapi.key_hint, /xyz9$/);
+    assert.ok(!('api_key' in pub.search.serpapi) || !pub.search.serpapi.api_key);
+  });
+  t('пустой ключ SerpAPI в PATCH оставляет прежний', () => {
+    const cur = loadSettings();
+    cur.search.serpapi.api_key = 'serp-keep';
+    const next = applySettingsPatch(cur, {
+      search: { ...cur.search, serpapi: { ...cur.search.serpapi, api_key: '' } },
+    });
+    assert.strictEqual(next.search.serpapi.api_key, 'serp-keep');
+  });
+  t('SerpAPI есть в списке парсеров', () => {
+    const s = loadSettings();
+    assert.ok(parsersView(s.search).parsers.some(p => p.kind === 'serpapi' && p.engine === 'google'));
+  });
+  t('список парсеров не содержит ключ SerpAPI', () => {
+    const s = loadSettings();
+    s.search.serpapi.api_key = 'serp-secret-view';
+    const view = parsersView(s.search);
+    assert.ok(!JSON.stringify(view).includes('serp-secret-view'));
+    assert.strictEqual(view.serpapi.has_key, true);
+  });
   t('провайдер по умолчанию — выбранный default', () => {
     const s = loadSettings();
     assert.equal(resolveProvider(s).id, 'openrouter');
@@ -1295,6 +1330,17 @@ console.log('\nТовар без описания: поиск в сети');
     const s = loadSettings();
     assert.ok(s.providers.some(p => p.id === 'deepseek' && p.base_url === 'https://api.deepseek.com'));
     assert.equal(resolveProvider(s, 'deepseek').name, 'DeepSeek');
+  });
+  t('пустой список моделей DeepSeek дополняется из заготовки', () => {
+    const next = applySettingsPatch(loadSettings(), {
+      providers: [{
+        id: 'deepseek', name: 'DeepSeek', kind: 'openai', enabled: true, default: true,
+        base_url: 'https://api.deepseek.com', models: [],
+      }],
+    });
+    const ds = next.providers.find(p => p.id === 'deepseek');
+    assert.ok(ds.models.includes('deepseek-v4-flash'));
+    assert.ok(ds.models.includes('deepseek-v4-pro'));
   });
 
   if (prev === undefined) delete process.env.SETTINGS_PATH;

@@ -208,9 +208,11 @@ node --env-file=.env server.js
 1. из названия берётся артикул (`modelToken`): «Холодильник LG GC-Q247CAMT» →
    `GC-Q247CAMT`. Артикула в названии нет — искать не по чему, товар
    пропускается как раньше;
-2. запрос уходит в поисковик без ключа и без JS: свой `SEARCH_URL`, затем
-   DuckDuckGo (html и lite) и Mojeek. Первый, кто ответил ссылками, и
-   используется — за частые запросы поисковик отдаёт заглушку вместо выдачи;
+2. запрос уходит в поисковик. Сначала **SerpAPI** (`engine=google`, выдача
+   `organic_results` без HTML и без капчи), если задан `SERPAPI_KEY` или ключ
+   во вкладке «Настройки». Нет ключа или SerpAPI ответил ошибкой — свой
+   `SEARCH_URL`, затем DuckDuckGo (html и lite) и Mojeek. Первый, кто вернул
+   ссылки, и используется;
 3. из выдачи берётся до `WEB_LOOKUP_TRIES` страниц, по одной на домен;
 4. **страница принимается, только если на ней есть артикул** — иначе в карточку
    уедут характеристики соседней модели. Это единственная проверка личности
@@ -380,6 +382,7 @@ ranges:    { диагональ_дюйм: [1, 120] },       // диапазон 
 | переменная | зачем |
 |---|---|
 | `OPENROUTER_API_KEY` | обязательна; остаётся на сервере |
+| `SERPAPI_KEY` | поиск пустых карточек через SerpAPI (Google JSON); без ключа — DuckDuckGo |
 | `APP_PASSWORD` | пароль на интерфейс и API; пусто = сервер открыт |
 | `HOST` / `PORT` | `0.0.0.0` нужен в контейнере |
 | `ALLOWED_HOSTS` | кому разрешён прокси `/api/product` |
@@ -415,6 +418,17 @@ ranges:    { диагональ_дюйм: [1, 120] },       // диапазон 
 cp .env.example .env    # APP_PASSWORD задать обязательно
 docker compose up -d --build
 docker compose logs -f
+```
+
+Базовый образ — не Docker Hub. На этой сети `Head registry-1.docker.io` часто
+обрывается `TLS handshake timeout` (та же DPI, что вешает TLS до OpenRouter).
+По умолчанию берётся зеркало AWS `public.ecr.aws/docker/library/node:24-alpine`.
+Другое зеркало или уже скачанный тег:
+
+```bash
+NODE_IMAGE=mirror.gcr.io/library/node:24-alpine docker compose up -d --build
+# или, если node:24-alpine уже есть локально:
+NODE_IMAGE=node:24-alpine docker compose build --pull=false && docker compose up -d
 ```
 
 Контейнер называется `ai-enricher`, внутри слушает 3000. Наружу его публикует
@@ -605,6 +619,7 @@ OUT=mrmag_enriched.jsonl CATEGORY=kholodilniki node enricher_mrmag.js
 `APP_USER`, `APP_PASSWORD`, `HOST`, `PAGE_CACHE_DIR`, `PAGE_CACHE_TTL_MS`,
 `CRAWL_GAP_MS`, `OUT_DIR`, `CATEGORY`, `MODELS_TTL_MS`, `MAX_PROXY_BYTES`,
 `WEB_LOOKUP`, `WEB_LOOKUP_TRIES`, `SEARCH_GAP_MS`, `SEARCH_GIVE_UP`, `SEARCH_URL`,
+`SERPAPI_KEY`, `SERPAPI_ENGINE`, `SERPAPI_GL`, `SERPAPI_HL`,
 `WEB_ALLOW_LOCAL`, `JOBS_DIR`, `JOBS_TTL_MS`.
 Все необязательные, кроме `APP_PASSWORD` — без него сервер работает, но открыт.
 Старый `.env` продолжит работать; сверьтесь с `.env.example`.

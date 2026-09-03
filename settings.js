@@ -6,7 +6,8 @@
  * но сами значения правятся из интерфейса и переживают перезапуск.
  *
  * Ключи в файл можно писать, но наружу они не уходят: GET отдаёт только
- * has_key / намёк из последних символов. Пустой api_key в PUT сохраняет прежний.
+ * has_key / намёк из последних символов. Пустой api_key в PUT сохраняет прежний
+ * (и у провайдера ИИ, и у SerpAPI).
  */
 
 import fs from 'fs';
@@ -180,6 +181,19 @@ export function defaultSearch() {
     search_url: '',
     fallback_engines: ['mojeek', 'brave'],
     engines: [],
+    serpapi: {
+      enabled: true,
+      api_key: '',
+      api_key_env: 'SERPAPI_KEY',
+      engine: 'google',
+      gl: 'ru',
+      hl: 'ru',
+      google_domain: 'google.ru',
+      location: 'Russia',
+      num: 10,
+      endpoint: '',
+      site_filter: '',
+    },
     duckduckgo: {
       enabled: true,
       endpoint: 'html',
@@ -221,7 +235,7 @@ function normalizeProvider(raw, { keepKey = '' } = {}) {
     models_path: str(raw?.models_path ?? preset.models_path, '/models'),
     chat_path: str(raw?.chat_path ?? preset.chat_path, '/chat/completions'),
     headers,
-    models,
+    models: models.length ? models : [...(preset.models || [])],
     notes: str(raw?.notes).slice(0, 500),
   };
 }
@@ -235,9 +249,19 @@ function normalizeEngine(raw) {
   };
 }
 
-function normalizeSearch(raw = {}) {
+const SERPAPI_ENGINES = new Set(['google', 'bing', 'yandex', 'duckduckgo']);
+
+function keepOrReplaceKey(raw, prevKey) {
+  if (raw && Object.prototype.hasOwnProperty.call(raw, 'api_key') && raw.api_key === null) return '';
+  if (!raw?.api_key) return prevKey || '';
+  return str(raw.api_key);
+}
+
+function normalizeSearch(raw = {}, prev = {}) {
   const base = defaultSearch();
   const ddg = raw.duckduckgo && typeof raw.duckduckgo === 'object' ? raw.duckduckgo : {};
+  const serp = raw.serpapi && typeof raw.serpapi === 'object' ? raw.serpapi : {};
+  const prevSerp = prev.serpapi && typeof prev.serpapi === 'object' ? prev.serpapi : {};
   const skip = Array.isArray(raw.skip_hosts)
     ? raw.skip_hosts.map(h => String(h).trim()).filter(Boolean)
     : base.skip_hosts;
@@ -245,6 +269,7 @@ function normalizeSearch(raw = {}) {
     ? raw.fallback_engines.map(s => String(s).trim()).filter(Boolean)
     : base.fallback_engines;
   const engines = Array.isArray(raw.engines) ? raw.engines.map(normalizeEngine).filter(e => e.url) : [];
+  const engine = String(serp.engine || 'google').toLowerCase();
   return {
     enabled: raw.enabled !== false,
     tries: num(raw.tries, base.tries, { min: 1, max: 10 }),
@@ -256,6 +281,19 @@ function normalizeSearch(raw = {}) {
     search_url: str(raw.search_url),
     fallback_engines: fallback,
     engines,
+    serpapi: {
+      enabled: serp.enabled !== false,
+      api_key: keepOrReplaceKey(serp, prevSerp.api_key),
+      api_key_env: str(serp.api_key_env, 'SERPAPI_KEY').slice(0, 80),
+      engine: SERPAPI_ENGINES.has(engine) ? engine : 'google',
+      gl: str(serp.gl, 'ru').slice(0, 8),
+      hl: str(serp.hl, 'ru').slice(0, 8),
+      google_domain: str(serp.google_domain, 'google.ru').slice(0, 40),
+      location: str(serp.location, 'Russia').slice(0, 80),
+      num: num(serp.num, 10, { min: 1, max: 100 }),
+      endpoint: str(serp.endpoint || serp.url),
+      site_filter: str(serp.site_filter).slice(0, 80),
+    },
     duckduckgo: {
       enabled: ddg.enabled !== false,
       endpoint: String(ddg.endpoint || 'html').toLowerCase() === 'lite' ? 'lite' : 'html',
@@ -323,7 +361,7 @@ export function normalizeSettings(raw = {}, prev = null) {
     description: { min_attrs: conditions.min_attrs },
     fuzzy: { min_score: conditions.fuzzy_min_score },
     model: normalizeModel(raw.model),
-    search: normalizeSearch(raw.search),
+    search: normalizeSearch(raw.search, prev?.search),
     providers: normalizeProviders(raw.providers, prev?.providers),
     conditions,
   };
@@ -354,6 +392,20 @@ export function providerKey(p) {
   return (envName && process.env[envName]) || '';
 }
 
+function publicSerpapi(serp = {}) {
+  const envName = serp.api_key_env || 'SERPAPI_KEY';
+  const envKey = envName && process.env[envName] ? process.env[envName] : '';
+  const stored = serp.api_key || '';
+  const rest = { ...serp };
+  delete rest.api_key;
+  return {
+    ...rest,
+    has_key: !!(stored || envKey),
+    key_hint: hintOf(stored || envKey),
+    key_from: stored ? 'file' : envKey ? 'env' : 'none',
+  };
+}
+
 /** То, что видит интерфейс: без секретов. */
 export function publicProvider(p) {
   const envKey = p.api_key_env && process.env[p.api_key_env] ? process.env[p.api_key_env] : '';
@@ -381,6 +433,10 @@ export function publicSettings(settings) {
   return {
     ...settings,
     providers: (settings.providers || []).map(publicProvider),
+    search: {
+      ...settings.search,
+      serpapi: publicSerpapi(settings.search?.serpapi || {}),
+    },
   };
 }
 
@@ -388,6 +444,7 @@ export function envOverrides() {
   const out = [];
   if (process.env.WEB_LOOKUP === '0') out.push({ key: 'WEB_LOOKUP', value: '0', note: 'поиск пустых карточек выключен переменной окружения' });
   if (process.env.SEARCH_URL) out.push({ key: 'SEARCH_URL', value: process.env.SEARCH_URL, note: 'свой поисковик перекрывает поле в файле' });
+  if (process.env.SERPAPI_KEY) out.push({ key: 'SERPAPI_KEY', value: '••••', note: 'ключ SerpAPI из окружения' });
   if (process.env.MISMATCH_POLICY) out.push({ key: 'MISMATCH_POLICY', value: process.env.MISMATCH_POLICY, note: 'политика расхождений из окружения' });
   if (process.env.DDG_REGION) out.push({ key: 'DDG_REGION', value: process.env.DDG_REGION, note: 'регион DuckDuckGo из окружения' });
   return out;
@@ -409,6 +466,8 @@ export function validateSettings(cfg) {
   }
   const ddgUrl = cfg.search?.duckduckgo?.url;
   if (ddgUrl && !isHttpUrl(ddgUrl)) errors.push('URL выдачи DuckDuckGo должен быть http(s)');
+  const serpUrl = cfg.search?.serpapi?.endpoint;
+  if (serpUrl && !isHttpUrl(serpUrl)) errors.push('endpoint SerpAPI должен быть http(s)');
   const extra = cfg.search?.search_url;
   if (extra && !extra.includes('%s')) errors.push('свой поисковик: в URL должен быть %s вместо запроса');
   for (const e of cfg.search?.engines || []) {
@@ -465,7 +524,7 @@ export function saveSettings(settings, root = ROOT) {
 
 /**
  * Применяет PATCH: полная замена секции, если она передана.
- * Для провайдеров api_key: "" — оставить прежний, null — стереть.
+ * Для провайдеров и SerpAPI api_key: "" — оставить прежний, null — стереть.
  */
 export function applySettingsPatch(current, patch = {}) {
   const next = { ...current };
@@ -495,10 +554,23 @@ export function providerEndpoint(p) {
   };
 }
 
-/** Список парсеров, который рисует интерфейс: DuckDuckGo, запасные, свои URL. */
+/** Список парсеров, который рисует интерфейс: SerpAPI, DuckDuckGo, запасные, свои URL. */
 export function parsersView(search = {}) {
   const s = normalizeSearch(search);
   const list = [];
+  list.push({
+    id: 'serpapi',
+    kind: 'serpapi',
+    name: 'SerpAPI',
+    enabled: s.serpapi.enabled,
+    builtin: true,
+    engine: s.serpapi.engine,
+    gl: s.serpapi.gl,
+    hl: s.serpapi.hl,
+    google_domain: s.serpapi.google_domain,
+    location: s.serpapi.location || '',
+    has_key: !!(s.serpapi.api_key || (s.serpapi.api_key_env && process.env[s.serpapi.api_key_env])),
+  });
   list.push({
     id: 'duckduckgo',
     kind: 'duckduckgo',
@@ -541,7 +613,7 @@ export function parsersView(search = {}) {
       url: e.url,
     });
   }
-  return { ...s, parsers: list };
+  return { ...s, serpapi: publicSerpapi(s.serpapi), parsers: list };
 }
 
 export function conditionsView(conditions = {}) {

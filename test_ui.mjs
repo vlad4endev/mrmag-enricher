@@ -140,11 +140,12 @@ export const api={syncSteps,setCnt,setCntFree,applyCnt,applySource,setSource,pic
   loadCategories,catOf,renderModelList,filterModels,renderParser,loadParser,
   applyDates,clearDates,renderDates,passesFilter,queued,onProdInput,apiJson,run,
   stopJob,follow,attachJob,resumeJob,applyJob,finishRun,
-  showPage,setTab,renderSettings,addProvider,removeProvider,addEngine,readSettingsPatch};
+  showPage,setTab,renderSettings,addProvider,removeProvider,addEngine,readSettingsPatch,
+  modelsFromSettings,pickDefaultModel,applyDefaultProviderModels,looksLikeModelId,catalogHint};
 export const st={get items(){return items},set items(v){items=v},
   get srcItems(){return srcItems},set srcItems(v){srcItems=v},
   get pickCat(){return pickCat},set pickCat(v){pickCat=v},get selCnt(){return selCnt},get results(){return results},
-  set results(v){results=v},get selModel(){return selModel},
+  set results(v){results=v},get selModel(){return selModel},set selModel(v){selModel=v},
   get allModels(){return allModels},set allModels(v){allModels=v},
   get curIdx(){return curIdx},get filter(){return filter},
   get running(){return running},set running(v){running=v},
@@ -337,9 +338,11 @@ console.log('\nПарсер: статус и настройки на экран�
 t('показывает, включён ли поиск пустых карточек и какой движок', () => {
   api.renderParser({
     enabled: true, tries: 3, fallback: ['mojeek', 'brave'],
+    serpapi: { enabled: true, has_key: true, engine: 'google', gl: 'ru' },
     duckduckgo: { enabled: true, method: 'POST', endpoint: 'html', region: 'ru-ru' },
   });
   assert.match(G('parserSub').textContent, /включён/);
+  assert.match(G('parserBox').innerHTML, /SerpAPI/);
   assert.match(G('parserBox').innerHTML, /DuckDuckGo/);
   assert.match(G('parserBox').innerHTML, /ru-ru/);
   assert.match(G('parserBox').innerHTML, /mojeek/);
@@ -362,7 +365,7 @@ t('рисует провайдеров и условия из ответа се�
   api.renderSettings({
     settings: {
       providers: [{ id: 'openrouter', name: 'OpenRouter', enabled: true, default: true, has_key: true, key_hint: '••••v1-abc', key_from: 'env', base_url: 'https://openrouter.ai/api/v1', models: [] }],
-      search: { enabled: true, tries: 3, gap_ms: 3000, timeout_ms: 20000, query_suffix: 'характеристики', skip_hosts: ['mrmag.ru'], search_url: '', fallback_engines: ['mojeek', 'brave'], engines: [], duckduckgo: { enabled: true, method: 'POST', endpoint: 'html', region: 'ru-ru' } },
+      search: { enabled: true, tries: 3, gap_ms: 3000, timeout_ms: 20000, query_suffix: 'характеристики', skip_hosts: ['mrmag.ru'], search_url: '', fallback_engines: ['mojeek', 'brave'], engines: [], serpapi: { enabled: true, engine: 'google', gl: 'ru', hl: 'ru', google_domain: 'google.ru', location: 'Russia', api_key_env: 'SERPAPI_KEY', has_key: false }, duckduckgo: { enabled: true, method: 'POST', endpoint: 'html', region: 'ru-ru' } },
       conditions: { mismatch_policy: 'flag', min_source_chars: 100, min_attrs: 5, facet_min_coverage: 70, target_coverage: 90, fuzzy_min_score: 0.93 },
       model: { name: 'deepseek/deepseek-v3.2', prompt_version: 'dict-v1', max_retries: 3, timeout_ms: 60000, max_tokens: 3200 },
     },
@@ -378,6 +381,9 @@ t('рисует провайдеров и условия из ответа се�
   assert.strictEqual(G('setMismatch').value, 'flag');
   assert.strictEqual(G('setTries').value, '3');
   assert.strictEqual(G('setDdgRegion').value, 'ru-ru');
+  assert.strictEqual(G('setSerpEngine').value, 'google');
+  assert.strictEqual(G('setSerpGl').value, 'ru');
+  assert.ok(G('setSerpOn').checked);
   assert.ok(G('setSearchOn').checked);
 });
 t('добавляет провайдера из заготовки', () => {
@@ -386,6 +392,29 @@ t('добавляет провайдера из заготовки', () => {
   api.addProvider('deepseek');
   assert.match(G('setProvList').innerHTML, /DeepSeek/);
   assert.match(G('setProvList').innerHTML, /api\.deepseek\.com/);
+});
+t('DeepSeek по умолчанию сразу стоит в шаге модели', () => {
+  st.selModel = null;
+  st.allModels = [];
+  api.renderSettings({
+    settings: {
+      providers: [
+        { id: 'openrouter', name: 'OpenRouter', enabled: true, default: false, models: [] },
+        { id: 'deepseek', name: 'DeepSeek', enabled: true, default: true, models: ['deepseek-v4-flash', 'deepseek-v4-pro'] },
+      ],
+      search: { enabled: true, tries: 3, gap_ms: 3000, timeout_ms: 20000, query_suffix: 'характеристики', skip_hosts: ['mrmag.ru'], search_url: '', fallback_engines: ['mojeek', 'brave'], engines: [], duckduckgo: { enabled: true, method: 'POST', endpoint: 'html', region: 'ru-ru' } },
+      conditions: { mismatch_policy: 'flag', min_source_chars: 100, min_attrs: 5, facet_min_coverage: 70, target_coverage: 90, fuzzy_min_score: 0.93 },
+      model: { name: '', prompt_version: 'dict-v1' },
+    },
+    presets: [],
+    overrides: [],
+  });
+  api.applyDefaultProviderModels();
+  assert.ok(st.allModels.some(m => m.id === 'deepseek-v4-flash' && m.provider === 'deepseek'));
+  assert.strictEqual(st.selModel.id, 'deepseek-v4-flash');
+  assert.strictEqual(st.selModel.provider, 'deepseek');
+  assert.match(G('mselName').textContent, /DeepSeek/);
+  assert.strictEqual(G('sub1').textContent, 'выбрана');
 });
 t('собирает условия с формы в PATCH', () => {
   G('setMismatch').value = 'strict';
@@ -872,6 +901,12 @@ t('справочник не загрузился — id вводится вру
   G('msrch').value = 'deepseek/deepseek-v3.2';
   api.renderModelList([]);
   assert.match(G('mdrop').innerHTML, /Использовать «deepseek\/deepseek-v3\.2» как есть/);
+});
+t('прямой id DeepSeek предлагается вручную', () => {
+  st.allModels = [];
+  G('msrch').value = 'deepseek-v4-flash';
+  api.renderModelList([]);
+  assert.match(G('mdrop').innerHTML, /Использовать «deepseek-v4-flash» как есть/);
 });
 t('мусор вместо id вручную не предлагается', () => {
   st.allModels = [];

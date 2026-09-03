@@ -105,15 +105,41 @@ function tagModels(raw, p) {
   })).filter(m => m.id);
 }
 
-async function fetchProviderModels(p) {
+/** Модели из карточки провайдера — без сети. DeepSeek/Ollama ими и живут. */
+function listedModels(p) {
+  return tagModels((p.models || []).map(id => ({ id, name: id, pricing: null })), p);
+}
+
+function dedupeModels(list) {
+  const seen = new Set();
+  const out = [];
+  for (const m of list || []) {
+    const k = `${m.provider || ''}\0${m.id}`;
+    if (!m.id || seen.has(k)) continue;
+    seen.add(k);
+    out.push(m);
+  }
+  return out;
+}
+
+function sortModels(list, defaultId) {
+  return list.slice().sort((a, b) => {
+    const ad = a.provider === defaultId ? 0 : 1;
+    const bd = b.provider === defaultId ? 0 : 1;
+    if (ad !== bd) return ad - bd;
+    return String(a.name || a.id).localeCompare(String(b.name || b.id), 'ru');
+  });
+}
+
+async function fetchProviderModels(p, { timeoutMs = 20_000 } = {}) {
   const ep = providerEndpoint(p);
-  const listed = tagModels((p.models || []).map(id => ({ id, name: id, pricing: null })), p);
+  const listed = listedModels(p);
   if (!p.models_path) return listed;
   const headers = { ...ep.headers };
   if (ep.apiKey) headers.Authorization = `Bearer ${ep.apiKey}`;
   let r, text;
   try {
-    r = await fetch(ep.modelsUrl, { headers, signal: AbortSignal.timeout(20_000) });
+    r = await fetch(ep.modelsUrl, { headers, signal: AbortSignal.timeout(timeoutMs) });
     text = await r.text();
   } catch (e) {
     if (listed.length) return listed;
@@ -131,31 +157,47 @@ async function fetchProviderModels(p) {
   }
   const rows = data.data || data.models || (Array.isArray(data) ? data : []);
   const fetched = tagModels(rows, p);
-  return fetched.length ? fetched : listed;
+  return fetched.length ? dedupeModels([...fetched, ...listed]) : listed;
 }
 
 async function models() {
   if (modelsCache.list && Date.now() - modelsCache.at < MODELS_TTL) return modelsCache.list;
-  if (!modelsInflight) {
-    modelsInflight = (async () => {
-      const settings = loadSettings(ROOT);
-      const enabled = settings.providers.filter(p => p.enabled);
-      if (!enabled.length) throw new Error('нет включённых провайдеров ИИ');
-      const errors = [];
-      const chunks = await Promise.all(enabled.map(async p => {
-        try { return await fetchProviderModels(p); }
-        catch (e) {
-          errors.push({ provider: p.id, name: p.name, error: e.message });
-          return [];
-        }
-      }));
-      const list = chunks.flat();
-      if (!list.length) {
-        throw new Error(errors[0]?.error || 'ни один провайдер не отдал модели');
+  const settings = loadSettings(ROOT);
+  const enabled = settings.providers.filter(p => p.enabled);
+  if (!enabled.length) throw new Error('нет включённых провайдеров ИИ');
+  const defaultId = (enabled.find(p => p.default) || enabled[0]).id;
+  const staticList = sortModels(dedupeModels(enabled.flatMap(listedModels)), defaultId);
+
+  const loadRemote = async () => {
+    const errors = [];
+    const chunks = await Promise.all(enabled.map(async p => {
+      const listed = listedModels(p);
+      // OpenRouter без своего списка не должен на 20 с блокировать DeepSeek.
+      const timeoutMs = listed.length ? 2500 : (p.default ? 10_000 : 4000);
+      try { return await fetchProviderModels(p, { timeoutMs }); }
+      catch (e) {
+        errors.push({ provider: p.id, name: p.name, error: e.message });
+        return listed;
       }
-      modelsCache = { at: Date.now(), list, errors };
-      return list;
-    })().finally(() => { modelsInflight = null; });
+    }));
+    const list = sortModels(dedupeModels(chunks.flat()), defaultId);
+    if (!list.length) throw new Error(errors[0]?.error || 'ни один провайдер не отдал модели');
+    modelsCache = { at: Date.now(), list, errors };
+    return list;
+  };
+
+  // Карточка DeepSeek уже знает id моделей — отдаём их сразу, каталог OpenRouter
+  // догоняет кэш, если ответит.
+  if (staticList.length) {
+    modelsCache = { at: Date.now(), list: staticList, errors: [] };
+    if (!modelsInflight) {
+      modelsInflight = loadRemote().catch(() => staticList).finally(() => { modelsInflight = null; });
+    }
+    return staticList;
+  }
+
+  if (!modelsInflight) {
+    modelsInflight = loadRemote().finally(() => { modelsInflight = null; });
   }
   return modelsInflight;
 }
@@ -907,7 +949,7 @@ server.listen(PORT, HOST, () => {
     console.log(`  Провайдеры: ${on.map(p => `${p.name}${p.default ? ' (по умолч.)' : ''}`).join(', ') || 'нет'}`);
     const parser = publicParserStatus(settings);
     if (!WEB_LOOKUP) parser.label = 'выключен (WEB_LOOKUP=0)';
-    console.log(`  Парсер: ${parser.label}${parser.enabled ? `, регион ${parser.duckduckgo.region}, ${parser.tries} попытки` : ''}`);
+    console.log(`  Парсер: ${parser.label}${parser.enabled ? `, ${parser.tries} попытки` : ''}`);
   } catch {
     console.log('  Настройки: config.json не прочитан, будут значения по умолчанию');
   }

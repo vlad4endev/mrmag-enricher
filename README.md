@@ -529,11 +529,14 @@ for (const ip of ['8.47.69.6','8.6.112.6']) {
 
 ```
 HTTPS_PROXY=http://user:pass@proxy.example.com:3128
-NO_PROXY=mrmag.ru,localhost,127.0.0.1
+NO_PROXY=mrmag.ru,localhost,127.0.0.1,api.deepseek.com,.deepseek.com
 ```
 
 `NODE_USE_ENV_PROXY=1` в образе уже стоит, поддержка встроена в Node 24.
-`mrmag.ru` из прокси исключён: это лишний крюк и лишняя точка отказа.
+`mrmag.ru` и `api.deepseek.com` из прокси исключены: каталог — российский,
+DeepSeek с этого IP доступен, а SOCKS, поднятый ради Cloudflare/OpenRouter,
+часто рвёт CONNECT до чужих хостов («Request was cancelled»). Сервер допишет
+эти хосты в `NO_PROXY` сам, даже если переменная уже задана в `.env`.
 
 ### 403 «Access denied by security policy»
 
@@ -566,8 +569,9 @@ SOCKS5 Node сам не понимает, поэтому `socks.js` подним
 TLS: владелец прокси видит имя хоста, но не содержимое, и ключ OpenRouter ему
 не достаётся. HTTP-прокси задаётся проще — `HTTPS_PROXY=http://...`, мост не нужен.
 
-`mrmag.ru` идёт мимо прокси (`NO_PROXY`): гонять российский каталог через
-заграничный канал незачем.
+`mrmag.ru` и `api.deepseek.com` идут мимо прокси (`NO_PROXY`): каталог —
+российский, DeepSeek доступен напрямую. Гонять их через SOCKS, поднятый
+ради OpenRouter, незачем и вредно: мост часто обрывает CONNECT.
 
 Ни `extra_hosts`, ни смена резолвера здесь не помогают — это уже не сеть,
 а решение принимающей стороны.

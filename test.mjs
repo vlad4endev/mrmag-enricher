@@ -12,7 +12,7 @@ import {
   coerceNumber, extractFacts as extractFactsIn, crossCheck, parseResponse,
   normalizeResponse as normalizeResponseIn, stripHtml, RateLimiter, isEnrichable,
   buildUserContent, rpmFor, attrFacts, productFacts, modelToken,
-  SCHEMAS, GENERIC_SCHEMA, schemaFor, buildSystemPrompt, enrichProduct,
+  SCHEMAS, GENERIC_SCHEMA, schemaFor, buildSystemPrompt, enrichProduct, netError,
 } from './lib.js';
 
 // Схема по умолчанию — универсальная, а не холодильник: неизвестная категория
@@ -25,7 +25,7 @@ import { parseListing, parseProductPage, buildFilters, assignMissingBrands, writ
   parseSearchResults, parseAnyProductPage } from './catalog.js';
 import http from 'http';
 import { buildV2, splitKey } from './export_v2.js';
-import { parseProxy, startBridge, setupProxy } from './socks.js';
+import { parseProxy, startBridge, setupProxy, mergeNoProxy, applyDirectHosts } from './socks.js';
 import net from 'net';
 
 // fetch подменяется в разделе про запросы к модели. Возвращаем именно исходный,
@@ -870,10 +870,41 @@ console.log('\nЗапрос к модели');
     assert.strictEqual(+e.usage.cost.toFixed(6), 0.0015, 'деньги за неудачу не должны исчезать');
   });
 
+  await tAsync('обрыв CONNECT называет хост, а не голое fetch failed', async () => {
+    const cancelled = Object.assign(new Error('fetch failed'), {
+      cause: Object.assign(new Error('Request was cancelled.'), { name: 'AbortError' }),
+    });
+    globalThis.fetch = () => Promise.reject(cancelled);
+    const e = await run({ name: 'X', description: 'Общий объем, л 310' }, {
+      maxRetries: 1,
+      chatUrl: 'https://api.deepseek.com/chat/completions',
+    }).then(() => null, err => err);
+    assert.ok(e, 'должно бросить');
+    assert.match(e.message, /api\.deepseek\.com/, 'иначе не видно, кого оборвали');
+    assert.match(e.message, /оборван/);
+    assert.doesNotMatch(e.message, /^fetch failed/);
+  });
+
   globalThis.fetch = nativeFetch;
 }
 
 // ── ПРОКСИ ───────────────────────────────────────────────────
+console.log('\nОшибки сети');
+t('разворачивает cause вместо голого fetch failed', () => {
+  const e = Object.assign(new Error('fetch failed'), { cause: { code: 'ENETUNREACH', message: 'network unreachable' } });
+  assert.match(netError(e), /fetch failed/);
+  assert.match(netError(e), /network unreachable|ENETUNREACH/);
+});
+t('обрыв CONNECT не маскируется под таймаут', () => {
+  const e = Object.assign(new Error('fetch failed'), {
+    cause: Object.assign(new Error('Request was cancelled.'), { name: 'AbortError' }),
+  });
+  const s = netError(e);
+  assert.match(s, /оборван/);
+  assert.match(s, /cancelled/i);
+  assert.doesNotMatch(s, /^таймаут/);
+});
+
 console.log('\nАдрес прокси');
 t('разбирает три формы записи', () => {
   assert.deepStrictEqual(parseProxy('tg://socks?server=1.2.3.4&port=3443&user=u&pass=p'),
@@ -887,6 +918,41 @@ t('разбирает три формы записи', () => {
 t('мусор не проглатывается молча', () => {
   assert.throws(() => parseProxy('tg://socks?server=1.2.3.4'), /port/);
   assert.throws(() => parseProxy('socks5://1.2.3.4'), /порт/);
+});
+t('mergeNoProxy дописывает DeepSeek к уже заданному списку', () => {
+  const prev = process.env.NO_PROXY;
+  process.env.NO_PROXY = 'mrmag.ru,localhost,127.0.0.1';
+  const out = mergeNoProxy('api.deepseek.com', '.deepseek.com');
+  assert.match(out, /mrmag\.ru/);
+  assert.match(out, /api\.deepseek\.com/);
+  assert.match(out, /\.deepseek\.com/);
+  if (prev === undefined) delete process.env.NO_PROXY;
+  else process.env.NO_PROXY = prev;
+});
+t('без прокси applyDirectHosts не выдумывает NO_PROXY', () => {
+  const prevN = process.env.NO_PROXY;
+  const prevH = process.env.HTTPS_PROXY;
+  const prevS = process.env.SOCKS_PROXY;
+  delete process.env.NO_PROXY;
+  delete process.env.HTTPS_PROXY;
+  delete process.env.SOCKS_PROXY;
+  assert.strictEqual(applyDirectHosts(), '');
+  assert.strictEqual(process.env.NO_PROXY, undefined);
+  if (prevN !== undefined) process.env.NO_PROXY = prevN;
+  if (prevH !== undefined) process.env.HTTPS_PROXY = prevH;
+  if (prevS !== undefined) process.env.SOCKS_PROXY = prevS;
+});
+t('HTTPS_PROXY без SOCKS всё равно выводит DeepSeek из туннеля', () => {
+  const prevN = process.env.NO_PROXY;
+  const prevH = process.env.HTTPS_PROXY;
+  delete process.env.NO_PROXY;
+  process.env.HTTPS_PROXY = 'http://127.0.0.1:18080';
+  applyDirectHosts();
+  assert.match(process.env.NO_PROXY, /api\.deepseek\.com/);
+  if (prevN === undefined) delete process.env.NO_PROXY;
+  else process.env.NO_PROXY = prevN;
+  if (prevH === undefined) delete process.env.HTTPS_PROXY;
+  else process.env.HTTPS_PROXY = prevH;
 });
 
 console.log('\nМост SOCKS5 → HTTP CONNECT');
@@ -986,6 +1052,20 @@ console.log('\nМост SOCKS5 → HTTP CONNECT');
     assert.match(process.env.HTTPS_PROXY, /^http:\/\/127\.0\.0\.1:\d+$/);
     assert.strictEqual(process.env.NODE_USE_ENV_PROXY, '1');
     assert.match(process.env.NO_PROXY, /mrmag\.ru/, 'каталог не должен ходить через заграничный прокси');
+    assert.match(process.env.NO_PROXY, /api\.deepseek\.com/, 'DeepSeek не должен ходить через SOCKS OpenRouter');
+    await p.close(); socks.close();
+    delete process.env.SOCKS_PROXY; delete process.env.HTTPS_PROXY;
+    delete process.env.NODE_USE_ENV_PROXY; delete process.env.NO_PROXY;
+  });
+
+  await tAsync('setupProxy дописывает DeepSeek, даже если NO_PROXY уже в .env', async () => {
+    const socks = fakeSocks(null);
+    const sp = await listen(socks, 0, '127.0.0.1');
+    process.env.SOCKS_PROXY = `socks5://127.0.0.1:${sp}`;
+    process.env.NO_PROXY = 'mrmag.ru,localhost,127.0.0.1';
+    const p = await setupProxy();
+    assert.match(process.env.NO_PROXY, /mrmag\.ru/);
+    assert.match(process.env.NO_PROXY, /api\.deepseek\.com/);
     await p.close(); socks.close();
     delete process.env.SOCKS_PROXY; delete process.env.HTTPS_PROXY;
     delete process.env.NODE_USE_ENV_PROXY; delete process.env.NO_PROXY;

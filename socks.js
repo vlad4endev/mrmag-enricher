@@ -165,6 +165,43 @@ export function startBridge(cfg, port = 0, host = '127.0.0.1') {
 }
 
 /**
+ * Хосты, которые не гоняем через прокси OpenRouter. Каталог — российский,
+ * DeepSeek — отдельный API: телеграм-SOCKS часто рвёт CONNECT до чужих
+ * хостов («Request was cancelled»), а api.deepseek.com с этого IP доступен.
+ * Дописываем даже если NO_PROXY уже стоит в .env — иначе DeepSeek так и
+ * остаётся в туннеле.
+ */
+export const DIRECT_HOSTS = ['mrmag.ru', 'localhost', '127.0.0.1', 'api.deepseek.com', '.deepseek.com'];
+
+export function mergeNoProxy(...hosts) {
+  const hasUpper = process.env.NO_PROXY != null;
+  const hasLower = process.env.no_proxy != null;
+  const envKey = hasUpper || !hasLower ? 'NO_PROXY' : 'no_proxy';
+  const have = [];
+  const seen = new Set();
+  for (const h of [...String(process.env.NO_PROXY || process.env.no_proxy || '').split(/[\s,]+/), ...hosts]) {
+    const s = String(h || '').trim();
+    if (!s) continue;
+    const k = s.toLowerCase();
+    if (seen.has(k)) continue;
+    seen.add(k);
+    have.push(s);
+  }
+  process.env[envKey] = have.join(',');
+  if (envKey === 'NO_PROXY' && hasLower) process.env.no_proxy = process.env.NO_PROXY;
+  if (envKey === 'no_proxy' && hasUpper) process.env.NO_PROXY = process.env.no_proxy;
+  return process.env[envKey];
+}
+
+export function applyDirectHosts() {
+  const proxied = process.env.HTTPS_PROXY || process.env.https_proxy
+    || process.env.HTTP_PROXY || process.env.http_proxy
+    || process.env.SOCKS_PROXY;
+  if (!proxied) return process.env.NO_PROXY || process.env.no_proxy || '';
+  return mergeNoProxy(...DIRECT_HOSTS);
+}
+
+/**
  * Поднимает мост, если задан SOCKS_PROXY.
  *
  * Порт фиксированный, а не случайный, и это принципиально: Node фиксирует
@@ -177,7 +214,13 @@ export function startBridge(cfg, port = 0, host = '127.0.0.1') {
  */
 export async function setupProxy(log = () => {}) {
   const raw = process.env.SOCKS_PROXY;
-  if (!raw) return null;
+  if (!raw) {
+    const bypass = applyDirectHosts();
+    if (bypass && (process.env.HTTPS_PROXY || process.env.https_proxy)) {
+      log(`  Мимо прокси: ${bypass}`);
+    }
+    return null;
+  }
 
   const cfg = parseProxy(raw);
   const port = Number(process.env.SOCKS_BRIDGE_PORT || 18080);
@@ -195,10 +238,7 @@ export async function setupProxy(log = () => {}) {
 
   process.env.NODE_USE_ENV_PROXY = '1';
   process.env.HTTPS_PROXY = bridge.url;
-  if (!process.env.NO_PROXY && !process.env.no_proxy) {
-    // Каталог магазина через заграничный прокси гонять незачем.
-    process.env.NO_PROXY = 'mrmag.ru,localhost,127.0.0.1';
-  }
+  applyDirectHosts();
 
   log(`  Прокси: SOCKS5 ${cfg.host}:${cfg.port}${cfg.user ? ` (логин ${cfg.user})` : ''} → ${bridge.url}`);
   log(`  Мимо прокси: ${process.env.NO_PROXY || process.env.no_proxy}`);

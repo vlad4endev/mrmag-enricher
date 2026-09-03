@@ -39,10 +39,29 @@ export const MIN_SOURCE_CHARS = Number(process.env.MIN_SOURCE_CHARS || 100);
 /**
  * undici отдаёт бесполезное «fetch failed», а настоящая причина лежит в
  * error.cause: ENETUNREACH (нет IPv6-маршрута), EAI_AGAIN (не резолвится),
- * ETIMEDOUT (режет firewall). Без неё диагностика превращается в гадание.
+ * ETIMEDOUT (режет firewall), AbortError «Request was cancelled» (прокси
+ * закрыл CONNECT). Без разворачивания цепочки диагностика — гадание.
  */
+function errorChain(e) {
+  const out = [];
+  for (let cur = e, i = 0; cur && i < 6; cur = cur.cause, i++) out.push(cur);
+  return out;
+}
+
+function chainText(e) {
+  return errorChain(e).map(x => `${x?.name || ''} ${x?.code || ''} ${x?.message || ''}`).join(' ');
+}
+
 export function netError(e) {
-  if (e?.name === 'TimeoutError') return `таймаут: ${e.message}`;
+  if (!e) return String(e);
+  const text = chainText(e);
+  if (e.name === 'TimeoutError' || /TimeoutError|ETIMEDOUT|UND_ERR_CONNECT_TIMEOUT/i.test(text)) {
+    return `таймаут: ${e.cause?.message || e.message}`;
+  }
+  if (/AbortError|ABORT_ERR|UND_ERR_ABORTED|was cancelled/i.test(text)) {
+    const detail = e.cause?.message || e.message;
+    return `запрос оборван (${detail}) — прокси закрыл CONNECT; хост из NO_PROXY идёт напрямую`;
+  }
   const cause = e?.cause?.message || e?.cause?.code;
   return cause ? `${e.message} (${cause})` : String(e?.message || e);
 }
@@ -1552,8 +1571,13 @@ export async function enrichProduct(product, opts) {
       // сбой уходит мимо ретрая голым «The operation was aborted due to timeout».
       bodyText = await res.text();
     } catch (e) {
-      // Таймаут и сетевой сбой — имеет смысл повторить.
-      lastErr = new Error(e.name === 'TimeoutError' ? `таймаут ${timeoutMs}ms` : netError(e));
+      // Таймаут и сетевой сбой — имеет смысл повторить. Хост в тексте, иначе
+      // «fetch failed (Request was cancelled.)» не говорит, кого оборвали:
+      // OpenRouter через SOCKS или DeepSeek, которого туда тащить не надо.
+      let host = chatUrl;
+      try { host = new URL(chatUrl).host; } catch { /* оставляем как есть */ }
+      const timed = e.name === 'TimeoutError' || e.cause?.name === 'TimeoutError';
+      lastErr = new Error(timed ? `таймаут ${timeoutMs}ms (${host})` : `${host}: ${netError(e)}`);
       if (attempt < maxRetries) { onNote(`сеть, retry ${attempt}`); await sleep(attempt * 3000); continue; }
       fail(lastErr);
     }

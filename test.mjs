@@ -1120,6 +1120,23 @@ console.log('\nТовар без описания: поиск в сети');
       'локальные и служебные адреса из выдачи не читаются: это доступ во внутреннюю сеть');
   });
 
+  t('футер DuckDuckGo не считается выдачей: mastodon и рассылка не вытесняют карточку', () => {
+    const organic = `<div class="result results_links web-result">
+        <a class="result__a" href="//duckduckgo.com/l/?uddg=${encodeURIComponent('https://shop.example/atlant-2862-90')}">товар</a>
+      </div>
+      <a href="https://mastodon.social/@duckduckgo">Mastodon</a>
+      <a href="https://buttondown.email/duckduckgo">newsletter</a>`;
+    assert.deepStrictEqual(parseSearchResults(organic, 'html.duckduckgo.com'),
+      ['https://shop.example/atlant-2862-90']);
+
+    const footerOnly = `<div class="anomaly-modal"></div><script src="/anomaly.js"></script>
+      <a href="https://mastodon.social/@duckduckgo">Mastodon</a>
+      <a href="https://buttondown.email/duckduckgo">newsletter</a>
+      <a href="https://shop.example/hidden">не органика</a>`;
+    assert.deepStrictEqual(parseSearchResults(footerOnly, 'html.duckduckgo.com'), [],
+      'заглушка с футером — пустая выдача, чтобы сработал следующий поисковик');
+  });
+
   t('с чужой карточки берутся характеристики, а не реклама магазина', () => {
     const page = `<table><tr><td>Общий объём</td><td>310 л</td></tr>
         <tr><td>Класс энергопотребления</td><td>A+</td></tr>

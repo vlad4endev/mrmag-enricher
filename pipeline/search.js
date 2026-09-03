@@ -20,6 +20,13 @@ const PRIVATE_HOST = new RegExp([
 
 const ENGINE_HOST = /(?:^|\.)(?:duckduckgo|google|gstatic|googleusercontent|yastatic|bing|brave|mojeek)\./i;
 
+/** Футер поисковика и соцсети: это не карточка товара, даже если href на странице выдачи. */
+export const JUNK_HOST = /(?:^|\.)(?:mastodon\.social|buttondown\.email|spreadprivacy\.com|twitter\.com|x\.com|facebook\.com|fb\.com|instagram\.com|t\.me|telegram\.(?:me|org)|reddit\.com|tiktok\.com|pinterest\.com|linkedin\.com|threads\.net|bsky\.app|vk\.com|ok\.ru|youtube\.com|youtu\.be|dzen\.ru)$/i;
+
+export function isJunkHost(host) {
+  return JUNK_HOST.test(String(host || '').replace(/^www\./, ''));
+}
+
 const FALLBACK = {
   mojeek: 'https://www.mojeek.com/search?q=%s',
   brave: 'https://search.brave.com/search?q=%s',
@@ -102,6 +109,39 @@ export function resolveSearchSettings(config = {}) {
       safeSearch: num(ddg.safe_search, -1),
       siteFilter: ddg.site_filter || '',
       url: process.env.DDG_URL || ddg.url || '',
+    },
+  };
+}
+
+/** То, что видит интерфейс: фактические настройки поиска пустых карточек. */
+export function publicParserStatus(config = {}) {
+  const search = resolveSearchSettings(config);
+  const ddg = search.duckduckgo;
+  const enabled = search.enabled;
+  let engine = 'выключен';
+  if (enabled) {
+    if (search.extraUrl) engine = 'свой поисковик';
+    else if (ddg.enabled) engine = `DuckDuckGo ${ddg.method} ${ddg.endpoint}`;
+    else engine = search.fallback[0] || 'поиск';
+  }
+  return {
+    enabled,
+    status: enabled ? 'on' : 'off',
+    label: enabled ? engine : 'выключен',
+    tries: search.tries,
+    gap_ms: search.gapMs,
+    timeout_ms: search.timeoutMs,
+    query_suffix: search.querySuffix,
+    skip_hosts: search.skipHosts,
+    search_url: search.extraUrl || null,
+    fallback: search.fallback,
+    duckduckgo: {
+      enabled: ddg.enabled,
+      method: ddg.method,
+      endpoint: ddg.endpoint,
+      region: ddg.region,
+      url: ddg.url || null,
+      site_filter: ddg.siteFilter || '',
     },
   };
 }
@@ -199,6 +239,7 @@ function pushUrl(urls, hosts, href, settings, engineHost) {
   if (!u || !/^https?:$/.test(u.protocol)) return;
   const host = u.hostname.replace(/^www\./, '');
   if (isSkippedHost(host, settings)) return;
+  if (isJunkHost(host)) return;
   if (engineHost && (host === engineHost || host.endsWith('.' + engineHost))) return;
   if (ENGINE_HOST.test(u.hostname)) return;
   if (!allowLocal() && PRIVATE_HOST.test(host)) return;

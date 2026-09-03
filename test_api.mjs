@@ -57,7 +57,7 @@ try {
     assert.strictEqual((await r.json()).ok, true);
   });
   await t('без пароля закрыты и страница, и API', async () => {
-    for (const p of ['/', '/api/categories', '/api/models', '/api/catalog?category=523']) {
+    for (const p of ['/', '/api/categories', '/api/models', '/api/parser', '/api/catalog?category=523']) {
       assert.strictEqual((await fetch(url(p))).status, 401, `${p} должен требовать вход`);
     }
     const r = await fetch(url('/api/enrich'), { method: 'POST', body: '{}' });
@@ -85,6 +85,15 @@ try {
     assert.strictEqual(byId[523].slug, 'kholodilniki');
     assert.ok(byId[467].spec_keys.includes('скорость_отжима_об_мин'));
     assert.ok(!byId[467].spec_keys.includes('объем_морозильной_камеры_л'), 'схемы не должны смешиваться');
+  });
+  await t('/api/parser отдаёт статус поиска пустых карточек', async () => {
+    const d = await (await fetch(url('/api/parser'), { headers: { authorization: auth } })).json();
+    assert.strictEqual(d.enabled, true);
+    assert.strictEqual(d.duckduckgo.method, 'POST');
+    assert.strictEqual(d.duckduckgo.endpoint, 'html');
+    assert.strictEqual(d.duckduckgo.region, 'ru-ru');
+    assert.ok(d.tries >= 1);
+    assert.match(d.label, /DuckDuckGo/i);
   });
   await t('неизвестный раздел — 400 со списком доступных', async () => {
     const r = await fetch(url('/api/catalog?category=zzz'), { headers: { authorization: auth } });

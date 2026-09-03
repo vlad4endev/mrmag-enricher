@@ -6,7 +6,7 @@ import { identityMatches } from './pipeline/identity.js';
 import { needsExternal, parseProductBySpecs, lookupExternal, enrichMissing } from './pipeline/external.js';
 import {
   parseSearchResults, parseDuckDuckGoResults, isDuckDuckGoBlocked,
-  searchQuery, searchWeb, searchDuckDuckGo, resolveSearchSettings,
+  searchQuery, searchWeb, searchDuckDuckGo, resolveSearchSettings, publicParserStatus,
 } from './pipeline/search.js';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -220,6 +220,11 @@ console.log('golden tests passed');
     parseSearchResults(serp, 'html.duckduckgo.com'),
     ['https://shop.example/card', 'https://second.example/tovar'],
   );
+  const footer = `<div class="anomaly-modal"></div><script src="/anomaly.js"></script>
+    <a href="https://mastodon.social/@duckduckgo">Mastodon</a>
+    <a href="https://buttondown.email/duckduckgo">newsletter</a>`;
+  assert.deepEqual(parseDuckDuckGoResults(footer), []);
+  assert.deepEqual(parseSearchResults(footer, 'html.duckduckgo.com'), []);
   const rec = normalizeProduct(p467[460989], d467, config);
   assert.match(searchQuery(rec, config), /BWSE 7129X WSV RU/);
   assert.match(searchQuery(rec, config), /характеристики$/);
@@ -299,6 +304,19 @@ console.log('golden tests passed');
   const rec = normalizeProduct(p467[460989], d467, config);
   assert.match(searchQuery(rec, { search: { query_suffix: 'спецификация' } }), /спецификация$/);
   console.log('ok search settings: config.json + env override + DuckDuckGo region');
+}
+
+{
+  const s = publicParserStatus(config);
+  assert.equal(s.enabled, true);
+  assert.equal(s.status, 'on');
+  assert.equal(s.duckduckgo.region, 'ru-ru');
+  assert.equal(s.duckduckgo.method, 'POST');
+  assert.match(s.label, /DuckDuckGo/);
+  const off = publicParserStatus({ search: { enabled: false } });
+  assert.equal(off.enabled, false);
+  assert.equal(off.status, 'off');
+  console.log('ok parser status for the UI');
 }
 
 {

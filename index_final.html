@@ -149,6 +149,8 @@ button:focus-visible,input:focus-visible,textarea:focus-visible,[tabindex]:focus
 .step-sub{font-size:11px;color:var(--t3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:130px;font-family:var(--mono)}
 .step.done .step-sub{color:var(--green)}
 .step-b{padding:11px 18px 17px 41px}
+.parser-kv{display:flex;justify-content:space-between;align-items:baseline;gap:9px;font-size:12px;color:var(--t2)}
+.parser-kv b{color:var(--t1);font-weight:650;font-size:12px;text-align:right;word-break:break-word}
 
 /* Поля ввода */
 input[type=text],input[type=password],textarea,select{
@@ -764,6 +766,17 @@ input[type=range]::-moz-range-thumb{
       </div>
     </section>
 
+    <section class="step" id="parserStep">
+      <div class="step-h">
+        <span class="step-n" id="parserDot">·</span>
+        <span class="step-t">Парсер</span>
+        <span class="step-sub" id="parserSub">загрузка…</span>
+      </div>
+      <div class="step-b" id="parserBox">
+        <div class="est-note">Статус поиска пустых карточек в сети.</div>
+      </div>
+    </section>
+
     <section class="step" id="step3">
       <div class="step-h">
         <span class="step-n" id="n3">3</span>
@@ -1209,6 +1222,44 @@ function setSt(cls,txt){
   document.getElementById('stxt').textContent=txt;
 }
 
+function renderParser(p){
+  const sub=document.getElementById('parserSub');
+  const box=document.getElementById('parserBox');
+  const step=document.getElementById('parserStep');
+  if(!p){
+    sub.textContent='нет данных';
+    box.innerHTML='<div class="est-note">Не удалось прочитать настройки парсера.</div>';
+    return;
+  }
+  const on=p.enabled!==false;
+  step.classList.toggle('done',on);
+  document.getElementById('parserDot').textContent=on?'✓':'·';
+  sub.textContent=on?'включён':'выключен';
+  const ddg=p.duckduckgo||{};
+  const ddgLine=ddg.enabled===false
+    ? 'выключен'
+    : `${ddg.method||'POST'} ${ddg.endpoint||'html'}, ${ddg.region||'—'}`;
+  const rows=[
+    ['Статус', on?'ищет пустые карточки в сети':'пропускает пустые карточки'],
+    ['DuckDuckGo', ddgLine],
+    ['Попыток на товар', String(p.tries??'—')],
+    ['Запасные', (p.fallback||[]).join(', ')||'нет'],
+  ];
+  if(p.search_url) rows.push(['Свой поисковик', p.search_url]);
+  if(ddg.url) rows.push(['URL выдачи', ddg.url]);
+  box.innerHTML=rows.map(([k,v])=>`<div class="parser-kv"><span>${esc(k)}</span><b>${esc(v)}</b></div>`).join('')
+    +'<div class="est-note" style="margin-top:8px">Страница принимается, только если на ней есть артикул из названия. Соцсети и футер поисковика в выдачу не входят.</div>';
+}
+
+async function loadParser(){
+  try{
+    renderParser(await apiJson('/api/parser'));
+  }catch(e){
+    document.getElementById('parserSub').textContent='нет ответа';
+    document.getElementById('parserBox').innerHTML=`<div class="est-note">${esc(e.message)}</div>`;
+  }
+}
+
 /** Пересчитывает рублёвые тарифы под текущий курс. */
 function applyRate(){
   for(const m of CALC_MODELS){
@@ -1236,6 +1287,7 @@ async function init(){
     document.getElementById('msearch').classList.add('open');
     stepError(1,`Справочник моделей недоступен: ${e.message}. Работать можно — введите id модели вручную в поиске выше.`);
   }
+  await loadParser();
   await loadCategories();
   restoreResults();
   syncSteps();

@@ -10,6 +10,8 @@ COPY package.json ./
 # smoke.mjs внутри образа намеренно: проверять сервис надо там, где он
 # работает, а node на хосте может отсутствовать.
 COPY *.js *.mjs *.html ./
+COPY pipeline ./pipeline
+COPY config.json ./
 
 # Оборванный импорт должен падать на сборке, а не в рестарт-цикле на проде.
 RUN node -e "Promise.all([import('./lib.js'),import('./catalog.js'),import('./socks.js')]).then(()=>console.log('импорты на месте'))"

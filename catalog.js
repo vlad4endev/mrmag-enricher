@@ -28,6 +28,9 @@ import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 import { netError, isEnrichable, modelToken, MIN_SOURCE_CHARS } from './lib.js';
 import { specFacets, enrichedRows } from './export_v2.js';
+import {
+  isDuckDuckGoBlocked, isJunkHost, parseDuckDuckGoResults, searchDuckDuckGo,
+} from './pipeline/search.js';
 
 export const ORIGIN = 'https://mrmag.ru';
 export const FEED_URL = `${ORIGIN}/scripts/sync_local/products.json`;
@@ -366,7 +369,6 @@ export function parseAnyProductPage(html) {
  */
 const ENGINES = [
   process.env.SEARCH_URL || null,                 // шаблон с %s вместо запроса
-  'https://html.duckduckgo.com/html/?q=%s',
   'https://lite.duckduckgo.com/lite/?q=%s',
   'https://www.mojeek.com/search?q=%s',
 ].filter(Boolean);
@@ -389,6 +391,11 @@ const forget = url => { try { fs.unlinkSync(cachePath(url)); } catch { /* неч
  * завёрнутые в редирект /l/?uddg=..., поэтому разворачиваем.
  * По одному адресу на домен: три страницы одного магазина — это одна и та же
  * карточка трижды.
+ *
+ * DuckDuckGo в футере всегда даёт mastodon.social и buttondown.email. Если
+ * забрать все href подряд, «выдача» состоит из рассылки — и запасной
+ * поисковик уже не вызывается, потому что ссылки формально нашлись.
+ * Органика — только a.result__a; заглушка и соцсети считаются пустой выдачей.
  */
 /**
  * Адрес из выдачи — недоверенный: чужая или подсунутая ссылка на 127.0.0.1 или
@@ -406,10 +413,16 @@ const PRIVATE_HOST = new RegExp([
 ].join('|'), 'i');
 
 export function parseSearchResults(html, engineHost = '') {
+  const body = String(html || '');
+  if (isDuckDuckGoBlocked(body)) return [];
+  if (/result__a|web-result|result-link/i.test(body)) {
+    return parseDuckDuckGoResults(body);
+  }
+
   const urls = [];
   const hosts = new Set();
   const own = new URL(ORIGIN).hostname;
-  for (const m of String(html).matchAll(/href="([^"]+)"/g)) {
+  for (const m of body.matchAll(/href="([^"]+)"/g)) {
     const href = m[1].replace(/&amp;/g, '&');
     let u;
     try { u = new URL(href.startsWith('//') ? 'https:' + href : href); } catch { continue; }
@@ -421,6 +434,7 @@ export function parseSearchResults(html, engineHost = '') {
     }
     const host = u.hostname.replace(/^www\./, '');
     if (host === own) continue;                          // наша же пустая карточка
+    if (isJunkHost(host)) continue;
     if (engineHost && host.endsWith(engineHost)) continue;
     if (!ALLOW_LOCAL && PRIVATE_HOST.test(host)) continue;
     if (/^(yastatic|gstatic|googleusercontent)\./i.test(host)) continue;
@@ -443,6 +457,19 @@ export async function searchWeb(query) {
     throw new Error(`поиск отключён после ${searchFails} неудач подряд — перезапустите прогон`);
   }
   let lastError = null;
+
+  // GET html.duckduckgo.com часто отдаёт заглушку. Раньше её футер
+  // (mastodon, buttondown) считался выдачей, и Mojeek уже не вызывался.
+  if (!process.env.SEARCH_URL) {
+    try {
+      const urls = await searchDuckDuckGo(query);
+      if (urls.length) { searchFails = 0; return urls; }
+      lastError = 'DuckDuckGo: выдача без ссылок';
+    } catch (e) {
+      lastError = e.message;
+    }
+  }
+
   for (const template of ENGINES) {
     const url = template.replace('%s', encodeURIComponent(query));
     const host = new URL(url).hostname.replace(/^www\./, '');

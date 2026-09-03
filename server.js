@@ -12,6 +12,7 @@
  * Маршруты:
  *   GET  /healthz             проба живости, без аутентификации
  *   GET  /api/models          список моделей с актуальными ценами (кэш MODELS_TTL_MS)
+ *   GET  /api/parser          статус и настройки поиска пустых карточек
  *   GET  /api/product?url=... прокси к каталогу, только по разрешённым хостам
  *   GET  /api/categories      разделы из требований и схемы полей
  *   GET  /api/catalog?category=kholodilniki[&limit=N]
@@ -48,9 +49,11 @@ import {
   RateLimiter, enrichProduct, rpmFor, schemaFor, SCHEMAS, netError,
   RUB_PER_USD, RUB_RATE_DATE, MISMATCH_POLICY, isEnrichable, productFacts,
 } from './lib.js';
-import { CATEGORIES, findCategory, crawlCategory, loadFeed, buildFilters, ensureSource } from './catalog.js';
+import { CATEGORIES, findCategory, crawlCategory, loadFeed, buildFilters, ensureSource, WEB_LOOKUP } from './catalog.js';
 import { buildV2 } from './export_v2.js';
 import { createJobStore } from './jobs.js';
+import { loadConfig } from './pipeline/dict.js';
+import { publicParserStatus } from './pipeline/search.js';
 
 const API_KEY = process.env.OPENROUTER_API_KEY;
 const PORT    = Number(process.env.PORT || 3000);
@@ -215,6 +218,18 @@ function apiCategories(res) {
     schemas: Object.fromEntries(Object.entries(SCHEMAS).map(([k, v]) =>
       [k, { id: v.id, name: v.name, spec_keys: v.specKeys, numeric_keys: v.numericKeys, enums: v.enums }])),
   });
+}
+
+function apiParser(res) {
+  let config = {};
+  try { config = loadConfig(ROOT); } catch { /* defaults in resolveSearchSettings */ }
+  const parser = publicParserStatus(config);
+  if (!WEB_LOOKUP) {
+    parser.enabled = false;
+    parser.status = 'off';
+    parser.label = 'выключен (WEB_LOOKUP=0)';
+  }
+  json(res, 200, parser);
 }
 
 /**
@@ -570,6 +585,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === 'GET'  && u.pathname === '/api/models')     return await apiModels(res);
+    if (req.method === 'GET'  && u.pathname === '/api/parser')     return apiParser(res);
     if (req.method === 'GET'  && u.pathname === '/api/categories') return apiCategories(res);
     if (req.method === 'POST' && u.pathname === '/api/filters')    return apiFilters(req, res);
     if (req.method === 'POST' && u.pathname === '/api/quality')    return apiQuality(req, res);
@@ -611,6 +627,13 @@ server.listen(PORT, HOST, () => {
   console.log(`  Прокси разрешён для: ${ALLOWED_HOSTS.join(', ')}`);
   console.log(`  Курс: ${RUB_PER_USD} ₽/$ на ${RUB_RATE_DATE} | политика расхождений: ${MISMATCH_POLICY}`);
   console.log(`  Вход: ${APP_PASSWORD ? `Basic, пользователь ${APP_USER}` : 'ОТКРЫТ'}`);
+  try {
+    const parser = publicParserStatus(loadConfig(ROOT));
+    if (!WEB_LOOKUP) parser.label = 'выключен (WEB_LOOKUP=0)';
+    console.log(`  Парсер: ${parser.label}${parser.enabled ? `, регион ${parser.duckduckgo.region}, ${parser.tries} попытки` : ''}`);
+  } catch {
+    console.log('  Парсер: config.json не прочитан, будут значения по умолчанию');
+  }
   if (resumedJobs.length) console.log(`  Продолжаем прерванные прогоны: ${resumedJobs.join(', ')}`);
   for (const l of proxyLines) console.log(l);
 

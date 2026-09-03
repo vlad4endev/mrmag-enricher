@@ -137,7 +137,7 @@ const EXPORTS = `
 export const api={syncSteps,setCnt,setCntFree,applyCnt,applySource,setSource,pickDataCat,renderDataCats,runCat,readProd,renderList,statusOf,selectResult,renderDetail,plural,
   renderEstimate,setFilter,stepError,pick,sumRun,renderFoot,clearResults,restoreResults,saveResults,
   downloadAll,downloadCategoryFiles,downloadV2,initTheme,toggleTheme,applyTheme,dur,renderRunline,
-  loadCategories,catOf,renderModelList,filterModels,
+  loadCategories,catOf,renderModelList,filterModels,renderParser,loadParser,
   applyDates,clearDates,renderDates,passesFilter,queued,onProdInput,apiJson,run,
   stopJob,follow,attachJob,resumeJob,applyJob,finishRun};
 export const st={get items(){return items},set items(v){items=v},
@@ -330,6 +330,25 @@ t('без модели или товаров — только пояснение
   st.items = [];
   api.renderEstimate();
   assert.match(G('est').innerHTML, /появится стоимость/);
+});
+
+console.log('\nПарсер: статус и настройки на экране');
+t('показывает, включён ли поиск пустых карточек и какой движок', () => {
+  api.renderParser({
+    enabled: true, tries: 3, fallback: ['mojeek', 'brave'],
+    duckduckgo: { enabled: true, method: 'POST', endpoint: 'html', region: 'ru-ru' },
+  });
+  assert.match(G('parserSub').textContent, /включён/);
+  assert.match(G('parserBox').innerHTML, /DuckDuckGo/);
+  assert.match(G('parserBox').innerHTML, /ru-ru/);
+  assert.match(G('parserBox').innerHTML, /mojeek/);
+  assert.ok(G('parserStep').classList.contains('done'));
+});
+t('выключенный парсер не притворяется работающим', () => {
+  api.renderParser({ enabled: false, tries: 3, fallback: [], duckduckgo: { enabled: false } });
+  assert.match(G('parserSub').textContent, /выключен/);
+  assert.match(G('parserBox').innerHTML, /пропускает пустые/);
+  assert.ok(!G('parserStep').classList.contains('done'));
 });
 
 console.log('\n«Сколько обработать» — одна настройка с одним смыслом');

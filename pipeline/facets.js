@@ -1,5 +1,7 @@
 /** Фильтры строго по facet.* справочника. Вид и шаг из справочника, не из данных. */
 
+import { formatAttrValue, unifyEnumValues } from './types.js';
+
 export function bucketLabel(value, facet, { isLast = false } = {}) {
   if (facet.kind !== 'range') return String(value);
   const step = facet.step;
@@ -21,11 +23,8 @@ function numericOf(v) {
   return Number.isFinite(n) ? n : null;
 }
 
-function displayValue(v) {
-  if (v === true) return 'Есть';
-  if (v === false) return 'Нет';
-  if (Array.isArray(v)) return v.join(', ');
-  return String(v);
+function displayValue(attr, v) {
+  return formatAttrValue(attr, v, { withUnit: false });
 }
 
 /**
@@ -33,6 +32,7 @@ function displayValue(v) {
  * Для range: [a; b) при bound_rule=left_closed.
  */
 export function buildFilters(recs, dict, config) {
+  unifyEnumValues(recs, dict);
   const minCov = config.facet_min_coverage ?? 70;
   const total = recs.length || 1;
   const filters = [];
@@ -73,7 +73,7 @@ export function buildFilters(recs, dict, config) {
         const v = r.attrs[attr.code];
         const parts = Array.isArray(v) ? v : [v];
         for (const p of parts) {
-          const lab = displayValue(p);
+          const lab = displayValue(attr, p);
           counts.set(lab, (counts.get(lab) || 0) + 1);
         }
       }
@@ -117,9 +117,10 @@ export function assignFilterValues(rec, dict, debugFacets) {
       const lo = Math.floor(n / facet.step) * facet.step;
       const maxLo = Math.max(...labels.map(x => parseFloat(x)));
       const isLast = facet.open_last && lo === maxLo;
-      out[f.name] = bucketLabel(n, facet, { isLast });
+      out[f.name] = [bucketLabel(n, facet, { isLast })];
     } else {
-      out[f.name] = displayValue(Array.isArray(v) ? v[0] : v);
+      const parts = Array.isArray(v) ? v : [v];
+      out[f.name] = parts.map(p => displayValue(attr, p));
     }
   }
   return out;

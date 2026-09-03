@@ -52,13 +52,180 @@ function inRange(n, range) {
   return n >= range[0] && n <= range[1];
 }
 
+const ECHO_LEAD = /^(?:цвет|тип|товара|значение|корпус[аеу]?)\s+/i;
+const ECHO_TAIL = /\s+(?:загрузк[аиеу]|корпуса?|товара|машины?|цвет)$/i;
+const ADJ_END = /(ый|ий|ой|ая|яя|ое|ее|ые|ие)$/;
+
+/** Сравнение значений без регистра, пробелов, дефисов и латинской x в кириллице. */
+export function valueFold(s) {
+  let t = String(s || '')
+    .toLowerCase()
+    .replace(/ё/g, 'е');
+  if (/[а-я]/.test(t)) t = t.replace(/[xc]/g, ch => (ch === 'x' ? 'х' : 'с'));
+  return t.replace(/[\s\-–—.,;:'"`«»()/\\]+/g, '');
+}
+
+export function valueStem(s) {
+  return valueFold(s).replace(ADJ_END, '').replace(/ист$/, '');
+}
+
+/**
+ * Единый вид enum/text: пробелы, скобки, эхо-слова, Title Case для кириллицы.
+ * Латиница (A++, ATLANT, LED) не трогается.
+ */
+export function displayEnum(raw) {
+  let t = String(raw ?? '').replace(/\s+/g, ' ').trim();
+  if (!t) return t;
+  t = t.replace(/\s*\([^)]*\)\s*/g, ' ').replace(/\s+/g, ' ').trim();
+  t = t.replace(/[.;,]+$/g, '').trim();
+  t = t.replace(ECHO_LEAD, '').replace(ECHO_TAIL, '').trim();
+  if (!t || isEchoOnly(t)) return '';
+  t = t.replace(/нерж\.?\s*стал[ьи]?/gi, 'нержавеющая сталь');
+  if (/[а-яё]/i.test(t)) {
+    t = t.replace(/[Cc](?=[А-ЯЁа-яё])|(?<=[А-ЯЁа-яё])[Cc]/g, 'с');
+  }
+  if (!/[а-яё]/i.test(t)) return t;
+  const chars = [...t];
+  chars[0] = chars[0].toUpperCase();
+  let out = chars[0];
+  for (let i = 1; i < chars.length; i++) {
+    const ch = chars[i];
+    out += /[А-ЯЁа-яё]/.test(ch) ? ch.toLowerCase() : ch;
+  }
+  return out;
+}
+
+export function attrLabel(attr) {
+  return (attr.facet && attr.facet.label) || attr.name;
+}
+
+export function labelHasUnit(label) {
+  return /,\s*\S+$/.test(String(label || ''));
+}
+
+/** Значение для карточки, фильтров и аннотации — одна и та же строка. */
+export function formatAttrValue(attr, v, { withUnit = false } = {}) {
+  if (v == null || v === '') return '';
+  if (Array.isArray(v)) {
+    return v.map(x => formatAttrValue(attr, x, { withUnit: false })).filter(Boolean).join(', ');
+  }
+  if (v === true) return 'Есть';
+  if (v === false) return 'Нет';
+  if (typeof v === 'number') {
+    const n = Number.isInteger(v) ? String(v) : String(v);
+    if (withUnit && attr.unit) return `${n} ${attr.unit}`;
+    return n;
+  }
+  return displayEnum(v);
+}
+
+function isEchoOnly(s) {
+  return /^(загрузк[аиеу]?|корпус[аеу]?|товара?|машины?|цвет|тип|значение)$/.test(valueFold(s));
+}
+
+function isBareBooleanWord(val) {
+  const k = String(val || '').trim().toLowerCase().replace(/ё/g, 'е');
+  return BOOL_TRUE.has(k) || BOOL_FALSE.has(k);
+}
+
+function pickMode(list) {
+  const c = new Map();
+  for (const x of list) c.set(x, (c.get(x) || 0) + 1);
+  return [...c].sort((a, b) => b[1] - a[1] || a[0].length - b[0].length || a[0].localeCompare(b[0], 'ru'))[0][0];
+}
+
+function resolveCanons(values) {
+  const displayed = values.map(v => displayEnum(v));
+  const groups = new Map();
+  for (const d of displayed) {
+    const k = valueStem(d);
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k).push(d);
+  }
+  const stems = [...groups.keys()].sort((a, b) => a.length - b.length || a.localeCompare(b));
+  const parent = new Map(stems.map(s => [s, s]));
+  for (let i = 0; i < stems.length; i++) {
+    const a = stems[i];
+    if (a.length < 6) continue;
+    for (let j = i + 1; j < stems.length; j++) {
+      const b = stems[j];
+      if (b.startsWith(a)) parent.set(b, parent.get(a));
+    }
+  }
+  for (const d of new Set(displayed)) {
+    const my = valueStem(d);
+    const toks = String(d).split(/[\s,/|+]+/).map(valueStem).filter(t => t.length >= 6);
+    for (const tok of toks) {
+      if (tok === my || !groups.has(tok)) continue;
+      parent.set(my, parent.get(tok));
+    }
+  }
+  const byRoot = new Map();
+  for (const [stem, list] of groups) {
+    const root = parent.get(stem);
+    if (!byRoot.has(root)) byRoot.set(root, []);
+    byRoot.get(root).push(...list);
+  }
+  const winner = new Map();
+  for (const [root, list] of byRoot) winner.set(root, pickMode(list));
+  const map = new Map();
+  for (let i = 0; i < values.length; i++) {
+    const raw = values[i];
+    const d = displayed[i];
+    const w = winner.get(parent.get(valueStem(d))) || d;
+    map.set(raw, w);
+    map.set(d, w);
+  }
+  return map;
+}
+
+/**
+ * Свести варианты одной характеристики к одному написанию по всему каталогу.
+ * Срабатывает после нормализации товара, до сборки фильтров и выгрузки.
+ */
+export function unifyEnumValues(recs, dict) {
+  if (!recs?.length || !dict) return recs;
+  for (const attr of dict.attrs) {
+    if (attr.type !== 'enum' && attr.type !== 'text') continue;
+    const strings = [];
+    for (const rec of recs) {
+      const v = rec.attrs[attr.code];
+      if (v == null) continue;
+      if (Array.isArray(v)) {
+        for (const x of v) if (typeof x === 'string') strings.push(x);
+      } else if (typeof v === 'string') strings.push(v);
+    }
+    if (!strings.length) continue;
+    const canon = resolveCanons(strings);
+    for (const rec of recs) {
+      const v = rec.attrs[attr.code];
+      if (v == null) continue;
+      if (Array.isArray(v)) {
+        const seen = new Set();
+        const next = [];
+        for (const x of v) {
+          const mapped = typeof x === 'string' ? (canon.get(x) || displayEnum(x)) : x;
+          const k = typeof mapped === 'string' ? valueFold(mapped) : String(mapped);
+          if (seen.has(k)) continue;
+          seen.add(k);
+          next.push(mapped);
+        }
+        rec.attrs[attr.code] = next;
+      } else if (typeof v === 'string') {
+        rec.attrs[attr.code] = canon.get(v) || displayEnum(v);
+      }
+    }
+  }
+  return recs;
+}
+
 function aliasValue(attr, raw) {
   const aliases = attr.value_aliases;
   if (!aliases) return null;
-  const fold = String(raw || '').trim().toLowerCase().replace(/ё/g, 'е');
+  const folded = valueFold(raw);
   for (const [canon, list] of Object.entries(aliases)) {
-    if (canon.toLowerCase() === fold) return canon;
-    if ((list || []).some(v => String(v).trim().toLowerCase().replace(/ё/g, 'е') === fold)) return canon;
+    if (valueFold(canon) === folded) return canon;
+    if ((list || []).some(v => valueFold(v) === folded)) return canon;
   }
   return null;
 }
@@ -102,8 +269,11 @@ export function normalizeValue(attr, raw, { keyText = '' } = {}) {
     }
     if (typ === 'enum' || typ === 'text') {
       const aliased = aliasValue(attr, v);
-      const val = (aliased || v).replace(/\s+/g, ' ').trim();
+      const val = displayEnum(aliased || v);
       if (!val) return empty;
+      if (typ === 'enum' && isBareBooleanWord(val)) {
+        return { ok: false, value: null, reason: 'bool_in_enum', raw: v };
+      }
       return { ok: true, value: val };
     }
     if (typ === 'dimensions') {
@@ -119,7 +289,7 @@ export function normalizeValue(attr, raw, { keyText = '' } = {}) {
     for (const p of parts) {
       const r = one(attr.type, p);
       if (!r.ok) continue;
-      const k = typeof r.value === 'string' ? r.value.toLowerCase() : String(r.value);
+      const k = typeof r.value === 'string' ? valueFold(r.value) : String(r.value);
       if (seen.has(k)) continue;
       seen.add(k);
       values.push(r.value);

@@ -58,6 +58,8 @@ export function applyExternal(rec, pairs, dict, config, meta = {}) {
     url: meta.url || null,
     query: meta.query || null,
     pairs: pairs.length,
+    ...(meta.page_data ? { page_data: meta.page_data } : {}),
+    ...(meta.web_info ? { web_info: meta.web_info } : {}),
   };
   return rec;
 }
@@ -68,7 +70,8 @@ export function applyExternal(rec, pairs, dict, config, meta = {}) {
 export function parseProductBySpecs(rec, html, dict, config, meta = {}) {
   const parsed = parseExternalSpecs(html, rec.identity, dict);
   if (!parsed.ok) return { rec, ...parsed };
-  applyExternal(rec, parsed.pairs, dict, config, meta);
+  const page_data = meta.page_data || (html ? visibleText(html) : '');
+  applyExternal(rec, parsed.pairs, dict, config, { ...meta, page_data });
   return { rec, ok: true, pairs: parsed.pairs };
 }
 

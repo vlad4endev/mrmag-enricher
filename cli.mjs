@@ -13,7 +13,7 @@
  *   node cli.mjs facets    data_467.json
  *   node cli.mjs artifacts data_467.json data_523.json
  *     → attributes_467.json, attributes_523.json, categories.json
- *   node cli.mjs validate  out/data_467.json
+ *   node cli.mjs validate  out/products_467.json
  *   node cli.mjs report    467
  */
 
@@ -30,6 +30,7 @@ import { normalizeProduct, coverage, formatCounts, unmappedFreq } from './pipeli
 import { buildFilters } from './pipeline/facets.js';
 import { buildReport } from './pipeline/report.js';
 import { renderCard } from './pipeline/generate.js';
+import { serializeProducts, serializeFilters } from './pipeline/export.js';
 import { enrichMissing } from './pipeline/external.js';
 import { resolveSearchSettings } from './pipeline/search.js';
 
@@ -154,16 +155,9 @@ function writeCustomerDeliverables({ recs, dict, catId, cov }) {
 function writeOutputs({ recs, dict, config, catId, cov, covAfter, formats, unmapped }, { customer = false } = {}) {
   fs.mkdirSync(OUT, { recursive: true });
   const after = covAfter || cov;
-  const data = recs.map(r => ({
-    id: r.id,
-    name: r.name,
-    description: r.card?.description ?? r.description,
-    annotation: r.card?.annotation ?? r.annotation,
-  }));
-  writeJson(path.join(OUT, `data_${catId}.json`), data);
-
   const built = buildFilters(recs, dict, config);
-  writeJson(path.join(OUT, `filters_${catId}.json`), { filters: built.filters });
+  writeJson(path.join(OUT, `products_${catId}.json`), serializeProducts(recs, dict, built.debug), 4);
+  writeJson(path.join(OUT, `filters_${catId}.json`), serializeFilters(built), 4);
 
   const attrsOut = attrsWithCoverage(dict, coverageMap(after, dict));
   writeJson(path.join(OUT, `attributes_${catId}.json`), attrsOut);
@@ -208,6 +202,8 @@ function sourceStats(recs) {
   };
 }
 
+const PRODUCT_FIELDS = ['id', 'name', 'meta_keywords', 'description_html', 'annotation_html', 'filters'];
+
 function validateFile(file) {
   const rows = JSON.parse(fs.readFileSync(file, 'utf-8'));
   const catId = catIdFromFile(file);
@@ -219,9 +215,16 @@ function validateFile(file) {
     const s = byId.get(r.id);
     if (!s) { console.log('!! лишний id', r.id); continue; }
     if (r.name !== s.name) nameMismatch++;
-    const keys = Object.keys(r);
-    if (keys.join() !== 'id,name,description,annotation') {
+    const keys = Object.keys(r).filter(k => k !== 'web_info' && k !== 'page_data');
+    if (keys.join() !== PRODUCT_FIELDS.join()) {
       console.log('!! поля', r.id, keys);
+    }
+    if (!r.filters || typeof r.filters !== 'object' || Array.isArray(r.filters)) {
+      console.log('!! filters не объект', r.id);
+    } else {
+      for (const [name, val] of Object.entries(r.filters)) {
+        if (!Array.isArray(val)) console.log('!! значение фильтра не массив', r.id, name);
+      }
     }
   }
   console.log(`validate ${catId}: names mismatch=${nameMismatch}, n=${rows.length}`);

@@ -1,7 +1,9 @@
 import { loadConfig, loadDictionary, loadProducts, attrsWithCoverage, loadCategories } from './pipeline/dict.js';
 import { normalizeProduct, formatCounts } from './pipeline/normalize.js';
-import { bucketLabel } from './pipeline/facets.js';
+import { bucketLabel, buildFilters } from './pipeline/facets.js';
 import { renderCard } from './pipeline/generate.js';
+import { compactAnnotation, compactHtml, serializeProduct, metaKeywords } from './pipeline/export.js';
+import { displayEnum, valueFold } from './pipeline/types.js';
 import { identityMatches } from './pipeline/identity.js';
 import { needsExternal, parseProductBySpecs, lookupExternal, enrichMissing } from './pipeline/external.js';
 import {
@@ -79,6 +81,20 @@ function run(id, dict, src) {
   const card = renderCard(r, d523);
   assert.ok(card.description != null);
   console.log('ok 426283');
+}
+
+{
+  const { p, r } = run(11391, d467, p467);
+  assert.equal(r.attrs.load_type, 'Фронтальная');
+  assert.equal(displayEnum('фронтальная загрузка'), 'Фронтальная');
+  assert.equal(displayEnum('товара белый'), 'Белый');
+  assert.equal(displayEnum('электронное (интеллектуальное)'), 'Электронное');
+  assert.equal(displayEnum('Cтекло'), 'Стекло');
+  assert.equal(displayEnum('Нерж. сталь'), 'Нержавеющая сталь');
+  assert.equal(displayEnum('меxанический'), 'Меxанический');
+  assert.equal(valueFold('меxанический'), valueFold('механический'));
+  assert.equal(valueFold('Отдельно стоящая'), valueFold('Отдельностоящая'));
+  console.log('ok displayEnum / valueFold');
 }
 
 console.log('golden tests passed');
@@ -603,3 +619,52 @@ console.log('golden tests passed');
   }
   console.log('ok SerpAPI JSON → matching page → S3 specs');
 }
+
+{
+  const all = loadProducts('data_467.json').map(p => normalizeProduct(p, d467, config));
+  const built = buildFilters(all, d467, config);
+  const r = all.find(x => x.id === 11391);
+  const p = p467[11391];
+  const row = serializeProduct(r, d467, built.debug);
+  assert.deepEqual(Object.keys(row).filter(k => k !== 'web_info' && k !== 'page_data'), [
+    'id', 'name', 'meta_keywords', 'description_html', 'annotation_html', 'filters',
+  ]);
+  assert.equal(row.id, p.id);
+  assert.equal(row.name, p.name);
+  assert.match(row.meta_keywords, /стиральная машина ATLANT/);
+  assert.match(row.description_html, /^<p>/);
+  assert.equal(row.description_html.includes('\n'), false);
+  assert.match(row.annotation_html, /^<ul><li>.+: .+<\/li>/);
+  assert.equal(row.annotation_html.includes('\n'), false);
+  assert.match(row.annotation_html, /Тип загрузки: Фронтальная/);
+  assert.match(row.annotation_html, /Бренд: ATLANT/);
+  assert.ok(Array.isArray(row.filters['Высота, см']));
+  assert.equal(row.filters['Высота, см'][0], '80-85');
+  assert.equal(row.filters['Скорость отжима, об/мин'][0], '1000-1200');
+  const facetNames = new Set(built.filters.map(f => f.name));
+  for (const name of Object.keys(row.filters)) {
+    assert.ok(facetNames.has(name), name);
+    assert.ok(Array.isArray(row.filters[name]) && row.filters[name].length);
+  }
+  for (const f of built.filters) {
+    if (row.filters[f.name]) assert.ok(f.value.includes(row.filters[f.name][0]), f.name);
+  }
+  assert.deepEqual(built.filters.map(f => Object.keys(f)), built.filters.map(() => ['name', 'value']));
+  assert.ok(built.filters.every(f => Array.isArray(f.value)));
+  for (const f of built.filters) {
+    const folds = f.value.map(valueFold);
+    assert.equal(new Set(folds).size, folds.length, `дубли в фильтре ${f.name}: ${f.value.join(' | ')}`);
+  }
+  const loadTypes = [...new Set(all.map(x => x.attrs.load_type).filter(Boolean))];
+  assert.ok(loadTypes.includes('Фронтальная'));
+  for (const v of loadTypes) {
+    assert.ok(['Фронтальная', 'Вертикальная'].includes(v), v);
+  }
+  assert.equal(compactAnnotation(''), '');
+  assert.equal(compactHtml('<p>a</p>\n<p>b</p>'), '<p>a</p><p>b</p>');
+  assert.ok(metaKeywords(r, d467).includes('ATLANT'));
+  const emptyAnn = serializeProduct({ ...r, annotation: '' }, d467, built.debug);
+  assert.match(emptyAnn.annotation_html, /Тип загрузки: Фронтальная/);
+  console.log('ok customer products+filters shape (11391)');
+}
+

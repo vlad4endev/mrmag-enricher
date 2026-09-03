@@ -71,10 +71,10 @@ export function loadProducts(file) {
   }));
 }
 
-export function writeJson(file, data) {
+export function writeJson(file, data, indent = 2) {
   const dir = path.dirname(file);
   if (dir && dir !== '.') fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(file, JSON.stringify(data, null, 2) + '\n', 'utf-8');
+  fs.writeFileSync(file, JSON.stringify(data, null, indent) + '\n', 'utf-8');
 }
 
 /** Категории на выходе — только {id, name}[], как в исходном categories.json. */

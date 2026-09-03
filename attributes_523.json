@@ -1,0 +1,1209 @@
+[
+  {
+    "code": "brand",
+    "name": "Бренд",
+    "description": "Производитель, как будет отображаться в карточке и фильтре",
+    "type": "enum",
+    "unit": null,
+    "cardinality": "single",
+    "order": 0,
+    "show_in_annotation": true,
+    "highlight": true,
+    "inferable": true,
+    "tier": "A",
+    "decision_reason": "Идентичность товара; извлекается из наименования без обратной записи",
+    "coverage_now": 0,
+    "coverage_final": 100,
+    "valid_range": null,
+    "synonyms": [
+      "Бренд",
+      "Производитель",
+      "Марка",
+      "Торговая марка"
+    ],
+    "blacklist": [
+      "Артикул",
+      "Модель",
+      "Линейка"
+    ],
+    "value_aliases": {
+      "Haier": [
+        "Haier",
+        "HAIER",
+        "Хайер"
+      ],
+      "Бирюса": [
+        "Бирюса",
+        "БИРЮСА",
+        "Biryusa",
+        "BIRYUSA"
+      ],
+      "Candy": [
+        "Candy",
+        "CANDY",
+        "Канди"
+      ],
+      "Indesit": [
+        "Indesit",
+        "INDESIT",
+        "Индезит"
+      ],
+      "DON": [
+        "DON",
+        "ДОН",
+        "Дон"
+      ],
+      "LG": [
+        "LG"
+      ],
+      "Pozis": [
+        "Pozis",
+        "POZIS",
+        "ПОЗИС",
+        "Позис"
+      ],
+      "Орск": [
+        "Орск",
+        "ОРСК",
+        "ORSK"
+      ],
+      "ATLANT": [
+        "ATLANT",
+        "АТЛАНТ",
+        "Атлант"
+      ],
+      "Samsung": [
+        "Samsung",
+        "SAMSUNG",
+        "Самсунг"
+      ],
+      "Beko": [
+        "Beko",
+        "BEKO",
+        "Беко"
+      ],
+      "Centek": [
+        "Centek",
+        "CENTEK",
+        "Центек"
+      ],
+      "Kraft": [
+        "Kraft",
+        "KRAFT",
+        "Крафт"
+      ],
+      "Hotpoint-Ariston": [
+        "Hotpoint-Ariston",
+        "Hotpoint Ariston",
+        "HOTPOINT"
+      ],
+      "Pioneer": [
+        "Pioneer",
+        "PIONEER",
+        "Пионер"
+      ],
+      "Саратов": [
+        "Саратов",
+        "САРАТОВ",
+        "Saratov"
+      ],
+      "Esperanza": [
+        "Esperanza",
+        "ESPERANZA"
+      ],
+      "Renova": [
+        "Renova",
+        "RENOVA",
+        "Ренова"
+      ],
+      "Stinol": [
+        "Stinol",
+        "STINOL",
+        "Стинол"
+      ],
+      "Leonord": [
+        "Leonord",
+        "LEONORD"
+      ],
+      "Свияга": [
+        "Свияга",
+        "СВИЯГА"
+      ],
+      "Gorenje": [
+        "Gorenje",
+        "GORENJE",
+        "Горенье"
+      ]
+    },
+    "facet": {
+      "enabled": true,
+      "label": "Бренд",
+      "kind": "enum"
+    }
+  },
+  {
+    "code": "fridge_type",
+    "name": "Тип холодильника",
+    "description": "Однокамерный, двухкамерный, Side-by-Side и другие",
+    "type": "enum",
+    "unit": null,
+    "cardinality": "single",
+    "order": 10,
+    "show_in_annotation": true,
+    "highlight": true,
+    "inferable": true,
+    "tier": "B",
+    "decision_reason": "Однокамерный, двухкамерный, Side-by-Side и другие",
+    "coverage_now": 41,
+    "coverage_final": 49,
+    "valid_range": null,
+    "synonyms": [
+      "Тип холодильника",
+      "Тип"
+    ],
+    "blacklist": [
+      "Тип компрессора",
+      "Тип управления",
+      "Тип хладагента",
+      "Тип ручки"
+    ],
+    "facet": {
+      "enabled": true,
+      "label": "Тип холодильника",
+      "kind": "enum"
+    }
+  },
+  {
+    "code": "chambers",
+    "name": "Количество камер",
+    "description": "Сколько камер",
+    "type": "integer",
+    "unit": null,
+    "cardinality": "single",
+    "order": 20,
+    "show_in_annotation": true,
+    "highlight": true,
+    "inferable": false,
+    "tier": "B",
+    "decision_reason": "Сколько камер",
+    "coverage_now": 40,
+    "coverage_final": 39,
+    "valid_range": [
+      1,
+      5
+    ],
+    "synonyms": [
+      "Количество камер",
+      "Количество камер, шт."
+    ],
+    "blacklist": [],
+    "facet": {
+      "enabled": true,
+      "label": "Количество камер",
+      "kind": "enum"
+    }
+  },
+  {
+    "code": "doors",
+    "name": "Количество дверей",
+    "description": "Сколько дверей",
+    "type": "integer",
+    "unit": null,
+    "cardinality": "single",
+    "order": 30,
+    "show_in_annotation": true,
+    "highlight": false,
+    "inferable": false,
+    "tier": "C",
+    "decision_reason": "Сколько дверей",
+    "coverage_now": 25,
+    "coverage_final": 25,
+    "valid_range": [
+      1,
+      5
+    ],
+    "synonyms": [
+      "Количество дверей",
+      "Количество дверей, шт."
+    ],
+    "blacklist": [],
+    "facet": {
+      "enabled": false,
+      "reason": "Не входит в согласованный набор фасетов категории"
+    }
+  },
+  {
+    "code": "freezer_pos",
+    "name": "Расположение морозильной камеры",
+    "description": "Морозильная камера сверху, снизу или её нет",
+    "type": "enum",
+    "unit": null,
+    "cardinality": "single",
+    "order": 40,
+    "show_in_annotation": true,
+    "highlight": true,
+    "inferable": true,
+    "tier": "B",
+    "decision_reason": "Морозильная камера сверху, снизу или её нет",
+    "coverage_now": 21,
+    "coverage_final": 22,
+    "valid_range": null,
+    "synonyms": [
+      "Расположение морозильной камеры",
+      "Расположение морозильной камеры / НТО",
+      "Расположение морозильнойкамеры"
+    ],
+    "blacklist": [],
+    "facet": {
+      "enabled": true,
+      "label": "Расположение морозильной камеры",
+      "kind": "enum"
+    }
+  },
+  {
+    "code": "vol_total",
+    "name": "Общий объём",
+    "description": "Общий объём холодильника в литрах",
+    "type": "number",
+    "unit": "л",
+    "cardinality": "single",
+    "order": 50,
+    "show_in_annotation": true,
+    "highlight": true,
+    "inferable": false,
+    "tier": "A",
+    "decision_reason": "Общий объём холодильника в литрах",
+    "coverage_now": 87,
+    "coverage_final": 94,
+    "valid_range": [
+      15,
+      1200
+    ],
+    "synonyms": [
+      "Общий объём",
+      "Объем брутто (л)/Общий",
+      "Общий объем",
+      "Общий полезный объем, л",
+      "Общий объем, л",
+      "Общий объем, л.",
+      "Общий объем в упаковке, м³",
+      "Общий полезный объем (л)",
+      "Общий объем, Литр.",
+      "Общий полезный объем",
+      "Общий объем холодильной камеры",
+      "Общий объем холодильника",
+      "Общий объем морозильной камеры",
+      "Общий объем брутто, л",
+      "Общий объем холодильнойкамеры",
+      "Объем брутто (л)/Морозильная камера",
+      "Объем брутто (л)/Холодильная камера",
+      "Общий объем (л)",
+      "Общий объемхолодильника",
+      "Общий объем морозильнойкамеры",
+      "Общий полезный объем, л.",
+      "Общий объем, Литр. 242",
+      "Общий объем холодильной камеры, л",
+      "Общий объем морозильной камеры, л",
+      "Общий объем холодильника (л)",
+      "Общий объем в упаковке, м³ 0.1"
+    ],
+    "blacklist": [
+      "Объём холодильной камеры",
+      "Объём морозильной камеры"
+    ],
+    "facet": {
+      "enabled": true,
+      "label": "Общий объём, л",
+      "kind": "range",
+      "step": 50,
+      "bound_rule": "left_closed",
+      "open_last": true
+    }
+  },
+  {
+    "code": "vol_fridge",
+    "name": "Объём холодильной камеры",
+    "description": "Объём холодильного отделения",
+    "type": "number",
+    "unit": "л",
+    "cardinality": "single",
+    "order": 60,
+    "show_in_annotation": true,
+    "highlight": true,
+    "inferable": false,
+    "tier": "B",
+    "decision_reason": "Объём холодильного отделения",
+    "coverage_now": 67,
+    "coverage_final": 74,
+    "valid_range": [
+      5,
+      900
+    ],
+    "synonyms": [
+      "Объём холодильной камеры",
+      "Объем холодильной камеры, л",
+      "Объем холодильной камеры",
+      "Полезный объем холодильной камеры",
+      "Объем холодильной камеры (л)",
+      "Объем холодильной камеры, л.",
+      "Объем холодильной камеры, Литр.",
+      "Общий объем холодильной камеры",
+      "Общий объем холодильника",
+      "Полезный объем холодильника",
+      "Полезный объем холодильной камеры, л",
+      "Полезный объем холодильной камеры, л.",
+      "Общий объем холодильнойкамеры",
+      "Полезный объем холодильнойкамеры",
+      "Полезный объем холодильного отделения, л.",
+      "Объем холодильной камеры, Литр. 242",
+      "Общий объем холодильной камеры, л",
+      "Общий объем холодильника (л)"
+    ],
+    "blacklist": [
+      "Общий объём",
+      "Объём морозильной камеры"
+    ],
+    "facet": {
+      "enabled": true,
+      "label": "Объём холодильной камеры, л",
+      "kind": "range",
+      "step": 50,
+      "bound_rule": "left_closed",
+      "open_last": true
+    }
+  },
+  {
+    "code": "vol_freezer",
+    "name": "Объём морозильной камеры",
+    "description": "Объём морозильного отделения",
+    "type": "number",
+    "unit": "л",
+    "cardinality": "single",
+    "order": 70,
+    "show_in_annotation": true,
+    "highlight": true,
+    "inferable": false,
+    "tier": "B",
+    "decision_reason": "Объём морозильного отделения",
+    "coverage_now": 62,
+    "coverage_final": 69,
+    "valid_range": [
+      1,
+      600
+    ],
+    "synonyms": [
+      "Объём морозильной камеры",
+      "Объем морозильной камеры, л",
+      "Объем морозильной камеры",
+      "Объем морозильной камеры (л)",
+      "Объем морозильной камеры/НТО, л.",
+      "Полезный объем морозильной камеры",
+      "Объем морозильной камеры, Литр.",
+      "Полезный объем морозильной камеры / НТО",
+      "Общий объем морозильной камеры",
+      "Полезный объем морозильной камеры, л.",
+      "Полезный объем морозильной камеры, л",
+      "Полезный объем морозильной камеры (л)",
+      "Общий объем морозильнойкамеры",
+      "Полезный объем морозильнойкамеры",
+      "Полезный объём морозильной камеры, л",
+      "Объем морозильной камеры, л -108",
+      "Объем морозильной камеры (НТО), Литр. -",
+      "Общий объем морозильной камеры, л"
+    ],
+    "blacklist": [
+      "Общий объём",
+      "Объём холодильной камеры"
+    ],
+    "facet": {
+      "enabled": true,
+      "label": "Объём морозильной камеры, л",
+      "kind": "range",
+      "step": 50,
+      "bound_rule": "left_closed",
+      "open_last": true
+    }
+  },
+  {
+    "code": "cooling",
+    "name": "Система охлаждения",
+    "description": "No Frost не требует размораживания вручную",
+    "type": "enum",
+    "unit": null,
+    "cardinality": "single",
+    "order": 80,
+    "show_in_annotation": true,
+    "highlight": true,
+    "inferable": true,
+    "tier": "B",
+    "decision_reason": "No Frost не требует размораживания вручную",
+    "coverage_now": 40,
+    "coverage_final": 42,
+    "valid_range": null,
+    "synonyms": [
+      "Система охлаждения",
+      "Технология охлаждения холодильной камеры",
+      "Технология охлаждения морозильной камеры",
+      "Технология охлаждения",
+      "Технология охлаждения морозильной камеры -No Frost"
+    ],
+    "blacklist": [
+      "Размораживание холодильной камеры",
+      "Размораживание морозильной камеры"
+    ],
+    "facet": {
+      "enabled": true,
+      "label": "Система охлаждения",
+      "kind": "enum"
+    }
+  },
+  {
+    "code": "defrost_fridge",
+    "name": "Размораживание холодильной камеры",
+    "description": "Способ размораживания холодильного отделения",
+    "type": "enum",
+    "unit": null,
+    "cardinality": "single",
+    "order": 90,
+    "show_in_annotation": true,
+    "highlight": false,
+    "inferable": true,
+    "tier": "C",
+    "decision_reason": "Способ размораживания холодильного отделения",
+    "coverage_now": 37,
+    "coverage_final": 42,
+    "valid_range": null,
+    "synonyms": [
+      "Размораживание холодильной камеры",
+      "Оттаивание холодильной камеры",
+      "Размораживание холодильной камеры- капельная система",
+      "Размораживание холодильной камеры ручное",
+      "Размораживание холодильной камеры- автоматическое",
+      "Оттаивание холодильной камеры ручное"
+    ],
+    "blacklist": [
+      "Размораживание морозильной камеры"
+    ],
+    "facet": {
+      "enabled": false,
+      "reason": "Не входит в согласованный набор фасетов категории"
+    }
+  },
+  {
+    "code": "defrost_freezer",
+    "name": "Размораживание морозильной камеры",
+    "description": "Способ размораживания морозильного отделения",
+    "type": "enum",
+    "unit": null,
+    "cardinality": "single",
+    "order": 100,
+    "show_in_annotation": true,
+    "highlight": false,
+    "inferable": true,
+    "tier": "C",
+    "decision_reason": "Способ размораживания морозильного отделения",
+    "coverage_now": 34,
+    "coverage_final": 38,
+    "valid_range": null,
+    "synonyms": [
+      "Размораживание морозильной камеры",
+      "Размораживание морозильной камеры / НТО",
+      "Размораживание морозильной камеры -No Frost",
+      "Размораживание морозильной камеры ручное"
+    ],
+    "blacklist": [
+      "Размораживание холодильной камеры"
+    ],
+    "facet": {
+      "enabled": false,
+      "reason": "Не входит в согласованный набор фасетов категории"
+    }
+  },
+  {
+    "code": "energy_class",
+    "name": "Класс энергоэффективности",
+    "description": "Экономичность по электроэнергии: от A+++ до G",
+    "type": "class_scale",
+    "unit": null,
+    "cardinality": "single",
+    "order": 110,
+    "show_in_annotation": true,
+    "highlight": true,
+    "inferable": true,
+    "tier": "A",
+    "decision_reason": "Экономичность по электроэнергии: от A+++ до G",
+    "coverage_now": 83,
+    "coverage_final": 88,
+    "valid_range": null,
+    "synonyms": [
+      "Класс энергоэффективности",
+      "Класс энергопотребления",
+      "Класс энергопотребления (Приказ №357 МинПромТорг РФ)",
+      "Класс энергосбережения",
+      "Класс энергопотребления (Приказ №357 МинПромТорг"
+    ],
+    "blacklist": [
+      "Климатический класс",
+      "Энергопотребление за год"
+    ],
+    "facet": {
+      "enabled": true,
+      "label": "Класс энергоэффективности",
+      "kind": "enum"
+    }
+  },
+  {
+    "code": "climate_class",
+    "name": "Климатический класс",
+    "description": "Допустимая температура в помещении",
+    "type": "enum",
+    "unit": null,
+    "cardinality": "multi",
+    "order": 120,
+    "show_in_annotation": true,
+    "highlight": false,
+    "inferable": true,
+    "tier": "C",
+    "decision_reason": "Допустимая температура в помещении",
+    "coverage_now": 80,
+    "coverage_final": 88,
+    "valid_range": null,
+    "synonyms": [
+      "Климатический класс",
+      "Климатический класс -N, ST, T"
+    ],
+    "blacklist": [
+      "Класс энергоэффективности"
+    ],
+    "facet": {
+      "enabled": false,
+      "reason": "Не входит в согласованный набор фасетов категории"
+    }
+  },
+  {
+    "code": "refrigerant",
+    "name": "Хладагент",
+    "description": "Какой хладагент используется",
+    "type": "enum",
+    "unit": null,
+    "cardinality": "single",
+    "order": 130,
+    "show_in_annotation": true,
+    "highlight": false,
+    "inferable": true,
+    "tier": "C",
+    "decision_reason": "Какой хладагент используется",
+    "coverage_now": 59,
+    "coverage_final": 64,
+    "valid_range": null,
+    "synonyms": [
+      "Хладагент",
+      "Тип хладагента",
+      "Хладагент и его количество",
+      "Вес хладагента, г.",
+      "Объем хладагента (г)",
+      "Объем хладагента, г."
+    ],
+    "blacklist": [],
+    "facet": {
+      "enabled": false,
+      "reason": "Не входит в согласованный набор фасетов категории"
+    }
+  },
+  {
+    "code": "compressors",
+    "name": "Количество компрессоров",
+    "description": "Сколько компрессоров",
+    "type": "integer",
+    "unit": null,
+    "cardinality": "single",
+    "order": 140,
+    "show_in_annotation": true,
+    "highlight": false,
+    "inferable": false,
+    "tier": "C",
+    "decision_reason": "Сколько компрессоров",
+    "coverage_now": 58,
+    "coverage_final": 58,
+    "valid_range": [
+      1,
+      3
+    ],
+    "synonyms": [
+      "Количество компрессоров",
+      "Количество компрессоров, шт.",
+      "Количество компрессоров (шт)",
+      "Количество компрессоров -1"
+    ],
+    "blacklist": [
+      "Тип компрессора"
+    ],
+    "facet": {
+      "enabled": false,
+      "reason": "Не входит в согласованный набор фасетов категории"
+    }
+  },
+  {
+    "code": "compressor_type",
+    "name": "Тип компрессора",
+    "description": "Инверторный тише и экономичнее",
+    "type": "enum",
+    "unit": null,
+    "cardinality": "single",
+    "order": 150,
+    "show_in_annotation": true,
+    "highlight": true,
+    "inferable": true,
+    "tier": "B",
+    "decision_reason": "Инверторный тише и экономичнее",
+    "coverage_now": 37,
+    "coverage_final": 39,
+    "valid_range": null,
+    "synonyms": [
+      "Тип компрессора",
+      "Тип компрессора -Стандартный"
+    ],
+    "blacklist": [
+      "Количество компрессоров"
+    ],
+    "facet": {
+      "enabled": true,
+      "label": "Тип компрессора",
+      "kind": "enum"
+    }
+  },
+  {
+    "code": "noise",
+    "name": "Уровень шума",
+    "description": "Шум при работе",
+    "type": "number",
+    "unit": "дБ",
+    "cardinality": "single",
+    "order": 160,
+    "show_in_annotation": true,
+    "highlight": true,
+    "inferable": false,
+    "tier": "A",
+    "decision_reason": "Шум при работе",
+    "coverage_now": 82,
+    "coverage_final": 90,
+    "valid_range": [
+      15,
+      90
+    ],
+    "synonyms": [
+      "Уровень шума",
+      "Уровень шума дБ (А)",
+      "Уровень шума (дБА)",
+      "Максимальный уровень шума, дБ",
+      "Уровень шума, дБ",
+      "Уровень шума (дБ)",
+      "Уровень шума, дБ (А)",
+      "Уровень шума, дБА",
+      "Уровень шума (Дб)",
+      "Максимальный уровень шума, дБ 42",
+      "Уровень шума, Дб",
+      "Уровень шума, дБ 41",
+      "Макс. уровень шума, дБ",
+      "Максимальный уровень шума",
+      "Максимальный уровень шума, дБ 41"
+    ],
+    "blacklist": [],
+    "facet": {
+      "enabled": true,
+      "label": "Уровень шума, дБ",
+      "kind": "range",
+      "step": 5,
+      "bound_rule": "left_closed",
+      "open_last": true
+    }
+  },
+  {
+    "code": "freeze_power",
+    "name": "Мощность замораживания",
+    "description": "Сколько кг продуктов замерзает за сутки",
+    "type": "number",
+    "unit": "кг/сут",
+    "cardinality": "single",
+    "order": 170,
+    "show_in_annotation": true,
+    "highlight": false,
+    "inferable": false,
+    "tier": "B",
+    "decision_reason": "Сколько кг продуктов замерзает за сутки",
+    "coverage_now": 60,
+    "coverage_final": 63,
+    "valid_range": [
+      0.5,
+      40
+    ],
+    "synonyms": [
+      "Мощность замораживания",
+      "Мощность замораживания (кг/сут)",
+      "Мощность замораживания, кг/24ч",
+      "Мощность замораживания, кг/сутки",
+      "Мощность замораживания, кг/24 ч",
+      "Мощность замораживания при температуре окр. среды +25°С",
+      "Мощность замораживания (кг/сутки)",
+      "Мощность замораживания при температуре окр. среды +25°С , кг/сут",
+      "Мощность замораживания, кг/ 24 ч",
+      "Мощность замораживания, кг/сутки + 5",
+      "Мощность замораживания (кг / 24 ч)",
+      "Мощность замораживания при температуре окр. среды +25°С, кг/сутки"
+    ],
+    "blacklist": [],
+    "facet": {
+      "enabled": true,
+      "label": "Мощность замораживания, кг/сут",
+      "kind": "range",
+      "step": 2,
+      "bound_rule": "left_closed",
+      "open_last": true
+    }
+  },
+  {
+    "code": "height",
+    "name": "Высота",
+    "description": "Высота холодильника",
+    "type": "number",
+    "unit": "см",
+    "cardinality": "single",
+    "order": 180,
+    "show_in_annotation": true,
+    "highlight": true,
+    "inferable": false,
+    "tier": "B",
+    "decision_reason": "Высота холодильника",
+    "coverage_now": 53,
+    "coverage_final": 69,
+    "valid_range": [
+      40,
+      250
+    ],
+    "synonyms": [
+      "Высота",
+      "Высота, см",
+      "Высота (см)",
+      "высота (см)",
+      "Высота, см."
+    ],
+    "blacklist": [
+      "Высота товарной упаковки"
+    ],
+    "facet": {
+      "enabled": true,
+      "label": "Высота, см",
+      "kind": "range",
+      "step": 5,
+      "bound_rule": "left_closed",
+      "open_last": true
+    }
+  },
+  {
+    "code": "width",
+    "name": "Ширина",
+    "description": "Ширина холодильника",
+    "type": "number",
+    "unit": "см",
+    "cardinality": "single",
+    "order": 190,
+    "show_in_annotation": true,
+    "highlight": true,
+    "inferable": false,
+    "tier": "B",
+    "decision_reason": "Ширина холодильника",
+    "coverage_now": 35,
+    "coverage_final": 58,
+    "valid_range": [
+      30,
+      200
+    ],
+    "synonyms": [
+      "Ширина",
+      "Ширина, см",
+      "Ширина (см)",
+      "ширина (см)",
+      "Ширина, см."
+    ],
+    "blacklist": [
+      "Ширина товарной упаковки"
+    ],
+    "facet": {
+      "enabled": true,
+      "label": "Ширина, см",
+      "kind": "range",
+      "step": 5,
+      "bound_rule": "left_closed",
+      "open_last": true
+    }
+  },
+  {
+    "code": "depth",
+    "name": "Глубина",
+    "description": "Глубина холодильника",
+    "type": "number",
+    "unit": "см",
+    "cardinality": "single",
+    "order": 200,
+    "show_in_annotation": true,
+    "highlight": true,
+    "inferable": false,
+    "tier": "B",
+    "decision_reason": "Глубина холодильника",
+    "coverage_now": 34,
+    "coverage_final": 61,
+    "valid_range": [
+      25,
+      150
+    ],
+    "synonyms": [
+      "Глубина",
+      "Глубина, см",
+      "Глубина (см)",
+      "Глубина, см."
+    ],
+    "blacklist": [
+      "Глубина товарной упаковки",
+      "Глубина с открытой дверцей"
+    ],
+    "facet": {
+      "enabled": true,
+      "label": "Глубина, см",
+      "kind": "range",
+      "step": 5,
+      "bound_rule": "left_closed",
+      "open_last": true
+    }
+  },
+  {
+    "code": "dims",
+    "name": "Габариты (ШхВхГ)",
+    "description": "Три размера одной строкой, как в выгрузке",
+    "type": "dimensions",
+    "unit": "см",
+    "cardinality": "single",
+    "order": 210,
+    "show_in_annotation": true,
+    "highlight": false,
+    "inferable": false,
+    "tier": "C",
+    "decision_reason": "Три размера одной строкой, как в выгрузке",
+    "coverage_now": 10,
+    "coverage_final": 17,
+    "valid_range": null,
+    "synonyms": [
+      "Габариты (ШхВхГ)",
+      "Размеры (ШхГхВ)",
+      "Размеры(ШхВхГ)",
+      "Габариты",
+      "Размеры холодильника (ВхШхГ) (см)",
+      "Габариты (ШxГxВ)",
+      "Габариты и вес",
+      "Размеры (ШхВхГ)",
+      "РАЗМЕРЫ (Ш Х В Х Г), ММ",
+      "Размеры, мм (ШхГхВ)",
+      "Габариты (ВхШхГ)",
+      "Размеры",
+      "Ширина х Высота х Глубина без упаковки (см)",
+      "Ширина х Высота х Глубина без упаковки",
+      "Ширина х Высота х Глубина (см)",
+      "Габариты без упаковки",
+      "Размеры без упаковки"
+    ],
+    "blacklist": [
+      "Габариты в упаковке",
+      "Ширина х Высота х Глубина в упаковке",
+      "Ширина х Высота х Глубина в упаковке (см)",
+      "Габариты с учётом упаковки",
+      "Размеры товарной упаковки"
+    ],
+    "facet": {
+      "enabled": false,
+      "reason": "Не входит в согласованный набор фасетов категории"
+    }
+  },
+  {
+    "code": "weight",
+    "name": "Вес",
+    "description": "Вес холодильника без упаковки",
+    "type": "number",
+    "unit": "кг",
+    "cardinality": "single",
+    "order": 220,
+    "show_in_annotation": true,
+    "highlight": false,
+    "inferable": false,
+    "tier": "C",
+    "decision_reason": "Вес холодильника без упаковки",
+    "coverage_now": 82,
+    "coverage_final": 92,
+    "valid_range": [
+      5,
+      400
+    ],
+    "synonyms": [
+      "Вес",
+      "Вес (кг)",
+      "Вес нетто (кг)",
+      "Вес, кг",
+      "Масса, кг., не более",
+      "Вес нетто, кг",
+      "Вес нетто",
+      "Масса (нетто), кг не более",
+      "Вес(нетто)",
+      "Масса (нетто), кг",
+      "Вес (нетто)",
+      "Вес нетто, к г- 69.5"
+    ],
+    "blacklist": [
+      "Вес брутто",
+      "Вес в упаковке",
+      "Вес брутто (кг)",
+      "Вес брутто, кг",
+      "Масса брутто"
+    ],
+    "facet": {
+      "enabled": false,
+      "reason": "Не входит в согласованный набор фасетов категории"
+    }
+  },
+  {
+    "code": "color",
+    "name": "Цвет корпуса",
+    "description": "Цвет корпуса холодильника",
+    "type": "enum",
+    "unit": null,
+    "cardinality": "single",
+    "order": 230,
+    "show_in_annotation": true,
+    "highlight": false,
+    "inferable": true,
+    "tier": "B",
+    "decision_reason": "Цвет корпуса холодильника",
+    "coverage_now": 48,
+    "coverage_final": 63,
+    "valid_range": null,
+    "synonyms": [
+      "Цвет корпуса",
+      "Цвет"
+    ],
+    "blacklist": [
+      "Цвет двери",
+      "Цвет ручки"
+    ],
+    "facet": {
+      "enabled": true,
+      "label": "Цвет корпуса",
+      "kind": "enum"
+    }
+  },
+  {
+    "code": "control_type",
+    "name": "Тип управления",
+    "description": "Кнопки, сенсор или механический переключатель",
+    "type": "enum",
+    "unit": null,
+    "cardinality": "multi",
+    "order": 240,
+    "show_in_annotation": true,
+    "highlight": false,
+    "inferable": true,
+    "tier": "A",
+    "decision_reason": "Кнопки, сенсор или механический переключатель",
+    "coverage_now": 70,
+    "coverage_final": 79,
+    "valid_range": null,
+    "synonyms": [
+      "Тип управления",
+      "Управление",
+      "Система управления"
+    ],
+    "blacklist": [],
+    "facet": {
+      "enabled": true,
+      "label": "Тип управления",
+      "kind": "enum"
+    }
+  },
+  {
+    "code": "display",
+    "name": "Дисплей",
+    "description": "Есть ли экран",
+    "type": "boolean",
+    "unit": null,
+    "cardinality": "single",
+    "order": 250,
+    "show_in_annotation": true,
+    "highlight": false,
+    "inferable": true,
+    "tier": "C",
+    "decision_reason": "Есть ли экран",
+    "coverage_now": 14,
+    "coverage_final": 15,
+    "valid_range": null,
+    "synonyms": [
+      "Дисплей",
+      "Тип дисплея",
+      "Тип индикации"
+    ],
+    "blacklist": [],
+    "facet": {
+      "enabled": false,
+      "reason": "Не входит в согласованный набор фасетов категории"
+    }
+  },
+  {
+    "code": "door_reversible",
+    "name": "Перенавешиваемые двери",
+    "description": "Дверь можно перевесить на другую сторону",
+    "type": "boolean",
+    "unit": null,
+    "cardinality": "single",
+    "order": 260,
+    "show_in_annotation": true,
+    "highlight": false,
+    "inferable": true,
+    "tier": "C",
+    "decision_reason": "Дверь можно перевесить на другую сторону",
+    "coverage_now": 35,
+    "coverage_final": 39,
+    "valid_range": null,
+    "synonyms": [
+      "Перенавешиваемые двери",
+      "Возможность перевешивания двери",
+      "Перенавешиваемые двери -Да",
+      "Перенавешиваемые двери.",
+      "Перенавешиваемая дверь"
+    ],
+    "blacklist": [],
+    "facet": {
+      "enabled": false,
+      "reason": "Не входит в согласованный набор фасетов категории"
+    }
+  },
+  {
+    "code": "shelf_material",
+    "name": "Материал полок",
+    "description": "Из чего сделаны полки",
+    "type": "enum",
+    "unit": null,
+    "cardinality": "single",
+    "order": 270,
+    "show_in_annotation": true,
+    "highlight": false,
+    "inferable": true,
+    "tier": "C",
+    "decision_reason": "Из чего сделаны полки",
+    "coverage_now": 38,
+    "coverage_final": 39,
+    "valid_range": null,
+    "synonyms": [
+      "Материал полок",
+      "Материал полок в камере",
+      "Материал полок на двери",
+      "Материал полок стекло/пластик",
+      "Материал полок холодильной камеры",
+      "Материал полок металл"
+    ],
+    "blacklist": [],
+    "facet": {
+      "enabled": false,
+      "reason": "Не входит в согласованный набор фасетов категории"
+    }
+  },
+  {
+    "code": "lighting",
+    "name": "Освещение",
+    "description": "Тип освещения внутри",
+    "type": "enum",
+    "unit": null,
+    "cardinality": "single",
+    "order": 280,
+    "show_in_annotation": true,
+    "highlight": false,
+    "inferable": true,
+    "tier": "C",
+    "decision_reason": "Тип освещения внутри",
+    "coverage_now": 34,
+    "coverage_final": 41,
+    "valid_range": null,
+    "synonyms": [
+      "Освещение",
+      "Система освещения",
+      "Система освещения (мороз.)",
+      "Система освещения -LED"
+    ],
+    "blacklist": [],
+    "facet": {
+      "enabled": false,
+      "reason": "Не входит в согласованный набор фасетов категории"
+    }
+  },
+  {
+    "code": "energy_year",
+    "name": "Энергопотребление за год",
+    "description": "Расход электроэнергии за год",
+    "type": "number",
+    "unit": "кВт·ч/год",
+    "cardinality": "single",
+    "order": 290,
+    "show_in_annotation": true,
+    "highlight": false,
+    "inferable": false,
+    "tier": "C",
+    "decision_reason": "Расход электроэнергии за год",
+    "coverage_now": 32,
+    "coverage_final": 33,
+    "valid_range": [
+      20,
+      900
+    ],
+    "synonyms": [
+      "Энергопотребление за год",
+      "Энергопотребление",
+      "Энергопотребление (кВтч/г)",
+      "Энергопотребление, кВтч/год",
+      "Энергопотребление, кВтч/24ч",
+      "Энергопотребление, кВтч/г",
+      "Энергопотребление в год, кВт·ч/год",
+      "Энергопотребление в год",
+      "Энергопотребление (кВтч/год)",
+      "Потребляемая энергия",
+      "Годовое потребление электроэнергии",
+      "Взвешенное годовое потребление энергии"
+    ],
+    "blacklist": [
+      "Класс энергоэффективности"
+    ],
+    "facet": {
+      "enabled": false,
+      "reason": "Не входит в согласованный набор фасетов категории"
+    }
+  },
+  {
+    "code": "country",
+    "name": "Страна производства",
+    "description": "Страна производства",
+    "type": "enum",
+    "unit": null,
+    "cardinality": "single",
+    "order": 300,
+    "show_in_annotation": true,
+    "highlight": false,
+    "inferable": true,
+    "tier": "C",
+    "decision_reason": "Страна производства",
+    "coverage_now": 15,
+    "coverage_final": 20,
+    "valid_range": null,
+    "synonyms": [
+      "Страна производства",
+      "Страна-производитель"
+    ],
+    "blacklist": [],
+    "facet": {
+      "enabled": false,
+      "reason": "Не входит в согласованный набор фасетов категории"
+    }
+  }
+]

@@ -1,0 +1,1101 @@
+[
+  {
+    "code": "brand",
+    "name": "Бренд",
+    "description": "Производитель, как будет отображаться в карточке и фильтре",
+    "type": "enum",
+    "unit": null,
+    "cardinality": "single",
+    "order": 0,
+    "show_in_annotation": true,
+    "highlight": true,
+    "inferable": true,
+    "tier": "A",
+    "decision_reason": "Идентичность товара; извлекается из наименования без обратной записи",
+    "coverage_now": 0,
+    "coverage_final": 99,
+    "valid_range": null,
+    "synonyms": [
+      "Бренд",
+      "Производитель",
+      "Марка",
+      "Торговая марка"
+    ],
+    "blacklist": [
+      "Артикул",
+      "Модель",
+      "Линейка"
+    ],
+    "value_aliases": {
+      "Haier": [
+        "Haier",
+        "HAIER",
+        "Хайер"
+      ],
+      "Бирюса": [
+        "Бирюса",
+        "БИРЮСА",
+        "Biryusa",
+        "BIRYUSA"
+      ],
+      "Candy": [
+        "Candy",
+        "CANDY",
+        "Канди"
+      ],
+      "Indesit": [
+        "Indesit",
+        "INDESIT",
+        "Индезит"
+      ],
+      "DON": [
+        "DON",
+        "ДОН",
+        "Дон"
+      ],
+      "LG": [
+        "LG"
+      ],
+      "Pozis": [
+        "Pozis",
+        "POZIS",
+        "ПОЗИС",
+        "Позис"
+      ],
+      "Орск": [
+        "Орск",
+        "ОРСК",
+        "ORSK"
+      ],
+      "ATLANT": [
+        "ATLANT",
+        "АТЛАНТ",
+        "Атлант"
+      ],
+      "Samsung": [
+        "Samsung",
+        "SAMSUNG",
+        "Самсунг"
+      ],
+      "Beko": [
+        "Beko",
+        "BEKO",
+        "Беко"
+      ],
+      "Centek": [
+        "Centek",
+        "CENTEK",
+        "Центек"
+      ],
+      "Kraft": [
+        "Kraft",
+        "KRAFT",
+        "Крафт"
+      ],
+      "Hotpoint-Ariston": [
+        "Hotpoint-Ariston",
+        "Hotpoint Ariston",
+        "HOTPOINT"
+      ],
+      "Pioneer": [
+        "Pioneer",
+        "PIONEER",
+        "Пионер"
+      ],
+      "Саратов": [
+        "Саратов",
+        "САРАТОВ",
+        "Saratov"
+      ],
+      "Esperanza": [
+        "Esperanza",
+        "ESPERANZA"
+      ],
+      "Renova": [
+        "Renova",
+        "RENOVA",
+        "Ренова"
+      ],
+      "Stinol": [
+        "Stinol",
+        "STINOL",
+        "Стинол"
+      ],
+      "Leonord": [
+        "Leonord",
+        "LEONORD"
+      ],
+      "Свияга": [
+        "Свияга",
+        "СВИЯГА"
+      ],
+      "Gorenje": [
+        "Gorenje",
+        "GORENJE",
+        "Горенье"
+      ]
+    },
+    "facet": {
+      "enabled": true,
+      "label": "Бренд",
+      "kind": "enum"
+    }
+  },
+  {
+    "code": "load_type",
+    "name": "Тип загрузки",
+    "description": "Спереди (фронтальная) или сверху (вертикальная)",
+    "type": "enum",
+    "unit": null,
+    "cardinality": "single",
+    "order": 10,
+    "show_in_annotation": true,
+    "highlight": true,
+    "inferable": true,
+    "tier": "B",
+    "decision_reason": "Спереди (фронтальная) или сверху (вертикальная)",
+    "coverage_now": 58,
+    "coverage_final": 55,
+    "valid_range": null,
+    "synonyms": [
+      "Тип загрузки",
+      "Загрузка",
+      "Тип загрузки фронтальная",
+      "Тип загрузки фронтальная."
+    ],
+    "blacklist": [],
+    "facet": {
+      "enabled": true,
+      "label": "Тип загрузки",
+      "kind": "enum"
+    }
+  },
+  {
+    "code": "load_max",
+    "name": "Максимальная загрузка белья",
+    "description": "Сколько кг белья можно загрузить за стирку",
+    "type": "number",
+    "unit": "кг",
+    "cardinality": "single",
+    "order": 20,
+    "show_in_annotation": true,
+    "highlight": true,
+    "inferable": false,
+    "tier": "A",
+    "decision_reason": "Сколько кг белья можно загрузить за стирку",
+    "coverage_now": 86,
+    "coverage_final": 88,
+    "valid_range": [
+      1,
+      25
+    ],
+    "synonyms": [
+      "Максимальная загрузка белья",
+      "Загрузка белья, кг",
+      "Максимальная загрузка белья при стирке",
+      "Загрузка белья",
+      "Максимальная загрузка для стирки, кг",
+      "Максимальная загрузка",
+      "Дозагрузка белья во время работы",
+      "Загрузка, кг",
+      "Загрузка белья, кг.",
+      "Максимальная загрузка при стирке (кг)",
+      "Дозагрузка белья",
+      "Максимальная загрузка белья (кг)",
+      "Загрузка белья для стирки и отжима",
+      "Загрузка белья, кг (стирка)",
+      "Максимальная загрузка сухого белья (кг)",
+      "Максимальная загрузка при стирке, Кг",
+      "Номинальная загрузка (кг)",
+      "Максимальная загрузка, кг",
+      "Максимальная загрузка для стирки",
+      "Загрузка белья (кг)",
+      "Максимальная загрузка белья для сушки",
+      "Максимальная загрузка белья для сушки (кг)",
+      "Загрузка белья, кг (сушка)",
+      "Загрузка, кг (Стирка)",
+      "Загрузка, кг (Сушка)",
+      "Загрузка (кг)",
+      "Максимальная загрузка для сушки (кг)",
+      "Максимальная загрузка при стирке",
+      "Загрузка белья для сушки, кг",
+      "Максимальная загрузка при сушке (кг)",
+      "Загрузка белья для стирки, кг.",
+      "Загрузка белья для сушки, кг.",
+      "Максимальная загрузка для сушки, кг"
+    ],
+    "blacklist": [
+      "Дозагрузка белья",
+      "Загрузка белья для сушки"
+    ],
+    "facet": {
+      "enabled": true,
+      "label": "Загрузка белья, кг",
+      "kind": "enum"
+    }
+  },
+  {
+    "code": "spin_max",
+    "name": "Максимальная скорость отжима",
+    "description": "Обороты барабана при отжиме: выше — суше бельё",
+    "type": "number",
+    "unit": "об/мин",
+    "cardinality": "single",
+    "order": 30,
+    "show_in_annotation": true,
+    "highlight": true,
+    "inferable": false,
+    "tier": "A",
+    "decision_reason": "Обороты барабана при отжиме: выше — суше бельё",
+    "coverage_now": 83,
+    "coverage_final": 84,
+    "valid_range": [
+      300,
+      2200
+    ],
+    "synonyms": [
+      "Максимальная скорость отжима",
+      "Скорость отжима, об/мин",
+      "Скорость вращения при отжиме",
+      "Макс. скорость отжима",
+      "Скорость отжима",
+      "Максимальная скорость отжима, об./мин.",
+      "Максимальная скорость отжима, об/мин",
+      "Максимальная скорость отжима, об/мин.",
+      "Максимальное число оборотов при отжиме, об/мин",
+      "Максимальная скорость отжима, об./мин",
+      "Регулируемая скорость отжима",
+      "Максимальная скорость отжима (об/мин)",
+      "Максимальное количество оборотов при отжиме, об/мин",
+      "Максимальная скорость вращения барабана при отжиме (об/мин)",
+      "Скорость вращения барабана при отжиме",
+      "Скорость отжима, об/мин -1000",
+      "Максимальная скорость отжима, об./мин. 1200."
+    ],
+    "blacklist": [
+      "Диапазон регулировки скорости отжима",
+      "Выбор скорости отжима",
+      "Класс отжима"
+    ],
+    "facet": {
+      "enabled": true,
+      "label": "Скорость отжима, об/мин",
+      "kind": "range",
+      "step": 200,
+      "bound_rule": "left_closed",
+      "open_last": true
+    }
+  },
+  {
+    "code": "energy_class",
+    "name": "Класс энергоэффективности",
+    "description": "Экономичность по электроэнергии: от A+++ до G",
+    "type": "class_scale",
+    "unit": null,
+    "cardinality": "single",
+    "order": 40,
+    "show_in_annotation": true,
+    "highlight": true,
+    "inferable": true,
+    "tier": "A",
+    "decision_reason": "Экономичность по электроэнергии: от A+++ до G",
+    "coverage_now": 77,
+    "coverage_final": 78,
+    "valid_range": null,
+    "synonyms": [
+      "Класс энергоэффективности",
+      "Класс энергопотребления",
+      "Класс энергопотребления (Приказ №357 МинПромТорг РФ)",
+      "Класс энергоэффективности (IEC)",
+      "Класс энергоэффективности (ERP)",
+      "Класс энергопотребления (2021)",
+      "Класс энергопотребления (A-G)",
+      "Класс энергопотребления -A+++",
+      "Класс энергопотребления (нормы ЕС)",
+      "Класс энергопотребления (Приказ №357 МинПромТорг"
+    ],
+    "blacklist": [
+      "Энергопотребление за год",
+      "Энергопотребление за цикл"
+    ],
+    "facet": {
+      "enabled": true,
+      "label": "Класс энергоэффективности",
+      "kind": "enum"
+    }
+  },
+  {
+    "code": "wash_class",
+    "name": "Класс стирки",
+    "description": "Класс качества стирки",
+    "type": "class_scale",
+    "unit": null,
+    "cardinality": "single",
+    "order": 50,
+    "show_in_annotation": true,
+    "highlight": false,
+    "inferable": true,
+    "tier": "C",
+    "decision_reason": "Класс качества стирки",
+    "coverage_now": 51,
+    "coverage_final": 51,
+    "valid_range": null,
+    "synonyms": [
+      "Класс стирки",
+      "Класс стирки / Класс отжима",
+      "Класс стирки / отжима",
+      "Класс стирки -"
+    ],
+    "blacklist": [
+      "Класс отжима"
+    ],
+    "facet": {
+      "enabled": false,
+      "reason": "Не входит в согласованный набор фасетов категории"
+    }
+  },
+  {
+    "code": "spin_class",
+    "name": "Класс эффективности отжима",
+    "description": "Класс качества отжима",
+    "type": "class_scale",
+    "unit": null,
+    "cardinality": "single",
+    "order": 60,
+    "show_in_annotation": true,
+    "highlight": false,
+    "inferable": true,
+    "tier": "C",
+    "decision_reason": "Класс качества отжима",
+    "coverage_now": 70,
+    "coverage_final": 66,
+    "valid_range": null,
+    "synonyms": [
+      "Класс эффективности отжима",
+      "Класс отжима",
+      "Класс стирки / Класс отжима",
+      "Класс стирки / отжима",
+      "Класс эффективности отжима (A-G)",
+      "Класс отжима -"
+    ],
+    "blacklist": [
+      "Класс стирки",
+      "Максимальная скорость отжима"
+    ],
+    "facet": {
+      "enabled": false,
+      "reason": "Не входит в согласованный набор фасетов категории"
+    }
+  },
+  {
+    "code": "noise_wash",
+    "name": "Уровень шума при стирке",
+    "description": "Шум при стирке",
+    "type": "number",
+    "unit": "дБ",
+    "cardinality": "single",
+    "order": 70,
+    "show_in_annotation": true,
+    "highlight": true,
+    "inferable": false,
+    "tier": "B",
+    "decision_reason": "Шум при стирке",
+    "coverage_now": 50,
+    "coverage_final": 53,
+    "valid_range": [
+      24.5,
+      128
+    ],
+    "synonyms": [
+      "Уровень шума при стирке",
+      "Уровень шума цикла стирки дБ (А)",
+      "Уровень шума при стирке, дБ",
+      "Уровень шума (стирка)",
+      "Уровень шума в режиме Стирка, дБ",
+      "Уровень шума при стирке, в децибелах",
+      "Уровень шума во время стирки [дБ (А)]",
+      "Уровень шума стирка",
+      "Уровень шума при стирке (Дб)",
+      "Уровень шума во время стирки/вращения",
+      "Уровень шума при стирке, дБ 57."
+    ],
+    "blacklist": [
+      "Уровень шума при отжиме",
+      "Уровень шума цикла отжима дБ (А)",
+      "Уровень шума при отжиме (дБ)"
+    ],
+    "facet": {
+      "enabled": true,
+      "label": "Уровень шума, дБ",
+      "kind": "range",
+      "step": 5,
+      "bound_rule": "left_closed",
+      "open_last": true
+    }
+  },
+  {
+    "code": "noise_spin",
+    "name": "Уровень шума при отжиме",
+    "description": "Шум при отжиме",
+    "type": "number",
+    "unit": "дБ",
+    "cardinality": "single",
+    "order": 80,
+    "show_in_annotation": true,
+    "highlight": false,
+    "inferable": false,
+    "tier": "C",
+    "decision_reason": "Шум при отжиме",
+    "coverage_now": 58,
+    "coverage_final": 60,
+    "valid_range": [
+      30,
+      100
+    ],
+    "synonyms": [
+      "Уровень шума при отжиме",
+      "Уровень шума цикла отжима дБ (А)",
+      "Уровень шума (стирка / отжим)",
+      "Уровень шума при отжиме, дБ",
+      "Уровень шума при стирке / отжиме, дБ",
+      "Уровень шума (отжим)",
+      "Уровень шума в режиме Отжима, дБ",
+      "Уровень шума при отжиме, в децибелах",
+      "Уровень шума во время отжима [дБ (А)]",
+      "Уровень шума при стирке/отжиме",
+      "Уровень шума при отжиме, дБ 75."
+    ],
+    "blacklist": [
+      "Уровень шума при стирке"
+    ],
+    "facet": {
+      "enabled": false,
+      "reason": "Не входит в согласованный набор фасетов категории"
+    }
+  },
+  {
+    "code": "color",
+    "name": "Цвет корпуса",
+    "description": "Цвет корпуса машины",
+    "type": "enum",
+    "unit": null,
+    "cardinality": "single",
+    "order": 90,
+    "show_in_annotation": true,
+    "highlight": false,
+    "inferable": true,
+    "tier": "B",
+    "decision_reason": "Цвет корпуса машины",
+    "coverage_now": 66,
+    "coverage_final": 70,
+    "valid_range": null,
+    "synonyms": [
+      "Цвет корпуса",
+      "Цвет"
+    ],
+    "blacklist": [
+      "Цвет дверцы люка",
+      "Цвет двери"
+    ],
+    "facet": {
+      "enabled": true,
+      "label": "Цвет корпуса",
+      "kind": "enum"
+    }
+  },
+  {
+    "code": "control_type",
+    "name": "Тип управления",
+    "description": "Кнопки, сенсор или механический переключатель",
+    "type": "enum",
+    "unit": null,
+    "cardinality": "multi",
+    "order": 100,
+    "show_in_annotation": true,
+    "highlight": false,
+    "inferable": true,
+    "tier": "B",
+    "decision_reason": "Кнопки, сенсор или механический переключатель",
+    "coverage_now": 57,
+    "coverage_final": 61,
+    "valid_range": null,
+    "synonyms": [
+      "Тип управления",
+      "Управление",
+      "Система управления"
+    ],
+    "blacklist": [],
+    "facet": {
+      "enabled": true,
+      "label": "Тип управления",
+      "kind": "enum"
+    }
+  },
+  {
+    "code": "programs_qty",
+    "name": "Количество программ",
+    "description": "Сколько программ стирки",
+    "type": "integer",
+    "unit": null,
+    "cardinality": "single",
+    "order": 110,
+    "show_in_annotation": true,
+    "highlight": true,
+    "inferable": false,
+    "tier": "C",
+    "decision_reason": "Сколько программ стирки",
+    "coverage_now": 57,
+    "coverage_final": 57,
+    "valid_range": [
+      1,
+      40
+    ],
+    "synonyms": [
+      "Количество программ",
+      "Программы",
+      "Количество программ стирки",
+      "ПРОГРАММЫ"
+    ],
+    "blacklist": [
+      "Специальные программы",
+      "Дополнительные программы"
+    ],
+    "facet": {
+      "enabled": false,
+      "reason": "Не входит в согласованный набор фасетов категории"
+    }
+  },
+  {
+    "code": "display",
+    "name": "Дисплей",
+    "description": "Есть ли экран с программой и временем",
+    "type": "boolean",
+    "unit": null,
+    "cardinality": "single",
+    "order": 120,
+    "show_in_annotation": true,
+    "highlight": false,
+    "inferable": true,
+    "tier": "C",
+    "decision_reason": "Есть ли экран с программой и временем",
+    "coverage_now": 47,
+    "coverage_final": 55,
+    "valid_range": null,
+    "synonyms": [
+      "Дисплей",
+      "Дисплей +",
+      "Тип дисплея",
+      "Тип индикации"
+    ],
+    "blacklist": [],
+    "facet": {
+      "enabled": false,
+      "reason": "Не входит в согласованный набор фасетов категории"
+    }
+  },
+  {
+    "code": "height",
+    "name": "Высота",
+    "description": "Высота машины",
+    "type": "number",
+    "unit": "см",
+    "cardinality": "single",
+    "order": 130,
+    "show_in_annotation": true,
+    "highlight": false,
+    "inferable": false,
+    "tier": "B",
+    "decision_reason": "Высота машины",
+    "coverage_now": 29,
+    "coverage_final": 75,
+    "valid_range": [
+      40,
+      250
+    ],
+    "synonyms": [
+      "Высота",
+      "Высота, см",
+      "Высота (см)"
+    ],
+    "blacklist": [
+      "Высота товарной упаковки",
+      "Высота нишы для встраивания"
+    ],
+    "facet": {
+      "enabled": true,
+      "label": "Высота, см",
+      "kind": "range",
+      "step": 5,
+      "bound_rule": "left_closed",
+      "open_last": true
+    }
+  },
+  {
+    "code": "width",
+    "name": "Ширина",
+    "description": "Ширина машины",
+    "type": "number",
+    "unit": "см",
+    "cardinality": "single",
+    "order": 140,
+    "show_in_annotation": true,
+    "highlight": true,
+    "inferable": false,
+    "tier": "B",
+    "decision_reason": "Ширина машины",
+    "coverage_now": 30,
+    "coverage_final": 75,
+    "valid_range": [
+      30,
+      200
+    ],
+    "synonyms": [
+      "Ширина",
+      "Ширина, см",
+      "Ширина (см)"
+    ],
+    "blacklist": [
+      "Ширина товарной упаковки",
+      "Ширина нишы для встраивания"
+    ],
+    "facet": {
+      "enabled": true,
+      "label": "Ширина, см",
+      "kind": "range",
+      "step": 5,
+      "bound_rule": "left_closed",
+      "open_last": true
+    }
+  },
+  {
+    "code": "depth",
+    "name": "Глубина",
+    "description": "Глубина машины",
+    "type": "number",
+    "unit": "см",
+    "cardinality": "single",
+    "order": 150,
+    "show_in_annotation": true,
+    "highlight": true,
+    "inferable": false,
+    "tier": "B",
+    "decision_reason": "Глубина машины",
+    "coverage_now": 34,
+    "coverage_final": 83,
+    "valid_range": [
+      25,
+      150
+    ],
+    "synonyms": [
+      "Глубина",
+      "Глубина, см",
+      "Глубина (см)",
+      "Глубина, см."
+    ],
+    "blacklist": [
+      "Глубина товарной упаковки",
+      "Глубина с открытой дверцей"
+    ],
+    "facet": {
+      "enabled": true,
+      "label": "Глубина, см",
+      "kind": "range",
+      "step": 5,
+      "bound_rule": "left_closed",
+      "open_last": true
+    }
+  },
+  {
+    "code": "dims",
+    "name": "Габариты (ШхГхВ)",
+    "description": "Три размера одной строкой, как в выгрузке",
+    "type": "dimensions",
+    "unit": "см",
+    "cardinality": "single",
+    "order": 160,
+    "show_in_annotation": true,
+    "highlight": false,
+    "inferable": false,
+    "tier": "C",
+    "decision_reason": "Три размера одной строкой, как в выгрузке",
+    "coverage_now": 50,
+    "coverage_final": 47,
+    "valid_range": null,
+    "synonyms": [
+      "Габариты (ШхГхВ)",
+      "Габариты (ШxГxВ)",
+      "Размеры по корпусу (Ш х В х Г см)",
+      "Размеры (Ш х В х Г см)",
+      "Габариты",
+      "Размеры и вес",
+      "Размеры",
+      "Размеры, мм (ШхГхВ)",
+      "Габариты изделия (ШхГхВ) (мм)",
+      "Размеры (ширина х глубина(*макс. корпус/ **с открытой дверцей) х высота, мм.)",
+      "Размеры (Ш × В × Г, мм)",
+      "Габариты(ВхШхГ)",
+      "Габариты (ВxШxГ), в сантиметрах",
+      "Габариты изделия (ШхГхВ), см",
+      "Размеры без выступающих деталей (ШxВxГ)",
+      "Размеры брутто (ШxВxГ)",
+      "Размеры (ШxВxГ, мм)",
+      "Размеры (ШxВxГ)",
+      "Габариты (ВхШхГ)",
+      "Габариты (ВxШxГ)",
+      "Размеры устройства",
+      "Ширина х Высота х Глубина без упаковки (см)",
+      "Ширина х Высота х Глубина без упаковки",
+      "Ширина х Высота х Глубина (см)",
+      "Габариты без упаковки",
+      "Размеры без упаковки"
+    ],
+    "blacklist": [
+      "Габариты в упаковке",
+      "Размеры в упаковке",
+      "Размеры с учётом упаковки",
+      "Ширина х Высота х Глубина в упаковке (см)",
+      "Ширина х Высота х Глубина в упаковке",
+      "Габариты с учётом упаковки",
+      "Размеры товарной упаковки"
+    ],
+    "facet": {
+      "enabled": false,
+      "reason": "Не входит в согласованный набор фасетов категории"
+    }
+  },
+  {
+    "code": "weight",
+    "name": "Вес",
+    "description": "Вес машины без упаковки",
+    "type": "number",
+    "unit": "кг",
+    "cardinality": "single",
+    "order": 170,
+    "show_in_annotation": true,
+    "highlight": false,
+    "inferable": false,
+    "tier": "C",
+    "decision_reason": "Вес машины без упаковки",
+    "coverage_now": 81,
+    "coverage_final": 86,
+    "valid_range": [
+      5,
+      400
+    ],
+    "synonyms": [
+      "Вес",
+      "Вес нетто (кг)",
+      "Вес нетто, кг",
+      "Вес, кг",
+      "Вес нетто",
+      "Вес (кг)",
+      "Вес (нетто)",
+      "Вес Нетто",
+      "Масса, кг"
+    ],
+    "blacklist": [
+      "Вес брутто",
+      "Вес в упаковке",
+      "Вес брутто (кг)",
+      "Вес брутто, кг",
+      "Масса брутто"
+    ],
+    "facet": {
+      "enabled": false,
+      "reason": "Не входит в согласованный набор фасетов категории"
+    }
+  },
+  {
+    "code": "install",
+    "name": "Установка",
+    "description": "Отдельно или встраивается в мебель",
+    "type": "enum",
+    "unit": null,
+    "cardinality": "single",
+    "order": 180,
+    "show_in_annotation": true,
+    "highlight": false,
+    "inferable": true,
+    "tier": "B",
+    "decision_reason": "Отдельно или встраивается в мебель",
+    "coverage_now": 28,
+    "coverage_final": 29,
+    "valid_range": null,
+    "synonyms": [
+      "Установка",
+      "Тип установки"
+    ],
+    "blacklist": [],
+    "facet": {
+      "enabled": true,
+      "label": "Установка",
+      "kind": "enum"
+    }
+  },
+  {
+    "code": "tank_material",
+    "name": "Материал бака",
+    "description": "Из чего сделан бак",
+    "type": "enum",
+    "unit": null,
+    "cardinality": "single",
+    "order": 190,
+    "show_in_annotation": true,
+    "highlight": false,
+    "inferable": true,
+    "tier": "C",
+    "decision_reason": "Из чего сделан бак",
+    "coverage_now": 17,
+    "coverage_final": 17,
+    "valid_range": null,
+    "synonyms": [
+      "Материал бака"
+    ],
+    "blacklist": [
+      "Материал барабана"
+    ],
+    "facet": {
+      "enabled": false,
+      "reason": "Не входит в согласованный набор фасетов категории"
+    }
+  },
+  {
+    "code": "drum_material",
+    "name": "Материал барабана",
+    "description": "Из чего сделан барабан",
+    "type": "enum",
+    "unit": null,
+    "cardinality": "single",
+    "order": 200,
+    "show_in_annotation": true,
+    "highlight": false,
+    "inferable": true,
+    "tier": "C",
+    "decision_reason": "Из чего сделан барабан",
+    "coverage_now": 20,
+    "coverage_final": 19,
+    "valid_range": null,
+    "synonyms": [
+      "Материал барабана",
+      "Материал барабана нержавеющая сталь"
+    ],
+    "blacklist": [
+      "Материал бака"
+    ],
+    "facet": {
+      "enabled": false,
+      "reason": "Не входит в согласованный набор фасетов категории"
+    }
+  },
+  {
+    "code": "motor_type",
+    "name": "Тип двигателя",
+    "description": "Инверторный тише и служит дольше",
+    "type": "enum",
+    "unit": null,
+    "cardinality": "single",
+    "order": 210,
+    "show_in_annotation": true,
+    "highlight": true,
+    "inferable": true,
+    "tier": "B",
+    "decision_reason": "Инверторный тише и служит дольше",
+    "coverage_now": 47,
+    "coverage_final": 47,
+    "valid_range": null,
+    "synonyms": [
+      "Тип двигателя",
+      "Инверторный двигатель",
+      "Тип мотора",
+      "Инверторный Двигатель",
+      "Инверторный двигатель (BLDC)",
+      "Тип мотораИнверторный"
+    ],
+    "blacklist": [],
+    "facet": {
+      "enabled": true,
+      "label": "Тип двигателя",
+      "kind": "enum"
+    }
+  },
+  {
+    "code": "drying",
+    "name": "Сушка",
+    "description": "Есть ли сушка белья",
+    "type": "boolean",
+    "unit": null,
+    "cardinality": "single",
+    "order": 220,
+    "show_in_annotation": true,
+    "highlight": false,
+    "inferable": true,
+    "tier": "B",
+    "decision_reason": "Есть ли сушка белья",
+    "coverage_now": 14,
+    "coverage_final": 16,
+    "valid_range": null,
+    "synonyms": [
+      "Сушка"
+    ],
+    "blacklist": [
+      "Класс сушки",
+      "Программа сушки"
+    ],
+    "facet": {
+      "enabled": true,
+      "label": "Сушка",
+      "kind": "enum"
+    }
+  },
+  {
+    "code": "child_lock",
+    "name": "Защита от детей",
+    "description": "Блокировка управления от детей",
+    "type": "boolean",
+    "unit": null,
+    "cardinality": "single",
+    "order": 230,
+    "show_in_annotation": true,
+    "highlight": false,
+    "inferable": true,
+    "tier": "C",
+    "decision_reason": "Блокировка управления от детей",
+    "coverage_now": 32,
+    "coverage_final": 32,
+    "valid_range": null,
+    "synonyms": [
+      "Защита от детей",
+      "Блокировка от детей",
+      "Блокировка от детей +",
+      "Блокировка от случайного нажатия / Защита от детей",
+      "Блокировка кнопок (защита от детей)",
+      "Блокировка от случайного нажатия/Защита от детей +",
+      "Защита от детей."
+    ],
+    "blacklist": [
+      "Защита от протечек"
+    ],
+    "facet": {
+      "enabled": false,
+      "reason": "Не входит в согласованный набор фасетов категории"
+    }
+  },
+  {
+    "code": "water_use",
+    "name": "Расход воды за цикл",
+    "description": "Расход воды за одну стирку",
+    "type": "number",
+    "unit": "л",
+    "cardinality": "single",
+    "order": 240,
+    "show_in_annotation": true,
+    "highlight": false,
+    "inferable": false,
+    "tier": "C",
+    "decision_reason": "Расход воды за одну стирку",
+    "coverage_now": 29,
+    "coverage_final": 29,
+    "valid_range": [
+      5,
+      250
+    ],
+    "synonyms": [
+      "Расход воды за цикл",
+      "Расход воды за стирку",
+      "Расход воды",
+      "Расход воды за цикл, л",
+      "Максимальный расход воды за цикл стирки, л/цикл",
+      "Годовой расход воды, л/год",
+      "Расход воды за стирку (л)"
+    ],
+    "blacklist": [],
+    "facet": {
+      "enabled": false,
+      "reason": "Не входит в согласованный набор фасетов категории"
+    }
+  },
+  {
+    "code": "energy_year",
+    "name": "Энергопотребление за год",
+    "description": "Расход электроэнергии за год",
+    "type": "number",
+    "unit": "кВт·ч/год",
+    "cardinality": "single",
+    "order": 250,
+    "show_in_annotation": true,
+    "highlight": false,
+    "inferable": false,
+    "tier": "C",
+    "decision_reason": "Расход электроэнергии за год",
+    "coverage_now": 71,
+    "coverage_final": 22,
+    "valid_range": [
+      20,
+      900
+    ],
+    "synonyms": [
+      "Энергопотребление за год",
+      "Класс энергопотребления",
+      "Энергопотребление (кВтч/г)",
+      "Энергопотребление 60°, полная загрузка, кВт/цикл",
+      "Класс энергопотребления (Приказ №357 МинПромТорг РФ)",
+      "Энергопотребление за цикл",
+      "Энергопотребление при полной нагрузке",
+      "Энергопотребление, частичная нагрузка",
+      "Энергопотребление в год, кВт*ч/год",
+      "Класс энергопотребления (2021)",
+      "Класс энергопотребления (A-G)",
+      "Kласс энергопотребления",
+      "Энергопотребление при стандартной программе для хлопка при температуре 60 °C, полная …",
+      "Энергопотребление при стандартной программе для хлопка при температуре 60 °C, частичн…",
+      "Энергопотребление при стандартной программе для хлопка при температуре 40 °C, частичн…",
+      "Годовое энергопотребление",
+      "Энергопотребление за цикл. кВт*ч/цикл",
+      "Класс энергопотребления -A+++",
+      "Класс энергопотребления (нормы ЕС)",
+      "Годовое энергопотребление, не более",
+      "Уровень энергопотребления за один цикл",
+      "Уровень годового энергопотребления",
+      "Класс энергопотребления (Приказ №357 МинПромТорг",
+      "Энергопотребление 60° стирка+сушка, кВт/цикл",
+      "Потребляемая энергия",
+      "Годовое потребление электроэнергии",
+      "Взвешенное годовое потребление энергии"
+    ],
+    "blacklist": [
+      "Класс энергоэффективности",
+      "Энергопотребление за цикл"
+    ],
+    "facet": {
+      "enabled": false,
+      "reason": "Не входит в согласованный набор фасетов категории"
+    }
+  },
+  {
+    "code": "country",
+    "name": "Страна производства",
+    "description": "Страна производства",
+    "type": "enum",
+    "unit": null,
+    "cardinality": "single",
+    "order": 260,
+    "show_in_annotation": true,
+    "highlight": false,
+    "inferable": true,
+    "tier": "C",
+    "decision_reason": "Страна производства",
+    "coverage_now": 20,
+    "coverage_final": 20,
+    "valid_range": null,
+    "synonyms": [
+      "Страна производства",
+      "Страна производитель",
+      "Страна-производитель"
+    ],
+    "blacklist": [],
+    "facet": {
+      "enabled": false,
+      "reason": "Не входит в согласованный набор фасетов категории"
+    }
+  }
+]

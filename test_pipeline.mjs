@@ -3,6 +3,8 @@ import { normalizeProduct, formatCounts } from './pipeline/normalize.js';
 import { bucketLabel, buildFilters } from './pipeline/facets.js';
 import { renderCard } from './pipeline/generate.js';
 import { compactAnnotation, compactHtml, serializeProduct, metaKeywords } from './pipeline/export.js';
+import { buildV2 } from './export_v2.js';
+import { dictToV2Rows } from './pipeline/v2.js';
 import { displayEnum, valueFold } from './pipeline/types.js';
 import { identityMatches, nameKeyTokens, parseIdentity } from './pipeline/identity.js';
 import { needsExternal, parseProductBySpecs, lookupExternal, enrichMissing } from './pipeline/external.js';
@@ -678,5 +680,44 @@ console.log('golden tests passed');
   const emptyAnn = serializeProduct({ ...r, annotation: '' }, d467, built.debug);
   assert.match(emptyAnn.annotation_html, /Тип загрузки: Фронтальная/);
   console.log('ok customer products+filters shape (11391)');
+}
+
+{
+  const r = normalizeProduct(p523[260], d523, config);
+  const [p] = buildV2(dictToV2Rows([r], d523)).products;
+  assert.deepEqual(Object.keys(p), ['id', 'name', 'meta_keywords', 'description_html', 'filters']);
+  assert.equal(p.id, 260);
+  assert.equal(p.name, 'Холодильник Pozis RK FNF-172 W');
+  assert.ok(!('annotation_html' in p));
+  assert.equal(typeof p.filters['Бренд'], 'string');
+  assert.equal(p.filters['Тип товара'], 'холодильник');
+  assert.equal(p.filters['Бренд'], 'Pozis');
+  assert.equal(p.filters['Модель'], 'RK FNF-172 W');
+  assert.equal(p.filters['Объем общий, л'], '344');
+  assert.equal(p.filters['Класс энергоэффективности'], 'A');
+  assert.equal(p.filters['Хладагент'], 'R600a');
+  assert.equal(p.filters['Уровень шума, дБ'], '40');
+  assert.equal(p.filters['Вес, кг'], '74');
+  assert.equal(p.filters['Система охлаждения'], 'No Frost');
+  assert.equal(p.filters['Тип управления'], 'механическое');
+  assert.equal(p.filters['Расположение морозильника'], 'нижнее');
+  assert.equal(p.filters['Количество камер'], '2');
+  assert.match(p.description_html, /^<h1>Холодильник Pozis RK FNF-172 W<\/h1>/);
+  assert.match(p.description_html, /<li>Тип товара: холодильник<\/li>/);
+  assert.match(p.description_html, /<li>Объем общий: 344 л<\/li>/);
+  assert.match(p.description_html, /<li>Система охлаждения: No Frost<\/li>/);
+  console.log('ok products_v2 shape (260 Pozis)');
+}
+
+{
+  const r = normalizeProduct(p467[11391], d467, config);
+  const [p] = buildV2(dictToV2Rows([r], d467)).products;
+  assert.equal(p.filters['Тип товара'], 'стиральная машина');
+  assert.equal(p.filters['Тип загрузки'], 'фронтальная');
+  assert.equal(p.filters['Бренд'], 'ATLANT');
+  assert.equal(p.filters['Максимальная загрузка, кг'], '6');
+  assert.equal(p.filters['Высота, мм'], '846');
+  assert.equal(typeof p.filters['Тип загрузки'], 'string');
+  console.log('ok products_v2 washer (11391)');
 }
 

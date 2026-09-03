@@ -31,6 +31,8 @@ import { buildFilters } from './pipeline/facets.js';
 import { buildReport } from './pipeline/report.js';
 import { renderCard } from './pipeline/generate.js';
 import { serializeProducts, serializeFilters } from './pipeline/export.js';
+import { buildV2 } from './export_v2.js';
+import { dictToV2Rows } from './pipeline/v2.js';
 import { enrichMissing } from './pipeline/external.js';
 import { resolveSearchSettings } from './pipeline/search.js';
 
@@ -159,6 +161,10 @@ function writeOutputs({ recs, dict, config, catId, cov, covAfter, formats, unmap
   writeJson(path.join(OUT, `products_${catId}.json`), serializeProducts(recs, dict, built.debug), 4);
   writeJson(path.join(OUT, `filters_${catId}.json`), serializeFilters(built), 4);
 
+  const v2 = buildV2(dictToV2Rows(recs, dict));
+  writeJson(path.join(OUT, `products_v2_${catId}.json`), v2.products, 2);
+  writeJson(path.join(OUT, `filters_v2_${catId}.json`), { filters: v2.filters }, 2);
+
   const attrsOut = attrsWithCoverage(dict, coverageMap(after, dict));
   writeJson(path.join(OUT, `attributes_${catId}.json`), attrsOut);
 
@@ -180,6 +186,7 @@ function writeOutputs({ recs, dict, config, catId, cov, covAfter, formats, unmap
   writeJson(path.join(OUT, `provenance_${catId}.json`), provenance);
 
   if (customer) writeCustomerDeliverables({ recs, dict, catId, cov: after });
+  console.log(`v2: products_v2_${catId}.json, filters_v2_${catId}.json`);
   return built;
 }
 

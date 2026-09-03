@@ -364,3 +364,79 @@ console.log('golden tests passed');
   }
   console.log('ok search engine → matching page → S3 specs');
 }
+
+{
+  const srv = http.createServer((req, res) => {
+    if (req.method === 'POST') {
+      let raw = '';
+      req.on('data', c => { raw += c; });
+      req.on('end', () => {
+        const p = new URLSearchParams(raw);
+        const hit = `http://${req.headers.host}/card`;
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+        if (p.get('kl') !== 'ru-ru' || !String(p.get('q') || '').includes('BWSE')) {
+          return res.end('<div class="anomaly-modal"></div><script src="/anomaly.js"></script>');
+        }
+        res.end(`<div class="result results_links web-result">
+          <a class="result__a" href="//duckduckgo.com/l/?uddg=${encodeURIComponent(hit)}">карточка</a>
+        </div>`);
+      });
+      return;
+    }
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+    res.end(`<h1>Стиральная машина Indesit BWSE 7129X WSV RU</h1>
+      <table><tr><td>Максимальная загрузка</td><td>7 кг</td></tr>
+      <tr><td>Скорость отжима</td><td>1200</td></tr>
+      <tr><td>Класс энергопотребления</td><td>A+++</td></tr>
+      <tr><td>Высота</td><td>85 см</td></tr></table>`);
+  });
+  await new Promise(r => srv.listen(0, r));
+  const port = srv.address().port;
+  const cacheDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pipe-ddg-'));
+  const prev = {
+    SEARCH_URL: process.env.SEARCH_URL,
+    PAGE_CACHE_DIR: process.env.PAGE_CACHE_DIR,
+    SEARCH_GAP_MS: process.env.SEARCH_GAP_MS,
+    CRAWL_GAP_MS: process.env.CRAWL_GAP_MS,
+    WEB_ALLOW_LOCAL: process.env.WEB_ALLOW_LOCAL,
+    DDG_URL: process.env.DDG_URL,
+  };
+  delete process.env.SEARCH_URL;
+  process.env.PAGE_CACHE_DIR = cacheDir;
+  process.env.SEARCH_GAP_MS = '0';
+  process.env.CRAWL_GAP_MS = '0';
+  process.env.WEB_ALLOW_LOCAL = '1';
+  const ddgConfig = {
+    ...config,
+    search: {
+      ...config.search,
+      search_url: '',
+      fallback_engines: [],
+      gap_ms: 0,
+      duckduckgo: {
+        ...config.search.duckduckgo,
+        enabled: true,
+        method: 'POST',
+        region: 'ru-ru',
+        url: `http://127.0.0.1:${port}/html/`,
+      },
+    },
+  };
+  try {
+    const rec = normalizeProduct(p467[460989], d467, config);
+    const urls = await searchDuckDuckGo(searchQuery(rec, ddgConfig), ddgConfig);
+    assert.ok(urls.some(u => u.includes('/card')), urls);
+    const got = await lookupExternal(rec, d467, ddgConfig);
+    assert.equal(got.ok, true, got.reason);
+    assert.equal(rec.attrs.load_max, 7);
+    assert.equal(rec.provenance.load_max.level, 'S3');
+  } finally {
+    await new Promise(r => srv.close(r));
+    fs.rmSync(cacheDir, { recursive: true, force: true });
+    for (const [k, v] of Object.entries(prev)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  }
+  console.log('ok DuckDuckGo POST → matching page → S3 specs');
+}

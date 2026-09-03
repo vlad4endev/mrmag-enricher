@@ -32,40 +32,6 @@ dist/
 # Мусор macOS
 .DS_Store
 
-# Кэш каталога — 3,5 МБ, перекачивается сам раз в сутки
-.products_cache.json
-
-# Результаты прогонов
-mrmag_enriched*.jsonl
-mrmag_enriched*.json
-mrmag_enriched*.txt
-enriched_*.jsonl
-enriched_*.json
-enriched_*.txt
-
-node_modules/
-.env
-
-# Временный файл теста интерфейса
-.ui_under_test.mjs
-
-# Кэш страниц каталога (листинги + страницы товаров)
-.page_cache/
-
-# Выгрузки по категориям
-products_*.json
-filters_*.json
-
-# Разметка: labelset.json и label.html генерируются, эталон храним
-labelset.json
-label.html
-
-# Пакет релиза
-dist/
-
-# Мусор macOS
-.DS_Store
-
 # Фоновые прогоны обогащения (jobs.js)
 jobs/
 

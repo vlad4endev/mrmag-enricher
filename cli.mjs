@@ -255,9 +255,10 @@ function showConfig() {
   console.log(`  свои хосты пропускаем: ${search.skipHosts.join(', ')}`);
   console.log(`  свой поисковик: ${search.extraUrl || 'нет'}`);
   console.log(`  DuckDuckGo: ${ddg.enabled ? `${ddg.method} ${ddg.endpoint}, регион ${ddg.region}` : 'выключен'}`);
+  if (ddg.url) console.log(`  DuckDuckGo URL: ${ddg.url}`);
   if (ddg.siteFilter) console.log(`  site: ${ddg.siteFilter}`);
   console.log(`  запасные движки: ${search.fallback.join(', ') || 'нет'}`);
-  console.log('\nперекрыть файл: WEB_LOOKUP=0, SEARCH_URL, WEB_LOOKUP_TRIES, SEARCH_GAP_MS, DDG_REGION, DDG_ENDPOINT');
+  console.log('\nперекрыть файл: WEB_LOOKUP=0, SEARCH_URL, WEB_LOOKUP_TRIES, SEARCH_GAP_MS, DDG_REGION, DDG_ENDPOINT, DDG_URL');
 }
 
 async function runEnrich(dataFile, { external = true, limit = null } = {}) {

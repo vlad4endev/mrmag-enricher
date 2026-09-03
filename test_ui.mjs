@@ -140,6 +140,8 @@ export const api={syncSteps,setCnt,setCntFree,applyCnt,applySource,setSource,pic
   loadCategories,catOf,renderModelList,filterModels,renderParser,loadParser,
   applyDates,clearDates,renderDates,passesFilter,queued,onProdInput,apiJson,run,
   stopJob,follow,attachJob,resumeJob,applyJob,finishRun,
+  loadFile,classifyPayload,normalizeCatalogProduct,catIdFromFilename,catNameFromId,
+  productsFromPayload,isFiltersPayload,filtersForExport,
   showPage,setTab,renderSettings,addProvider,removeProvider,addEngine,readSettingsPatch,
   modelsFromSettings,pickDefaultModel,applyDefaultProviderModels,looksLikeModelId,catalogHint};
 export const st={get items(){return items},set items(v){items=v},
@@ -158,7 +160,8 @@ export const st={get items(){return items},set items(v){items=v},
   get jobId(){return jobId},set jobId(v){jobId=v},
   get jobPos(){return jobPos},set jobPos(v){jobPos=v},
   get following(){return following},set following(v){following=v},
-  get dateKey(){return dateKey}};
+  get dateKey(){return dateKey},
+  get srcFilters(){return srcFilters}};
 `;
 const tmp = path.join(ROOT, '.ui_under_test.mjs');
 fs.writeFileSync(tmp, script + EXPORTS, 'utf-8');
@@ -504,6 +507,118 @@ t('без категорий выбирать нечего — блок скры
   assert.strictEqual(st.items.length, 2);
 });
 
+console.log('\nФормат data_*.json / filters_*.json');
+const DATA_FMT = [
+  { id: 260, name: 'Холодильник Pozis RK FNF-172 W', description: '<p>R600a</p>', annotation: '<ul><li>Общий объем - 344</li></ul>' },
+  { id: 805, name: 'Холодильник Pozis RK-103 W', description: '', annotation: '<ul><li>Цвет - белый</li></ul>' },
+];
+const FILTERS_FMT = {
+  filters: [
+    { name: 'Тип товара', value: ['Воздухоочиститель', 'Вытяжка'] },
+    { name: 'Цвет', value: ['Белый', 'Черный'] },
+  ],
+};
+const fakeFile = (name, content) => ({
+  name,
+  text: () => Promise.resolve(typeof content === 'string' ? content : JSON.stringify(content)),
+});
+
+t('имя data_523.json даёт id раздела', () => {
+  assert.strictEqual(api.catIdFromFilename('data_523.json'), '523');
+  assert.strictEqual(api.catIdFromFilename('filters_929.json'), '929');
+  assert.strictEqual(api.catIdFromFilename('products_467.json'), '467');
+  assert.strictEqual(api.catIdFromFilename('/tmp/data_523.json'), '523');
+  assert.strictEqual(api.catIdFromFilename('catalog.json'), null);
+});
+t('data_*.json — массив товаров заказчика, не фид с sku', () => {
+  const { products, filters } = api.classifyPayload(DATA_FMT, 'data_523.json');
+  assert.strictEqual(filters, null);
+  assert.strictEqual(products.length, 2);
+  assert.strictEqual(products[0].id, 260);
+  assert.ok(!('sku' in products[0]));
+});
+t('filters_*.json — объект с name/value, не товары', () => {
+  const { products, filters } = api.classifyPayload(FILTERS_FMT, 'filters_929.json');
+  assert.strictEqual(products, null);
+  assert.strictEqual(filters.filters.length, 2);
+  assert.deepStrictEqual(filters.filters[0].value, ['Воздухоочиститель', 'Вытяжка']);
+  assert.ok(api.isFiltersPayload(FILTERS_FMT));
+  assert.ok(!api.isFiltersPayload(DATA_FMT));
+});
+t('id копируется в sku, категория — из имени файла', () => {
+  st.schemas = { kholodilniki: { id: 523, name: 'Холодильники' }, stiralnye_mashiny: { id: 467, name: 'Стиральные машины' } };
+  assert.strictEqual(api.catNameFromId('523'), 'Холодильники');
+  const p = api.normalizeCatalogProduct(DATA_FMT[0], 'Холодильники');
+  assert.strictEqual(p.sku, 260);
+  assert.strictEqual(p.id, 260);
+  assert.strictEqual(p.category, 'Холодильники');
+  assert.strictEqual(p.name, DATA_FMT[0].name);
+});
+await tAsync('загрузка data_523.json ставит категорию и sku', async () => {
+  st.schemas = { kholodilniki: { id: 523, name: 'Холодильники' } };
+  G('fileIn').files = [fakeFile('data_523.json', DATA_FMT)];
+  await api.loadFile(G('fileIn'));
+  assert.strictEqual(st.srcItems.length, 2);
+  assert.ok(st.srcItems.every(p => p.sku === p.id && p.category === 'Холодильники'));
+  assert.match(G('dataCatRow').innerHTML, /Холодильники/);
+  assert.match(G('fetchHint').textContent, /data_523\.json: 2 товара/);
+});
+await tAsync('два data_*.json склеиваются, у каждого своя категория', async () => {
+  st.schemas = {
+    kholodilniki: { id: 523, name: 'Холодильники' },
+    stiralnye_mashiny: { id: 467, name: 'Стиральные машины' },
+  };
+  G('fileIn').files = [
+    fakeFile('data_523.json', [DATA_FMT[0]]),
+    fakeFile('data_467.json', [{ id: 11391, name: 'Стиральная машина ATLANT', description: '<p>a</p>', annotation: '<ul><li>загрузка - 6 кг</li></ul>' }]),
+  ];
+  await api.loadFile(G('fileIn'));
+  assert.strictEqual(st.srcItems.length, 2);
+  assert.strictEqual(st.srcItems[0].category, 'Холодильники');
+  assert.strictEqual(st.srcItems[1].category, 'Стиральные машины');
+  assert.match(G('dataCatRow').innerHTML, /Холодильники/);
+  assert.match(G('dataCatRow').innerHTML, /Стиральные машины/);
+});
+await tAsync('один filters_*.json без товаров — ошибка', async () => {
+  api.setSource([]);
+  G('fileIn').files = [fakeFile('filters_929.json', FILTERS_FMT)];
+  await api.loadFile(G('fileIn'));
+  assert.match(G('step2').querySelector('.inline-err').textContent, /только файлы фильтров/);
+  assert.strictEqual(st.srcItems.length, 0);
+  api.stepError(2, null);
+});
+await tAsync('data + filters вместе запоминают фасеты заказчика', async () => {
+  st.schemas = { kholodilniki: { id: 523, name: 'Холодильники' } };
+  G('fileIn').files = [
+    fakeFile('data_523.json', DATA_FMT),
+    fakeFile('filters_523.json', FILTERS_FMT),
+  ];
+  await api.loadFile(G('fileIn'));
+  assert.strictEqual(st.srcFilters.get('523').filters[0].name, 'Тип товара');
+  assert.strictEqual(api.filtersForExport('523', { id: 523 }).filters.length, 2);
+});
+await tAsync('старый фид с sku по-прежнему читается', async () => {
+  G('fileIn').files = [fakeFile('products.json', [{ sku: '1', name: 'A', description: 'x' }])];
+  await api.loadFile(G('fileIn'));
+  assert.strictEqual(st.srcItems[0].sku, '1');
+  assert.strictEqual(st.srcItems[0].name, 'A');
+});
+t('живой data_523.json из репозитория читается как каталог заказчика', () => {
+  const raw = JSON.parse(fs.readFileSync(path.join(ROOT, 'data_523.json'), 'utf-8'));
+  const { products, filters } = api.classifyPayload(raw, 'data_523.json');
+  assert.strictEqual(filters, null);
+  assert.ok(products.length > 10, `ожидался каталог, а не ${products.length} записей`);
+  assert.ok(products.every(p => p && p.id != null && p.name), 'у каждого товара есть id и name');
+  const p = api.normalizeCatalogProduct(products[0], 'Холодильники');
+  assert.strictEqual(p.sku, p.id);
+  assert.strictEqual(p.category, 'Холодильники');
+});
+t('вставка filters_*.json в textarea не принимается за товар', () => {
+  G('prod').value = JSON.stringify(FILTERS_FMT);
+  assert.match(api.readProd(), /файл фильтров/);
+  assert.strictEqual(st.items.length, 0);
+});
+
 console.log('\nОшибки показываются внутри шага, а не через alert()');
 t('битый JSON попадает в шаг 2 и убирается после починки', () => {
   G('prod').value = '{битый json';
@@ -661,7 +776,7 @@ console.log('\nДва файла на раздел');
 // Выгрузка читает и окно (items/results), и хранилище прогона: тест, который
 // выставляет окно напрямую, обязан начинать с пустого хранилища — иначе в файл
 // приедут товары предыдущей проверки.
-const setWindow = (its, res) => { st.runStore.clear(); st.items = its; st.results = res; };
+const setWindow = (its, res) => { st.runStore.clear(); st.srcFilters.clear(); st.items = its; st.results = res; };
 
 const catchFiles = async fn => {
   const files = [];
@@ -761,6 +876,23 @@ await tAsync('сбой фильтров не оставляет половину
   try { files = await catchFiles(() => api.downloadCategoryFiles()); }
   finally { globalThis.fetch = realFetch; }
   assert.strictEqual(files.length, 0, 'products без filters выгружать нельзя');
+});
+
+await tAsync('загруженные filters_*.json уходят в выгрузку без пересчёта', async () => {
+  st.schemas = { kholodilniki: { id: 523, name: 'Холодильники' } };
+  st.categories = [{ slug: 'kholodilniki', name: 'Холодильники', id: 523, url: 'u' }];
+  G('fileIn').files = [
+    fakeFile('data_523.json', DATA_FMT),
+    fakeFile('filters_523.json', FILTERS_FMT),
+  ];
+  await api.loadFile(G('fileIn'));
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = () => { throw new Error('фильтры заказчика сервер пересчитывать не должен'); };
+  let files;
+  try { files = await catchFiles(() => api.downloadCategoryFiles()); }
+  finally { globalThis.fetch = realFetch; }
+  assert.deepStrictEqual(files.map(f => f.name), ['products_523.json', 'filters_523.json']);
+  assert.deepStrictEqual(JSON.parse(files[1].body), FILTERS_FMT);
 });
 
 console.log('\nВыгрузка JSON v2');

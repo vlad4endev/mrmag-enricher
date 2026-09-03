@@ -208,6 +208,7 @@ textarea{
   background:var(--bg2);color:var(--t2);font-family:inherit;font-size:11.5px;font-weight:600;cursor:pointer;
 }
 #fileIn::file-selector-button:hover{border-color:var(--ac-b);color:var(--t1);background:var(--bg3)}
+.hint code{font-family:var(--mono);font-size:10.5px;color:var(--t2)}
 
 /* Выбор модели */
 .msel{
@@ -832,9 +833,10 @@ input[type=range]::-moz-range-thumb{
         </div>
         <div class="hint" id="fetchHint">Загрузит первые 10 товаров по адресу</div>
 
-        <div class="flbl" style="margin-top:12px">Или файл JSON с компьютера</div>
-        <input type="file" id="fileIn" accept=".json,application/json"
-               onchange="loadFile(this)" aria-label="Файл JSON с товарами">
+        <div class="flbl" style="margin-top:12px">Или файлы JSON с компьютера</div>
+        <input type="file" id="fileIn" accept=".json,application/json" multiple
+               onchange="loadFile(this)" aria-label="Файлы JSON: data_*.json и filters_*.json">
+        <div class="hint">data_523.json — товары <code>{id, name, description, annotation}</code>. filters_929.json — <code>{filters:[{name, value}]}</code>. Можно выбрать несколько сразу.</div>
 
         <div id="dataCats" style="display:none">
           <div class="flbl" style="margin-top:12px">Категории в загруженных товарах</div>
@@ -844,7 +846,7 @@ input[type=range]::-moz-range-thumb{
         <details class="adv" id="advBox">
           <summary id="advSum">JSON товаров — можно вставить вручную</summary>
           <textarea id="prod" oninput="onProdInput()" aria-label="JSON товаров"
-                    placeholder='[{"sku":"123","name":"...","description":"..."}]'></textarea>
+                    placeholder='[{"id":123,"name":"...","description":"...","annotation":"..."}]'></textarea>
         </details>
       </div>
     </section>
@@ -934,7 +936,7 @@ input[type=range]::-moz-range-thumb{
           Берёт товары с описаниями и достаёт из них характеристики, синонимы и SEO-текст.
           <ol>
             <li>Выберите <b>модель</b> — рядом видна её цена за 1M токенов.</li>
-            <li>Укажите, <b>сколько</b> товаров обработать, и загрузите их по адресу.</li>
+            <li>Укажите, <b>сколько</b> товаров обработать, и загрузите <code>data_*.json</code> или адрес фида.</li>
             <li>Сверьте <b>стоимость</b> прогона и нажмите «Обогатить».</li>
           </ol>
         </div>
@@ -1546,9 +1548,10 @@ const doneRes=()=>results.filter(Boolean);
  */
 const runStore=new Map();
 
-// Ключ товара: sku магазина, дальше — что есть. ponytail: у товара без единого
-// признака ключом остаётся позиция, и в другом окне он посчитается новым.
-const rowKey=(p,i)=>String(p?.sku??p?.article??p?.url??p?.name??`#${i}`);
+// Ключ товара: sku магазина, иначе id из data_*.json, дальше — что есть.
+// ponytail: у товара без единого признака ключом остаётся позиция, и в другом
+// окне он посчитается новым.
+const rowKey=(p,i)=>String(p?.sku??p?.id??p?.article??p?.url??p?.name??`#${i}`);
 
 // ── КАЧЕСТВО ИСХОДНЫХ ДАННЫХ И ДАТА ИМПОРТА ──────────────────
 // quality[i] = {ok} | {ok:false, reason} — ответ /api/quality, индексы как у items.
@@ -2023,12 +2026,81 @@ function applySource(){
 function setSource(all){
   srcItems=Array.isArray(all)?all:[];
   pickCat=null;
+  srcFilters=new Map();
   runStore.clear();   // другой список товаров — другой прогон
   results=[];
   applySource();
   document.getElementById('prod').value=JSON.stringify(items,null,2);
   selectResult(0);
   loadQuality();
+}
+
+// Фильтры из filters_*.json, если их загрузили вместе с товарами. Ключ — id
+// раздела из имени файла. На выгрузке «2 файла» они идут как есть: пересчитывать
+// фасеты заказчика по окну значило бы отдать другой набор значений.
+let srcFilters=new Map();
+
+/** id раздела из data_523.json / filters_929.json / products_467.json. */
+function catIdFromFilename(name){
+  const base=String(name||'').replace(/^.*[\\/]/,'');
+  const m=base.match(/^(?:data|products|filters)_(\d+)(?:\.[^.]+)?$/i)
+    || base.match(/^(\d+)(?:\.[^.]+)?$/);
+  return m?m[1]:null;
+}
+
+function catNameFromId(id){
+  if(id==null||id==='') return '';
+  const sid=String(id);
+  const fromSchema=Object.values(schemas||{}).find(s=>String(s.id)===sid);
+  if(fromSchema?.name) return fromSchema.name;
+  const fromCat=(categories||[]).find(c=>String(c.id)===sid);
+  return fromCat?.name||sid;
+}
+
+/** Файл заказчика: { filters: [{ name, value: string[] }] }. */
+function isFiltersPayload(x){
+  return Boolean(x && typeof x==='object' && !Array.isArray(x) && Array.isArray(x.filters)
+    && x.filters.every(f=>f && typeof f==='object' && typeof f.name==='string' && Array.isArray(f.value)));
+}
+
+function productsFromPayload(parsed){
+  if(Array.isArray(parsed)) return parsed;
+  if(!parsed || typeof parsed!=='object') return null;
+  for(const k of ['items','products','data']){
+    if(Array.isArray(parsed[k])) return parsed[k];
+  }
+  // Один товар без обёртки — как раньше принимал loadFile.
+  if(!isFiltersPayload(parsed) && (parsed.name || parsed.title || parsed.id!=null || parsed.sku!=null)){
+    return [parsed];
+  }
+  return null;
+}
+
+/**
+ * data_*.json заказчика — {id, name, description, annotation}, без sku и
+ * категории. Остальной интерфейс ждёт sku и category: копируем id в sku и
+ * подставляем раздел из имени файла, чтобы чип и схема совпали с CLI.
+ */
+function normalizeCatalogProduct(p, catName){
+  if(!p || typeof p!=='object') return p;
+  const id=p.id??p.sku??p.article;
+  const out={...p};
+  if(out.id==null && id!=null) out.id=id;
+  if(out.sku==null && id!=null) out.sku=id;
+  if(!String(out.category||'').trim() && catName) out.category=catName;
+  if(out.description==null) out.description='';
+  if(out.annotation==null) out.annotation='';
+  return out;
+}
+
+function classifyPayload(parsed, filename){
+  const catId=catIdFromFilename(filename);
+  const catName=catNameFromId(catId);
+  const products=productsFromPayload(parsed);
+  const filters=isFiltersPayload(parsed)?parsed
+    :(parsed && typeof parsed==='object' && Array.isArray(parsed.filters) && isFiltersPayload({filters:parsed.filters})
+      ?{filters:parsed.filters}:null);
+  return {catId, catName, products, filters};
 }
 
 /** Категории считаем по всему загруженному, а не по срезу: иначе счётчик врёт. */
@@ -2063,23 +2135,53 @@ function pickDataCat(name){
   syncSteps();
 }
 
-/** Файл с диска: тот же JSON, что и по адресу, только без сети. */
+/**
+ * Файлы с диска. Форматы:
+ *   data_523.json     — массив {id, name, description, annotation}
+ *   filters_929.json  — {filters:[{name, value: string[]}]}
+ *   фид магазина      — массив с sku / {items|products|data}
+ * Несколько файлов сразу: товары склеиваются, фильтры запоминаются по id
+ * из имени. Один filters_*.json без data_*.json — ошибка: обогащать нечего.
+ */
 async function loadFile(inp){
-  const f=inp.files&&inp.files[0];
-  if(!f) return;
+  const list=inp.files?[...inp.files]:[];
+  if(!list.length) return;
   stepError(2,null);
   try{
-    const parsed=JSON.parse(await f.text());
-    const all=Array.isArray(parsed)?parsed:(parsed.items??parsed.products??parsed.data??[parsed]);
-    if(!Array.isArray(all)||!all.length) throw new Error('в файле нет товаров');
-    setSource(all);
+    const loaded=[], notes=[];
+    const nextFilters=new Map();
+    for(const f of list){
+      let parsed;
+      try{ parsed=JSON.parse(await f.text()); }
+      catch(e){ throw new Error(`${f.name}: не JSON (${e.message})`); }
+      const {catId,catName,products,filters}=classifyPayload(parsed,f.name);
+      if(filters) nextFilters.set(catId||'all', filters);
+      if(products){
+        if(!products.length) throw new Error(`${f.name}: в файле нет товаров`);
+        const bad=products.findIndex(x=>!x||typeof x!=='object');
+        if(bad>=0) throw new Error(`${f.name}: элемент №${bad+1} — не объект товара`);
+        loaded.push(...products.map(p=>normalizeCatalogProduct(p,catName)));
+        notes.push(`${f.name}: ${products.length} ${plural(products.length,'товар','товара','товаров')}${catName?` · ${catName}`:''}`);
+      }else if(filters){
+        notes.push(`${f.name}: фильтры (${filters.filters.length})`);
+      }else{
+        throw new Error(`${f.name}: не распознан формат. Нужен data_*.json (массив {id, name, description, annotation}) или filters_*.json ({filters:[{name, value}]})`);
+      }
+    }
+    if(!loaded.length){
+      throw new Error('Выбраны только файлы фильтров — добавьте data_*.json с товарами');
+    }
+    setSource(loaded);
+    srcFilters=nextFilters;
     document.getElementById('urlIn').value='';
-    document.getElementById('fetchHint').textContent=`Файл ${f.name}: загружено ${items.length} из ${all.length}`;
+    const extra=loaded.length!==items.length?` · в окне ${items.length}`:'';
+    document.getElementById('fetchHint').textContent=notes.join(' · ')+extra;
     setSt('ok',`Файл: ${items.length}`);
   }catch(e){
     setSt('er','Файл не прочитан');
     stepError(2,`Файл не читается: ${e.message}`);
   }
+  inp.value='';
   syncSteps();
 }
 
@@ -2099,10 +2201,14 @@ function readProd(){
   let parsed;
   try{ parsed=JSON.parse(raw); }
   catch(e){ return fail('JSON товаров не разбирается: '+e.message); }
-  const arr=Array.isArray(parsed)?parsed:[parsed];
+  if(isFiltersPayload(parsed) && !productsFromPayload(parsed)){
+    return fail('Это файл фильтров — вставьте data_*.json с товарами');
+  }
+  const arr=productsFromPayload(parsed)||(Array.isArray(parsed)?parsed:[parsed]);
   const bad=arr.findIndex(x=>!x||typeof x!=='object');
   if(bad>=0) return `Элемент №${bad+1} — не объект товара`;
-  srcItems=arr;
+  srcFilters=new Map();
+  srcItems=arr.map(p=>normalizeCatalogProduct(p,''));
   applySource();
   return null;
 }
@@ -2146,7 +2252,7 @@ async function fetchProducts(){
     const data=await apiJson('/api/product?url='+encodeURIComponent(fetchUrl));
     const all=Array.isArray(data)?data:(data.items??data.products??data.data??[data]);
     if(!Array.isArray(all)||!all.length) throw new Error('В ответе нет товаров');
-    setSource(all);
+    setSource(all.map(p=>normalizeCatalogProduct(p,'')));
     hint.textContent=`Загружено ${items.length} из ${all.length} доступных`;
   }catch(e){
     hint.textContent=`Загрузит первые ${selCnt} ${plural(selCnt,'товар','товара','товаров')} по адресу`;
@@ -2384,6 +2490,7 @@ function renderDetail(){
   const name=it?.name||it?.sku||`Товар №${curIdx+1}`;
   const meta=[];
   if(it?.sku!=null)   meta.push(`арт. <b>${esc(String(it.sku))}</b>`);
+  else if(it?.id!=null) meta.push(`id <b>${esc(String(it.id))}</b>`);
   if(it?.price!=null) meta.push(`<b>${Number(it.price).toLocaleString('ru')} ₽</b>`);
   if(items.length>1)  meta.push(`${curIdx+1} из ${items.length}`);
   document.getElementById('detailTitle').innerHTML=
@@ -2887,7 +2994,7 @@ async function downloadCategoryFiles(){
     // не отдать ничего, чем отдать половину пары.
     const files=[
       [`products_${key}.json`,g.rows],
-      [`filters_${key}.json`, await serverFilters(g.cat,g.rows)],
+      [`filters_${key}.json`, filtersForExport(key,g.cat) || await serverFilters(g.cat,g.rows)],
     ];
     files.forEach(([name,data])=>saveFile(JSON.stringify(data,null,2),name));
     setSt('ok',`Файлов: ${files.length} · товаров: ${g.rows.length}`);
@@ -2937,7 +3044,18 @@ async function serverV2(products){
     body:JSON.stringify({products})});
 }
 
-/** Фильтры считает сервер: buildFilters живёт там, дублировать её здесь нельзя. */
+/** Фильтры считает сервер: buildFilters живёт там, дублировать её здесь нельзя.
+ *  Исключение — файл, который заказчик сам положил рядом с data_*.json: его
+ *  значения уже те, что витрина ждёт, и пересчёт по окну их подменит. */
+function filtersForExport(key, cat){
+  if(!srcFilters.size) return null;
+  const id=cat?.id!=null?String(cat.id):'';
+  if(id && srcFilters.has(id)) return srcFilters.get(id);
+  if(srcFilters.has(String(key))) return srcFilters.get(String(key));
+  if(srcFilters.size===1 && srcFilters.has('all')) return srcFilters.get('all');
+  return null;
+}
+
 async function serverFilters(cat,products){
   return await apiJson('/api/filters',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({category_id:cat.id,category:cat.name,url:cat.url,products})});

@@ -2,7 +2,8 @@
  * Добор характеристик у товаров без своих данных (S3).
  *
  * 1. По имени ищем ту же модель в поисковике.
- * 2. Читаем страницы выдачи, пока бренд и модель не совпадут целиком.
+ * 2. Читаем страницы выдачи, пока бренд и модель (или опознавательные
+ *    слова имени) не совпадут.
  * 3. Таблицу характеристик разбираем тем же парсером, что и свой фид,
  *    и дописываем пустые поля. Уже заполненное из annotation не трогаем.
  *
@@ -11,7 +12,7 @@
  */
 
 import { extractPairsFromPage, visibleText } from './parse.js';
-import { identityMatches } from './identity.js';
+import { identityMatches, nameKeyTokens } from './identity.js';
 import { ingestPairs } from './normalize.js';
 import { searchWeb, fetchPage, searchQuery, resolveSearchSettings } from './search.js';
 
@@ -27,15 +28,16 @@ function filledCount(rec) {
   return n;
 }
 
-/** Своих характеристик мало, а модель из имени есть — есть что искать. */
+/** Своих характеристик мало, а по имени товар ещё можно найти. */
 export function needsExternal(rec, { minAttrs = 5 } = {}) {
-  if (!rec?.identity?.model) return false;
-  return filledCount(rec) < minAttrs;
+  if (filledCount(rec) >= minAttrs) return false;
+  if (rec?.identity?.model) return true;
+  return nameKeyTokens(rec?.name || rec?.identity?.name, rec?.identity?.brand).length > 0;
 }
 
 /**
- * Разобрать HTML-страницу характеристик. Без совпадения модели — пусто:
- * чужие цифры дороже пропуска.
+ * Разобрать HTML-страницу характеристик. Без совпадения модели или
+ * опознавательных слов имени — пусто: чужие цифры дороже пропуска.
  */
 export function parseExternalSpecs(html, identity, dict) {
   const text = visibleText(html);

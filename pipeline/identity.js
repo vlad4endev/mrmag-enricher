@@ -28,7 +28,32 @@ function findBrand(name, dict) {
   return null;
 }
 
-const GENERIC = /^(стиральная|машина|холодильник|морозильник|морозильная|камера|with|с)$/i;
+/** Слова названия, по которым товар не узнать: тип, цвет, единицы. */
+const GENERIC = /^(?:стиральн[а-яё]*|машин[а-яё]*|холодильник[а-яё]*|морозильник[а-яё]*|морозильн[а-яё]*|камер[а-яё]*|телевизор[а-яё]*|плит[а-яё]*|духовк[а-яё]*|посудомоечн[а-яё]*|микроволнов[а-яё]*|печ[а-яё]*|кондиционер[а-яё]*|вытяжк[а-яё]*|варочн[а-яё]*|поверхност[а-яё]*|сушильн[а-яё]*|сушилк[а-яё]*|встраиваем[а-яё]*|отдельностоящ[а-яё]*|двухкамерн[а-яё]*|однокамерн[а-яё]*|белый|белая|белое|черный|черная|черное|чёрный|чёрная|чёрное|серебристый|серебристая|серебристое|серый|серая|серое|красный|красная|красное|синий|синяя|синее|бежевый|бежевая|графит|графитовый|цвет|with|the|and|для|или|шт|см|мм|кг|л|и|с|a)$/i;
+
+/**
+ * Опознавательные слова из названия: бренд, модель, артикул.
+ * «Холодильник белый» → [] — искать не по чему.
+ * «Холодильник DON R 290 G» → ['DON', '290'] — однобуквенные суффиксы цвета отбрасываются.
+ */
+export function nameKeyTokens(name, extra) {
+  const bits = [
+    ...String(name || '').replace(/[«»""(),;]/g, ' ').split(/\s+/),
+    ...[extra].flat().filter(Boolean).map(String),
+  ];
+  const out = [];
+  const seen = new Set();
+  for (const raw of bits) {
+    const w = raw.replace(/^[.:]+|[.:]+$/g, '');
+    if (!w || GENERIC.test(w)) continue;
+    if (w.length < 2 && !/\d/.test(w)) continue;
+    const id = fold(w).replace(/[^\p{L}\d]/gu, '');
+    if (id.length < 2 || seen.has(id)) continue;
+    seen.add(id);
+    out.push(w);
+  }
+  return out;
+}
 
 export function parseIdentity(name, dict) {
   const src = String(name || '');
@@ -50,6 +75,7 @@ export function parseIdentity(name, dict) {
     brand: brand?.canon ?? null,
     model: model || null,
     article,
+    name: src,
   };
 }
 
@@ -73,16 +99,28 @@ export function brandAliases(brand, dict) {
   return [...new Set([canon, ...list.map(v => String(v).trim()).filter(Boolean)])];
 }
 
+function brandOnPage(text, brand, dict) {
+  if (!brand) return true;
+  return brandAliases(brand, dict).some(a => containsTokenSequence(text, a));
+}
+
 /**
  * Правило 12: внешний источник принимается только при полном совпадении
  * бренда и модели одновременно. Синонимы бренда («Индезит» = Indesit)
  * берутся из справочника, если он передан.
+ *
+ * Модели в названии нет — сверяем опознавательные слова имени: иначе карточки
+ * вроде «DON R 290» без артикула-токена оставались пустыми навсегда.
  */
 export function identityMatches(text, identity, dict) {
   const model = String(identity?.model || '').trim();
   const brand = String(identity?.brand || '').trim();
-  if (!model) return false;
-  if (!containsTokenSequence(text, model)) return false;
-  if (!brand) return true;
-  return brandAliases(brand, dict).some(a => containsTokenSequence(text, a));
+  if (model) {
+    if (!containsTokenSequence(text, model)) return false;
+    return brandOnPage(text, brand, dict);
+  }
+  const keys = nameKeyTokens(identity?.name, brand);
+  if (!keys.length) return false;
+  if (!keys.every(k => containsTokenSequence(text, k))) return false;
+  return brandOnPage(text, brand, dict);
 }

@@ -275,8 +275,7 @@ async function main() {
     process.stdout.write(`  [${String(i + 1).padStart(4)}/${todo.length}] ${name.padEnd(48)}...`);
 
     // Нечего извлекать — не платим за запрос, помечаем и идём дальше.
-    // Пустая карточка сначала добирается из сети: у товара есть артикул, а
-    // значит есть и чужая карточка с характеристиками (ensureSource).
+    // Пустая карточка сначала добирается из сети по имени товара (ensureSource).
     let item = p, sourceUrl = null;
     const first = isEnrichable(p, schema);
     if (!first.ok) {

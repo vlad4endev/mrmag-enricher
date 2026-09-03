@@ -1043,7 +1043,7 @@ input[type=range]::-moz-range-thumb{
 
       <section class="set-panel" id="setParse">
         <div class="set-h">Парсеры поиска</div>
-        <p class="set-lead">Когда у карточки нет описания, сервер ищет ту же модель в сети. Сначала SerpAPI (Google JSON), затем свой URL, DuckDuckGo и запасные HTML-движки. Страница принимается, только если на ней есть артикул из названия.</p>
+        <p class="set-lead">Когда у карточки нет описания, сервер ищет ту же модель в сети по названию товара. Сначала SerpAPI (Google JSON), затем свой URL, DuckDuckGo и запасные HTML-движки. Страница принимается, если на ней есть артикул или опознавательные слова имени.</p>
         <div class="set-card" style="margin-bottom:12px">
           <label class="set-check"><input type="checkbox" id="setSearchOn"> Искать описания пустых карточек в сети</label>
           <div class="set-grid">
@@ -1776,7 +1776,7 @@ function renderParser(p){
   if((p.engines||[]).length) rows.push(['Свои парсеры', p.engines.map(e=>e.name||e.url).join(', ')]);
   if(ddg.url) rows.push(['URL выдачи', ddg.url]);
   box.innerHTML=rows.map(([k,v])=>`<div class="parser-kv"><span>${esc(k)}</span><b>${esc(v)}</b></div>`).join('')
-    +'<div class="est-note" style="margin-top:8px">Страница принимается, только если на ней есть артикул из названия. Соцсети и футер поисковика в выдачу не входят.</div>'
+    +'<div class="est-note" style="margin-top:8px">Страница принимается, если на ней есть артикул или опознавательные слова имени. Соцсети и футер поисковика в выдачу не входят.</div>'
     +'<button type="button" class="sbtn ghost" style="margin-top:10px" onclick="showPage(\'settings\');setTab(\'parse\')">Настроить парсеры</button>';
 }
 
@@ -2467,7 +2467,7 @@ function renderList(){
     const name=it.name||it.title||it.sku||`Товар №${i+1}`;
     // Причину «без данных» пишем в строку: иначе непонятно, почему товар в
     // фильтре и что с ним делать — она же уйдёт в skipped при прогоне.
-    const why=!results[i]&&isThin(i)?` · без данных: ${quality[i].reason}${quality[i].web?' · поищем описание в сети':''}`
+    const why=!results[i]&&isThin(i)?` · без данных: ${quality[i].reason}${quality[i].web?' · поищем описание в сети по названию':''}`
       :(confOf(i).length?` · каталог противоречит себе: ${confOf(i).map(c=>label(c.field)).join(', ')}`:'');
     const d=dateKey?dateOf(it):null;
     return `<button class="ri s-${st.cls}${i===curIdx?' on':''}" onclick="selectResult(${i})" title="${esc(String(name))}${why?esc(why):''}">`
@@ -2529,7 +2529,7 @@ function renderDetail(){
     }
     setP('detail',conf+`<div class="seobox"><div class="st">Исходный текст — ${src.length} символов</div>${esc(src||'пусто')}</div>`
       +`<div class="hint">Товар ещё не обработан. Нажмите «Обогатить через ИИ».`
-      +`${!src&&quality[curIdx]?.web?' Своего текста нет — описание будет найдено в сети по артикулу из названия.':''}</div>`);
+      +`${!src&&quality[curIdx]?.web?' Своего текста нет — описание будет найдено в сети по названию товара.':''}</div>`);
     return;
   }
   if(r.skipped){

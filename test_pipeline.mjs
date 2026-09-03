@@ -4,7 +4,7 @@ import { bucketLabel, buildFilters } from './pipeline/facets.js';
 import { renderCard } from './pipeline/generate.js';
 import { compactAnnotation, compactHtml, serializeProduct, metaKeywords } from './pipeline/export.js';
 import { displayEnum, valueFold } from './pipeline/types.js';
-import { identityMatches } from './pipeline/identity.js';
+import { identityMatches, nameKeyTokens, parseIdentity } from './pipeline/identity.js';
 import { needsExternal, parseProductBySpecs, lookupExternal, enrichMissing } from './pipeline/external.js';
 import {
   parseSearchResults, parseDuckDuckGoResults, isDuckDuckGoBlocked,
@@ -170,6 +170,18 @@ console.log('golden tests passed');
     identityMatches('Стиральная машина Индезит BWSE 7129X WSV RU', { brand: 'Indesit', model: 'BWSE 7129X WSV RU' }, d467),
     true,
   );
+  assert.deepEqual(nameKeyTokens('Холодильник белый'), []);
+  assert.deepEqual(nameKeyTokens('Холодильник DON R 290 G'), ['DON', '290']);
+  assert.equal(
+    identityMatches('Холодильник DON R 290 G объём 310', { name: 'Холодильник DON R 290 G' }),
+    true,
+  );
+  assert.equal(
+    identityMatches('Холодильник DON R 291 G', { name: 'Холодильник DON R 290 G' }),
+    false,
+  );
+  const donId = parseIdentity('Холодильник DON R 290 G', d523);
+  assert.equal(needsExternal({ identity: donId, name: donId.name, attrs: {}, provenance: {} }), true);
   console.log('ok identity match: full model, not a neighbour');
 }
 

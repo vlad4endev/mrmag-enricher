@@ -20,6 +20,8 @@
  * утверждаем ничего: магазин противоречит сам себе примерно в 2% карточек.
  */
 
+import { nameKeyTokens } from './pipeline/identity.js';
+
 // ── КУРС ─────────────────────────────────────────────────────
 // Обновляйте вместе с датой — она печатается в отчётах и выводится в UI.
 export const RUB_PER_USD = Number(process.env.RUB_PER_USD || 80);
@@ -1227,6 +1229,48 @@ export function parseResponse(text) {
   }
 }
 
+/**
+ * Обрыв по max_tokens почти всегда режет хвост: specs уже написаны, а
+ * seo_description оборван на полуслове. Закрываем строку и скобки — иначе
+ * весь товар уходит в ошибку из-за одного незакрытого абзаца.
+ */
+export function repairTruncatedJson(text) {
+  if (!text) return null;
+  let s = String(text)
+    .replace(/^```json\s*/i, '')
+    .replace(/^```\s*/i, '')
+    .replace(/\s*```$/i, '')
+    .trim();
+  try {
+    const p = JSON.parse(s);
+    return Array.isArray(p) ? p[0] : p;
+  } catch { /* чиним */ }
+
+  let inString = false, escape = false;
+  const stack = [];
+  for (const ch of s) {
+    if (inString) {
+      if (escape) { escape = false; continue; }
+      if (ch === '\\') { escape = true; continue; }
+      if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') { inString = true; continue; }
+    if (ch === '{') stack.push('}');
+    else if (ch === '[') stack.push(']');
+    else if ((ch === '}' || ch === ']') && stack[stack.length - 1] === ch) stack.pop();
+  }
+  if (inString) s += '"';
+  s = s.replace(/,\s*$/, '');
+  s += stack.reverse().join('');
+  try {
+    const p = JSON.parse(s);
+    return Array.isArray(p) ? p[0] : p;
+  } catch {
+    return null;
+  }
+}
+
 // Модель отвечает «Есть», «ЕСТЬ», «имеется» на поле со списком ["да","нет"] —
 // три разных фасета вместо одного. Приводим то, что однозначно, остальное
 // считаем значением вне списка.
@@ -1388,17 +1432,27 @@ export function modelToken(name) {
 }
 
 /**
+ * Пустую карточку ещё можно добрать из сети, если в названии есть
+ * артикул или другие опознавательные слова (бренд, модель).
+ * «Холодильник белый» — нет: по такому имени чужую карточку не отличить.
+ */
+export function canSearchWeb(product) {
+  if (modelToken(product?.name)) return true;
+  return nameKeyTokens(product?.name, product?.brand).length > 0;
+}
+
+/**
  * Стоит ли платить за запрос по этому товару.
  * Короткий текст сам по себе не приговор — важно, есть ли в нём что извлекать.
  * Возвращает { ok } либо { ok:false, reason } для пометки в выгрузке.
  *
- * Отказ с web:true — это «своего текста нет, но товар опознаваем по артикулу»:
+ * Отказ с web:true — это «своего текста нет, но товар опознаваем по имени»:
  * такой товар до модели ещё может дойти, если описание найдётся в сети
  * (ensureSource в catalog.js). Сеть здесь не трогается: фильтр в интерфейсе
  * обязан считаться мгновенно и на любом количестве товаров.
  */
 export function isEnrichable(product, schemaKey) {
-  const web = Boolean(modelToken(product.name));
+  const web = canSearchWeb(product);
   const text = sourceText(product);
   if (!text) return { ok: false, reason: 'нет ни description, ни annotation', web };
   const factCount = Object.keys(extractFacts(text, schemaKey)).length;
@@ -1406,6 +1460,25 @@ export function isEnrichable(product, schemaKey) {
     return { ok: false, reason: `текст ${text.length} симв. и ни одной распознанной характеристики`, web };
   }
   return { ok: true };
+}
+
+/** Верх ретрая при обрыве. Совпадает с потолком max_tokens в настройках. */
+export const MAX_COMPLETION_TOKENS = 16_000;
+
+/**
+ * DeepSeek/Qwen по умолчанию думают вслух. Цепочка рассуждений и JSON делят
+ * один max_tokens: thinking съедает бюджет, finish_reason=length, карточка
+ * пустая. Для извлечения характеристик рассуждения не нужны — выключаем.
+ * Чужим моделям эти поля не шлём: часть шлюзов падает на неизвестном ключе.
+ */
+function thinkingOff(model) {
+  const m = String(model || '').toLowerCase();
+  if (!/deepseek|qwen|qwq/.test(m)) return {};
+  return {
+    thinking: { type: 'disabled' },
+    reasoning: { enabled: false, effort: 'none' },
+    enable_thinking: false,
+  };
 }
 
 function buildRequestBody(model, product, maxTokens = 3200, schemaKey) {
@@ -1417,6 +1490,7 @@ function buildRequestBody(model, product, maxTokens = 3200, schemaKey) {
     response_format: { type: 'json_object' },
     // Возвращает фактическую стоимость запроса — не считаем её сами.
     usage: { include: true },
+    ...thinkingOff(model),
     messages: [
       { role: 'system', content: buildSystemPrompt(schemaKey) },
       { role: 'user',   content: product },
@@ -1616,10 +1690,23 @@ export async function enrichProduct(product, opts) {
       if (costSource === 'нет данных') costSource = 'тариф модели';
     }
 
+    const content = choice.message?.content ?? '';
+    const accept = (data) => {
+      const enriched = normalizeResponse(data, src, schema, product.attributes, mismatchPolicy);
+      return { enriched, ...usage(), costSource, attempts: attempt };
+    };
+
     // Обрыв по длине — детерминированная ошибка: повтор с тем же лимитом бессмыслен.
+    // Но JSON мог успеть закрыться на лимите, или specs уже написаны, а хвост
+    // SEO обрезан: это не повод выкидывать товар.
     if (choice.finish_reason === 'length') {
-      if (attempt < maxRetries && tokenBudget < 8000) {
-        tokenBudget = Math.min(8000, tokenBudget * 2);
+      try { return accept(parseResponse(content)); } catch { /* не закрылся */ }
+      const repaired = repairTruncatedJson(content);
+      if (repaired) {
+        try { return accept(repaired); } catch { /* починка дала мусор */ }
+      }
+      if (attempt < maxRetries && tokenBudget < MAX_COMPLETION_TOKENS) {
+        tokenBudget = Math.min(MAX_COMPLETION_TOKENS, tokenBudget * 2);
         onNote(`обрыв по длине, max_tokens→${tokenBudget}`);
         continue;
       }
@@ -1628,7 +1715,7 @@ export async function enrichProduct(product, opts) {
 
     let enriched;
     try {
-      enriched = normalizeResponse(parseResponse(choice.message?.content ?? ''), src, schema, product.attributes, mismatchPolicy);
+      enriched = normalizeResponse(parseResponse(content), src, schema, product.attributes, mismatchPolicy);
     } catch (err) {
       lastErr = err;
       if (attempt < maxRetries) { onNote(`parse err, retry ${attempt}`); await sleep(2000); continue; }

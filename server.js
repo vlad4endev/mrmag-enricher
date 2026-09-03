@@ -31,9 +31,9 @@
  *   POST /api/jobs/:id/stop   остановить прогон после текущего товара
  *   DELETE /api/jobs/:id      забыть прогон вместе с файлом на диске
  *
- * Товар без description и annotation не пропускается молча: если в названии
- * есть артикул, описание ищется в сети (ensureSource), и адрес найденной
- * страницы возвращается в source_url. Отключается WEB_LOOKUP=0.
+ * Товар без description и annotation не пропускается молча: по имени
+ * ищется описание в сети (ensureSource), и адрес найденной страницы
+ * возвращается в source_url. Отключается WEB_LOOKUP=0.
  *
  * Ответ /api/enrich: { enriched, usage:{prompt_tokens, completion_tokens, cost,
  * cost_source, attempts} }. Токены и стоимость — сумма по всем попыткам, включая
@@ -540,8 +540,8 @@ async function enrichOne(product, { model, category, provider } = {}) {
     usage:    { prompt_tokens: 0, completion_tokens: 0, cost: 0 },
   });
 
-  // Дешёвый вердикт без сети: своего текста нет и артикула в названии тоже —
-  // искать нечего и не по чему.
+  // Дешёвый вердикт без сети: своего текста нет и в названии не за что
+  // зацепиться (нет ни артикула, ни бренда/модели) — искать нечего.
   const first = isEnrichable(product, schema);
   if (!first.ok && !first.web) return skip(first.reason);
 
@@ -570,9 +570,9 @@ async function enrichOne(product, { model, category, provider } = {}) {
     if (e.status === 400) throw e;
   }
 
-  // Пустая карточка — не приговор: тот же артикул описан у производителя и
-  // других продавцов. Ищем описание в сети и работаем с ним как со своим;
-  // адрес страницы уходит в ответ, чтобы источник был виден, а не подразумевался.
+  // Пустая карточка — не приговор: та же модель описана у производителя и
+  // других продавцов. Ищем описание в сети по имени товара и работаем с ним
+  // как со своим; адрес страницы уходит в ответ, чтобы источник был виден.
   let filled = product, sourceUrl = null;
   if (!first.ok) {
     const found = await ensureSource(product, schema);

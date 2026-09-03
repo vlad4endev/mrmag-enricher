@@ -10,6 +10,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import {
   coerceNumber, extractFacts as extractFactsIn, crossCheck, parseResponse,
+  repairTruncatedJson, MAX_COMPLETION_TOKENS,
   normalizeResponse as normalizeResponseIn, stripHtml, RateLimiter, isEnrichable,
   buildUserContent, rpmFor, attrFacts, productFacts, modelToken,
   SCHEMAS, GENERIC_SCHEMA, schemaFor, buildSystemPrompt, enrichProduct, netError,
@@ -22,7 +23,7 @@ const extractFacts = (text, key = 'kholodilniki') => extractFactsIn(text, key);
 const normalizeResponse = (data, src = '', key = 'kholodilniki', attrs = []) => normalizeResponseIn(data, src, key, attrs);
 const attr = (name, value) => ({ name, value });
 import { parseListing, parseProductPage, buildFilters, assignMissingBrands, writeCategoryFiles,
-  parseSearchResults, parseAnyProductPage } from './catalog.js';
+  parseSearchResults, parseAnyProductPage, pageDescribesProduct } from './catalog.js';
 import http from 'http';
 import { buildV2, splitKey } from './export_v2.js';
 import { parseProxy, startBridge, setupProxy, mergeNoProxy, applyDirectHosts } from './socks.js';
@@ -158,6 +159,11 @@ t('JSON среди пояснений', () => {
 t('пустой ответ бросает', () => {
   assert.throws(() => parseResponse(''), /Пустой ответ/);
   assert.throws(() => parseResponse('совсем не json'), /распарсить/);
+});
+t('обрезанный JSON закрывает строку и скобки', () => {
+  const r = repairTruncatedJson('{"specs":{"бренд":"DON"},"seo_description":"Холодильник DON');
+  assert.strictEqual(r.specs.бренд, 'DON');
+  assert.match(r.seo_description, /^Холодильник DON/);
 });
 
 console.log('\nНормализация');
@@ -828,7 +834,7 @@ console.log('\nЗапрос к модели');
   await tAsync('обрыв по длине поднимает лимит, а расход суммируется', async () => {
     record.length = 0;
     stub([
-      reply('{"specs":{"бренд":"D', { finish: 'length', usage: { prompt_tokens: 900, completion_tokens: 2500, cost: 0.003 } }),
+      reply('обрезано без json', { finish: 'length', usage: { prompt_tokens: 900, completion_tokens: 2500, cost: 0.003 } }),
       reply(answer({ бренд: 'DON' }), { usage: { prompt_tokens: 900, completion_tokens: 400, cost: 0.001 } }),
     ]);
     const r = await run({ name: 'X', description: 'Общий объем, л 310 Вес (кг) - 62' }, { maxTokens: 2500 });
@@ -839,6 +845,55 @@ console.log('\nЗапрос к модели');
     assert.strictEqual(+r.cost.toFixed(6), 0.004, 'ретрай — оплаченный запрос');
     assert.strictEqual(r.iT, 1800);
     assert.strictEqual(r.oT, 2900);
+  });
+
+  await tAsync('у DeepSeek thinking выключен, иначе max_tokens съедает цепочка', async () => {
+    record.length = 0;
+    stub([reply(answer({ бренд: 'DON' }), { usage: { prompt_tokens: 10, completion_tokens: 5 } })]);
+    await run({ name: 'X', description: 'Общий объем, л 310' }, { model: 'deepseek/deepseek-v3.2' });
+    const body = record[0].body;
+    assert.deepStrictEqual(body.thinking, { type: 'disabled' });
+    assert.strictEqual(body.reasoning.enabled, false);
+    assert.strictEqual(body.reasoning.effort, 'none');
+    assert.strictEqual(body.enable_thinking, false);
+  });
+
+  await tAsync('GPT не получает thinking-поля', async () => {
+    record.length = 0;
+    stub([reply(answer({ бренд: 'DON' }), { usage: {} })]);
+    await run({ name: 'X', description: 'Общий объем, л 310' }, { model: 'openai/gpt-4o-mini' });
+    assert.ok(!('thinking' in record[0].body));
+    assert.ok(!('reasoning' in record[0].body));
+  });
+
+  await tAsync('обрыв с целым JSON принимается без повтора', async () => {
+    record.length = 0;
+    stub([reply(answer({ бренд: 'DON' }), { finish: 'length', usage: { prompt_tokens: 10, completion_tokens: 5 } })]);
+    const r = await run({ name: 'X', description: 'Общий объем, л 310' }, { maxTokens: 8000 });
+    assert.strictEqual(record.length, 1, 'JSON закрыт — повтор не нужен');
+    assert.strictEqual(r.enriched.specs.бренд, 'DON');
+  });
+
+  await tAsync('ретрай обрыва идёт до потолка настроек, не до 8000', async () => {
+    record.length = 0;
+    stub([
+      reply('обрезано без json', { finish: 'length', usage: { prompt_tokens: 1, completion_tokens: 8000, cost: 0.01 } }),
+      reply(answer({ бренд: 'DON' }), { usage: { prompt_tokens: 1, completion_tokens: 100, cost: 0.001 } }),
+    ]);
+    const r = await run({ name: 'X', description: 'Общий объем, л 310' }, { maxTokens: 8000 });
+    assert.strictEqual(record[0].body.max_tokens, 8000);
+    assert.strictEqual(record[1].body.max_tokens, MAX_COMPLETION_TOKENS);
+    assert.strictEqual(r.enriched.specs.бренд, 'DON');
+  });
+
+  await tAsync('обрезанный JSON с готовыми specs не роняет товар', async () => {
+    record.length = 0;
+    stub([reply('{"specs":{"бренд":"DON","модель":"290 G"},"seo_description":"Холодильник DON', {
+      finish: 'length', usage: { prompt_tokens: 10, completion_tokens: 8000 },
+    })]);
+    const r = await run({ name: 'X', description: 'Общий объем, л 310' }, { maxTokens: 8000, maxRetries: 1 });
+    assert.strictEqual(record.length, 1);
+    assert.strictEqual(r.enriched.specs.бренд, 'DON');
   });
 
   await tAsync('тариф модели считает стоимость, когда OpenRouter её не вернул', async () => {
@@ -1187,18 +1242,20 @@ console.log('\nОграничитель частоты под параллель
 
 console.log('\nТовар без описания: поиск в сети');
 {
-  // Артикул из названия — единственная проверка, что найденная страница про
-  // этот товар. Ошибётся она — в карточку уедут характеристики соседней модели.
+  // Артикул или опознавательные слова имени — проверка, что найденная страница
+  // про этот товар. Ошибётся она — в карточку уедут характеристики соседа.
   t('артикул узнаётся в названии, а слова с одной цифрой — нет', () => {
     assert.strictEqual(modelToken('Холодильник LG GC-Q247CAMT'), 'GC-Q247CAMT');
     assert.strictEqual(modelToken('Холодильник "Атлант" 2862-90'), '2862-90');
     // В скобках — внутренний код магазина, на чужом сайте его нет.
     assert.strictEqual(modelToken('Холодильник HOTPOINT-ARISTON HBD 1182.3 M NF H (78091)'), '1182.3');
     assert.strictEqual(modelToken('Холодильник 2-камерный белый'), null);
+    assert.strictEqual(modelToken('Холодильник DON R 290 G'), null);
     assert.strictEqual(modelToken(''), null);
   });
-  t('пустой товар с артикулом помечается как «можно найти в сети»', () => {
+  t('пустой товар ищется в сети по артикулу или по имени, но не по голому типу', () => {
     assert.strictEqual(isEnrichable({ name: 'Холодильник LG GC-Q247CAMT' }).web, true);
+    assert.strictEqual(isEnrichable({ name: 'Холодильник DON R 290 G' }).web, true);
     assert.strictEqual(isEnrichable({ name: 'Холодильник белый' }).web, false);
   });
 
@@ -1264,7 +1321,19 @@ console.log('\nТовар без описания: поиск в сети');
             + '<tr><td>Система разморозки</td><td>No Frost</td></tr>'
             + '<tr><td>Ширина</td><td>59.5 см</td></tr>'
             + '<tr><td>Высота</td><td>190 см</td></tr></table>',
+    '/don': '<h1>Холодильник DON R 290 G</h1>'
+          + '<table><tr><td>Общий объём</td><td>310 л</td></tr>'
+          + '<tr><td>Система разморозки</td><td>капельная</td></tr>'
+          + '<tr><td>Ширина</td><td>58 см</td></tr>'
+          + '<tr><td>Высота</td><td>171 см</td></tr></table>',
   };
+
+  t('страница принимается по артикулу или по имени, соседняя модель — нет', () => {
+    assert.strictEqual(pageDescribesProduct(pages['/don'], { name: 'Холодильник DON R 290 G' }).ok, true);
+    assert.strictEqual(pageDescribesProduct(pages['/don'], { name: 'Холодильник DON R 291 G' }).ok, false);
+    assert.strictEqual(pageDescribesProduct(pages['/right'], { name: 'Холодильник LG GC-Q247CAMT' }).ok, true);
+    assert.strictEqual(pageDescribesProduct(pages['/wrong'], { name: 'Холодильник LG GC-Q247CAMT' }).ok, false);
+  });
   const srv = http.createServer((req, res) => {
     const url = new URL(req.url, 'http://x');
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });

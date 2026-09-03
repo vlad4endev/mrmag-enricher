@@ -29,6 +29,7 @@ import { fileURLToPath } from 'url';
 import { netError, isEnrichable, modelToken, MIN_SOURCE_CHARS } from './lib.js';
 import { specFacets, enrichedRows } from './export_v2.js';
 import { loadConfig } from './pipeline/dict.js';
+import { containsTokenSequence, nameKeyTokens } from './pipeline/identity.js';
 import {
   isDuckDuckGoBlocked, isJunkHost, parseDuckDuckGoResults,
   searchWeb as pipelineSearchWeb,
@@ -300,8 +301,9 @@ export async function crawlCategory(url, { limit = Infinity, offset = 0, feed = 
  * работает всё то же самое — extractFacts, гейт, промпт.
  *
  * Чужая страница — источник недоверенный, отсюда три ограничения:
- *   1. страница принимается, только если на ней есть артикул из названия,
- *      иначе в карточку уедут характеристики соседней модели;
+ *   1. страница принимается, если на ней есть артикул из названия
+ *      или все опознавательные слова имени (бренд + модель). Иначе
+ *      в карточку уедут характеристики соседней модели;
  *   2. торговые фразы («купить», «доставка», цена в рублях) выбрасываются —
  *      это реклама чужого магазина, ей в нашем описании не место;
  *   3. адрес страницы записывается в source_url и виден в выгрузке: откуда
@@ -318,6 +320,27 @@ const squash = s => String(s || '').toLowerCase().replace(/[^\p{L}\d]/gu, '');
 const htmlText = h => decode(String(h || '')
   .replace(/<(script|style|noscript|svg|template)[\s\S]*?<\/\1>/gi, ' ')
   .replace(/<[^>]+>/g, ' '));
+
+/**
+ * Страница про этот товар, а не про соседа.
+ * Сначала артикул (если он есть в названии), иначе все опознавательные слова.
+ */
+export function pageDescribesProduct(html, product) {
+  const text = htmlText(html);
+  const hay = squash(text);
+  const token = modelToken(product?.name);
+  if (token && hay.includes(squash(token))) return { ok: true, how: 'article', token };
+  const keys = nameKeyTokens(product?.name, product?.brand);
+  if (!keys.length) {
+    return { ok: false, reason: token ? `нет артикула ${token}` : 'в названии нет опознавательных слов' };
+  }
+  const missing = keys.filter(k => !containsTokenSequence(text, k) && !hay.includes(squash(k)));
+  if (missing.length) {
+    const why = token ? `нет артикула ${token}` : `нет в тексте «${missing.join(', ')}»`;
+    return { ok: false, reason: why };
+  }
+  return { ok: true, how: 'name', keys };
+}
 
 /** Реклама чужого магазина: в описание нашей карточки такие фразы не идут. */
 const SALES_RE = /куп(и|ить|лю)|цена|руб|₽|достав|магазин|заказ|скидк|акци|кредит|рассрочк|отзыв|корзин|самовывоз/i;
@@ -465,7 +488,7 @@ export async function ensureSource(product, schema, { onNote = () => {} } = {}) 
 
   let urls = [];
   try {
-    onNote(`ищем в сети: ${token}`);
+    onNote(`ищем в сети: ${token || product.name}`);
     urls = await searchWeb(query);
   } catch (e) {
     return { product, gate: { ...gate, reason: `${gate.reason}; поиск в сети не удался: ${e.message}` } };
@@ -479,8 +502,9 @@ export async function ensureSource(product, schema, { onNote = () => {} } = {}) 
     catch { tried.push(`${host}: не открылась`); continue; }
 
     // Не тот товар — не наш случай: лучше пропуск, чем чужие характеристики.
-    if (!squash(htmlText(html)).includes(squash(token))) {
-      tried.push(`${host}: нет артикула ${token}`);
+    const who = pageDescribesProduct(html, product);
+    if (!who.ok) {
+      tried.push(`${host}: ${who.reason}`);
       continue;
     }
     const found = parseAnyProductPage(html);

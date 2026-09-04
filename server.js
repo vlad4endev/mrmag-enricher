@@ -965,7 +965,7 @@ function apiLogout(req, res) {
 function deny(req, res, pathname) {
   if (pathname.startsWith('/api/')) {
     res.writeHead(401, {
-      'WWW-Authenticate': 'Basic realm="AI Enricher", charset="UTF-8"',
+      'WWW-Authenticate': 'Basic realm="Ogran", charset="UTF-8"',
       'Content-Type': 'application/json; charset=utf-8',
       'Cache-Control': 'no-store',
     });

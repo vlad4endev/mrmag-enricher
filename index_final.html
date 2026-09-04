@@ -841,14 +841,14 @@ input[type=range]::-moz-range-thumb{
 /* Пошаговый лог прогона — живой журнал под прогрессом */
 .runlog{
   display:none;flex-direction:column;flex-shrink:0;
-  border-bottom:1px solid var(--b1);background:var(--bg3);max-height:42%;min-height:0;
+  border-bottom:1px solid var(--b1);background:var(--bg3);min-height:0;
 }
 .runlog.on{display:flex}
 .runlog-h{
-  display:flex;align-items:center;gap:8px;padding:7px 10px;
+  display:flex;align-items:center;flex-wrap:wrap;gap:6px 8px;padding:7px 10px;
   border-bottom:1px solid var(--b1);flex-shrink:0;min-width:0;
 }
-.runlog-t{flex:1;min-width:0;font-size:11px;font-weight:650;color:var(--t1);letter-spacing:-.02em}
+.runlog-t{flex:1 1 auto;min-width:0;font-size:11px;font-weight:650;color:var(--t1);letter-spacing:-.02em}
 .runlog-n{font-family:var(--mono);font-size:10px;color:var(--t3);font-variant-numeric:tabular-nums}
 .runlog-copy,.runlog-clr{
   border:1px solid var(--b1);background:var(--bg2);color:var(--t2);
@@ -858,9 +858,9 @@ input[type=range]::-moz-range-thumb{
 .runlog-copy:hover,.runlog-clr:hover{border-color:var(--ac);color:var(--ac);background:var(--ac-w)}
 .runlog-copy.ok{border-color:var(--gbd);color:var(--green);background:var(--gbg)}
 .runlog-body{
-  flex:1;overflow-y:auto;padding:6px 8px 8px;margin:0;
+  overflow-y:auto;padding:6px 8px 8px;margin:0;max-height:200px;
   font-family:var(--mono);font-size:10.5px;line-height:1.45;color:var(--t2);
-  white-space:pre-wrap;word-break:break-word;min-height:72px;
+  white-space:pre-wrap;word-break:break-word;min-height:56px;
 }
 .runlog-line{display:block;padding:1px 0}
 .runlog-line .rl-ts{color:var(--t3);margin-right:6px}
@@ -3055,6 +3055,9 @@ const POLL_GIVEUP=20;     // ~1 минута молчания сервера: д
 let jobId=null;           // прогон, за которым следим
 let following=false;      // опрос уже идёт — второй не нужен
 let jobPos=false;         // товары взяты из прогона: индекс = позиция в очереди
+let runLog=[];            // пошаговый журнал текущего/последнего прогона
+let logCursor=0;          // сколько строк лога уже забрали с сервера
+let logStick=true;        // автопрокрутка вниз, пока пользователь сам не ушёл вверх
 
 function saveJobId(id){
   jobId=id||null;
@@ -3063,6 +3066,104 @@ function saveJobId(id){
 
 /** Индекс товара в items по позиции в очереди прогона. */
 const qIdx=(d,pos)=>jobPos?pos:(d.indices?.[pos]??pos);
+
+function fmtLogTs(t){
+  if(!t) return '--:--:--';
+  const d=new Date(t);
+  return [d.getHours(),d.getMinutes(),d.getSeconds()].map(n=>String(n).padStart(2,'0')).join(':');
+}
+
+function logLineText(e){
+  return `${fmtLogTs(e.t)}  ${e.msg}`;
+}
+
+function renderRunLog(){
+  const box=document.getElementById('runLog');
+  const body=document.getElementById('runLogBody');
+  const nEl=document.getElementById('runLogN');
+  if(!box||!body) return;
+  const show=running||runLog.length>0;
+  box.classList.toggle('on',show);
+  nEl.textContent=String(runLog.length);
+  if(!runLog.length){
+    body.innerHTML='<span class="runlog-empty">Здесь появятся шаги прогона.</span>';
+    return;
+  }
+  const nearBottom=body.scrollHeight-body.scrollTop-body.clientHeight<40;
+  body.innerHTML=runLog.map(e=>{
+    const cls=e.level==='ok'?'l-ok':e.level==='err'?'l-err':e.level==='warn'?'l-warn':e.level==='skip'?'l-skip':'l-info';
+    return `<span class="runlog-line ${cls}"><span class="rl-ts">${esc(fmtLogTs(e.t))}</span>${esc(e.msg)}</span>`;
+  }).join('');
+  if(logStick||nearBottom) body.scrollTop=body.scrollHeight;
+}
+
+function resetRunLog(){
+  runLog=[];
+  logCursor=0;
+  logStick=true;
+  renderRunLog();
+}
+
+function applyLog(d){
+  if(!Array.isArray(d?.log)) return;
+  const from=typeof d.log_from==='number'?d.log_from:logCursor;
+  if(from===0){
+    // Полный снимок: новый прогон, подхват или первый опрос.
+    runLog=d.log.slice();
+  }else if(from<=logCursor){
+    // Хвост: дописываем только то, чего ещё нет.
+    const skip=Math.max(0,logCursor-from);
+    for(let i=skip;i<d.log.length;i++) runLog.push(d.log[i]);
+  }else{
+    for(const e of d.log) runLog.push(e);
+  }
+  logCursor=typeof d.log_total==='number'?d.log_total:from+d.log.length;
+  renderRunLog();
+}
+
+async function copyRunLog(){
+  const btn=document.getElementById('runLogCopy');
+  if(!runLog.length){
+    if(btn){ btn.textContent='Пусто'; setTimeout(()=>btn.textContent='Копировать',1200); }
+    return;
+  }
+  const header=[
+    'Лог обогащения',
+    jobId?`Прогон: ${jobId}`:null,
+    selModel?`Модель: ${selModel.id}`:null,
+    `Строк: ${runLog.length}`,
+    '',
+  ].filter(v=>v!=null).join('\n');
+  const text=header+'\n'+runLog.map(logLineText).join('\n');
+  try{
+    await navigator.clipboard.writeText(text);
+    if(btn){
+      btn.classList.add('ok');
+      btn.textContent='Скопировано';
+      setTimeout(()=>{ btn.classList.remove('ok'); btn.textContent='Копировать'; },1600);
+    }
+  }catch(e){
+    if(btn){ btn.textContent='Не вышло'; setTimeout(()=>btn.textContent='Копировать',1600); }
+  }
+}
+
+function clearRunLog(){
+  // Только экран: серверный журнал остаётся, чтобы при опросе не путать курсор.
+  // После очистки ждём новые строки с текущего logCursor.
+  runLog=[];
+  renderRunLog();
+}
+
+// Автопрокрутка лога отключается, если пользователь ушёл читать вверх.
+function bindRunLogScroll(){
+  const body=document.getElementById('runLogBody');
+  if(!body||body.dataset.bound) return;
+  body.dataset.bound='1';
+  body.addEventListener('scroll',()=>{
+    const near=body.scrollHeight-body.scrollTop-body.clientHeight<48;
+    logStick=near;
+  });
+}
 
 async function run(){
   // Кнопка одна: во время прогона она останавливает.
@@ -3098,6 +3199,7 @@ async function run(){
 
   jobPos=false;
   saveJobId(job.id);
+  resetRunLog();
   await follow(job.id);
 }
 
@@ -3136,6 +3238,7 @@ async function follow(id){
   following=true;
   running=true;
   runT0=Date.now();
+  bindRunLogScroll();
   document.getElementById('runBtn').classList.add('working');
   document.getElementById('foot').classList.remove('done');
   hide('confBdg');
@@ -3144,13 +3247,14 @@ async function follow(id){
   const tick=setInterval(renderRunline,1000);
   syncSteps();
   renderList();
+  renderRunLog();
 
   let cursor=0, fails=0, last=null, prev=-1;
   try{
     for(;;){
       let d;
       try{
-        d=await apiJson(`/api/jobs/${id}?from=${cursor}`);
+        d=await apiJson(`/api/jobs/${id}?from=${cursor}&logFrom=${logCursor}`);
         fails=0;
       }catch(e){
         if(/404/.test(e.message)||/не найден/i.test(e.message)){ last={status:'gone',error:e.message}; break; }
@@ -3160,6 +3264,7 @@ async function follow(id){
         continue;
       }
       applyJob(d);
+      applyLog(d);
       // Двигаемся только по заполненному началу хвоста: дырка в конце — это
       // ещё не обработанные товары, а не пропуск.
       let k=0; while(k<d.results.length&&d.results[k]) k++;
@@ -3220,6 +3325,7 @@ function finishRun(d){
 
   runQueue=null;
   renderRunline();
+  renderRunLog();
   renderList();
   document.getElementById('runBtn').classList.remove('working');
   document.getElementById('runTxt').innerHTML='<span>Обогатить через ИИ</span>';
@@ -3242,7 +3348,7 @@ function finishRun(d){
  */
 async function attachJob(id){
   let d;
-  try{ d=await apiJson(`/api/jobs/${id}?from=0&products=1`); }
+  try{ d=await apiJson(`/api/jobs/${id}?from=0&logFrom=0&products=1`); }
   catch{ saveJobId(null); return false; }
 
   // Зашли с другого браузера: товаров в этой вкладке нет — берём их из прогона.
@@ -3258,6 +3364,8 @@ async function attachJob(id){
   }
   if(!selModel&&d.model) pick(d.model);
 
+  resetRunLog();
+  applyLog(d);
   saveJobId(id);
   if(d.status==='running'||d.status==='queued'){
     follow(id);

@@ -275,22 +275,25 @@ async function main() {
     process.stdout.write(`  [${String(i + 1).padStart(4)}/${todo.length}] ${name.padEnd(48)}...`);
 
     // Нечего извлекать — не платим за запрос, помечаем и идём дальше.
-    // Пустая карточка сначала добирается из сети по имени товара (ensureSource).
+    // Пустая карточка: описание из сети. Своё описание без страны: ищем
+    // только страну по модели. ensureSource это делает сам.
     let item = p, sourceUrl = null;
     const first = isEnrichable(p, schema);
-    if (!first.ok) {
-      const found = first.web
-        ? await ensureSource(p, schema, { onNote: n => process.stdout.write(` [${n}]`) })
-        : { product: p, gate: first };
-      if (!found.gate.ok) {
-        write({ original: p, enriched: null, skipped: found.gate.reason, _meta: {} });
-        skipped++;
-        console.log(` ⊘  пропущен — ${found.gate.reason}`);
-        continue;
-      }
-      item = found.product;
-      sourceUrl = found.source ?? null;
+    if (!first.ok && !first.web) {
+      write({ original: p, enriched: null, skipped: first.reason, _meta: {} });
+      skipped++;
+      console.log(` ⊘  пропущен — ${first.reason}`);
+      continue;
     }
+    const found = await ensureSource(p, schema, { onNote: n => process.stdout.write(` [${n}]`) });
+    if (!found.gate.ok) {
+      write({ original: p, enriched: null, skipped: found.gate.reason, _meta: {} });
+      skipped++;
+      console.log(` ⊘  пропущен — ${found.gate.reason}`);
+      continue;
+    }
+    item = found.product;
+    sourceUrl = found.source ?? null;
 
     try {
       const { enriched, iT, oT, cost, costSource } = await enrichProduct(item, {

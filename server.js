@@ -574,16 +574,13 @@ async function enrichOne(product, { model, category, provider } = {}) {
     if (e.status === 400) throw e;
   }
 
-  // Пустая карточка — не приговор: та же модель описана у производителя и
-  // других продавцов. Ищем описание в сети по имени товара и работаем с ним
-  // как со своим; адрес страницы уходит в ответ, чтобы источник был виден.
-  let filled = product, sourceUrl = null;
-  if (!first.ok) {
-    const found = await ensureSource(product, schema);
-    if (!found.gate.ok) return skip(found.gate.reason);
-    filled = found.product;
-    sourceUrl = found.source ?? null;
-  }
+  // Пустая карточка — описание из сети. Карточка с текстом, но без страны —
+  // отдельный поиск только страны по модели. ensureSource сам решает, что
+  // искать: чужую таблицу в уже заполненные поля не мешает.
+  const found = await ensureSource(product, schema);
+  if (!found.gate.ok) return skip(found.gate.reason);
+  const filled = found.product;
+  const sourceUrl = found.source ?? null;
 
   const { enriched, iT, oT, cost, costSource, attempts } = await enrichProduct(filled, {
     model, apiKey, schema,

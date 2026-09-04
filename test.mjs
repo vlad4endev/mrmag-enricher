@@ -457,6 +457,10 @@ t('холодильник без category не уходит в универса�
   assert.strictEqual(s.id, 523);
   assert.ok(s.specKeys.includes('система_охлаждения'));
   assert.ok(!s.specKeys.includes('назначение'), 'это не generic');
+  const atlant = schemaForProduct({ name: 'Холодильник ATLANT ХМ 6025-031' });
+  assert.strictEqual(atlant.id, 523);
+  assert.ok(!atlant.specKeys.includes('мощность_вт'));
+  assert.ok(!atlant.specKeys.includes('напряжение_в'));
   assert.strictEqual(schemaForProduct({ name: 'Стиральная машина ATLANT' }).id, 467);
 });
 t('поля категорий не пересекаются по смыслу', () => {
@@ -1373,6 +1377,8 @@ console.log('\nТовар без описания: поиск в сети');
           + '<tr><td>Высота</td><td>171 см</td></tr></table>',
     '/country': '<h1>Холодильник LG GC Q247CAMT</h1>'
           + '<table><tr><td>Страна изготовления</td><td>Китай</td></tr></table>',
+    '/atlant': '<h1>Холодильник ATLANT ХМ 6025-031</h1>'
+          + '<table><tr><td>Страна производства</td><td>Беларусь</td></tr></table>',
   };
 
   t('страница принимается по артикулу или по имени, соседняя модель — нет', () => {
@@ -1381,11 +1387,16 @@ console.log('\nТовар без описания: поиск в сети');
     assert.strictEqual(pageDescribesProduct(pages['/right'], { name: 'Холодильник LG GC-Q247CAMT' }).ok, true);
     assert.strictEqual(pageDescribesProduct(pages['/wrong'], { name: 'Холодильник LG GC-Q247CAMT' }).ok, false);
   });
+  const serpQueries = [];
   const srv = http.createServer((req, res) => {
     const url = new URL(req.url, 'http://x');
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
     if (url.pathname === '/serp') {
       const q = decodeURIComponent(url.search || '');
+      serpQueries.push(q);
+      if (/6025|ХМ/i.test(q)) {
+        return res.end(`<a href="http://[::1]:${port}/atlant">a</a>`);
+      }
       if (/стран/i.test(q)) {
         return res.end(`<a href="http://[::1]:${port}/country">c</a>`);
       }
@@ -1419,6 +1430,7 @@ console.log('\nТовар без описания: поиск в сети');
   });
 
   await tAsync('нет страны в исходнике — ищем по модели, своё описание не трогаем', async () => {
+    serpQueries.length = 0;
     const product = {
       sku: '320420',
       name: 'Холодильник LG GC-Q247CAMT',
@@ -1431,6 +1443,24 @@ console.log('\nТовар без описания: поиск в сети');
     assert.match(got.product.annotation, /Страна производства - Китай/);
     assert.match(got.product.description, /Двухкамерный холодильник/);
     assert.strictEqual(got.source, `http://[::1]:${port}/country`);
+  });
+
+  await tAsync('холодильник с описанием без страны — ищем по полной модели ХМ', async () => {
+    serpQueries.length = 0;
+    const product = {
+      name: 'Холодильник ATLANT ХМ 6025-031',
+      brand: 'ATLANT',
+      description: 'Двухкамерный холодильник с общим объёмом 384 литра и капельной системой охлаждения.',
+      annotation: 'Общий объём - 384 л<br>Вес - 80 кг',
+    };
+    const got = await web.ensureSource(product, 'kholodilniki');
+    assert.strictEqual(got.gate.ok, true, got.gate.reason);
+    const asked = serpQueries.join(' ');
+    assert.match(asked, /ХМ 6025-031/, 'модель целиком, не обрезанный 6025-031');
+    assert.doesNotMatch(asked, /характеристики/, 'своё описание есть — полную карточку не скрейпим');
+    assert.match(got.product.annotation, /Страна производства - Беларусь/);
+    assert.match(got.product.description, /Двухкамерный холодильник/);
+    assert.strictEqual(got.source, `http://[::1]:${port}/atlant`);
   });
 
   await tAsync('страна уже в исходнике — в сеть за ней не ходим', async () => {

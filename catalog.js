@@ -23,11 +23,11 @@ import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 import { fileURLToPath } from 'url';
-import { netError, isEnrichable, modelToken, MIN_SOURCE_CHARS, extractFacts, hasCountryFact, canSearchWeb } from './lib.js';
+import { netError, isEnrichable, modelToken, MIN_SOURCE_CHARS, extractFacts, hasCountryFact, canSearchWeb, schemaFor } from './lib.js';
 import { specFacets, enrichedRows } from './export_v2.js';
 import { loadConfig, loadCategories, hasDictionary } from './pipeline/dict.js';
 import { CRAWL_SLUGS } from './pipeline/schema.js';
-import { containsTokenSequence, nameKeyTokens } from './pipeline/identity.js';
+import { containsTokenSequence, nameKeyTokens, parseIdentity } from './pipeline/identity.js';
 import {
   isDuckDuckGoBlocked, isJunkHost, parseDuckDuckGoResults,
   searchWeb as pipelineSearchWeb, countryQuery,
@@ -506,6 +506,23 @@ function withCountryLine(product, country, url) {
 }
 
 /**
+ * Запрос за страной: бренд + модель из справочника, не урезанный артикул.
+ * «Холодильник ATLANT ХМ 6025-031» → ATLANT ХМ 6025-031, а не 6025-031:
+ * modelToken берёт самое длинное слово с цифрами и отбрасывает «ХМ».
+ */
+function countrySearchIdentity(product, schema) {
+  const dict = schemaFor(schema)?.dict;
+  if (dict) {
+    const id = parseIdentity(product.name, dict);
+    return {
+      brand: id.brand || product.brand || null,
+      model: id.model || modelToken(product.name),
+    };
+  }
+  return { brand: product.brand || null, model: modelToken(product.name) };
+}
+
+/**
  * Страны нет в исходнике → поиск по модели. Совпавшая страница даёт только
  * страну: остальные поля карточки уже свои, чужую таблицу в них не мешаем.
  */
@@ -516,7 +533,7 @@ async function fillCountryFromWeb(product, schema, { onNote = () => {} } = {}) {
   const query = countryQuery({
     name: product.name,
     brand: product.brand,
-    identity: { brand: product.brand, model: modelToken(product.name) },
+    identity: countrySearchIdentity(product, schema),
   });
   let urls = [];
   try {

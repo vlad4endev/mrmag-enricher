@@ -3172,14 +3172,13 @@ function renderVis(d){
   }
 
   const sp={...(d.specs||{}),...(d.technical_specs||{}),...(d.dimensions||{}),...(d.thread||{})};
-  const rows=Object.entries(sp);
+  const rows=Object.entries(sp).filter(([,v])=>!isEmpty(v));
   if(rows.length){
     const bad=new Set((d.warnings||[]).map(w=>w.field));
-    const filled=rows.filter(([,v])=>!isEmpty(v)).length;
-    out+=`<div class="spec-title">Характеристики <i>${filled}${rows.length!==filled?' / '+rows.length:''}</i></div>`
+    out+=`<div class="spec-title">Характеристики <i>${rows.length}</i></div>`
       +`<div class="specs">${rows.map(([k,v])=>
-          `<div class="sp${bad.has(k)?' bad':''}${isEmpty(v)?' empty':''}"><span class="sp-k">${esc(specLabel(k))}</span>`
-          +`<span class="sp-d"></span><span class="sp-v">${isEmpty(v)?'—':esc(String(v))}</span></div>`).join('')}</div>`;
+          `<div class="sp${bad.has(k)?' bad':''}"><span class="sp-k">${esc(specLabel(k))}</span>`
+          +`<span class="sp-d"></span><span class="sp-v">${esc(String(v))}</span></div>`).join('')}</div>`;
   }
 
   const search=SEARCH_FIELDS.filter(([k])=>!isEmpty(d[k]));

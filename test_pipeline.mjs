@@ -255,6 +255,13 @@ console.log('golden tests passed');
   assert.equal(needsCountry(rec, d467), true);
   assert.match(countryQuery(rec), /60С1010/);
   assert.match(countryQuery(rec), /страна производства$/);
+  const atlantId = parseIdentity('Холодильник ATLANT ХМ 6025-031', d523);
+  assert.equal(atlantId.brand, 'ATLANT');
+  assert.equal(atlantId.model, 'ХМ 6025-031');
+  assert.equal(
+    countryQuery({ identity: atlantId, brand: 'ATLANT' }),
+    'ATLANT ХМ 6025-031 страна производства',
+  );
   const html = `
     <h1>Стиральная машина ATLANT 60С1010</h1>
     <table>

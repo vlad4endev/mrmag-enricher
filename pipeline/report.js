@@ -1,6 +1,6 @@
 /** Семь разделов отчёта. */
 
-export function buildReport({ recs, dict, config, coverageBefore, coverageAfter, formats, unmapped, excluded, sources }) {
+export function buildReport({ recs, dict, config, coverageBefore, coverageAfter, formats, unmapped, excluded, sources, held = [], noReview = [] }) {
   const total = recs.length;
   const minCov = config.facet_min_coverage;
   const target = config.target_coverage;
@@ -53,6 +53,8 @@ export function buildReport({ recs, dict, config, coverageBefore, coverageAfter,
       5: { title: 'Товары без описания', items: noDescription },
       6: { title: 'Товары с невыполненным восполнением', items: incomplete },
       7: { title: 'Неопознанные ключи', items: unmapped.map(([key, count]) => ({ key, count })) },
+      8: { title: 'Пустой annotation_html — не в выгрузке', items: held },
+      9: { title: 'Пустой web_info — нет отзыва', items: noReview },
     },
   };
 }

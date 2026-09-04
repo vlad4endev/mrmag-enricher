@@ -79,6 +79,18 @@ export function splitHtmlChunks(html) {
   return s.split(/<br\s*\/?>/i).map(stripHtml).filter(Boolean);
 }
 
+/** «Холодильники» → «холодильник»; «Стиральные машины» → «стиральная машина». */
+export function singularProductType(name) {
+  const s = String(name || '').toLowerCase().replace(/ё/g, 'е').trim();
+  if (!s) return null;
+  const adjNoun = s.match(/^(\S+?)ые\s+(\S+?)ы$/u);
+  if (adjNoun) return `${adjNoun[1]}ая ${adjNoun[2]}а`;
+  const adjNounIe = s.match(/^(\S+?)ие\s+(\S+?)и$/u);
+  if (adjNounIe) return `${adjNounIe[1]}яя ${adjNounIe[2]}`;
+  if (/и$/.test(s) && !/\s/.test(s)) return s.slice(0, -1);
+  return s;
+}
+
 export function isPackingKey(key) {
   const s = String(key || '');
   if (/без\s+упаковк/i.test(s)) return false;

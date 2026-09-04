@@ -2,18 +2,35 @@
 
 import { formatAttrValue, unifyEnumValues } from './types.js';
 
-export function bucketLabel(value, facet, { isLast = false, isLastClosed = false } = {}) {
-  if (facet.kind !== 'range') return String(value);
-  const step = facet.step;
-  if (!(step > 0)) throw new Error(`facet.step обязателен для range (${facet.label})`);
-  const lo = Math.floor(Number(value) / step) * step;
-  if (facet.open_last && isLast) return `${fmt(lo)}+`;
-  const hi = lo + step;
-  return `${fmt(lo)}-${fmt(hi)}`;
+/** Доля товаров на одно значение, выше которой фильтр перестаёт различать товары. */
+const DOMINANT_SHARE = 95;
+
+/**
+ * Вид фильтра следует из типа атрибута, а не из разброса данных.
+ * Счётная величина — перечень: «2, 3, 4 скорости», а не «2-2.2» и «2.8-3».
+ */
+export function facetKind(attr) {
+  const kind = attr.facet?.kind;
+  if (kind === 'range' && attr.type === 'integer') return 'enum';
+  return kind;
 }
 
 function fmt(n) {
   return Number.isInteger(n) ? String(n) : String(+n.toFixed(3));
+}
+
+/** Начало полузакрытого интервала [a; b): 600 при шаге 50 — это 600-650, не 550-600. */
+function bucketLo(value, step) {
+  return Math.floor(Number(value) / step) * step;
+}
+
+export function bucketLabel(value, facet, { isLast = false } = {}) {
+  if (facet.kind !== 'range') return String(value);
+  const step = facet.step;
+  if (!(step > 0)) throw new Error(`facet.step обязателен для range (${facet.label})`);
+  const lo = bucketLo(value, step);
+  if (facet.open_last && isLast) return `${fmt(lo)}+`;
+  return `${fmt(lo)}-${fmt(lo + step)}`;
 }
 
 function numericOf(v) {
@@ -27,10 +44,17 @@ function displayValue(attr, v) {
   return formatAttrValue(attr, v, { withUnit: false });
 }
 
+/** Значения атрибута как список: multi даёт несколько, single — одно. */
+function valueList(v) {
+  if (v == null || v === '') return [];
+  return Array.isArray(v) ? v.filter(x => x != null && x !== '') : [v];
+}
+
 /**
- * Строит filters.json. Пустые бакеты не создаются.
- * Для range: [a; b) при bound_rule=left_closed; последний закрытый включает правую границу.
- * Сумма counter диапазонного фильтра = число товаров с заполненным атрибутом.
+ * Строит filters.json. Состав — только facet.enabled справочника: универсальный
+ * набор «тип товара, назначение, вес» внутри категории ничего не различает.
+ * Для range: [a; b); последний бакет открытый при facet.open_last.
+ * Пустые бакеты не создаются.
  */
 export function buildFilters(recs, dict, config) {
   unifyEnumValues(recs, dict);
@@ -44,85 +68,57 @@ export function buildFilters(recs, dict, config) {
   const warnings = [];
 
   for (const attr of dict.attrs) {
-    if (attr.tier === 'X') continue;
-    if (attr.tier === 'C') continue;
-
     const facet = attr.facet || {};
-    if (!facet.enabled) continue;
+    if (!facet.enabled) {
+      if (facet.disabled_reason) {
+        excluded.push({ code: attr.code, name: attr.name, reason: facet.disabled_reason });
+      }
+      continue;
+    }
+    if (attr.tier === 'X') continue;
 
     const filled = recs.filter(r => r.attrs[attr.code] != null);
     const cov = (filled.length / total) * 100;
 
-    // A — фильтр сразу; B — только при покрытии ≥ порога (после дообогащения).
-    if (attr.tier === 'B' && cov < minCov) {
-      excluded.push({
-        code: attr.code,
-        name: attr.name,
-        coverage: Math.round(cov * 10) / 10,
-        reason: `После дообогащения заполненность ${Math.round(cov)}% ниже порога ${minCov}%`,
-      });
-      continue;
-    }
-
     const counts = new Map();
-    let filledCount = filled.length;
+    const kind = facetKind(attr);
 
-    if (facet.kind === 'range') {
+    if (kind === 'range') {
       if (!(facet.step > 0)) throw new Error(`facet.step обязателен для range (${facet.label || attr.name})`);
       const nums = filled.map(r => numericOf(r.attrs[attr.code])).filter(v => v != null);
-      filledCount = nums.length;
       if (!nums.length) continue;
+      const maxLo = Math.max(...nums.map(v => bucketLo(v, facet.step)));
 
-      const minV = Math.min(...nums);
-      const seriesStart = Math.floor(minV / facet.step) * facet.step;
-      const labels = nums.map(v => Math.floor(v / facet.step) * facet.step);
-      const maxLo = Math.max(...labels);
-      // Последний закрытый бакет (без open_last): включает правую границу.
-      const lastClosedHi = maxLo + facet.step;
-
-      for (let i = 0; i < nums.length; i++) {
-        const v = nums[i];
-        let lo = labels[i];
-        // Значения ниже seriesStart не ожидаются; подтягиваем к началу ряда.
-        if (lo < seriesStart) lo = seriesStart;
-        const isLast = facet.open_last && lo === maxLo;
-        const isLastClosed = !facet.open_last && lo === maxLo && v === lastClosedHi;
-        // [a; b): на границе b значение относится к следующему бакету —
-        // floor уже даёт это. Последний закрытый: v == hi остаётся в maxLo.
-        if (!facet.open_last && v === lastClosedHi) {
-          lo = maxLo;
-        }
-        const lab = bucketLabel(v, facet, { isLast: isLast || (lo === maxLo && facet.open_last), isLastClosed });
-        // Пересчёт метки при сдвиге lo для last-closed edge case.
-        const finalLab = (lo !== labels[i] && !facet.open_last)
-          ? `${fmt(maxLo)}-${fmt(lastClosedHi)}`
-          : lab;
-        counts.set(finalLab, (counts.get(finalLab) || 0) + 1);
+      for (const v of nums) {
+        const isLast = !!facet.open_last && bucketLo(v, facet.step) === maxLo;
+        const lab = bucketLabel(v, { ...facet, kind: 'range' }, { isLast });
+        counts.set(lab, (counts.get(lab) || 0) + 1);
       }
 
       const sum = [...counts.values()].reduce((a, b) => a + b, 0);
-      if (sum !== filledCount) {
+      if (sum !== nums.length) {
         throw new Error(
           `сумма counter фасета «${facet.label || attr.name}» = ${sum}, ` +
-          `заполненных товаров = ${filledCount} — выгрузка заблокирована`,
+          `числовых значений = ${nums.length} — выгрузка заблокирована`,
         );
       }
-      const occupied = [...counts.keys()].length;
-      if (occupied > 8) {
+      if (counts.size > 8) {
         warnings.push({
           code: attr.code,
           name: facet.label || attr.name,
-          occupied,
-          reason: `Занятых бакетов ${occupied} > 8; шаг задан справочником, пересчёт запрещён`,
+          occupied: counts.size,
+          reason: `Занятых бакетов ${counts.size} > 8; шаг задан справочником, пересчёт запрещён`,
         });
       }
     } else {
+      // Мультизначный атрибут даёт товару несколько значений фильтра:
+      // «механическое, кнопочное» попадает и в «Механическое», и в «Кнопочное».
       for (const r of filled) {
-        const v = r.attrs[attr.code];
-        const parts = Array.isArray(v) ? v : [v];
-        for (const p of parts) {
+        const seen = new Set();
+        for (const p of valueList(r.attrs[attr.code])) {
           const lab = displayValue(attr, p);
-          if (!lab) continue;
+          if (!lab || seen.has(lab)) continue;
+          seen.add(lab);
           counts.set(lab, (counts.get(lab) || 0) + 1);
         }
       }
@@ -138,6 +134,26 @@ export function buildFilters(recs, dict, config) {
       .map(([value]) => value);
 
     if (!values.length) continue;
+
+    // Фильтр, где одно значение покрывает почти все товары каталога, не
+    // помогает выбирать: доля считается от всех товаров, а не от заполненных.
+    const topShare = (Math.max(...counts.values()) / total) * 100;
+    if (topShare > DOMINANT_SHARE) {
+      warnings.push({
+        code: attr.code,
+        name: facet.label || attr.name,
+        share: Math.round(topShare * 10) / 10,
+        reason: `Одно значение у ${Math.round(topShare)}% заполненных — фильтр не различает товары`,
+      });
+    }
+    if (cov < minCov) {
+      warnings.push({
+        code: attr.code,
+        name: facet.label || attr.name,
+        coverage: Math.round(cov * 10) / 10,
+        reason: `Заполненность ${Math.round(cov)}% ниже ориентира ${minCov}%; состав фильтров задан справочником`,
+      });
+    }
 
     filters.push({
       name: facet.label || attr.name,
@@ -158,6 +174,10 @@ export function buildFilters(recs, dict, config) {
   };
 }
 
+/**
+ * Значения фильтров одного товара. Всегда массив: мультизначный атрибут
+ * ставит товар сразу в несколько значений фильтра.
+ */
 export function assignFilterValues(rec, dict, debugFacets) {
   const out = {};
   for (const f of debugFacets) {
@@ -165,17 +185,19 @@ export function assignFilterValues(rec, dict, debugFacets) {
     if (v == null) continue;
     const attr = dict.byCode.get(f._code);
     const facet = attr.facet;
-    if (facet.kind === 'range') {
+    if (facetKind(attr) === 'range') {
       const n = numericOf(v);
       if (n == null) continue;
-      const labels = f.value;
-      const lo = Math.floor(n / facet.step) * facet.step;
-      const maxLo = Math.max(...labels.map(x => parseFloat(x)));
-      const isLast = facet.open_last && lo === maxLo;
-      out[f.name] = [bucketLabel(n, facet, { isLast })];
+      const maxLo = Math.max(...f.value.map(x => parseFloat(x)));
+      const isLast = !!facet.open_last && bucketLo(n, facet.step) === maxLo;
+      out[f.name] = [bucketLabel(n, { ...facet, kind: 'range' }, { isLast })];
     } else {
-      const parts = Array.isArray(v) ? v : [v];
-      out[f.name] = parts.map(p => displayValue(attr, p));
+      const labels = [];
+      for (const p of valueList(v)) {
+        const lab = displayValue(attr, p);
+        if (lab && !labels.includes(lab)) labels.push(lab);
+      }
+      if (labels.length) out[f.name] = labels;
     }
   }
   return out;

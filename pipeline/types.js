@@ -99,6 +99,68 @@ export function attrLabel(attr) {
   return (attr.facet && attr.facet.label) || attr.name;
 }
 
+/**
+ * Подпись строки характеристик — имя атрибута из справочника.
+ * facet.label («Загрузка белья, кг») принадлежит фильтру: там значение
+ * бакетировано, здесь стоит точное, и единица идёт после числа.
+ */
+export function annotationLabel(attr) {
+  return attr.name;
+}
+
+/** Регистр значения сохраняют классы, латиница и имена собственные. */
+const KEEP_CASE_CODES = new Set(['brand', 'country', 'refrigerant']);
+
+export function annotationCase(attr, s) {
+  const t = String(s ?? '');
+  if (!t) return t;
+  if (attr.type === 'class_scale') return t;          // A++, B
+  if (KEEP_CASE_CODES.has(attr.code)) return t;       // ATLANT, Россия, R600a
+  if (!/[а-яё]/i.test(t)) return t;                   // No Frost, LED, SN-T
+  return t[0].toLowerCase() + t.slice(1);
+}
+
+/** Порядок осей берётся из имени атрибута: «Габариты (ШхГхВ)» ≠ «(ШхВхГ)». */
+const AXIS_FIELD = { ш: 'width', в: 'height', г: 'depth', д: 'depth' };
+
+export function formatDimensions(attr, v) {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return '';
+  const axes = String(attr.name || '').match(/\(([шхвгд]+)\)/i)?.[1] || 'швг';
+  const order = [...axes.toLowerCase()].filter(ch => AXIS_FIELD[ch]).map(ch => AXIS_FIELD[ch]);
+  const parts = (order.length === 3 ? order : ['width', 'height', 'depth'])
+    .map(f => v[f])
+    .filter(x => typeof x === 'number');
+  if (parts.length !== 3) return '';
+  return parts.map(String).join('×') + (attr.unit ? ` ${attr.unit}` : '');
+}
+
+/**
+ * Строка характеристик: «Максимальная загрузка белья: 6 кг».
+ * Точное значение, единица после числа, мультизначные через запятую,
+ * логические — «есть» / «нет». Заглушки не выводятся вовсе.
+ */
+export function annotationText(attr, v) {
+  if (v == null || v === '') return '';
+  if (Array.isArray(v)) {
+    const seen = new Set();
+    const parts = [];
+    for (const x of v) {
+      const s = annotationText(attr, x);
+      if (!s || seen.has(s)) continue;
+      seen.add(s);
+      parts.push(s);
+    }
+    return parts.join(', ');
+  }
+  if (v === true) return 'есть';
+  if (v === false) return 'нет';
+  if (typeof v === 'number') {
+    return attr.unit ? `${v} ${attr.unit}` : String(v);
+  }
+  if (attr.type === 'dimensions' || typeof v === 'object') return formatDimensions(attr, v);
+  return annotationCase(attr, displayEnum(v));
+}
+
 export function labelHasUnit(label) {
   return /,\s*\S+$/.test(String(label || ''));
 }
@@ -242,10 +304,10 @@ export function unifyEnumValues(recs, dict) {
 function aliasValue(attr, raw) {
   const aliases = attr.value_aliases;
   if (!aliases) return null;
-  const folded = valueFold(raw);
+  const folds = new Set([valueFold(raw), valueFold(displayEnum(raw))].filter(Boolean));
   for (const [canon, list] of Object.entries(aliases)) {
-    if (valueFold(canon) === folded) return canon;
-    if ((list || []).some(v => valueFold(v) === folded)) return canon;
+    const keys = [valueFold(canon), ...(list || []).map(valueFold)];
+    if (keys.some(k => folds.has(k))) return canon;
   }
   return null;
 }
@@ -293,6 +355,9 @@ export function normalizeValue(attr, raw, { keyText = '' } = {}) {
         return { ok: false, value: null, reason: 'qty_in_enum', raw: v };
       }
       const aliased = aliasValue(attr, v);
+      if (!aliased && /^[a-z][a-z0-9]*[-_][a-z0-9_-]+$/.test(String(v).trim())) {
+        return { ok: false, value: null, reason: 'slug', raw: v };
+      }
       const val = displayEnum(aliased || v);
       if (!val) return empty;
       if (typ === 'enum' && isBareBooleanWord(val)) {
@@ -301,7 +366,7 @@ export function normalizeValue(attr, raw, { keyText = '' } = {}) {
           return { ok: false, value: null, reason: 'bool_false_in_enum', raw: v };
         }
         const implied = impliedEnumFromKey(attr, keyText);
-        if (implied) return { ok: true, value: implied };
+        if (implied) return { ok: true, value: aliasValue(attr, implied) || implied };
         return { ok: false, value: null, reason: 'bool_in_enum', raw: v };
       }
       return { ok: true, value: val };

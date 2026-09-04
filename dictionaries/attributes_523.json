@@ -198,9 +198,10 @@
     ],
     "blacklist": [],
     "facet": {
-      "enabled": true,
+      "enabled": false,
       "label": "Количество камер",
-      "kind": "enum"
+      "kind": "enum",
+      "disabled_reason": "Счётное значение, дублирует «Тип холодильника»"
     }
   },
   {
@@ -228,9 +229,10 @@
     ],
     "blacklist": [],
     "facet": {
-      "enabled": true,
+      "enabled": false,
       "label": "Количество дверей",
-      "kind": "enum"
+      "kind": "enum",
+      "disabled_reason": "Счётное значение, дублирует «Тип холодильника»"
     }
   },
   {
@@ -543,9 +545,10 @@
       "Размораживание холодильной камеры"
     ],
     "facet": {
-      "enabled": true,
+      "enabled": false,
       "label": "Размораживание морозильной камеры",
-      "kind": "enum"
+      "kind": "enum",
+      "disabled_reason": "Перекрывается с «Системой охлаждения» и размораживанием холодильной камеры"
     }
   },
   {
@@ -1085,9 +1088,10 @@
     ],
     "blacklist": [],
     "facet": {
-      "enabled": true,
+      "enabled": false,
       "label": "Дисплей",
-      "kind": "enum"
+      "kind": "enum",
+      "disabled_reason": "Одно значение у 87% при покрытии 15%"
     }
   },
   {
@@ -1115,9 +1119,10 @@
     ],
     "blacklist": [],
     "facet": {
-      "enabled": true,
+      "enabled": false,
       "label": "Перенавешиваемые двери",
-      "kind": "enum"
+      "kind": "enum",
+      "disabled_reason": "Значение «есть» у 99% заполненных — фильтр не различает товары"
     }
   },
   {

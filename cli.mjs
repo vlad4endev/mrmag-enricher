@@ -29,8 +29,10 @@ import { annotationFormat, stripHtml, normKey } from './pipeline/text.js';
 import { normalizeProduct, coverage, formatCounts, unmappedFreq } from './pipeline/normalize.js';
 import { buildFilters } from './pipeline/facets.js';
 import { buildReport } from './pipeline/report.js';
-import { renderCard } from './pipeline/generate.js';
+import { renderCard, annotationRows, MIN_ANNOTATION_ROWS } from './pipeline/generate.js';
 import { serializeProducts, serializeFilters } from './pipeline/export.js';
+import { validateProducts } from './pipeline/validate.js';
+import { webInfoFrom } from './pipeline/reviews.js';
 import { buildV2 } from './export_v2.js';
 import { dictToV2Rows } from './pipeline/v2.js';
 import { enrichMissing } from './pipeline/external.js';
@@ -174,10 +176,33 @@ function writeOutputs({ recs, dict, config, catId, cov, covAfter, formats, unmap
   for (const rec of recs) {
     if (!rec.card) rec.card = renderCard(rec, dict);
   }
-  const built = buildFilters(recs, dict, config);
+  // Товар с неполными характеристиками уходит в отчёт, а не в выгрузку:
+  // пустой annotation_html у заказчика — дефект, воспроизводить его не нужно.
+  const held = recs.filter(r => annotationRows(r, dict).length < MIN_ANNOTATION_ROWS);
+  const heldIds = new Set(held.map(r => r.id));
+  const exported = recs.filter(r => !heldIds.has(r.id));
+
+  const built = buildFilters(exported, dict, config);
   writeContractData(recs, dict, catId);
-  writeJson(path.join(OUT, `products_${catId}.json`), serializeProducts(recs, dict, built.debug), 4);
+  const products = serializeProducts(exported, dict, built.debug, { root: ROOT });
+  writeJson(path.join(OUT, `products_${catId}.json`), products, 4);
   writeJson(path.join(OUT, `filters_${catId}.json`), serializeFilters(built), 4);
+  const heldRows = held.map(r => ({
+    id: r.id,
+    name: r.name,
+    rows: annotationRows(r, dict).length,
+    reason: `характеристик ${annotationRows(r, dict).length} < ${MIN_ANNOTATION_ROWS}`,
+  }));
+  writeJson(path.join(OUT, `held_${catId}.json`), heldRows, 2);
+  const noReview = recs.filter(r => !webInfoFrom(
+    r.web_info ?? r.external?.web_info ?? r.review ?? r.external?.review ?? r.page_data ?? r.external?.page_data ?? '',
+  )).map(r => ({ id: r.id, name: r.name, reason: 'нет отзыва покупателя' }));
+  writeJson(path.join(OUT, `noreview_${catId}.json`), noReview, 2);
+  const verdict = validateProducts(products, dict, new Map(recs.map(r => [r.id, r])));
+  writeJson(path.join(OUT, `validate_${catId}.json`), verdict, 2);
+  if (!verdict.ok) {
+    console.log(`validate ${catId}: ${verdict.errors.length} нарушений`);
+  }
 
   const v2 = buildV2(dictToV2Rows(recs, dict), { dict });
   writeJson(path.join(OUT, `products_v2_${catId}.json`), v2.products, 2);
@@ -196,6 +221,7 @@ function writeOutputs({ recs, dict, config, catId, cov, covAfter, formats, unmap
     coverageBefore: cov,
     coverageAfter: after,
     formats, unmapped, excluded: built.excluded, sources,
+    held: heldRows, noReview,
   });
   writeJson(path.join(OUT, `report_${catId}.json`), report);
 
@@ -231,32 +257,36 @@ function sourceStats(recs) {
   };
 }
 
-const PRODUCT_FIELDS = ['id', 'name', 'meta_keywords', 'description_html', 'annotation_html', 'filters'];
-
+/**
+ * Проверка выгрузки по чек-листу. Ненулевой код возврата — чтобы CI падал
+ * до отправки заказчику, а не после.
+ */
 function validateFile(file) {
   const rows = JSON.parse(fs.readFileSync(file, 'utf-8'));
   const catId = catIdFromFile(file);
+  const dict = loadDictionary(catId, ROOT);
   const src = loadProducts(path.join(ROOT, `data_${catId}.json`));
   const byId = new Map(src.map(p => [p.id, p]));
-  if (rows.length !== src.length) console.log(`!! число записей ${rows.length} ≠ ${src.length}`);
-  let nameMismatch = 0;
-  for (const r of rows) {
-    const s = byId.get(r.id);
-    if (!s) { console.log('!! лишний id', r.id); continue; }
-    if (r.name !== s.name) nameMismatch++;
-    const keys = Object.keys(r).filter(k => k !== 'web_info' && k !== 'page_data');
-    if (keys.join() !== PRODUCT_FIELDS.join()) {
-      console.log('!! поля', r.id, keys);
-    }
-    if (!r.filters || typeof r.filters !== 'object' || Array.isArray(r.filters)) {
-      console.log('!! filters не объект', r.id);
-    } else {
-      for (const [name, val] of Object.entries(r.filters)) {
-        if (!Array.isArray(val)) console.log('!! значение фильтра не массив', r.id, name);
-      }
-    }
+
+  const { ok, errors, summary } = validateProducts(rows, dict, byId);
+
+  console.log(`validate ${catId}: товаров ${summary.products}, ` +
+    `фильтров ${summary.filters_present}/${summary.filters_expected}, ` +
+    `мультизначных значений ${summary.multi_value_filters}, ` +
+    `с web_info ${summary.with_web_info}`);
+  for (const d of summary.dominant_filters) {
+    console.log(`  !! «${d.name}»: одно значение у ${d.share}% — фильтр не различает товары`);
   }
-  console.log(`validate ${catId}: names mismatch=${nameMismatch}, n=${rows.length}`);
+
+  const byKind = new Map();
+  for (const e of errors) byKind.set(e.kind, (byKind.get(e.kind) || 0) + 1);
+  for (const [kind, n] of [...byKind].sort((a, b) => b[1] - a[1])) {
+    const sample = errors.find(e => e.kind === kind);
+    console.log(`  ${String(n).padStart(4)}  ${kind}${sample?.detail != null ? `  напр. ${sample.id ?? ''} ${sample.detail}` : ''}`);
+  }
+  console.log(ok ? 'OK: чек-лист пройден' : `НЕ ПРОЙДЕНО: ${errors.length} нарушений`);
+  writeJson(path.join(OUT, `validate_${catId}.json`), { ok, summary, errors }, 2);
+  if (!ok) process.exitCode = 1;
 }
 
 function reportCmd(catId) {

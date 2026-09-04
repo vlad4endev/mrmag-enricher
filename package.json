@@ -12,6 +12,7 @@
     "enrich:stiralnye": "CATEGORY=stiralnye_mashiny node enricher_mrmag.js",
     "test": "node test.mjs && node test_ui.mjs && node test_api.mjs && node test_pipeline.mjs",
     "test:pipeline": "node test_pipeline.mjs",
+    "validate": "node cli.mjs validate out/products_467.json",
     "inspect": "node cli.mjs inspect",
     "normalize": "node cli.mjs normalize",
     "facets": "node cli.mjs facets",

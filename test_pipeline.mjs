@@ -3,6 +3,9 @@ import { normalizeProduct, formatCounts } from './pipeline/normalize.js';
 import { bucketLabel, buildFilters } from './pipeline/facets.js';
 import { renderCard } from './pipeline/generate.js';
 import { compactAnnotation, compactHtml, serializeProduct, metaKeywords } from './pipeline/export.js';
+import { validateProducts, validateDescription, expectedFilters, PRODUCT_FIELDS } from './pipeline/validate.js';
+import { annotationRows, MIN_ANNOTATION_ROWS } from './pipeline/generate.js';
+import { webInfoFrom, cleanReviewText, isReview } from './pipeline/reviews.js';
 import { buildV2 } from './export_v2.js';
 import { dictToV2Rows, v2FacetSpecKeys } from './pipeline/v2.js';
 import { displayEnum, valueFold } from './pipeline/types.js';
@@ -157,7 +160,7 @@ console.log('golden tests passed');
   assert.equal(r.dump, true);
   assert.ok(r.pairs.length >= 8, r.pairs.length);
   assert.ok(r.pairs.every(x => x.source === 'S2'));
-  assert.equal(r.attrs.install, 'Отдельностоящая');
+  assert.equal(r.attrs.install, 'Отдельно стоящая');
   assert.equal(r.attrs.height, 85);
   assert.equal(r.attrs.width, 59.6);
   assert.equal(r.attrs.depth, 46.5);
@@ -750,9 +753,7 @@ console.log('golden tests passed');
   const r = all.find(x => x.id === 11391);
   const p = p467[11391];
   const row = serializeProduct(r, d467, built.debug);
-  assert.deepEqual(Object.keys(row).filter(k => k !== 'web_info' && k !== 'page_data'), [
-    'id', 'name', 'meta_keywords', 'description_html', 'annotation_html', 'filters',
-  ]);
+  assert.deepEqual(Object.keys(row), PRODUCT_FIELDS);
   assert.equal(row.id, p.id);
   assert.equal(row.name, p.name);
   assert.match(row.meta_keywords, /стиральная машина ATLANT/);
@@ -760,7 +761,7 @@ console.log('golden tests passed');
   assert.equal(row.description_html.includes('\n'), false);
   assert.match(row.annotation_html, /^<ul><li>.+: .+<\/li>/);
   assert.equal(row.annotation_html.includes('\n'), false);
-  assert.match(row.annotation_html, /Тип загрузки: Фронтальная/);
+  assert.match(row.annotation_html, /Тип загрузки: фронтальная/);
   assert.match(row.annotation_html, /Бренд: ATLANT/);
   assert.ok(Array.isArray(row.filters['Высота, см']));
   assert.equal(row.filters['Высота, см'][0], '80-85');
@@ -788,7 +789,7 @@ console.log('golden tests passed');
   assert.equal(compactHtml('<p>a</p>\n<p>b</p>'), '<p>a</p><p>b</p>');
   assert.ok(metaKeywords(r, d467).includes('ATLANT'));
   const emptyAnn = serializeProduct({ ...r, annotation: '' }, d467, built.debug);
-  assert.match(emptyAnn.annotation_html, /Тип загрузки: Фронтальная/);
+  assert.match(emptyAnn.annotation_html, /Тип загрузки: фронтальная/);
   console.log('ok customer products+filters shape (11391)');
 }
 
@@ -797,7 +798,7 @@ console.log('golden tests passed');
   assert.ok(keys.has('цвет') && keys.has('тип_товара') && keys.has('бренд'));
   assert.ok(!keys.has('хладагент') && !keys.has('вес_кг'));
   const w = v2FacetSpecKeys(d467);
-  assert.ok(w.has('вес_кг'), 'вес стиральной машины в таблице — фильтр');
+  assert.ok(!w.has('вес_кг'), 'вес стиральной машины — не фильтр');
   assert.ok(![...w].some(k => /расход_воды/.test(k)));
   assert.ok(![...w].some(k => /шум.*отжим|отжима.*дб/.test(k)));
   console.log('ok v2FacetSpecKeys vs таблица заказчика');
@@ -823,7 +824,7 @@ console.log('golden tests passed');
   assert.equal(p.filters['Система охлаждения'], 'No Frost');
   assert.equal(p.filters['Тип управления'], 'Механическое');
   assert.equal(p.filters['Расположение морозильной камеры'], 'Нижнее');
-  assert.equal(p.filters['Количество камер'], '2');
+  assert.ok(!('Количество камер' in p.filters), 'камеры — характеристика, не фильтр');
   assert.match(p.description_html, /^<h1>Холодильник Pozis RK FNF-172 W<\/h1>/);
   assert.match(p.description_html, /<li>Тип товара: холодильник<\/li>/);
   assert.match(p.description_html, /<li>Общий объем: 344 л<\/li>/);
@@ -865,5 +866,59 @@ console.log('golden tests passed');
     }
     console.log('ok products_v2 структура vs эталон заказчика (260, 805)');
   }
+}
+
+{
+  const cleaned = cleanReviewText('Отзыв о      Н--П3Д. Достоинства: 1. Не шумная 2. Простота монтажа');
+  assert.ok(!/отзыв о/i.test(cleaned));
+  assert.ok(!/--/.test(cleaned));
+  assert.equal(isReview('Десятилетиями мы прилагаем все наши усилия в направлении улучшения'), false);
+  assert.equal(webInfoFrom('Десятилетиями мы прилагаем все наши усилия. Наша компания — мировой лидер.'), '');
+  const review = 'Купила месяц назад и пользуюсь каждый день. Достоинства: тихая, простота монтажа, яркая подсветка. '
+    + 'Не жалею о покупке, рекомендую соседям. За эти деньги работает уже без нареканий, мне нравится набор программ. '
+    + 'Впечатление положительное: стоит своих денег, посоветовали в сервисе. '.repeat(3);
+  const web = webInfoFrom(review);
+  assert.ok(web.length >= 300 && web.length <= 700, web.length);
+  console.log('ok web_info clean / corporate drop');
+}
+
+{
+  const all = loadProducts('data_467.json').map(p => normalizeProduct(p, d467, config));
+  const exported = all.filter(r => annotationRows(r, d467).length >= MIN_ANNOTATION_ROWS);
+  const built = buildFilters(exported, d467, config);
+  assert.equal(expectedFilters(d467).length, 14);
+  assert.equal(expectedFilters(d523).length, 17);
+  const ids = [11391, 29921, 44772, 12957, 44773, 44782, 52904, 128925, 182681, 190925];
+  const recs = ids.map(id => all.find(x => x.id === id)).filter(Boolean);
+  const rows = recs.map(r => serializeProduct(r, d467, built.debug));
+  const src = new Map(ids.map(id => [id, p467[id]]).filter(([, p]) => p));
+  const { errors } = validateProducts(rows, d467, src);
+  const blocking = errors.filter(e => e.kind !== 'filter_missing');
+  assert.equal(blocking.length, 0, JSON.stringify(blocking.slice(0, 8), null, 2));
+
+  const a = rows.find(r => r.id === 11391);
+  assert.match(a.annotation_html, /Максимальная загрузка белья: 6 кг/);
+  assert.match(a.annotation_html, /Максимальная скорость отжима: 1000 об\/мин/);
+  assert.match(a.annotation_html, /Класс энергоэффективности: A\+\+/);
+  assert.match(a.annotation_html, /Уровень шума при стирке: 59 дБ/);
+  assert.match(a.annotation_html, /Ширина: 59\.6 см/);
+  assert.deepEqual(a.filters['Загрузка белья, кг'], ['6']);
+  assert.deepEqual(a.filters['Скорость отжима, об/мин'], ['1000-1200']);
+  assert.deepEqual(a.filters['Уровень шума, дБ'], ['55-60']);
+  assert.deepEqual(a.filters['Ширина, см'], ['55-60']);
+  assert.ok(!/экономи[яи]|гарант/i.test(a.description_html));
+  assert.equal(validateDescription(a.description_html).length, 0);
+
+  const c = rows.find(r => r.id === 29921);
+  assert.equal(c.name, p467[29921].name);
+  assert.match(c.annotation_html, /Вес: 47 кг/);
+  assert.ok(!c.annotation_html.includes('49'));
+  assert.ok(!('Материал' in c.filters));
+
+  const i = rows.find(r => r.id === 44772);
+  assert.equal(i.name, 'Стиральная машина "Indesit" IWSB 5085 (CIS) (62908)');
+  assert.equal(i.filters.Бренд[0], 'Indesit');
+  assert.ok(i.name.includes('"Indesit"'));
+  console.log('ok checklist 10×467 (11391 / 29921 / 44772)');
 }
 

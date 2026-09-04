@@ -57,6 +57,7 @@ import {
 import { CATEGORIES, findCategory, crawlCategory, loadFeed, buildFilters, ensureSource, WEB_LOOKUP } from './catalog.js';
 import { buildV2 } from './export_v2.js';
 import { buildCustomerExport } from './pipeline/export.js';
+import { dictForProducts } from './pipeline/schema.js';
 import { createJobStore } from './jobs.js';
 import { loadConfig } from './pipeline/dict.js';
 import { publicParserStatus } from './pipeline/search.js';
@@ -521,12 +522,12 @@ async function apiExportV2(req, res) {
   const catKey = category ?? category_id
     ?? products.find(p => p.category)?.category
     ?? products.find(p => p.category_id)?.category_id;
-  const schema = schemaForProduct(products[0], catKey);
-  if (schema?.dict) {
+  const dict = dictForProducts(products, catKey, ROOT);
+  if (dict) {
     let config;
     try { config = loadConfig(ROOT); }
     catch { return json(res, 500, { error: 'не прочитался config.json' }); }
-    const out = buildCustomerExport(products, { dict: schema.dict, config, root: ROOT });
+    const out = buildCustomerExport(products, { dict, config, root: ROOT });
     if (!out.products.length) {
       return json(res, 400, { error: 'нет товаров с полными характеристиками', held: out.held });
     }
@@ -553,10 +554,13 @@ async function apiExport(req, res) {
   const catKey = category ?? category_id
     ?? products.find(p => p.category)?.category
     ?? products.find(p => p.category_id)?.category_id;
-  const schema = schemaForProduct(products[0], catKey);
-  const dict = schema?.dict;
+  const dict = dictForProducts(products, catKey, ROOT);
   if (!dict) {
-    return json(res, 400, { error: 'нет справочника категории — выгрузка заказчика только для разделов со справочником' });
+    const out = buildV2(products, {});
+    if (!out.products.length) {
+      return json(res, 400, { error: 'Нет товаров для выгрузки' });
+    }
+    return json(res, 200, out);
   }
   let config;
   try { config = loadConfig(ROOT); }

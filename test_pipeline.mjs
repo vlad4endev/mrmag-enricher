@@ -5,6 +5,7 @@ import { renderCard, annotationRows, MIN_ANNOTATION_ROWS, verifyDescription } fr
 import { compactAnnotation, compactHtml, serializeProduct, metaKeywords, buildCustomerExport } from './pipeline/export.js';
 import { validateProducts, validateDescription, expectedFilters, PRODUCT_FIELDS } from './pipeline/validate.js';
 import { webInfoFrom, cleanReviewText, isReview } from './pipeline/reviews.js';
+import { dictForProducts } from './pipeline/schema.js';
 import { buildV2 } from './export_v2.js';
 import { dictToV2Rows, v2FacetSpecKeys } from './pipeline/v2.js';
 import { displayEnum, valueFold } from './pipeline/types.js';
@@ -957,5 +958,12 @@ console.log('golden tests passed');
   const kw = metaKeywords(r, d467);
   assert.ok(!/узк(?:ая|ий|ое|ие|ой)\b/i.test(kw), kw);
   console.log('ok verifyDescription / no false «узкая»');
+}
+
+{
+  assert.equal(dictForProducts([{ name: 'Стиральная машина ATLANT' }], 'без раздела').catId, '467');
+  assert.equal(dictForProducts([{ name: 'Холодильник Pozis' }], 'all').catId, '523');
+  assert.equal(dictForProducts([{ name: 'Вытяжка Lex' }], 929), null);
+  console.log('ok dictForProducts resolves washer/fridge, skips hoods');
 }
 

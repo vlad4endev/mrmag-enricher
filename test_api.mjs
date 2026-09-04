@@ -404,6 +404,31 @@ try {
     assert.ok(Array.isArray(d.products[0].filters['Высота, см']));
     assert.ok(!d.products[0].description_html.includes('<h1'));
   });
+  await t('без раздела — справочник из имени стиральной машины', async () => {
+    const src = JSON.parse(fs.readFileSync(path.join(ROOT, 'data_467.json'), 'utf8'))
+      .find(p => p.id === 11391);
+    const r = await postExport({
+      category: 'без раздела',
+      products: [{ ...src, sku: String(src.id), category: '' }],
+    });
+    assert.strictEqual(r.status, 200);
+    const d = await r.json();
+    assert.strictEqual(d.products[0].id, 11391);
+    assert.ok(d.products[0].annotation_html);
+  });
+  await t('раздел без справочника не ломает выгрузку', async () => {
+    const r = await postExport({
+      category: 929,
+      products: [{
+        sku: '1', name: 'Вытяжка X',
+        enriched: { specs: { цвет: 'белый' }, short_description: 'Коротко', seo_keywords: [] },
+      }],
+    });
+    assert.strictEqual(r.status, 200);
+    const d = await r.json();
+    assert.ok(d.products.length);
+    assert.ok(!('annotation_html' in d.products[0]) || d.products[0].description_html);
+  });
 
   console.log('\nВалидация обогащения');
   const post = body => fetch(url('/api/enrich'), {

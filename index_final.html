@@ -2939,12 +2939,19 @@ function saveFile(content,filename,type='application/json'){
  * чтобы в файл не уехали пустые карточки из окна.
  */
 function catOf(p){
-  const name=p?.category||'';
-  const c=categories.find(x=>x.name===name||x.slug===name);
+  const name=String(p?.category||'').trim();
+  const idHint=p?.category_id??p?.cat_id??null;
+  const same=(x,slug)=>{
+    if(!x) return false;
+    if(idHint!=null && String(x.id)===String(idHint)) return true;
+    if(x.name===name||slug===name) return true;
+    return Boolean(name && x.name && name.endsWith(x.name));
+  };
+  const c=categories.find(x=>same(x,x.slug));
   if(c) return {id:c.id,name:c.name,url:c.url,slug:c.slug};
-  const sc=Object.entries(schemas).find(([slug,x])=>x.name===name||slug===name);
+  const sc=Object.entries(schemas).find(([slug,x])=>same(x,slug));
   if(sc) return {id:sc[1].id,name:sc[1].name,url:null,slug:sc[0]};
-  return {id:null,name:name||'без раздела',url:null,slug:'bez_razdela'};
+  return {id:idHint??null,name:name||'без раздела',url:null,slug:'bez_razdela'};
 }
 
 /** Строка, которую отдаём серверу на сборку витрины. */
@@ -3000,13 +3007,26 @@ function mergeGroups(groups){
     rows:all.flatMap(g=>g.rows)}];
 }
 
+/** id раздела, а не «без раздела» / all: сервер по ним ищет справочник. */
+function exportCatHint(g){
+  const id=g?.cat?.id;
+  if(id!=null && String(id)!=='' && String(id)!=='null') return id;
+  const fromRun=typeof runCat==='function'?runCat():null;
+  if(fromRun) return fromRun;
+  const name=g?.cat?.name, slug=g?.cat?.slug;
+  if(name && !/^(без раздела|все разделы)$/i.test(name)) return name;
+  if(slug && !/^(bez_razdela|all)$/i.test(slug)) return slug;
+  const row=g?.rows?.find(p=>p.category||p.category_id||p.name);
+  return row?.category_id ?? row?.category ?? row?.name ?? null;
+}
+
 /** Собрать выгрузку на сервере. null — обогащённых товаров нет, fetch не нужен. */
 async function loadExport(path){
   const groups=groupItems(true);
   if(!groups.size) return null;
   const [key,g]=mergeGroups(groups);
   const d=await apiJson(path,{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({products:g.rows, category: g.cat?.id ?? g.cat?.name ?? g.cat?.slug})});
+    body:JSON.stringify({products:g.rows, category: exportCatHint(g)})});
   return {key,g,d,groups};
 }
 

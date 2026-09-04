@@ -161,6 +161,37 @@ export function tryLoadDictSchema(key, root = '.') {
   return schemaFromDictionary(dict, { slug, name });
 }
 
+const SKIP_CAT_HINT = new Set(['', 'all', 'без раздела', 'bez_razdela', 'все разделы']);
+
+/**
+ * Справочник для выгрузки: id, slug, путь «…/Стиральные машины», имя товара.
+ * Иначе UI шлёт «без раздела» / «all» и /api/export падает, хотя в пачке
+ * стиральные машины со справочником 467.
+ */
+export function dictForProducts(products, category, root = '.') {
+  const hints = [category];
+  for (const p of products || []) {
+    hints.push(p.category_id, p.category, p.name);
+  }
+  for (const hint of hints) {
+    if (hint == null) continue;
+    const s = String(hint).trim();
+    if (!s || SKIP_CAT_HINT.has(s.toLowerCase())) continue;
+    const loaded = tryLoadDictSchema(s, root);
+    if (loaded?.dict) return loaded.dict;
+    const n = s.toLowerCase().replace(/ё/g, 'е');
+    if (/стиральн/.test(n)) {
+      const d = tryLoadDictSchema(467, root);
+      if (d?.dict) return d.dict;
+    }
+    if (/холодильник/.test(n)) {
+      const d = tryLoadDictSchema(523, root);
+      if (d?.dict) return d.dict;
+    }
+  }
+  return null;
+}
+
 /**
  * Извлечь факты из текста через пайплайн справочника.
  * Ключи — как в схеме ИИ (объем_общий_л, высота_мм).

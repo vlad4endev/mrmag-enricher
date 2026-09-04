@@ -350,8 +350,9 @@
       "Класс отжима"
     ],
     "facet": {
-      "enabled": false,
-      "reason": "Не входит в согласованный набор фасетов категории"
+      "enabled": true,
+      "label": "Класс стирки",
+      "kind": "enum"
     }
   },
   {
@@ -383,8 +384,9 @@
       "Максимальная скорость отжима"
     ],
     "facet": {
-      "enabled": false,
-      "reason": "Не входит в согласованный набор фасетов категории"
+      "enabled": true,
+      "label": "Класс эффективности отжима",
+      "kind": "enum"
     }
   },
   {
@@ -561,8 +563,12 @@
       "Дополнительные программы"
     ],
     "facet": {
-      "enabled": false,
-      "reason": "Не входит в согласованный набор фасетов категории"
+      "enabled": true,
+      "label": "Количество программ",
+      "kind": "range",
+      "step": 5,
+      "bound_rule": "left_closed",
+      "open_last": true
     }
   },
   {
@@ -590,8 +596,9 @@
     ],
     "blacklist": [],
     "facet": {
-      "enabled": false,
-      "reason": "Не входит в согласованный набор фасетов категории"
+      "enabled": true,
+      "label": "Дисплей",
+      "kind": "enum"
     }
   },
   {
@@ -760,8 +767,9 @@
       "Размеры товарной упаковки"
     ],
     "facet": {
-      "enabled": false,
-      "reason": "Не входит в согласованный набор фасетов категории"
+      "enabled": true,
+      "label": "Габариты (ШхГхВ)",
+      "kind": "enum"
     }
   },
   {
@@ -802,8 +810,12 @@
       "Масса брутто"
     ],
     "facet": {
-      "enabled": false,
-      "reason": "Не входит в согласованный набор фасетов категории"
+      "enabled": true,
+      "label": "Вес, кг",
+      "kind": "range",
+      "step": 10,
+      "bound_rule": "left_closed",
+      "open_last": true
     }
   },
   {

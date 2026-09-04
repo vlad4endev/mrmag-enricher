@@ -26,6 +26,7 @@ import { parseListing, parseProductPage, buildFilters, assignMissingBrands, writ
   parseSearchResults, parseAnyProductPage, pageDescribesProduct } from './catalog.js';
 import http from 'http';
 import { buildV2, splitKey } from './export_v2.js';
+import { loadDictionary } from './pipeline/dict.js';
 import { parseProxy, startBridge, setupProxy, mergeNoProxy, applyDirectHosts } from './socks.js';
 import net from 'net';
 
@@ -1163,6 +1164,22 @@ t('да/нет становится Есть/Нет и в фильтре, и в 
   assert.deepStrictEqual(filters.map(f => f.value), [['Есть'], ['Нет']]);
   assert.strictEqual(products[0].filters['Дисплей'], 'Есть');
   assert.match(products[0].description_html, /<li>Дисплей: Есть<\/li>/);
+});
+
+t('таблица заказчика: выключенный фасет остаётся в HTML, не в filters', () => {
+  const dict = loadDictionary(523);
+  const [p] = buildV2([v2row('1', {
+    цвет: 'белый',
+    хладагент: 'R600a',
+    вес_кг: 74,
+    тип_товара: 'холодильник',
+  })], { dict }).products;
+  assert.strictEqual(p.filters['Цвет'], 'белый');
+  assert.strictEqual(p.filters['Тип товара'], 'холодильник');
+  assert.ok(!('Хладагент' in p.filters));
+  assert.ok(!('Вес, кг' in p.filters));
+  assert.match(p.description_html, /<li>Хладагент: R600a<\/li>/);
+  assert.match(p.description_html, /<li>Вес: 74 кг<\/li>/);
 });
 
 t('description_html: описание, характеристики с единицами, ключи в meta', () => {

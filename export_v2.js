@@ -6,6 +6,8 @@
  * Одно и то же значение у товара и в списке каталога считает одна функция.
  */
 
+import { v2FacetSpecKeys } from './pipeline/v2.js';
+
 // Числовое поле схемы кончается единицей измерения: она уходит и в имя фасета
 // («Объем, л»), и в строку характеристики («Объем: 25 л»).
 const UNIT = {
@@ -163,15 +165,24 @@ export function specFacets(rows) {
   });
 }
 
-export function buildV2(rows) {
+function resolveFacetKeys(opts = {}) {
+  if (opts.facetKeys instanceof Set) return opts.facetKeys;
+  if (Array.isArray(opts.facetKeys)) return new Set(opts.facetKeys);
+  if (opts.dict) return v2FacetSpecKeys(opts.dict);
+  return null;
+}
+
+export function buildV2(rows, opts = {}) {
   const enriched = enrichedRows(rows);
   const { nums, valueOf } = facetScale(enriched);
+  const facetKeys = resolveFacetKeys(opts);
 
   const products = enriched.map(r => {
     const e = r.enriched;
     const filters = {};
     for (const [k, v] of Object.entries(e.specs)) {
       if (v == null || v === '') continue;
+      if (facetKeys && !facetKeys.has(k)) continue;
       const name = facetName(k);
       filters[name] = valueOf(name, v);
     }

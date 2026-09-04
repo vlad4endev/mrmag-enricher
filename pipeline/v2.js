@@ -1,12 +1,36 @@
 /**
  * Справочник → вход buildV2.
  * Ключи specs и подписи — из facet.label / name / unit;
- * тип товара — из categories.json. Без CODE_TO_SPEC / PRODUCT_TYPE на 467/523.
+ * тип товара — из categories.json. Ключи фасетов — facet.enabled плюс
+ * алиасы CODE_TO_SPEC, чтобы путь ИИ и путь справочника совпали.
  */
 
 import { metaKeywords } from './export.js';
 import { loadCategories } from './dict.js';
 import { attrLabel } from './types.js';
+import { CODE_TO_SPEC } from './schema.js';
+
+/** Всегда в filters_v2, даже если в справочнике нет таких code. */
+const IDENTITY_SPEC_KEYS = ['тип_товара', 'бренд', 'модель'];
+
+/**
+ * Ключи specs, которые можно класть в filters_v2.
+ * HTML-характеристики собираются из всех specs; сюда — только facet.enabled
+ * и идентичность. Два ключа на атрибут: подпись справочника и CODE_TO_SPEC
+ * (ИИ пишет объём_общий_л, словарь — общий_объем_л).
+ */
+export function v2FacetSpecKeys(dict) {
+  const keys = new Set(IDENTITY_SPEC_KEYS);
+  for (const attr of dict?.attrs || []) {
+    if (attr.tier === 'X') continue;
+    if (!attr.facet?.enabled) continue;
+    keys.add(specKeyFromAttr(attr).key);
+    const dest = CODE_TO_SPEC[attr.code];
+    if (!dest) continue;
+    keys.add(typeof dest === 'object' ? dest.key : dest);
+  }
+  return keys;
+}
 
 function unwrap(v) {
   if (Array.isArray(v)) return v.length ? unwrap(v[0]) : null;
@@ -208,4 +232,4 @@ export function dictToV2Rows(recs, dict, opts = {}) {
   return (recs || []).map(r => dictToV2Row(r, dict, opts));
 }
 
-export { specKeyFromAttr, productTypeFromCategories, singularProductType };
+export { specKeyFromAttr, productTypeFromCategories, singularProductType, IDENTITY_SPEC_KEYS };

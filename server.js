@@ -511,11 +511,15 @@ async function apiExportV2(req, res) {
   let body;
   try { body = JSON.parse(raw); } catch { return json(res, 400, { error: 'Тело запроса не JSON' }); }
 
-  const { products } = body || {};
+  const { products, category, category_id } = body || {};
   if (!Array.isArray(products) || !products.length) {
     return json(res, 400, { error: 'Не передан список товаров' });
   }
-  const out = buildV2(products);
+  const catKey = category ?? category_id
+    ?? products.find(p => p.category)?.category
+    ?? products.find(p => p.category_id)?.category_id;
+  const dict = schemaFor(catKey)?.dict;
+  const out = buildV2(products, dict ? { dict } : {});
   if (!out.products.length) return json(res, 400, { error: 'Нет обогащённых товаров — в v2 нечего выгружать' });
   json(res, 200, out);
 }

@@ -335,6 +335,29 @@ try {
     assert.strictEqual(d.products[0].id, 1);
     assert.ok(d.filters.find(f => f.name === 'Цвет').value.includes(d.products[0].filters['Цвет']));
   });
+  await t('категория 523 не кладёт хладагент и вес в filters_v2', async () => {
+    const r = await postV2({
+      category: 523,
+      products: [{
+        sku: '260',
+        name: 'Pozis',
+        category: 'Холодильники',
+        enriched: {
+          specs: { цвет: 'белый', хладагент: 'R600a', вес_кг: 74 },
+          short_description: 'Коротко',
+          seo_keywords: [],
+        },
+      }],
+    });
+    assert.strictEqual(r.status, 200);
+    const d = await r.json();
+    assert.ok(d.products[0].filters['Цвет']);
+    assert.ok(!('Хладагент' in d.products[0].filters));
+    assert.ok(!('Вес, кг' in d.products[0].filters));
+    assert.match(d.products[0].description_html, /Хладагент: R600a/);
+    assert.match(d.products[0].description_html, /Вес: 74 кг/);
+    assert.ok(!d.filters.some(f => /Хладагент|Вес/.test(f.name)));
+  });
   await t('прогон целиком — тело больше мегабайта не отбивается', async () => {
     // 259 обогащённых товаров — это ~1,5 МБ: на общем лимите readBody пакетная
     // выгрузка падала «Тело запроса слишком велико».

@@ -179,7 +179,7 @@ function writeOutputs({ recs, dict, config, catId, cov, covAfter, formats, unmap
   writeJson(path.join(OUT, `products_${catId}.json`), serializeProducts(recs, dict, built.debug), 4);
   writeJson(path.join(OUT, `filters_${catId}.json`), serializeFilters(built), 4);
 
-  const v2 = buildV2(dictToV2Rows(recs, dict));
+  const v2 = buildV2(dictToV2Rows(recs, dict), { dict });
   writeJson(path.join(OUT, `products_v2_${catId}.json`), v2.products, 2);
   writeJson(path.join(OUT, `filters_v2_${catId}.json`), { filters: v2.filters }, 2);
   const cat = loadCategories(ROOT).find(c => Number(c.id) === Number(catId));

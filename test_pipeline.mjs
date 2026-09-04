@@ -4,7 +4,7 @@ import { bucketLabel, buildFilters } from './pipeline/facets.js';
 import { renderCard } from './pipeline/generate.js';
 import { compactAnnotation, compactHtml, serializeProduct, metaKeywords } from './pipeline/export.js';
 import { buildV2 } from './export_v2.js';
-import { dictToV2Rows } from './pipeline/v2.js';
+import { dictToV2Rows, v2FacetSpecKeys } from './pipeline/v2.js';
 import { displayEnum, valueFold } from './pipeline/types.js';
 import { identityMatches, nameKeyTokens, parseIdentity } from './pipeline/identity.js';
 import { needsExternal, parseProductBySpecs, lookupExternal, enrichMissing } from './pipeline/external.js';
@@ -685,8 +685,19 @@ console.log('golden tests passed');
 }
 
 {
+  const keys = v2FacetSpecKeys(d523);
+  assert.ok(keys.has('цвет') && keys.has('тип_товара') && keys.has('бренд'));
+  assert.ok(!keys.has('хладагент') && !keys.has('вес_кг'));
+  const w = v2FacetSpecKeys(d467);
+  assert.ok(w.has('вес_кг'), 'вес стиральной машины в таблице — фильтр');
+  assert.ok(![...w].some(k => /расход_воды/.test(k)));
+  assert.ok(![...w].some(k => /шум.*отжим|отжима.*дб/.test(k)));
+  console.log('ok v2FacetSpecKeys vs таблица заказчика');
+}
+
+{
   const r = normalizeProduct(p523[260], d523, config);
-  const [p] = buildV2(dictToV2Rows([r], d523)).products;
+  const [p] = buildV2(dictToV2Rows([r], d523), { dict: d523 }).products;
   assert.deepEqual(Object.keys(p), ['id', 'name', 'meta_keywords', 'description_html', 'filters']);
   assert.equal(p.id, 260);
   assert.equal(p.name, 'Холодильник Pozis RK FNF-172 W');
@@ -698,9 +709,9 @@ console.log('golden tests passed');
   // Подписи фасетов — из справочника (facet.label / name), не из CODE_TO_SPEC.
   assert.equal(p.filters['Общий объем, л'], '344');
   assert.equal(p.filters['Класс энергоэффективности'], 'A');
-  assert.equal(p.filters['Хладагент'], 'R600a');
+  assert.ok(!('Хладагент' in p.filters), 'хладагент — характеристика, не фильтр');
+  assert.ok(!('Вес, кг' in p.filters), 'вес холодильника — характеристика, не фильтр');
   assert.equal(p.filters['Уровень шума, дБ'], '40');
-  assert.equal(p.filters['Вес, кг'], '74');
   assert.equal(p.filters['Система охлаждения'], 'No Frost');
   assert.equal(p.filters['Тип управления'], 'механическое');
   assert.equal(p.filters['Расположение морозильной камеры'], 'нижнее');
@@ -709,18 +720,22 @@ console.log('golden tests passed');
   assert.match(p.description_html, /<li>Тип товара: холодильник<\/li>/);
   assert.match(p.description_html, /<li>Общий объем: 344 л<\/li>/);
   assert.match(p.description_html, /<li>Система охлаждения: No Frost<\/li>/);
+  assert.match(p.description_html, /<li>Хладагент: R600a<\/li>/);
+  assert.match(p.description_html, /<li>Вес: 74 кг<\/li>/);
   console.log('ok products_v2 shape (260 Pozis)');
 }
 
 {
   const r = normalizeProduct(p467[11391], d467, config);
-  const [p] = buildV2(dictToV2Rows([r], d467)).products;
+  const [p] = buildV2(dictToV2Rows([r], d467), { dict: d467 }).products;
   assert.equal(p.filters['Тип товара'], 'стиральная машина');
   assert.equal(p.filters['Тип загрузки'], 'фронтальная');
   assert.equal(p.filters['Бренд'], 'ATLANT');
   assert.equal(p.filters['Загрузка белья, кг'], '6');
   assert.equal(p.filters['Высота, мм'], '846');
   assert.equal(typeof p.filters['Тип загрузки'], 'string');
+  assert.ok(!Object.keys(p.filters).some(n => /расход воды/i.test(n)));
+  assert.ok(!Object.keys(p.filters).some(n => /отжима.*дб|шум при отжиме/i.test(n)));
   console.log('ok products_v2 washer (11391)');
 }
 
@@ -729,7 +744,7 @@ console.log('golden tests passed');
   if (fs.existsSync(goldFile)) {
     const gold = JSON.parse(fs.readFileSync(goldFile, 'utf8'));
     const recs = [260, 805].map(id => normalizeProduct(p523[id], d523, config));
-    const { products } = buildV2(dictToV2Rows(recs, d523));
+    const { products } = buildV2(dictToV2Rows(recs, d523), { dict: d523 });
     assert.equal(products.length, 2);
     for (const g of gold) {
       const p = products.find(x => x.id === g.id);

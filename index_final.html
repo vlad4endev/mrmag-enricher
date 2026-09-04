@@ -3038,7 +3038,7 @@ async function downloadV2(){
     // Диапазоны фасетов считаются по всему набору сразу: посчитай их по
     // разделам и склей файлы потом — у товара остался бы диапазон своего
     // раздела, которого нет в общем списке фасетов.
-    const d=await serverV2(g.rows);
+    const d=await serverV2(g.rows, g.cat);
     files.push([`filters_v2_${key}.json`,{filters:d.filters}]);
     files.push([`products_v2_${key}.json`,d.products]);
     files.forEach(([name,data])=>saveFile(JSON.stringify(data,null,2),name));
@@ -3050,9 +3050,9 @@ async function downloadV2(){
   }
 }
 
-async function serverV2(products){
+async function serverV2(products, cat){
   return await apiJson('/api/export-v2',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({products})});
+    body:JSON.stringify({products, category: cat?.id ?? cat?.name ?? cat?.slug})});
 }
 
 /** Фильтры считает сервер: buildFilters живёт там, дублировать её здесь нельзя.

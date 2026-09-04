@@ -62,6 +62,19 @@ function allowLocal() {
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
+/** AbortSignal.timeout() — TimeoutError; часть сбоев приходит как AbortError с этим текстом. */
+export function isTimeoutError(e) {
+  const text = [e?.name, e?.message, e?.cause?.name, e?.cause?.message].filter(Boolean).join(' ');
+  return e?.name === 'TimeoutError'
+    || e?.cause?.name === 'TimeoutError'
+    || /таймаут|aborted due to timeout|ETIMEDOUT|UND_ERR_CONNECT_TIMEOUT/i.test(text);
+}
+
+function timedError(e, timeoutMs) {
+  if (isTimeoutError(e)) return new Error(`таймаут ${timeoutMs}ms`);
+  return e instanceof Error ? e : new Error(String(e));
+}
+
 let lastFetch = 0;
 let lastSearch = 0;
 
@@ -203,20 +216,25 @@ export async function fetchPage(url, { timeoutMs = 20_000 } = {}) {
 
   await waitGap('fetch', Number(process.env.CRAWL_GAP_MS || 250));
 
-  const res = await fetch(url, {
-    headers: {
-      'User-Agent': UA,
-      'Accept-Language': 'ru,en;q=0.8',
-      Accept: 'text/html,application/xhtml+xml;q=0.9,*/*;q=0.8',
-    },
-    signal: AbortSignal.timeout(timeoutMs),
-    redirect: 'follow',
-  });
-  if (!res.ok) throw new Error(`HTTP ${res.status} на ${url}`);
-  const html = await res.text();
-  fs.mkdirSync(cacheDir(), { recursive: true });
-  fs.writeFileSync(file, html, 'utf-8');
-  return html;
+  try {
+    const res = await fetch(url, {
+      headers: {
+        'User-Agent': UA,
+        'Accept-Language': 'ru,en;q=0.8',
+        Accept: 'text/html,application/xhtml+xml;q=0.9,*/*;q=0.8',
+      },
+      signal: AbortSignal.timeout(timeoutMs),
+      redirect: 'follow',
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status} на ${url}`);
+    const html = await res.text();
+    fs.mkdirSync(cacheDir(), { recursive: true });
+    fs.writeFileSync(file, html, 'utf-8');
+    return html;
+  } catch (e) {
+    if (/^HTTP /.test(e.message)) throw e;
+    throw timedError(e, timeoutMs);
+  }
 }
 
 async function fetchForm(url, body, { timeoutMs = 20_000, cacheKey, gapMs } = {}) {
@@ -225,29 +243,34 @@ async function fetchForm(url, body, { timeoutMs = 20_000, cacheKey, gapMs } = {}
 
   await waitGap('search', gapMs ?? Number(process.env.SEARCH_GAP_MS || 3000));
 
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'User-Agent': UA,
-      'Accept-Language': 'ru,en;q=0.9',
-      Accept: 'text/html,application/xhtml+xml;q=0.9,*/*;q=0.8',
-      'Content-Type': 'application/x-www-form-urlencoded',
-      Origin: new URL(url).origin,
-      Referer: url,
-    },
-    body,
-    signal: AbortSignal.timeout(timeoutMs),
-    redirect: 'follow',
-  });
-  if (!res.ok) throw new Error(`HTTP ${res.status} на ${url}`);
-  const html = await res.text();
-  if (isDuckDuckGoBlocked(html)) {
-    forget(file);
-    throw new Error('DuckDuckGo: заглушка или капча вместо выдачи');
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'User-Agent': UA,
+        'Accept-Language': 'ru,en;q=0.9',
+        Accept: 'text/html,application/xhtml+xml;q=0.9,*/*;q=0.8',
+        'Content-Type': 'application/x-www-form-urlencoded',
+        Origin: new URL(url).origin,
+        Referer: url,
+      },
+      body,
+      signal: AbortSignal.timeout(timeoutMs),
+      redirect: 'follow',
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status} на ${url}`);
+    const html = await res.text();
+    if (isDuckDuckGoBlocked(html)) {
+      forget(file);
+      throw new Error('DuckDuckGo: заглушка или капча вместо выдачи');
+    }
+    fs.mkdirSync(cacheDir(), { recursive: true });
+    fs.writeFileSync(file, html, 'utf-8');
+    return html;
+  } catch (e) {
+    if (/^HTTP |заглушка|капча/.test(e.message)) throw e;
+    throw timedError(e, timeoutMs);
   }
-  fs.mkdirSync(cacheDir(), { recursive: true });
-  fs.writeFileSync(file, html, 'utf-8');
-  return html;
 }
 
 async function fetchJson(url, { timeoutMs = 20_000, cacheKey, gapMs } = {}) {
@@ -258,27 +281,32 @@ async function fetchJson(url, { timeoutMs = 20_000, cacheKey, gapMs } = {}) {
 
   await waitGap('search', gapMs ?? Number(process.env.SEARCH_GAP_MS || 3000));
 
-  const res = await fetch(url, {
-    headers: {
-      'User-Agent': UA,
-      Accept: 'application/json',
-    },
-    signal: AbortSignal.timeout(timeoutMs),
-    redirect: 'follow',
-  });
-  const text = await res.text();
-  let data;
-  try { data = JSON.parse(text); } catch {
-    forget(file);
-    throw new Error(`ответ не JSON (HTTP ${res.status})`);
+  try {
+    const res = await fetch(url, {
+      headers: {
+        'User-Agent': UA,
+        Accept: 'application/json',
+      },
+      signal: AbortSignal.timeout(timeoutMs),
+      redirect: 'follow',
+    });
+    const text = await res.text();
+    let data;
+    try { data = JSON.parse(text); } catch {
+      forget(file);
+      throw new Error(`ответ не JSON (HTTP ${res.status})`);
+    }
+    if (!res.ok || data.error) {
+      forget(file);
+      throw new Error(data.error || `HTTP ${res.status}`);
+    }
+    fs.mkdirSync(cacheDir(), { recursive: true });
+    fs.writeFileSync(file, text, 'utf-8');
+    return data;
+  } catch (e) {
+    if (/^HTTP |ответ не JSON/.test(e.message)) throw e;
+    throw timedError(e, timeoutMs);
   }
-  if (!res.ok || data.error) {
-    forget(file);
-    throw new Error(data.error || `HTTP ${res.status}`);
-  }
-  fs.mkdirSync(cacheDir(), { recursive: true });
-  fs.writeFileSync(file, text, 'utf-8');
-  return data;
 }
 
 export function unwrapDuckDuckGoUrl(href) {
@@ -476,12 +504,24 @@ export async function searchWeb(query, config = {}) {
   if (!settings.enabled) throw new Error('поиск выключен');
 
   const errors = [];
+  let timeoutStreak = 0;
+  const note = (msg, err) => {
+    errors.push(msg);
+    if ((err && isTimeoutError(err)) || /таймаут \d+ms/.test(String(msg))) {
+      timeoutStreak++;
+      // Два таймаута подряд — сеть не отвечает. Дальше те же 20с × движок
+      // только откладывают отправку имени в модель.
+      if (timeoutStreak >= 2) throw new Error(errors.join('; '));
+    } else {
+      timeoutStreak = 0;
+    }
+  };
 
   if (settings.serpapi.enabled && settings.serpapi.apiKey) {
     try {
       return await searchSerpApi(query, config);
     } catch (e) {
-      errors.push(e.message);
+      note(e.message, e);
     }
   }
 
@@ -501,23 +541,30 @@ export async function searchWeb(query, config = {}) {
       await waitGap('search', settings.gapMs);
       const urls = parseSearchResults(await fetchPage(url, { timeoutMs: settings.timeoutMs }), host, settings);
       if (urls.length) return urls;
-      errors.push(`${eng.name || host}: выдача без ссылок`);
+      note(`${eng.name || host}: выдача без ссылок`);
     } catch (e) {
-      errors.push(`${eng.name || 'поиск'}: ${e.message}`);
+      note(`${eng.name || 'поиск'}: ${e.message}`, e);
     }
   }
 
+  let ddgFailed = false;
   if (settings.duckduckgo.enabled) {
     try {
       return await searchDuckDuckGo(query, config);
     } catch (e) {
-      errors.push(e.message);
+      ddgFailed = true;
+      note(e.message, e);
     }
   }
 
   for (const name of settings.fallback) {
     const template = FALLBACK[name];
     if (!template) continue;
+    // Lite — тот же DuckDuckGo. Если html уже не ответил, ждать ещё 20с незачем.
+    if (name.startsWith('ddg') && ddgFailed) {
+      errors.push(`${name}: пропущен, DuckDuckGo уже не ответил`);
+      continue;
+    }
     try {
       const url = template.replace('%s', encodeURIComponent(q));
       const host = new URL(url).hostname.replace(/^www\./, '');
@@ -527,9 +574,9 @@ export async function searchWeb(query, config = {}) {
         ? parseDuckDuckGoResults(html, settings)
         : parseSearchResults(html, host, settings);
       if (urls.length) return urls;
-      errors.push(`${host}: выдача без ссылок`);
+      note(`${host}: выдача без ссылок`);
     } catch (e) {
-      errors.push(`${name}: ${e.message}`);
+      note(`${name}: ${e.message}`, e);
     }
   }
 
@@ -545,4 +592,16 @@ export function searchQuery(rec, configOrSettings = {}) {
   if (name) return suffix ? `${name} ${suffix}` : name;
   const bits = [rec?.identity?.brand, rec?.identity?.model, suffix].filter(Boolean);
   return bits.join(' ');
+}
+
+/**
+ * Запрос за страной производства: бренд + модель, без маркетингового хвоста
+ * имени. Полное имя — только если модели в карточке нет.
+ */
+export function countryQuery(rec) {
+  const brand = String(rec?.identity?.brand || rec?.brand || '').trim();
+  const model = String(rec?.identity?.model || '').trim();
+  if (model) return [brand, model, 'страна производства'].filter(Boolean).join(' ');
+  const name = String(rec?.name || '').replace(/["«»]/g, ' ').replace(/\s+/g, ' ').trim();
+  return name ? `${name} страна производства` : '';
 }

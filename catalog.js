@@ -23,14 +23,14 @@ import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 import { fileURLToPath } from 'url';
-import { netError, isEnrichable, modelToken, MIN_SOURCE_CHARS } from './lib.js';
+import { netError, isEnrichable, modelToken, MIN_SOURCE_CHARS, extractFacts, hasCountryFact, canSearchWeb } from './lib.js';
 import { specFacets, enrichedRows } from './export_v2.js';
 import { loadConfig, loadCategories, hasDictionary } from './pipeline/dict.js';
 import { CRAWL_SLUGS } from './pipeline/schema.js';
 import { containsTokenSequence, nameKeyTokens } from './pipeline/identity.js';
 import {
   isDuckDuckGoBlocked, isJunkHost, parseDuckDuckGoResults,
-  searchWeb as pipelineSearchWeb,
+  searchWeb as pipelineSearchWeb, countryQuery,
 } from './pipeline/search.js';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
@@ -486,29 +486,45 @@ export async function searchWeb(query) {
   }
 }
 
+function countryFromHtml(html, schema) {
+  const found = parseAnyProductPage(html);
+  const text = [found.annotation, found.description].filter(Boolean).join('\n');
+  const v = extractFacts(text, schema).страна_производства;
+  if (v != null && String(v).trim()) return String(v).trim();
+  const hit = (found.attributes || []).find(a =>
+    /стран[аы][\s-]*(?:производств|изготовлен|производитель)/i.test(a.name) && a.value);
+  return hit ? String(hit.value).trim() : null;
+}
+
+function withCountryLine(product, country, url) {
+  const line = `Страна производства - ${country}`;
+  return {
+    ...product,
+    annotation: [product.annotation, line].filter(Boolean).join('<br>'),
+    source_url: product.source_url || url,
+  };
+}
+
 /**
- * Товар с описанием: своим, если оно есть, иначе найденным в сети.
- * Возвращает { product, gate, source }: product — то, что уходит в модель,
- * gate — вердикт по нему, source — адрес страницы, откуда добран текст.
- *
- * Атрибуты магазина остаются нетронутыми: они задают фасеты каталога, и
- * подмешивать в них чужую таблицу нельзя — спор «каталога с самим собой»
- * должен оставаться спором каталога.
+ * Страны нет в исходнике → поиск по модели. Совпавшая страница даёт только
+ * страну: остальные поля карточки уже свои, чужую таблицу в них не мешаем.
  */
-export async function ensureSource(product, schema, { onNote = () => {} } = {}) {
-  const gate = isEnrichable(product, schema);
-  if (gate.ok || !WEB_LOOKUP || !gate.web) return { product, gate };
-
-  const token = modelToken(product.name);
-  const query = `${String(product.name).replace(/["«»]/g, ' ')} ${product.brand || ''} характеристики`
-    .replace(/\s+/g, ' ').trim();
-
+async function fillCountryFromWeb(product, schema, { onNote = () => {} } = {}) {
+  if (hasCountryFact(product, schema) || !canSearchWeb(product)) {
+    return { ok: false, product };
+  }
+  const query = countryQuery({
+    name: product.name,
+    brand: product.brand,
+    identity: { brand: product.brand, model: modelToken(product.name) },
+  });
   let urls = [];
   try {
-    onNote(`ищем в сети: ${token || product.name}`);
+    onNote(`ищем страну: ${query}`);
     urls = await searchWeb(query);
   } catch (e) {
-    return { product, gate: { ...gate, reason: `${gate.reason}; поиск в сети не удался: ${e.message}` } };
+    onNote(`страну в сети не нашли: ${e.message}`);
+    return { ok: false, product };
   }
 
   const tried = [];
@@ -517,32 +533,114 @@ export async function ensureSource(product, schema, { onNote = () => {} } = {}) 
     let html;
     try { html = await fetchPage(url, { ua: WEB_UA, timeoutMs: 20_000 }); }
     catch { tried.push(`${host}: не открылась`); continue; }
-
-    // Не тот товар — не наш случай: лучше пропуск, чем чужие характеристики.
     const who = pageDescribesProduct(html, product);
     if (!who.ok) {
       tried.push(`${host}: ${who.reason}`);
       continue;
     }
-    const found = parseAnyProductPage(html);
-    if (!found.annotation && found.description.length < MIN_SOURCE_CHARS) {
-      tried.push(`${host}: нечего взять`);
+    const country = countryFromHtml(html, schema);
+    if (!country) {
+      tried.push(`${host}: страны нет на странице`);
       continue;
     }
-    const merged = {
-      ...product,
-      description: String(product.description || '').trim() || found.description,
-      annotation:  [product.annotation, found.annotation].filter(Boolean).join(' ').trim(),
-      source_url:  url,
-    };
-    const after = isEnrichable(merged, schema);
-    if (!after.ok) { tried.push(`${host}: ${after.reason}`); continue; }
-    onNote(`описание из сети: ${host}`);
-    return { product: merged, gate: after, source: url };
+    onNote(`страна из сети: ${country} (${host})`);
+    return { ok: true, product: withCountryLine(product, country, url), source: url };
+  }
+  if (tried.length) onNote(`страну в сети не нашли: ${tried.join('; ')}`);
+  return { ok: false, product };
+}
+
+/**
+ * Товар с описанием: своим, если оно есть, иначе найденным в сети.
+ * Возвращает { product, gate, source }: product — то, что уходит в модель,
+ * gate — вердикт по нему, source — адрес страницы, откуда добран текст.
+ *
+ * Если товар опознаваем по имени (gate.web), поиск — лучшее усилие, а не
+ * условие: таймаут или пустая выдача не пропускают карточку. Модели тогда
+ * уходит исходное имя. Чужие характеристики по-прежнему не подставляются.
+ *
+ * Страна производства — отдельный случай: своих характеристик может быть
+ * достаточно, а страны в исходнике нет. Тогда ищем её по модели.
+ *
+ * Атрибуты магазина остаются нетронутыми: они задают фасеты каталога, и
+ * подмешивать в них чужую таблицу нельзя — спор «каталога с самим собой»
+ * должен оставаться спором каталога.
+ */
+export async function ensureSource(product, schema, { onNote = () => {} } = {}) {
+  const gate = isEnrichable(product, schema);
+  if (!WEB_LOOKUP) return { product, gate };
+  if (!gate.ok && !gate.web) return { product, gate };
+
+  let current = product;
+  let source = null;
+  let currentGate = gate;
+
+  if (!currentGate.ok) {
+    const token = modelToken(product.name);
+    const query = `${String(product.name).replace(/["«»]/g, ' ')} ${product.brand || ''} характеристики`
+      .replace(/\s+/g, ' ').trim();
+
+    let urls = [];
+    let searchFailed = false;
+    try {
+      onNote(`ищем в сети: ${token || product.name}`);
+      urls = await searchWeb(query);
+    } catch (e) {
+      onNote(`поиск не удался, отправляем как есть: ${e.message}`);
+      currentGate = { ...gate, ok: true, reason: `${gate.reason}; поиск в сети не удался: ${e.message}` };
+      searchFailed = true;
+    }
+
+    if (!searchFailed) {
+      const tried = [];
+      let foundPage = false;
+      for (const url of urls.slice(0, WEB_TRIES)) {
+        const host = new URL(url).hostname.replace(/^www\./, '');
+        let html;
+        try { html = await fetchPage(url, { ua: WEB_UA, timeoutMs: 20_000 }); }
+        catch { tried.push(`${host}: не открылась`); continue; }
+
+        const who = pageDescribesProduct(html, product);
+        if (!who.ok) {
+          tried.push(`${host}: ${who.reason}`);
+          continue;
+        }
+        const found = parseAnyProductPage(html);
+        if (!found.annotation && found.description.length < MIN_SOURCE_CHARS) {
+          tried.push(`${host}: нечего взять`);
+          continue;
+        }
+        const merged = {
+          ...product,
+          description: String(product.description || '').trim() || found.description,
+          annotation:  [product.annotation, found.annotation].filter(Boolean).join(' ').trim(),
+          source_url:  url,
+        };
+        const after = isEnrichable(merged, schema);
+        if (!after.ok) { tried.push(`${host}: ${after.reason}`); continue; }
+        onNote(`описание из сети: ${host}`);
+        current = merged;
+        source = url;
+        currentGate = after;
+        foundPage = true;
+        break;
+      }
+      if (!foundPage) {
+        const why = tried.length ? tried.join('; ') : 'выдача пуста';
+        onNote(`в сети не нашлось, отправляем как есть: ${why}`);
+        currentGate = { ...gate, ok: true, reason: `${gate.reason}; в сети не нашлось (${why})` };
+      }
+    }
   }
 
-  const why = tried.length ? tried.join('; ') : 'выдача пуста';
-  return { product, gate: { ...gate, reason: `${gate.reason}; в сети не нашлось (${why})` } };
+  const country = await fillCountryFromWeb(current, schema, { onNote });
+  if (country.ok) {
+    current = country.product;
+    source = source || country.source;
+    currentGate = isEnrichable(current, schema);
+  }
+
+  return { product: current, gate: currentGate, ...(source ? { source } : {}) };
 }
 
 // ── АВТОФИЛЬТРЫ ──────────────────────────────────────────────

@@ -12,7 +12,7 @@ import {
   coerceNumber, extractFacts as extractFactsIn, crossCheck, parseResponse,
   repairTruncatedJson, MAX_COMPLETION_TOKENS,
   normalizeResponse as normalizeResponseIn, stripHtml, RateLimiter, isEnrichable,
-  buildUserContent, rpmFor, attrFacts, productFacts, modelToken,
+  buildUserContent, rpmFor, attrFacts, productFacts, modelToken, hasCountryFact,
   SCHEMAS, GENERIC_SCHEMA, schemaFor, schemaForProduct, buildSystemPrompt, enrichProduct, netError,
 } from './lib.js';
 
@@ -83,6 +83,19 @@ t('\\w не ломает кириллические суффиксы', () => {
 t('система охлаждения', () => {
   assert.strictEqual(extractFacts('Система охлаждения - No Frost').система_охлаждения, 'No Frost');
   assert.strictEqual(extractFacts('Система охлаждения - капельная').система_охлаждения, 'Капельная');
+});
+t('страна производства и изготовления — одно поле', () => {
+  assert.strictEqual(extractFacts('Страна производства - Россия').страна_производства, 'Россия');
+  assert.strictEqual(extractFacts('Страна изготовления - Китай').страна_производства, 'Китай');
+  assert.strictEqual(extractFacts('Страна-изготовитель: Беларусь').страна_производства, 'Беларусь');
+  assert.equal(hasCountryFact({
+    description: '',
+    annotation: 'Общий объем - 310 л<br>Страна изготовления - Китай',
+  }, 'kholodilniki'), true);
+  assert.equal(hasCountryFact({
+    description: 'Двухкамерный холодильник с общим объёмом 310 л и системой No Frost.',
+    annotation: 'Общий объем - 310 л',
+  }, 'kholodilniki'), false);
 });
 t('шум и миллиметры без пересчёта', () => {
   assert.strictEqual(extractFacts('Уровень шума - 39 дБ').уровень_шума_дб, 39);
@@ -958,6 +971,10 @@ t('обрыв CONNECT не маскируется под таймаут', () => 
   assert.match(s, /cancelled/i);
   assert.doesNotMatch(s, /^таймаут/);
 });
+t('AbortSignal.timeout не оставляет английскую формулировку', () => {
+  const e = Object.assign(new Error('The operation was aborted due to timeout'), { name: 'TimeoutError' });
+  assert.strictEqual(netError(e), 'таймаут');
+});
 
 console.log('\nАдрес прокси');
 t('разбирает три формы записи', () => {
@@ -1396,12 +1413,13 @@ console.log('\nТовар без описания: поиск в сети');
     assert.deepStrictEqual(product.description, '', 'исходный товар не переписывается на месте');
   });
 
-  await tAsync('чужие характеристики без совпадения артикула не подставляются', async () => {
-    const got = await web.ensureSource(
-      { sku: '1', name: 'Холодильник LG GC-X999ZZZ', description: '' }, 'kholodilniki');
-    assert.strictEqual(got.gate.ok, false);
+  await tAsync('чужие характеристики без совпадения артикула не подставляются, имя всё равно идёт в модель', async () => {
+    const product = { sku: '1', name: 'Холодильник LG GC-X999ZZZ', description: '' };
+    const got = await web.ensureSource(product, 'kholodilniki');
+    assert.strictEqual(got.gate.ok, true, 'опознаваемое имя — не пропуск, даже если страница не та');
     assert.match(got.gate.reason, /нет артикула|в сети не нашлось/);
     assert.strictEqual(got.source, undefined);
+    assert.strictEqual(got.product.description, '', 'чужой текст не подставляется');
   });
 
   await tAsync('WEB_LOOKUP=0 возвращает прежний пропуск без единого запроса', async () => {

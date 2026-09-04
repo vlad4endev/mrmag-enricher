@@ -1,11 +1,13 @@
 /**
- * Добор характеристик у товаров без своих данных (S3).
+ * Добор характеристик у товаров без своих данных (S3) и страны производства.
  *
  * 1. По имени ищем ту же модель в поисковике.
  * 2. Читаем страницы выдачи, пока бренд и модель (или опознавательные
  *    слова имени) не совпадут.
  * 3. Таблицу характеристик разбираем тем же парсером, что и свой фид,
  *    и дописываем пустые поля. Уже заполненное из annotation не трогаем.
+ * 4. Если своих данных достаточно, но страны производства в исходнике нет —
+ *    отдельный поиск по модели («бренд модель страна производства»).
  *
  * WW80AG6S28AELP и WW80AGAS26AXLP — разные товары: чужая страница
  * с соседней моделью отбрасывается.
@@ -14,7 +16,8 @@
 import { extractPairsFromPage, visibleText } from './parse.js';
 import { identityMatches, nameKeyTokens } from './identity.js';
 import { ingestPairs } from './normalize.js';
-import { searchWeb, fetchPage, searchQuery, resolveSearchSettings } from './search.js';
+import { matchKey } from './match.js';
+import { searchWeb, fetchPage, searchQuery, countryQuery, resolveSearchSettings } from './search.js';
 
 const MIN_PAIRS = 3;
 
@@ -31,6 +34,15 @@ function filledCount(rec) {
 /** Своих характеристик мало, а по имени товар ещё можно найти. */
 export function needsExternal(rec, { minAttrs = 5 } = {}) {
   if (filledCount(rec) >= minAttrs) return false;
+  if (rec?.identity?.model) return true;
+  return nameKeyTokens(rec?.name || rec?.identity?.name, rec?.identity?.brand).length > 0;
+}
+
+/** Страны нет в исходнике, а по модели ещё можно найти чужую карточку. */
+export function needsCountry(rec, dict) {
+  if (!dict?.byCode?.has('country')) return false;
+  const v = rec?.attrs?.country;
+  if (v != null && v !== '') return false;
   if (rec?.identity?.model) return true;
   return nameKeyTokens(rec?.name || rec?.identity?.name, rec?.identity?.brand).length > 0;
 }
@@ -75,6 +87,81 @@ export function parseProductBySpecs(rec, html, dict, config, meta = {}) {
   const page_data = meta.page_data || (html ? visibleText(html) : '');
   applyExternal(rec, parsed.pairs, dict, config, { ...meta, page_data });
   return { rec, ok: true, pairs: parsed.pairs };
+}
+
+function countryPairsOf(pairs, dict, config) {
+  const fuzzyMin = config?.fuzzy?.min_score ?? 0.9;
+  return (pairs || []).filter(p => {
+    const matched = matchKey(p.key, dict, { value: p.value, fuzzyMin });
+    return matched.attr?.code === 'country';
+  });
+}
+
+/**
+ * На совпавшей модели достаточно одной пары «страна — значение».
+ * MIN_PAIRS для полной таблицы здесь не действует: ищем только страну.
+ */
+export function parseCountryFromPage(html, identity, dict, config) {
+  const text = visibleText(html);
+  if (!identityMatches(text, identity, dict)) {
+    return { ok: false, reason: 'модель не совпала', pairs: [] };
+  }
+  const pairs = extractPairsFromPage(html, dict).map(p => ({ ...p, source: 'S3' }));
+  const country = countryPairsOf(pairs, dict, config);
+  if (!country.length) return { ok: false, reason: 'страны нет на странице', pairs };
+  return { ok: true, pairs: country };
+}
+
+/**
+ * Найти страну производства по модели. Чужие поля не трогаем:
+ * карточка уже заполнена, нужен только пропуск в исходнике.
+ */
+export async function lookupCountry(rec, dict, config, io = {}) {
+  const settings = resolveSearchSettings(config);
+  if (!settings.enabled) {
+    return { rec, ok: false, reason: 'поиск выключен' };
+  }
+  if (!needsCountry(rec, dict)) {
+    return { rec, ok: false, reason: 'страна уже есть или искать не по чему' };
+  }
+  const query = io.query || countryQuery(rec);
+  if (!query) return { rec, ok: false, reason: 'пустой поисковый запрос' };
+  const search = io.search || (q => searchWeb(q, config));
+  const fetchHtml = io.fetchHtml || (url => fetchPage(url, { timeoutMs: settings.timeoutMs }));
+  const maxPages = io.maxPages ?? settings.tries;
+  const onNote = io.onNote || (() => {});
+
+  let urls = [];
+  try {
+    onNote(`ищем страну: ${query}`);
+    urls = await search(query);
+  } catch (e) {
+    return { rec, ok: false, reason: `поиск не удался: ${e.message}`, query };
+  }
+
+  const tried = [];
+  for (const url of (urls || []).slice(0, maxPages)) {
+    let host = url;
+    try { host = new URL(url).hostname.replace(/^www\./, ''); } catch { /* оставляем url */ }
+    let html;
+    try { html = await fetchHtml(url); }
+    catch { tried.push(`${host}: не открылась`); continue; }
+    const got = parseCountryFromPage(html, rec.identity, dict, config);
+    if (!got.ok) {
+      tried.push(`${host}: ${got.reason}`);
+      continue;
+    }
+    const page_data = html ? visibleText(html) : '';
+    applyExternal(rec, got.pairs, dict, config, { url, query, page_data });
+    onNote(`страна с ${host}: ${rec.attrs.country}`);
+    return { rec, ok: true, url, query, pairs: got.pairs };
+  }
+  return {
+    rec,
+    ok: false,
+    query,
+    reason: tried.length ? tried.join('; ') : 'выдача пуста',
+  };
 }
 
 /**
@@ -145,6 +232,10 @@ export async function enrichMissing(recs, dict, config, io = {}) {
   const results = [];
   for (const rec of need) {
     results.push(await lookupExternal(rec, dict, config, io));
+  }
+  const forCountry = recs.filter(r => needsCountry(r, dict));
+  for (const rec of forCountry) {
+    results.push(await lookupCountry(rec, dict, config, io));
   }
   return results;
 }

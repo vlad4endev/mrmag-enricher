@@ -7,11 +7,11 @@ import { buildV2 } from './export_v2.js';
 import { dictToV2Rows, v2FacetSpecKeys } from './pipeline/v2.js';
 import { displayEnum, valueFold } from './pipeline/types.js';
 import { identityMatches, nameKeyTokens, parseIdentity } from './pipeline/identity.js';
-import { needsExternal, parseProductBySpecs, lookupExternal, enrichMissing } from './pipeline/external.js';
+import { needsExternal, parseProductBySpecs, lookupExternal, enrichMissing, needsCountry, lookupCountry, parseCountryFromPage } from './pipeline/external.js';
 import {
   parseSearchResults, parseDuckDuckGoResults, isDuckDuckGoBlocked,
-  parseSerpApiResults, searchQuery, searchWeb, searchDuckDuckGo, searchSerpApi,
-  resolveSearchSettings, publicParserStatus,
+  parseSerpApiResults, searchQuery, countryQuery, searchWeb, searchDuckDuckGo, searchSerpApi,
+  resolveSearchSettings, publicParserStatus, isTimeoutError, fetchPage,
 } from './pipeline/search.js';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -196,6 +196,8 @@ console.log('golden tests passed');
   assert.equal(needsExternal(empty), true);
   assert.equal(needsExternal(normalizeProduct(p523[426283], d523, config)), false);
   assert.equal(needsExternal(normalizeProduct(p467[11391], d467, config)), false);
+  assert.equal(needsCountry(normalizeProduct(p467[11391], d467, config), d467), true);
+  assert.equal(needsCountry(normalizeProduct(p523[426283], d523, config), d523), false);
 
   const html = `
     <h1>Стиральная машина Indesit BWSE 7129X WSV RU</h1>
@@ -238,6 +240,45 @@ console.log('golden tests passed');
   assert.equal(rec.attrs.load_max, 7);
   assert.notEqual(rec.attrs.load_max, 5);
   console.log('ok lookup skips neighbour page, takes matching model');
+}
+
+{
+  const made = normalizeProduct({
+    id: 1,
+    name: 'Холодильник LG GA-B419SQGL',
+    annotation: 'Страна изготовления - Китай<br>Общий объем - 310 л',
+    description: '',
+  }, d523, config);
+  assert.equal(made.attrs.country, 'Китай');
+  const rec = normalizeProduct(p467[11391], d467, config);
+  assert.equal(rec.attrs.country, null);
+  assert.equal(needsCountry(rec, d467), true);
+  assert.match(countryQuery(rec), /60С1010/);
+  assert.match(countryQuery(rec), /страна производства$/);
+  const html = `
+    <h1>Стиральная машина ATLANT 60С1010</h1>
+    <table>
+      <tr><td>Страна изготовления</td><td>Беларусь</td></tr>
+    </table>`;
+  const parsed = parseCountryFromPage(html, rec.identity, d467, config);
+  assert.equal(parsed.ok, true, parsed.reason);
+  const found = await lookupCountry(rec, d467, config, {
+    search: async q => {
+      assert.match(q, /60С1010/);
+      return ['https://a.test/wrong', 'https://b.test/country'];
+    },
+    fetchHtml: async url => {
+      if (url.includes('wrong')) {
+        return '<h1>ATLANT 50С1010</h1><table><tr><td>Страна изготовления</td><td>Китай</td></tr></table>';
+      }
+      return html;
+    },
+  });
+  assert.equal(found.ok, true, found.reason);
+  assert.equal(rec.attrs.country, 'Беларусь');
+  assert.equal(rec.provenance.country.level, 'S3');
+  assert.equal(rec.attrs.load_max, 6, 'чужие поля с страницы страны не затирают свои');
+  console.log('ok country from web by model, neighbour rejected, source fields kept');
 }
 
 {
@@ -404,6 +445,66 @@ console.log('golden tests passed');
     }
   }
   console.log('ok parser status for the UI');
+}
+
+{
+  const abort = Object.assign(new Error('The operation was aborted due to timeout'), { name: 'TimeoutError' });
+  assert.equal(isTimeoutError(abort), true);
+  assert.equal(isTimeoutError(new Error('HTTP 403 на https://x')), false);
+  const cancelled = Object.assign(new Error('fetch failed'), {
+    cause: Object.assign(new Error('Request was cancelled.'), { name: 'AbortError' }),
+  });
+  assert.equal(isTimeoutError(cancelled), false, 'обрыв CONNECT — не таймаут');
+
+  const cacheDir = fs.mkdtempSync(path.join(os.tmpdir(), 'search-timeout-'));
+  const prevFetch = globalThis.fetch;
+  const prev = {
+    PAGE_CACHE_DIR: process.env.PAGE_CACHE_DIR,
+    CRAWL_GAP_MS: process.env.CRAWL_GAP_MS,
+    SEARCH_GAP_MS: process.env.SEARCH_GAP_MS,
+    SEARCH_URL: process.env.SEARCH_URL,
+    SERPAPI_KEY: process.env.SERPAPI_KEY,
+    SERPAPI_API_KEY: process.env.SERPAPI_API_KEY,
+  };
+  process.env.PAGE_CACHE_DIR = cacheDir;
+  process.env.CRAWL_GAP_MS = '0';
+  process.env.SEARCH_GAP_MS = '0';
+  delete process.env.SEARCH_URL;
+  delete process.env.SERPAPI_KEY;
+  delete process.env.SERPAPI_API_KEY;
+  let fetches = 0;
+  globalThis.fetch = () => {
+    fetches++;
+    return Promise.reject(abort);
+  };
+  try {
+    await assert.rejects(
+      () => fetchPage('https://example.com/search-timeout', { timeoutMs: 1500 }),
+      e => /таймаут 1500ms/.test(e.message) && !/aborted due to timeout/i.test(e.message),
+    );
+    fetches = 0;
+    await assert.rejects(
+      () => searchWeb('LG GC-Q247CAMT', {
+        search: {
+          timeout_ms: 1500,
+          gap_ms: 0,
+          fallback_engines: ['mojeek', 'brave', 'ddg_lite'],
+          duckduckgo: { enabled: true, method: 'POST', endpoint: 'html', region: 'ru-ru' },
+          serpapi: { enabled: false },
+        },
+      }),
+      e => /таймаут 1500ms/.test(e.message) && !/brave|ddg_lite/.test(e.message),
+    );
+    assert.equal(fetches, 2, `два таймаута подряд останавливают обход, было ${fetches} запросов`);
+  } finally {
+    globalThis.fetch = prevFetch;
+    for (const [k, v] of Object.entries(prev)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+    fs.rmSync(cacheDir, { recursive: true, force: true });
+  }
+  console.log('ok search timeout: русское сообщение, не AbortSignal');
 }
 
 {

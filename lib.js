@@ -60,8 +60,10 @@ function chainText(e) {
 export function netError(e) {
   if (!e) return String(e);
   const text = chainText(e);
-  if (e.name === 'TimeoutError' || /TimeoutError|ETIMEDOUT|UND_ERR_CONNECT_TIMEOUT/i.test(text)) {
-    return `таймаут: ${e.cause?.message || e.message}`;
+  // AbortSignal.timeout() в Node — TimeoutError с английским
+  // «The operation was aborted due to timeout». Это не прокси и не отмена.
+  if (e.name === 'TimeoutError' || /TimeoutError|ETIMEDOUT|UND_ERR_CONNECT_TIMEOUT|aborted due to timeout/i.test(text)) {
+    return 'таймаут';
   }
   if (/AbortError|ABORT_ERR|UND_ERR_ABORTED|was cancelled/i.test(text)) {
     const detail = e.cause?.message || e.message;
@@ -1333,6 +1335,20 @@ export function sourceText(product) {
   return (stripHtml(product.description) + ' ' + stripHtml(product.annotation)).trim();
 }
 
+const COUNTRY_IN_SOURCE = /стран[аы][\s-]*(?:производств[а-яё]*|изготовлен[а-яё]*|производитель)\s*[-–—:]\s*[A-Za-zА-Яа-яЁё]{2,}/i;
+
+/**
+ * Страна производства уже есть в исходнике (annotation/description).
+ * Тогда в сеть за ней не ходим: своё значение дороже чужой карточки.
+ */
+export function hasCountryFact(product, schemaKey) {
+  const text = sourceText(product);
+  if (!text) return false;
+  const v = extractFacts(text, schemaKey).страна_производства;
+  if (v != null && String(v).trim() !== '') return true;
+  return COUNTRY_IN_SOURCE.test(text);
+}
+
 /**
  * Артикул из названия: «Холодильник LG GC-Q247CAMT» → «GC-Q247CAMT».
  *
@@ -1374,10 +1390,9 @@ export function canSearchWeb(product) {
  * Короткий текст сам по себе не приговор — важно, есть ли в нём что извлекать.
  * Возвращает { ok } либо { ok:false, reason } для пометки в выгрузке.
  *
- * Отказ с web:true — это «своего текста нет, но товар опознаваем по имени»:
- * такой товар до модели ещё может дойти, если описание найдётся в сети
- * (ensureSource в catalog.js). Сеть здесь не трогается: фильтр в интерфейсе
- * обязан считаться мгновенно и на любом количестве товаров.
+ * Отказ с web:true — товар опознаваем по имени. Фильтр считает это сразу,
+ * без сети. Прогон (ensureSource) попытается добрать текст; не выйдет —
+ * имя всё равно уйдёт в модель. WEB_LOOKUP=0 оставляет прежний пропуск.
  */
 export function isEnrichable(product, schemaKey) {
   const web = canSearchWeb(product);

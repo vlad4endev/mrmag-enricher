@@ -3,18 +3,22 @@
 import { parseProductFields } from './parse.js';
 import { matchKey } from './match.js';
 import { normalizeValue, countUnitsInValues } from './types.js';
-import { parseDimensions } from './dimensions.js';
+import { parseDimensions, reconcileDimensions } from './dimensions.js';
 import { parseIdentity } from './identity.js';
 import { isPackingKey, normKey } from './text.js';
 
 function emptyState(dict) {
   const attrs = {};
-  for (const a of dict.attrs) attrs[a.code] = null;
+  for (const a of dict.attrs) {
+    if (a.tier === 'X') continue;
+    attrs[a.code] = null;
+  }
   return attrs;
 }
 
 function setAttr(rec, code, value, prov) {
   if (value == null || rec.attrs[code] != null) return false;
+  if (!(code in rec.attrs)) return false; // tier X — нет слота
   rec.attrs[code] = value;
   rec.provenance[code] = prov;
   return true;
@@ -25,6 +29,7 @@ function applyDims(rec, dims, prov, dict) {
   for (const axis of ['width', 'height', 'depth']) {
     if (dims[axis] == null || !dict.byCode.has(axis)) continue;
     const attr = dict.byCode.get(axis);
+    if (attr.tier === 'X') continue;
     const n = dims[axis];
     const range = attr.valid_range;
     if (range && (n < range[0] || n > range[1])) {
@@ -38,7 +43,7 @@ function applyDims(rec, dims, prov, dict) {
 
 export function ingestPair(rec, pair, dict, { fuzzyMin } = {}) {
   const key = pair.key;
-  if (isPackingKey(key) && /габарит|размер|ширин|высот|глубин/i.test(key)) {
+  if (isPackingKey(key) && /габарит|размер|ширин|высот|глубин|вес|масс/i.test(key)) {
     rec.stats.packed_dims++;
     return;
   }
@@ -52,6 +57,11 @@ export function ingestPair(rec, pair, dict, { fuzzyMin } = {}) {
   }
 
   const attr = matched.attr;
+  if (attr.tier === 'X') {
+    rec.stats.tier_x++;
+    return;
+  }
+
   rec.mapped.add(attr.code);
   const prov = {
     level: pair.source || 'S1',
@@ -59,6 +69,7 @@ export function ingestPair(rec, pair, dict, { fuzzyMin } = {}) {
     model: null,
     prompt: null,
     how: matched.how,
+    fuzzy_match: matched.fuzzy_match || false,
   };
 
   if (attr.type === 'dimensions') {
@@ -78,8 +89,22 @@ export function ingestPair(rec, pair, dict, { fuzzyMin } = {}) {
       return;
     }
     rec.stats.dims_parsed++;
-    setAttr(rec, attr.code, parsed.dims, prov);
-    applyDims(rec, parsed.dims, { ...prov, from: 'dims' }, dict);
+    const separate = {
+      width: rec.attrs.width,
+      height: rec.attrs.height,
+      depth: rec.attrs.depth,
+    };
+    const hasSeparate = separate.width != null || separate.height != null || separate.depth != null;
+    const recon = reconcileDimensions(
+      hasSeparate ? Object.fromEntries(Object.entries(separate).filter(([, v]) => v != null)) : null,
+      parsed.dims,
+    );
+    if (recon.flag === 'dimensions_mismatch') {
+      rec.flags.push('dimensions_mismatch');
+      rec.moderation.push({ code: attr.code, reason: 'dimensions_mismatch', key, value: pair.value });
+    }
+    setAttr(rec, attr.code, recon.dims, prov);
+    applyDims(rec, recon.dims, { ...prov, from: 'dims' }, dict);
     return;
   }
 
@@ -106,15 +131,18 @@ export function normalizeProduct(product, dict, config) {
     mapped: new Set(),
     flags: [],
     moderation: [],
-    stats: { packed_dims: 0, dims_parsed: 0, dims_unknown: 0, blacklisted: 0, units: 0 },
+    stats: { packed_dims: 0, dims_parsed: 0, dims_unknown: 0, blacklisted: 0, units: 0, tier_x: 0 },
     format: 'EMPTY',
     dump: false,
   };
 
   if (rec.identity.brand && dict.byCode.has('brand')) {
-    setAttr(rec, 'brand', rec.identity.brand, {
-      level: 'S0', raw: product.name, model: null, prompt: null, how: 'name',
-    });
+    const brandAttr = dict.byCode.get('brand');
+    if (brandAttr.tier !== 'X') {
+      setAttr(rec, 'brand', rec.identity.brand, {
+        level: 'S0', raw: product.name, model: null, prompt: null, how: 'name',
+      });
+    }
   }
 
   const parsed = parseProductFields(product, dict);
@@ -124,6 +152,7 @@ export function normalizeProduct(product, dict, config) {
   rec.stats.units = countUnitsInValues(parsed.pairs);
 
   for (const a of dict.attrs) {
+    if (a.tier === 'X') continue;
     const syns = new Set([a.name, ...(a.synonyms || [])].map(s => normKey(s)).filter(Boolean));
     const src = parsed.fromAnn.length ? parsed.fromAnn : [];
     if (src.some(p => syns.has(normKey(p.key)))) rec.mapped.add(a.code);
@@ -135,14 +164,27 @@ export function normalizeProduct(product, dict, config) {
 }
 
 export function ingestPairs(rec, pairs, dict, config) {
-  const fuzzyMin = config?.fuzzy?.min_score ?? 0.93;
-  for (const pair of pairs) ingestPair(rec, pair, dict, { fuzzyMin });
+  const fuzzyMin = config?.fuzzy?.min_score ?? config?.conditions?.fuzzy_min_score;
+  if (fuzzyMin == null) throw new Error('config.fuzzy.min_score обязателен');
+  for (const pair of pairs) {
+    const matched = matchKey(pair.key, dict, { value: pair.value, fuzzyMin });
+    // inferable: false — запрет вывода моделью (source=model), не S1/S2/S3.
+    if (matched.attr && matched.attr.inferable === false && pair.source === 'model') {
+      continue;
+    }
+    if (matched.attr?.tier === 'X') continue;
+    ingestPair(rec, pair, dict, { fuzzyMin });
+  }
 }
 
 export function coverage(recs, dict) {
   const total = recs.length || 1;
   const out = {};
   for (const a of dict.attrs) {
+    if (a.tier === 'X') {
+      out[a.code] = { coverage_now: a.coverage_now, fact: 0, fact_filled: 0, fact_direct: 0, filled: 0, direct: 0, mapped: 0, total: recs.length };
+      continue;
+    }
     const filled = recs.filter(r => r.attrs[a.code] != null).length;
     const direct = recs.filter(r => {
       const p = r.provenance[a.code];

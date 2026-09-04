@@ -21,6 +21,9 @@
  */
 
 import { nameKeyTokens } from './pipeline/identity.js';
+import { tryLoadDictSchema, extractFactsFromDictionary, loadConfigSafe, CRAWL_SLUGS, specDest } from './pipeline/schema.js';
+import { matchKey } from './pipeline/match.js';
+import { normalizeValue } from './pipeline/types.js';
 
 // ── КУРС ─────────────────────────────────────────────────────
 // Обновляйте вместе с датой — она печатается в отчётах и выводится в UI.
@@ -184,7 +187,7 @@ function extractDims(text) {
     cands.push({
       nums:   raw.map(x => Math.round(x * k)),
       axes:   ax ? [ax[1], ax[2], ax[3]].map(c => AXIS[c.toLowerCase()]) : null,
-      packed: RE_PACK.test(before),
+      packed: /без\s+упаковк/i.test(before) ? false : RE_PACK.test(before),
     });
   }
   return cands.find(c => !c.packed && c.axes) || cands.find(c => !c.packed) || cands[0] || null;
@@ -239,122 +242,10 @@ function commonFacts(t, schema) {
   return f;
 }
 
-// ── ХОЛОДИЛЬНИКИ ─────────────────────────────────────────────
-const FRIDGE_RANGE = {
-  ширина_мм: [300, 2600], высота_мм: [400, 2600], глубина_мм: [250, 1200],
-  вес_кг: [8, 300],
-  объем_общий_л: [15, 1200], объем_холодильной_камеры_л: [5, 900],
-  объем_морозильной_камеры_л: [1, 600],
-  уровень_шума_дб: [15, 75], мощность_замораживания_кг_сут: [1, 40],
-  количество_камер: [1, 4],
-};
+// ── ХОЛОДИЛЬНИКИ / СТИРАЛЬНЫЕ МАШИНЫ ─────────────────────────
+// Схемы, диапазоны, подписи и экстракторы — из dictionaries/attributes_{id}.json
+// (см. pipeline/schema.js). Здесь больше нет FRIDGE_*/WASHER_* констант.
 
-// Подписи числовых полей. unit — единица, которую обязательно видеть рядом с
-// числом: без неё «Общий объем холодильника 180 л» уезжает в объём камеры, а
-// «Количество полок 3» — в литры.
-const FRIDGE_LABELS = [
-  ['объем_общий_л',                 `(?:общ${C}*\\s+об[ъь]?[её]м${C}*|об[ъь]?[её]м\\s+брутто[^0-9\\n]{0,14}общ${C}*)`, RE_L],
-  ['объем_холодильной_камеры_л',    `об[ъь]?[её]м${C}*\\s+холодильн${C}*\\s+(?:камер|отделен|отсек)${C}*`, RE_L],
-  ['объем_морозильной_камеры_л',    `об[ъь]?[её]м${C}*\\s+морозил${C}*(?:\\s+(?:камер|отделен|отсек)${C}*)?`, RE_L],
-  ['уровень_шума_дб',               `уров${C}*\\s+шума`, null],
-  ['мощность_замораживания_кг_сут', `мощност${C}*\\s+заморажив${C}*`, null],
-  ['вес_кг',                        `(?:вес|масс${C})${C}*`, null],
-  ['количество_камер',              `количеств${C}*\\s+камер`, null],
-];
-
-// Число перед подписью: «39 дБ», «двухкамерный».
-const RE_NOISE_BARE = /(\d+)\s*д[Бб]/;
-const RE_CHAMBERS_W = /(одно|двух|тр[ёе]х|четыр[ёе]х)камерн/i;
-const CHAMBER_N = { 'одно': 1, 'двух': 2, 'трёх': 3, 'трех': 3, 'четырёх': 4, 'четырех': 4 };
-// «Без No Frost» — это НЕ No Frost. Прежняя регулярка читала отрицание как факт.
-// Отрицание стоит и после подписи: описание — склеенная таблица «признак
-// значение», и в ней встречается «No Frost Нет.», «No Frost - Нет Цвет».
-const RE_NOFROST = /(без\s*[:\-–—]?\s*)?(full\s*no\s*frost|no\s*frost|ноу\s*фрост)([\s\S]{0,14})/gi;
-
-/**
- * Отрицание ли «нет» сразу за подписью. Форм две, и они противоположны:
- * «No Frost Нет.» — значение таблицы, а «No Frost — нет наледи в отделении» —
- * фраза о том, что No Frost как раз есть. Отличаем по тому, что идёт дальше:
- * строчная буква продолжает фразу, точка и заглавная закрывают значение.
- * Регистр здесь и есть признак, поэтому проверка хвоста идёт БЕЗ флага i.
- */
-function negatedTail(tail) {
-  const m = /^\s*[:\-–—]?\s*(нет|отсутствует)/i.exec(tail);
-  return Boolean(m) && !/^\s*[а-яё]/.test(tail.slice(m[0].length));
-}
-const RE_REFRIG = /хладагент[^0-9A-Za-z\n]{0,14}(R\s?\d{3}\s?[a-z]?)/i;
-
-function fridgeFacts(t, f, ranges) {
-  if (f.количество_камер == null) {
-    const c = t.match(RE_CHAMBERS_W);
-    if (c) f.количество_камер = CHAMBER_N[c[1].toLowerCase()] ?? null;
-  }
-  if (f.уровень_шума_дб == null) {
-    const n = t.match(RE_NOISE_BARE);
-    if (n && inRange('уровень_шума_дб', +n[1], ranges)) f.уровень_шума_дб = +n[1];
-  }
-
-  // Система охлаждения: при противоречии («No Frost» и «капельная» рядом) или
-  // при отрицании факта не выставляем — лучше не проверить, чем проверить ложью.
-  // Упоминаний бывает несколько; утверждение и отрицание рядом — то же
-  // противоречие, что No Frost с капельной, и разрешать его догадкой нельзя.
-  const drip = /капельн/i.test(t);
-  let says = false, denies = false;
-  for (const m of t.matchAll(RE_NOFROST)) {
-    if (m[1] || negatedTail(m[3])) denies = true; else says = true;
-  }
-  const hasNF = says && !denies;
-  if (drip !== hasNF) f.система_охлаждения = drip ? 'капельная' : 'No Frost';
-
-  const r = t.match(RE_REFRIG);
-  if (r) f.хладагент = r[1].replace(/\s+/g, '').toUpperCase().replace(/([A-Z])$/, m => m.toLowerCase());
-}
-
-// ── СТИРАЛЬНЫЕ МАШИНЫ ────────────────────────────────────────
-const WASHER_RANGE = {
-  // Узкая машина 330 мм глубиной, «под столешницу» — 850 мм высотой.
-  ширина_мм: [340, 900], высота_мм: [600, 1300], глубина_мм: [280, 800],
-  вес_кг: [15, 140],
-  максимальная_загрузка_кг: [1, 25],
-  скорость_отжима_об_мин: [300, 2200],
-  количество_программ: [1, 40],
-  расход_воды_л_цикл: [10, 130],
-  уровень_шума_стирки_дб: [30, 80],
-  уровень_шума_отжима_дб: [40, 95],
-};
-
-const WASHER_LABELS = [
-  // «Мax загрузка белья, (кг) - 7» — подпись магазина; «загрузкой 7 кг» — из текста.
-  // Единица обязательна: иначе «в зависимости от загрузки. Программа Хлопок 40»
-  // даёт загрузку 40 кг.
-  ['максимальная_загрузка_кг', `загрузк${C}*(?:\\s+бель${C}*)?`, RE_KG],
-  ['скорость_отжима_об_мин',   `отжим${C}*`, null],
-  ['расход_воды_л_цикл',       `расход${C}*\\s+воды`, RE_L],
-  ['уровень_шума_стирки_дб',   `шум${C}*\\s+(?:при\\s+)?стирк${C}*`, RE_DB],
-  ['уровень_шума_отжима_дб',   `шум${C}*\\s+(?:при\\s+)?отжим${C}*`, RE_DB],
-  ['количество_программ',      `количеств${C}*\\s+программ`, null],
-  ['вес_кг',                   `(?:вес|масс${C})${C}*`, RE_KG],
-];
-
-// Число перед подписью: «15 программ», «1200 об/мин».
-const RE_PROGRAMS_BARE = /(\d+)\s*программ/i;
-const RE_RPM_BARE = /(\d+)\s*об[\/.\s]*мин/i;
-// Просто «вертикальн» ловит «вертикальные ручки» — требуем рядом «загрузк»
-// или «люк», иначе тип загрузки берётся из постороннего слова.
-const RE_LOADING = /(?:тип\s+)?загрузк[а-яё]*[^.;]{0,24}?(фронтальн|вертикальн)|(фронтальн|вертикальн)[а-яё]*\s+(?:загрузк|люк)/i;
-
-function washerFacts(t, f, ranges) {
-  if (f.количество_программ == null) {
-    const p = t.match(RE_PROGRAMS_BARE);
-    if (p && inRange('количество_программ', +p[1], ranges)) f.количество_программ = +p[1];
-  }
-  if (f.скорость_отжима_об_мин == null) {
-    const r = t.match(RE_RPM_BARE);
-    if (r && inRange('скорость_отжима_об_мин', +r[1], ranges)) f.скорость_отжима_об_мин = +r[1];
-  }
-  const l = t.match(RE_LOADING);
-  if (l) f.тип_загрузки = /фронтальн/i.test(l[1] || l[2]) ? 'фронтальная' : 'вертикальная';
-}
 
 // ── СЛОВАРЬ ЕДИНИЦ И ПОДПИСЕЙ ────────────────────────────────
 // Разделов у магазина шестнадцать, а разбор один. Чтобы не писать регулярку на
@@ -382,6 +273,10 @@ const LABEL = {
   мощность_квт:               [`мощност${C}*`, RE_KW],
   потребляемая_мощность_вт:   [`(?:потребля${C}*\\s+)?мощност${C}*`, RE_W],
   объем_л:                    [`об[ъь]?[её]м${C}*`, RE_L],
+  объем_общий_л:              [`общ${C}*\\s+об[ъь]?[её]м${C}*`, RE_L],
+  объем_холодильной_камеры_л: [`об[ъь]?[её]м${C}*\\s+холодильн${C}*\\s+(?:камер|отделен)${C}*`, RE_L],
+  объем_морозильной_камеры_л: [`об[ъь]?[её]м${C}*\\s+морозильн${C}*`, RE_L],
+  мощность_замораживания_кг_сут: [`(?:мощност${C}*\\s+замораживан${C}*|замораживающ${C}*\\s+способност${C}*)`, RE_KG],
   объем_бака_л:               [`об[ъь]?[её]м${C}*\\s+(?:бак|резервуар|контейнер)${C}*`, RE_L],
   уровень_шума_дб:            [`уров${C}*\\s+шума`, RE_DB],
   напряжение_в:               [`напряжени${C}*`, RE_V],
@@ -520,82 +415,14 @@ const COOLING_VARIANTS = [
   [/капельн/i,                  'капельная'],
   [/ручн/i,                     'ручная разморозка'],
 ];
-const CHAMBER_VARIANTS = [[/одноками/i, 1], [/двухками/i, 2], [/тр[ёе]хками/i, 3]];
-const LOAD_VARIANTS    = [[/фронтал/i, 'фронтальная'], [/вертикал/i, 'вертикальная']];
-
-const FRIDGE_ATTRS = [
-  ['система_охлаждения', /разморозк|охлажд/i,   v => pickEnum(v, COOLING_VARIANTS)],
-  ['количество_камер',   /тип\s*холодильник/i,  v => pickEnum(v, CHAMBER_VARIANTS)],
-  ['высота_мм',          /высота/i,             v => parseRange(v, 10)],
-  ['объем_общий_л',      /общий\s*объ[её]м/i,   v => parseRange(v)],
-];
-const WASHER_ATTRS = [
-  ['тип_загрузки',             /тип\s*загрузки/i,   v => pickEnum(v, LOAD_VARIANTS)],
-  ['максимальная_загрузка_кг', /загрузка\s*белья/i, v => parseRange(v)],
-  ['глубина_мм',               /глубина/i,          v => parseRange(v, 10)],
-];
 
 // ── РЕЕСТР СХЕМ ──────────────────────────────────────────────
 /**
- * Схема категории: поля ответа, диапазоны правдоподобия, подписи для разбора
- * фактов и добавка к промпту. Ключ — slug раздела mrmag.ru.
- *
- * id есть только у разделов, которые реально обходятся (см. CATEGORIES в
- * catalog.js); он читается со страницы, а не задаётся в коде. Остальные схемы
- * работают по slug и по названию — они нужны для обогащения, а не для обхода.
- *
- * Двухуровневость намеренная: «Холодильники» — подраздел «Техники для дома»,
- * и схема подраздела точнее. schemaFor берёт самую точную из тех, что нашлись.
+ * Схемы разделов без отдельного dictionaries/attributes_{id}.json.
+ * Холодильники (523) и стиральные машины (467) собираются из справочника
+ * через pipeline/schema.js → schemaFor().
  */
 export const SCHEMAS = {
-  // ── Крупная бытовая техника (обходится) ────────────────────
-  kholodilniki: defineSchema({
-    slug: 'kholodilniki', id: 523, name: 'Холодильники',
-    subject: 'холодильников и морозильников',
-    fields: [
-      ...IDENT,
-      ['класс_энергоэффективности', 'str'],
-      ['объем_общий_л', 'num'], ['объем_холодильной_камеры_л', 'num'], ['объем_морозильной_камеры_л', 'num'],
-      ['система_охлаждения', ['No Frost', 'капельная', 'ручная разморозка']],
-      ['количество_камер', 'num'],
-      ['расположение_морозильника', ['нижнее', 'верхнее', 'боковое', 'нет морозильника']],
-      ['тип_управления', CONTROL],
-      ['хладагент', 'str'], ['уровень_шума_дб', 'num'],
-      ['мощность_замораживания_кг_сут', 'num'],
-      ...DIMS,
-      ['цвет', 'str'], ['тип_ручек', 'str'],
-    ],
-    ranges: FRIDGE_RANGE, labels: FRIDGE_LABELS, extra: fridgeFacts, attrs: FRIDGE_ATTRS,
-    unitNotes: [
-      'Поля _л — целые литры, _кг — килограммы, _дб — децибелы',
-      'система_охлаждения: "Без No Frost" — это капельная, НЕ No Frost',
-      'Высота и объём в виде "От 181 до 190 см", "От 301л до 400л" — корзины фильтра магазина, а не размер: бери значение из текста или ставь null',
-    ],
-  }),
-
-  stiralnye_mashiny: defineSchema({
-    slug: 'stiralnye_mashiny', id: 467, name: 'Стиральные машины',
-    subject: 'стиральных машин',
-    fields: [
-      ...IDENT,
-      ['тип_загрузки', ['фронтальная', 'вертикальная']],
-      ['установка', ['отдельностоящая', 'встраиваемая', 'под столешницу']],
-      ['максимальная_загрузка_кг', 'num'], ['скорость_отжима_об_мин', 'num'],
-      ['класс_энергоэффективности', 'str'], ['класс_стирки', 'str'], ['класс_отжима', 'str'],
-      ['количество_программ', 'num'], ['расход_воды_л_цикл', 'num'],
-      ['уровень_шума_стирки_дб', 'num'], ['уровень_шума_отжима_дб', 'num'],
-      ['тип_управления', CONTROL],
-      ['дисплей', YESNO], ['сушка', YESNO], ['защита_от_протечек', 'str'],
-      ...DIMS, ['цвет', 'str'],
-    ],
-    ranges: WASHER_RANGE, labels: WASHER_LABELS, extra: washerFacts, attrs: WASHER_ATTRS,
-    unitNotes: [
-      'скорость_отжима_об_мин — оборотов в минуту, только число',
-      'максимальная_загрузка_кг — килограммы сухого белья',
-      'Глубина в виде "от 40,5 до 50" — это диапазон фильтра магазина, а не размер: ставь null',
-    ],
-  }),
-
   // ── Разделы каталога ───────────────────────────────────────
   tekhnika_dlya_doma: defineSchema({
     slug: 'tekhnika_dlya_doma', name: 'Техника для дома',
@@ -916,7 +743,14 @@ export const GENERIC_SCHEMA = defineSchema({
 /** Схема по slug, id категории, названию или объекту схемы. */
 export function schemaFor(key) {
   if (!key) return GENERIC_SCHEMA;
-  if (typeof key === 'object') return key.specKeys ? key : GENERIC_SCHEMA;
+  if (typeof key === 'object') {
+    if (key.fromDictionary || key.specKeys) return key;
+    return GENERIC_SCHEMA;
+  }
+  // Категории со справочником — только из dictionaries/attributes_{id}.json.
+  const fromDict = tryLoadDictSchema(key);
+  if (fromDict) return fromDict;
+
   const k = String(key).trim();
   if (SCHEMAS[k]) return SCHEMAS[k];
   const lower = k.toLowerCase();
@@ -1078,6 +912,29 @@ export function extractFacts(text, schemaKey) {
   const t = String(text || '');
   if (!t) return {};
   const s = schemaFor(schemaKey);
+  if (s.fromDictionary && s.dict) {
+    const plain = stripHtml(t);
+    const common = commonFacts(plain, s);
+    const fromDict = extractFactsFromDictionary(t, s.dict, loadConfigSafe());
+    const f = { ...fromDict, ...common };
+    // Тройка из текста: оси, которые commonFacts отбросил (лживая подпись),
+    // не должны вернуться из справочника.
+    if (common.размеры_мм) {
+      for (const k of ['высота_мм', 'ширина_мм', 'глубина_мм']) {
+        if (common[k] != null) f[k] = common[k];
+        else delete f[k];
+      }
+    }
+    for (const key of s.specKeys || []) {
+      if (f[key] != null || !LABEL[key]) continue;
+      const [lab, unit] = LABEL[key];
+      const h = labeled(plain, lab);
+      if (!h || !inRange(key, h.value, s.ranges)) continue;
+      if (unit && !unit.test(h.tail) && !unit.test(h.gap) && !unit.test(h.head)) continue;
+      f[key] = h.value;
+    }
+    return f;
+  }
   const f = commonFacts(t, s);
 
   for (const [key, label, unit] of s.labels) {
@@ -1099,6 +956,56 @@ export function extractFacts(text, schemaKey) {
 export function attrFacts(attributes, schemaKey) {
   const s = schemaFor(schemaKey);
   const facts = {}, bounds = {}, sources = {};
+  if (s.fromDictionary && s.dict) {
+    const list = Array.isArray(attributes) ? attributes : [];
+    const cfg = loadConfigSafe();
+    const fuzzyMin = cfg?.fuzzy?.min_score ?? 0.9;
+    for (const a of list) {
+      const name = String(a?.name ?? '');
+      const raw = String(a?.value ?? '').trim();
+      if (!name || !raw) continue;
+      const matched = matchKey(name, s.dict, { value: raw, fuzzyMin });
+      if (!matched.attr || matched.attr.tier === 'X') continue;
+      const attr = matched.attr;
+      const dest = specDest(attr);
+      const key = typeof dest === 'object' ? dest.key : dest;
+      const mul = typeof dest === 'object' ? dest.mul : 1;
+      const src = `${name}: ${a.value}`;
+
+      if (attr.type === 'number' || attr.type === 'integer') {
+        const got = parseRange(raw, mul);
+        if (got == null) continue;
+        sources[key] = src;
+        if (typeof got === 'object') bounds[key] = { ...got, source: src };
+        else if (inRange(key, got, s.ranges)) facts[key] = got;
+        continue;
+      }
+
+      // Несколько вариантов через «/» — фасет фильтра, не характеристика.
+      if (attr.type === 'enum' && /\/| или /i.test(raw)) {
+        const hits = pickEnum(raw, COOLING_VARIANTS);
+        if (attr.code === 'cooling' && hits == null) continue;
+        if (attr.code !== 'cooling' && /\/| или /i.test(raw)) continue;
+      }
+
+      if (attr.code === 'cooling') {
+        const snapped = pickEnum(raw, COOLING_VARIANTS);
+        if (snapped == null) continue;
+        facts[key] = snapped;
+        sources[key] = src;
+        continue;
+      }
+
+      const norm = normalizeValue(attr, raw, { keyText: name });
+      if (!norm.ok) continue;
+      let val = norm.value;
+      if (typeof val === 'number' && mul !== 1) val = Math.round(val * mul * 1000) / 1000;
+      if (Array.isArray(val)) val = val[0];
+      facts[key] = val;
+      sources[key] = src;
+    }
+    return { facts, bounds, sources };
+  }
   for (const a of Array.isArray(attributes) ? attributes : []) {
     const name = String(a?.name ?? '');
     const spec = s.attrs.find(([, re]) => re.test(name));

@@ -20,7 +20,7 @@ export function buildReport({ recs, dict, config, coverageBefore, coverageAfter,
     { id: 10, name: 'модель получает нормализованные атрибуты', norm: 'HTML собирается программно', fact: true },
     { id: 11, name: 'числа и единицы в описании сверяются', norm: 'блокирующая ошибка при расхождении единиц', fact: true },
     { id: 12, name: 'внешний источник — бренд и модель целиком', norm: 'полное совпадение модели', fact: true },
-    { id: 13, name: 'третья категория = новый attributes_{id}.json', norm: 'без правок кода', fact: true },
+    { id: 13, name: 'третья категория = новый dictionaries/attributes_{id}.json', norm: 'без правок кода', fact: true },
   ];
 
   const coverage = dict.attrs.map(a => ({

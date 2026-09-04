@@ -15,12 +15,13 @@ function fmtVal(attr, v) {
 }
 
 export function renderCard(rec, dict) {
-  const visible = dict.attrs.filter(a => a.show_in_annotation && rec.attrs[a.code] != null);
+  const visible = dict.attrs.filter(a =>
+    a.tier !== 'X' && a.show_in_annotation && rec.attrs[a.code] != null);
   const lis = visible
     .sort((a, b) => a.order - b.order)
     .map(a => `<li>${esc(attrLabel(a))}: ${esc(fmtVal(a, rec.attrs[a.code]))}</li>`);
   const highlights = dict.attrs
-    .filter(a => a.highlight && rec.attrs[a.code] != null)
+    .filter(a => a.tier !== 'X' && a.highlight && rec.attrs[a.code] != null)
     .sort((a, b) => a.order - b.order)
     .map(a => `${attrLabel(a)}: ${fmtVal(a, rec.attrs[a.code])}`);
 

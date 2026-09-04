@@ -117,7 +117,9 @@ console.log('golden tests passed');
 
 {
   assert.throws(() => loadDictionary('999', '.'), /нет справочника/);
-  const tmp = 'attributes_999.json';
+  const tmpDir = 'dictionaries';
+  const tmp = path.join(tmpDir, 'attributes_999.json');
+  fs.mkdirSync(tmpDir, { recursive: true });
   fs.writeFileSync(tmp, JSON.stringify([{
     code: 'brand', name: 'Бренд', description: 'x', type: 'enum', unit: null,
     cardinality: 'single', order: 0, show_in_annotation: true, highlight: true,
@@ -702,6 +704,8 @@ console.log('golden tests passed');
   assert.equal(p.filters['Тип управления'], 'механическое');
   assert.equal(p.filters['Расположение морозильника'], 'нижнее');
   assert.equal(p.filters['Количество камер'], '2');
+  assert.equal(p.filters['Цвет'], 'белый');
+  assert.equal(p.filters['Тип ручек'], 'вертикальные');
   assert.match(p.description_html, /^<h1>Холодильник Pozis RK FNF-172 W<\/h1>/);
   assert.match(p.description_html, /<li>Тип товара: холодильник<\/li>/);
   assert.match(p.description_html, /<li>Объем общий: 344 л<\/li>/);
@@ -719,5 +723,35 @@ console.log('golden tests passed');
   assert.equal(p.filters['Высота, мм'], '846');
   assert.equal(typeof p.filters['Тип загрузки'], 'string');
   console.log('ok products_v2 washer (11391)');
+}
+
+{
+  const goldFile = '/Users/vl4endev/Downloads/products_v2_523.json';
+  if (fs.existsSync(goldFile)) {
+    const gold = JSON.parse(fs.readFileSync(goldFile, 'utf8'));
+    const recs = [260, 805].map(id => normalizeProduct(p523[id], d523, config));
+    const { products, filters } = buildV2(dictToV2Rows(recs, d523));
+    assert.equal(products.length, 2);
+    for (const g of gold) {
+      const p = products.find(x => x.id === g.id);
+      assert.ok(p, `нет товара ${g.id}`);
+      assert.deepEqual(Object.keys(p), Object.keys(g));
+      for (const [name, val] of Object.entries(g.filters)) {
+        assert.equal(typeof p.filters[name], 'string', `${g.id} ${name} не строка`);
+        if (p.filters[name] !== undefined) {
+          assert.equal(p.filters[name], val, `${g.id} ${name}: ${p.filters[name]} ≠ ${val}`);
+        }
+      }
+    }
+    const goldFilters = JSON.parse(fs.readFileSync('/Users/vl4endev/Downloads/filters_v2_523.json', 'utf8'));
+    for (const gf of goldFilters.filters) {
+      const got = filters.find(f => f.name === gf.name);
+      assert.ok(got, `нет фасета ${gf.name}`);
+      for (const v of gf.value) {
+        assert.ok(got.value.includes(v), `${gf.name} нет значения ${v}: ${got.value}`);
+      }
+    }
+    console.log('ok products_v2 1:1 с эталоном заказчика (260, 805)');
+  }
 }
 

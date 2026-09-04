@@ -23,19 +23,33 @@ export function fold(s) {
     .replace(/ё/g, 'е');
 }
 
-const UNIT_TOKEN = /(?:^|\s)(кг|г|см|мм|м|л|мл|дба|дб|об\/?\s*мин|квт·ч\/год|квт\*?ч\/?кг|квтч\/г|квт|шт|%)(?:\s|$)/gi;
+/** Единицы измерения в скобках или после запятой. */
+const UNIT_ONLY = /^(?:кг|г|см|мм|м|л|мл|дба|дб|дБ|об\/?\s*мин|квт·ч\/год|квт\*?ч\/?кг|квтч\/г|квт|шт|%|кг\/сут)$/i;
+const UNIT_TAIL = /(?:,\s*|\s+)(кг|г|см|мм|м|л|мл|дба|дб|об\/?\s*мин|квт·ч\/год|квт\*?ч\/?кг|квтч\/г|квт|шт|%)$/i;
+const QUALIFIER = /\b(?:не\s+более|не\s+менее|макс(?:имальн(?:ый|ая|ое|ые))?|максимум|[mм]ax|прибл(?:изительно)?)\b/gi;
 
-/** Нормальная форма ключа: регистр, пунктуация, единицы в скобках. */
+/**
+ * Нормальная форма ключа:
+ * нижний регистр → ё→е → скобки только с единицей → хвостовая единица после запятой
+ * → «не более / макс / прибл» → пунктуация в пробел → схлопнуть пробелы.
+ */
 export function normKey(s) {
-  return fold(s)
+  let t = fold(s)
     .replace(/&nbsp;?/gi, ' ')
-    .replace(/[«»„“”"'`]/g, '')
-    .replace(/[()[\]{}]/g, ' ')
-    .replace(/[,.;:!?*/\\|]/g, ' ')
+    .replace(/[«»„“”"'`]/g, '');
+  // Скобки, содержащие только единицу измерения — снять целиком.
+  t = t.replace(/\(([^)]*)\)/g, (_, inner) => (UNIT_ONLY.test(String(inner).trim()) ? ' ' : ` ${inner} `));
+  t = t.replace(/\[([^\]]*)\]/g, (_, inner) => (UNIT_ONLY.test(String(inner).trim()) ? ' ' : ` ${inner} `));
+  t = t.replace(UNIT_TAIL, ' ');
+  // «Max» / «Мax» (кириллица+латиница) — то же, что «макс»; \b в JS не видит кириллицу.
+  t = t.replace(/(^|[\s(,;])[mм]ax(?=[\s),;.]|$)/gi, '$1 ');
+  t = t.replace(QUALIFIER, ' ');
+  t = t
+    .replace(/[,.;:!?*/\\|+\-–—]/g, ' ')
     .replace(/[×xх]/gi, 'x')
-    .replace(UNIT_TOKEN, ' ')
     .replace(/\s+/g, ' ')
     .trim();
+  return t;
 }
 
 export function tokens(s) {
@@ -69,4 +83,16 @@ export function isPackingKey(key) {
   const s = String(key || '');
   if (/без\s+упаковк/i.test(s)) return false;
   return /в\s+упаковк|товарной\s+упаковк|с\s+уч[её]том\s+упаковк|брутто|в\s+коробк/i.test(s);
+}
+
+/** Строка-заголовок: «Размеры:» или «УПРАВЛЕНИЕ И ФУНКЦИОНАЛ». */
+export function isHeadingLine(text) {
+  const s = String(text || '').trim();
+  if (!s) return true;
+  if (/:\s*$/.test(s) && !/\S:\s*\S/.test(s)) return true;
+  const letters = s.replace(/[^A-Za-zА-ЯЁа-яё]/g, '');
+  if (letters.length >= 3 && !/\d/.test(s) && letters === letters.toUpperCase() && /[А-ЯЁA-Z]/.test(letters)) {
+    return true;
+  }
+  return false;
 }

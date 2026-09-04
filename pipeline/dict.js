@@ -1,4 +1,4 @@
-/** Загрузчик справочника attributes_{cat_id}.json. */
+/** Загрузчик справочника dictionaries/attributes_{cat_id}.json. */
 
 import fs from 'fs';
 import path from 'path';
@@ -24,8 +24,17 @@ export function loadConfig(root = '.') {
   return JSON.parse(fs.readFileSync(configPath(root), 'utf-8'));
 }
 
+/** Путь к справочнику категории. Новая категория = один файл здесь. */
+export function dictionaryPath(catId, root = '.') {
+  return path.join(root, 'dictionaries', `attributes_${catId}.json`);
+}
+
+export function hasDictionary(catId, root = '.') {
+  return fs.existsSync(dictionaryPath(catId, root));
+}
+
 export function loadDictionary(catId, root = '.') {
-  const file = path.join(root, `attributes_${catId}.json`);
+  const file = dictionaryPath(catId, root);
   if (!fs.existsSync(file)) {
     throw new Error(`нет справочника ${file} — третья категория добавляется только этим файлом`);
   }

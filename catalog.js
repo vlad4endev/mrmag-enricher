@@ -1,12 +1,9 @@
 /**
  * catalog.js — сборка каталога категории mrmag.ru и автофильтров.
  *
- * Заказчик задаёт категории адресом раздела:
- *   Холодильники        https://mrmag.ru/shop/kholodilniki        (523)
- *   Стиральные машины   https://mrmag.ru/shop/stiralnye_mashiny   (467)
- *
- * id категории НЕ вбит в код — он читается со страницы (data-category), иначе
- * при переносе раздела файлы молча уедут под чужим номером.
+ * Разделы со справочником: dictionaries/attributes_{id}.json + categories.json.
+ * URL обхода магазина — slug из CRAWL_SLUGS (только адрес, без имён характеристик).
+ * id категории при записи файлов берётся со страницы (data-category).
  *
  * Листинг раздела отдаёт по 20 товаров и уже содержит всё для фильтра: sku,
  * название, цену, наличие, картинку и бренд (ссылка class="mr-brand"). Поэтому
@@ -28,7 +25,8 @@ import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 import { netError, isEnrichable, modelToken, MIN_SOURCE_CHARS } from './lib.js';
 import { specFacets, enrichedRows } from './export_v2.js';
-import { loadConfig } from './pipeline/dict.js';
+import { loadConfig, loadCategories, hasDictionary } from './pipeline/dict.js';
+import { CRAWL_SLUGS } from './pipeline/schema.js';
 import { containsTokenSequence, nameKeyTokens } from './pipeline/identity.js';
 import {
   isDuckDuckGoBlocked, isJunkHost, parseDuckDuckGoResults,
@@ -40,15 +38,34 @@ const ROOT = path.dirname(fileURLToPath(import.meta.url));
 export const ORIGIN = 'https://mrmag.ru';
 export const FEED_URL = `${ORIGIN}/scripts/sync_local/products.json`;
 
+/** URL обхода: slug → полный адрес раздела (без имён атрибутов). */
+const CRAWL_URLS = Object.fromEntries(
+  Object.keys(CRAWL_SLUGS).map(slug => [slug, `${ORIGIN}/shop/${slug}`]),
+);
+
 /**
- * Разделы из требований. Адрес — то, что задаёт заказчик; id указан для поиска
- * по номеру, но истиной считается id со страницы: при расхождении будет
- * предупреждение, а имена файлов возьмут номер страницы, а не этот список.
+ * Разделы, для которых есть dictionaries/attributes_{id}.json.
+ * Имена — из categories.json; slug/URL — только для обхода магазина.
  */
-export const CATEGORIES = [
-  { slug: 'kholodilniki',      name: 'Холодильники',      id: 523, url: `${ORIGIN}/shop/kholodilniki` },
-  { slug: 'stiralnye_mashiny', name: 'Стиральные машины', id: 467, url: `${ORIGIN}/shop/stiralnye_mashiny` },
-];
+export function resolveCrawlCategories(root = ROOT) {
+  let cats = [];
+  try { cats = loadCategories(root); } catch { /* */ }
+  const byId = new Map(cats.map(c => [String(c.id), c]));
+  const out = [];
+  for (const [slug, id] of Object.entries(CRAWL_SLUGS)) {
+    if (!hasDictionary(id, root)) continue;
+    const meta = byId.get(String(id));
+    out.push({
+      slug,
+      id: Number(id),
+      name: meta?.name || `Категория ${id}`,
+      url: CRAWL_URLS[slug] || `${ORIGIN}/shop/${slug}`,
+    });
+  }
+  return out;
+}
+
+export const CATEGORIES = resolveCrawlCategories();
 
 /** Раздел по slug, названию, id или адресу. */
 export const findCategory = key => {
@@ -162,7 +179,7 @@ export function parseProductPage(html) {
   }
   return {
     description: decode(desc.replace(/<[^>]+>/g, ' ')),
-    annotation:  attributes.map(a => `${a.name} - ${a.value}`).join(' '),
+    annotation:  attributes.map(a => `${a.name} - ${a.value}`).join('<br>'),
     attributes,
     brand:       html.match(/itemprop="brand"[^>]*content="([^"]*)"/i)?.[1] ?? null,
   };
@@ -382,7 +399,7 @@ export function parseAnyProductPage(html) {
     description: prose,
     // Тот же вид, в котором характеристики приходят из фида и со страницы
     // магазина: «подпись - значение» через пробел.
-    annotation: attributes.map(a => `${a.name} - ${a.value}`).join(' '),
+    annotation: attributes.map(a => `${a.name} - ${a.value}`).join('<br>'),
     attributes,
   };
 }

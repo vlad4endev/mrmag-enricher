@@ -10,8 +10,8 @@ const AXIS_WORD = [
   [/длин/i, 'depth'],
 ];
 
-const RE_TRIPLE = /(\d+(?:[.,]\d+)?)\s*[x×хX]\s*(\d+(?:[.,]\d+)?)\s*[x×хX]\s*(\d+(?:[.,]\d+)?)/;
-const RE_LETTERS = /([швгдwhd])\s*[x×хx]\s*([швгдwhd])\s*[x×хx]\s*([швгдwhd])/i;
+const RE_TRIPLE = /(\d+(?:[.,]\d+)?)\s*(?:[x×хX*]|\s+на\s+)\s*(\d+(?:[.,]\d+)?)\s*(?:[x×хX*]|\s+на\s+)\s*(\d+(?:[.,]\d+)?)/i;
+const RE_LETTERS = /([швгдwhd])\s*[x×хx*]\s*([швгдwhd])\s*[x×хx*]\s*([швгдwhd])/i;
 const BARE_DIM_KEYS = /^(габариты|размеры|размер)$/i;
 
 export function axisOrderFromKey(key) {
@@ -61,12 +61,29 @@ export function parseDimensions(key, value) {
   const cm = nums.map(n => +toCm(n, unit).toFixed(2));
   const order = axisOrderFromKey(key);
   if (!order) {
-    if (BARE_DIM_KEYS.test(String(key).trim())) {
-      return { dims: null, flag: 'dimensions_axis_order_unknown', raw: cm };
-    }
     return { dims: null, flag: 'dimensions_axis_order_unknown', raw: cm };
   }
   const dims = {};
   order.forEach((axis, i) => { dims[axis] = cm[i]; });
   return { dims, packed: false };
+}
+
+/**
+ * Приоритет у отдельных Высота/Ширина/Глубина.
+ * Расхождение с составными > 5% → dimensions_mismatch.
+ */
+export function reconcileDimensions(separate, compound) {
+  if (!compound) return { dims: separate || null, flag: null };
+  if (!separate) return { dims: compound, flag: null };
+  const out = { ...compound, ...separate };
+  for (const axis of ['width', 'height', 'depth']) {
+    const a = separate[axis];
+    const b = compound[axis];
+    if (a == null || b == null) continue;
+    const base = Math.max(Math.abs(a), Math.abs(b), 1e-9);
+    if (Math.abs(a - b) / base > 0.05) {
+      return { dims: separate, flag: 'dimensions_mismatch' };
+    }
+  }
+  return { dims: out, flag: null };
 }

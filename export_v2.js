@@ -1,15 +1,9 @@
 /**
  * export_v2.js — выгрузка «JSON v2»: фасеты каталога и товары с готовым
- * description_html.
+ * description_html. Формат — как products_v2 / filters_v2 заказчика:
+ * checkbox-фасеты, числа как есть («344», не «300-350»), без цены.
  *
- * Чем отличается от filters_(id).json: там фильтр магазина (бренд из листинга
- * и слайдер цены), здесь фасеты из обогащения — все checkbox, числовые поля
- * свёрнуты в диапазоны. Одно и то же значение у товара и в списке каталога
- * считает одна функция: разойдись они хоть в округлении — товар не попадёт ни
- * в один свой фасет, и фильтр молча отдаст пустой раздел.
- *
- * На входе — массив товаров в форме products_(id).json (товар + enriched),
- * поэтому модуль одинаково работает и из интерфейса, и по файлу из CLI.
+ * Одно и то же значение у товара и в списке каталога считает одна функция.
  */
 
 // Числовое поле схемы кончается единицей измерения: она уходит и в имя фасета
@@ -45,49 +39,7 @@ const facetName = key => {
   return unit ? `${label}, ${unit}` : label;
 };
 
-// Пока значений мало, диапазоны не нужны: шесть объёмов читаются лучше, чем
-// шесть интервалов вокруг них. 256 холодильников дают 60 разных объёмов —
-// вот там перечисление и превращается в бесполезные 60 галочек.
-const DISCRETE_MAX = 6;
-const TARGET_BUCKETS = 8;
-const NICE = [1, 2, 2.5, 5, 10];
-
-/** Круглый шаг: ~1/8 разброса, подтянутый до 1/2/2.5/5/10 × 10^k. */
-function niceStep(span) {
-  const rough = span / TARGET_BUCKETS;
-  const mag = 10 ** Math.floor(Math.log10(rough));
-  for (const n of NICE) if (rough <= n * mag * 1.000001) return n * mag;
-  return 10 * mag;
-}
-
-/**
- * Функция «число → подпись диапазона» по разбросу значений раздела.
- * Диапазон считается от самого значения, а не подбором по списку границ:
- * пустых интервалов в фасете тогда не бывает по построению.
- */
-function bucketize(values) {
-  const uniq = [...new Set(values)].sort((a, b) => a - b);
-  if (uniq.length <= DISCRETE_MAX) return num;
-  const step = niceStep(uniq[uniq.length - 1] - uniq[0]);
-  // Шаг в единицу на целых значениях — это то же перечисление, только в виде
-  // «39-40»: диапазон здесь ничего не сворачивает.
-  if (step <= 1 && uniq.every(Number.isInteger)) return num;
-  const dec = Math.max(0, -Math.floor(Math.log10(step)) + 1);
-  const round = x => +x.toFixed(dec);
-  return v => {
-    const lo = round(Math.floor(v / step) * step);
-    return `${num(lo)}-${num(round(lo + step))}`;
-  };
-}
-
 const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-
-// Цена приходит не из обогащения, а из листинга магазина — но фасет каталога
-// без неё бесполезен, а checkbox-диапазоны ей считает та же bucketize. Ноль —
-// это отсутствие цены, как и в buildFilters: иначе «0-25000» соберёт весь
-// раздел без цены в один фильтр.
-const PRICE = 'Цена, ₽';
-const priceOf = p => (Number.isFinite(p.price) && p.price > 0 ? p.price : null);
 
 /** id товара — sku магазина; числовой отдаём числом, как в примере заказчика. */
 const idOf = p => (/^\d+$/.test(String(p.sku ?? '')) ? Number(p.sku) : (p.sku ?? null));
@@ -147,11 +99,8 @@ export const enrichedRows = rows => (rows || []).filter(r => r && r.enriched && 
 
 /**
  * Разброс числовых полей по всему набору и функция «число → подпись фасета».
- * Диапазон нельзя выбрать по одному товару, поэтому сначала весь набор.
- *
- * Отдаётся наружу, потому что фасеты считают двое: выгрузка v2 и
- * filters_(id).json. Посчитай каждый по-своему — округление разойдётся, и товар
- * не попадёт в свой же фильтр.
+ * Если передан dict (категория со справочником) — шаг и kind только из facet.*,
+ * без niceStep по разбросу.
  */
 export function facetScale(enriched) {
   const nums = new Map();
@@ -163,12 +112,9 @@ export function facetScale(enriched) {
       nums.get(name).push(v);
     }
   }
-  const prices = enriched.map(priceOf).filter(v => v != null);
-  if (prices.length) nums.set(PRICE, prices);
-
-  const bucket = new Map([...nums].map(([name, vs]) => [name, bucketize(vs)]));
-  const valueOf = (name, v) =>
-    typeof v === 'number' ? bucket.get(name)(v) : (YESNO[String(v).toLowerCase()] || String(v));
+  // Эталон заказчика перечисляет точные значения («344», «10.5»), не корзины.
+  const valueOf = (_name, v) =>
+    typeof v === 'number' ? num(v) : (YESNO[String(v).toLowerCase()] || String(v));
   return { nums, valueOf };
 }
 
@@ -229,8 +175,6 @@ export function buildV2(rows) {
       const name = facetName(k);
       filters[name] = valueOf(name, v);
     }
-    const price = priceOf(r);
-    if (price != null) filters[PRICE] = valueOf(PRICE, price);
     return {
       id: idOf(r),
       name: r.name || e.seo_title || '',

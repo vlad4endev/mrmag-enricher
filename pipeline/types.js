@@ -268,6 +268,10 @@ export function normalizeValue(attr, raw, { keyText = '' } = {}) {
       return { ok: true, value: letter + m[2] };
     }
     if (typ === 'enum' || typ === 'text') {
+      // Число с единицей в enum — скорее чужой атрибут, чем допустимое значение.
+      if (/\d+(?:[.,]\d+)?\s*(?:кг|г|л|мл|см|мм|дб|об)/i.test(v) && !/фронтал|вертикал|камер/i.test(v)) {
+        return { ok: false, value: null, reason: 'qty_in_enum', raw: v };
+      }
       const aliased = aliasValue(attr, v);
       const val = displayEnum(aliased || v);
       if (!val) return empty;

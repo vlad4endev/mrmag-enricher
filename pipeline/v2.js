@@ -1,69 +1,18 @@
 /**
- * Справочник → вход buildV2. Эталон выхода — products_v2_{id}.json:
- * id, name, meta_keywords, description_html, filters со строками.
- *
- * Ключи specs — как в схеме ИИ (объем_общий_л, ширина_мм), не коды справочника:
- * splitKey из них собирает те же подписи, что в эталоне («Объем общий, л»).
+ * Справочник → вход buildV2.
+ * Ключи specs и подписи — из facet.label / name / unit;
+ * тип товара — из categories.json. Без CODE_TO_SPEC / PRODUCT_TYPE на 467/523.
  */
 
 import { metaKeywords } from './export.js';
-
-const PRODUCT_TYPE = {
-  523: 'холодильник',
-  467: 'стиральная машина',
-};
-
-/** code справочника → ключ specs (строка) или { key, mul } для см → мм. */
-const CODE_TO_SPEC = {
-  523: {
-    brand: 'бренд',
-    energy_class: 'класс_энергоэффективности',
-    vol_total: 'объем_общий_л',
-    vol_fridge: 'объем_холодильной_камеры_л',
-    vol_freezer: 'объем_морозильной_камеры_л',
-    cooling: 'система_охлаждения',
-    chambers: 'количество_камер',
-    freezer_pos: 'расположение_морозильника',
-    control_type: 'тип_управления',
-    refrigerant: 'хладагент',
-    noise: 'уровень_шума_дб',
-    freeze_power: 'мощность_замораживания_кг_сут',
-    height: { key: 'высота_мм', mul: 10 },
-    width: { key: 'ширина_мм', mul: 10 },
-    depth: { key: 'глубина_мм', mul: 10 },
-    weight: 'вес_кг',
-    color: 'цвет',
-  },
-  467: {
-    brand: 'бренд',
-    load_type: 'тип_загрузки',
-    install: 'установка',
-    load_max: 'максимальная_загрузка_кг',
-    spin_max: 'скорость_отжима_об_мин',
-    energy_class: 'класс_энергоэффективности',
-    wash_class: 'класс_стирки',
-    spin_class: 'класс_отжима',
-    programs_qty: 'количество_программ',
-    water_use: 'расход_воды_л_цикл',
-    noise_wash: 'уровень_шума_стирки_дб',
-    noise_spin: 'уровень_шума_отжима_дб',
-    control_type: 'тип_управления',
-    display: 'дисплей',
-    drying: 'сушка',
-    height: { key: 'высота_мм', mul: 10 },
-    width: { key: 'ширина_мм', mul: 10 },
-    depth: { key: 'глубина_мм', mul: 10 },
-    weight: 'вес_кг',
-    color: 'цвет',
-  },
-};
+import { loadCategories } from './dict.js';
+import { attrLabel } from './types.js';
 
 function unwrap(v) {
   if (Array.isArray(v)) return v.length ? unwrap(v[0]) : null;
   return v;
 }
 
-/** Кириллица в эталоне строчная («нижнее», «механическое»), латиница как есть. */
 function specText(v) {
   const s = String(v ?? '').trim();
   if (!s) return s;
@@ -71,10 +20,52 @@ function specText(v) {
   return s;
 }
 
+/** «Общий объём, л» → общий_объем_л; см → мм с множителем. */
+function specKeyFromAttr(attr) {
+  const label = attrLabel(attr);
+  let base = String(label || attr.name || attr.code)
+    .toLowerCase()
+    .replace(/ё/g, 'е')
+    .replace(/[^a-zа-я0-9]+/gi, '_')
+    .replace(/^_|_$/g, '');
+  if (attr.unit === 'см') {
+    base = base.replace(/_?см$/, '') + '_мм';
+    return { key: base.replace(/__/g, '_'), mul: 10 };
+  }
+  if (attr.unit) {
+    const u = String(attr.unit).toLowerCase().replace(/\//g, '_').replace(/·/g, '').replace(/\s+/g, '_');
+    if (!base.includes(u)) base = `${base}_${u}`;
+  }
+  return { key: base.replace(/__/g, '_'), mul: 1 };
+}
+
+function productTypeFromCategories(catId, root = '.') {
+  try {
+    const cats = loadCategories(root);
+    const hit = cats.find(c => Number(c.id) === Number(catId));
+    if (!hit) return null;
+    return singularProductType(String(hit.name));
+  } catch {
+    return null;
+  }
+}
+
+/** «Холодильники» → «холодильник»; «Стиральные машины» → «стиральная машина». */
+function singularProductType(name) {
+  const s = String(name || '').toLowerCase().replace(/ё/g, 'е').trim();
+  if (!s) return null;
+  const adjNoun = s.match(/^(\S+?)ые\s+(\S+?)ы$/u);
+  if (adjNoun) return `${adjNoun[1]}ая ${adjNoun[2]}а`;
+  const adjNounIe = s.match(/^(\S+?)ие\s+(\S+?)и$/u);
+  if (adjNounIe) return `${adjNounIe[1]}яя ${adjNounIe[2]}`;
+  if (/и$/.test(s) && !/\s/.test(s)) return s.slice(0, -1);
+  return s;
+}
+
 function snapCooling(v) {
   const t = String(v).toLowerCase().replace(/ё/g, 'е');
   if (/без\s*no\s*frost|капельн/.test(t)) return 'капельная';
-  if (/no\s*frost|ноу\s*фрост/.test(t)) return 'No Frost';
+  if (/no\s*frost|ноу\s*фрост|full\s*no/.test(t)) return 'No Frost';
   return specText(v);
 }
 
@@ -104,16 +95,25 @@ function snapControl(v) {
   return specText(v);
 }
 
-function specFromAttr(key, raw, attr) {
+function snapLoad(v) {
+  const t = String(v).toLowerCase().replace(/ё/g, 'е');
+  if (/вертикал/.test(t)) return 'вертикальная';
+  if (/фронтал/.test(t)) return 'фронтальная';
+  return specText(v);
+}
+
+function specFromAttr(raw, attr) {
   const v = unwrap(raw);
   if (v == null || v === '') return null;
   if (attr?.type === 'boolean' || typeof v === 'boolean') return v ? 'да' : 'нет';
   if (typeof v === 'number') return v;
-  if (key === 'система_охлаждения') return snapCooling(v);
-  if (key === 'расположение_морозильника') return snapFreezer(v);
-  if (key === 'установка') return snapInstall(v);
-  if (key === 'тип_управления') return snapControl(v);
-  if (key === 'цвет') return specText(String(v).split(/\s*\/\s*/)[0]);
+  if (attr?.type === 'class_scale') return String(v);
+  if (attr?.code === 'cooling') return snapCooling(v);
+  if (attr?.code === 'freezer_pos') return snapFreezer(v);
+  if (attr?.code === 'install') return snapInstall(v);
+  if (attr?.code === 'control_type') return snapControl(v);
+  if (attr?.code === 'load_type') return snapLoad(v);
+  if (attr?.code === 'color') return specText(String(v).split(/\s*\/\s*/)[0]);
   return specText(v);
 }
 
@@ -132,41 +132,42 @@ function inferChambers(rec) {
   return null;
 }
 
-function buildSpecs(rec, dict) {
-  const map = CODE_TO_SPEC[dict.catId] || CODE_TO_SPEC[String(dict.catId)] || {};
+export function buildSpecs(rec, dict, { root = '.' } = {}) {
   const specs = {};
-  const type = PRODUCT_TYPE[dict.catId] || PRODUCT_TYPE[Number(dict.catId)];
+  const type = productTypeFromCategories(dict.catId, root);
   if (type) specs.тип_товара = type;
   const model = rec.identity?.model;
   if (model) specs.модель = String(model).trim();
 
-  for (const [code, dest] of Object.entries(map)) {
-    const attr = dict.byCode.get(code);
-    const raw = rec.attrs?.[code];
-    const key = typeof dest === 'object' ? dest.key : dest;
-    const mul = typeof dest === 'object' ? dest.mul : 1;
-    let val = specFromAttr(key, raw, attr);
+  for (const attr of dict.attrs) {
+    if (attr.tier === 'X') continue;
+    const raw = rec.attrs?.[attr.code];
+    if (raw == null || raw === '') continue;
+    const { key, mul } = specKeyFromAttr(attr);
+    let val = specFromAttr(raw, attr);
     if (typeof val === 'number' && mul !== 1) val = Math.round(val * mul * 1000) / 1000;
     if (val == null || val === '') continue;
     specs[key] = val;
   }
 
-  if (specs.расположение_морозильника == null) {
-    const pos = inferFreezer(rec);
-    if (pos) specs.расположение_морозильника = pos;
+  if (dict.byCode.has('freezer_pos')) {
+    const k = specKeyFromAttr(dict.byCode.get('freezer_pos')).key;
+    if (specs[k] == null) {
+      const pos = inferFreezer(rec);
+      if (pos) specs[k] = pos;
+    }
   }
-  if (specs.количество_камер == null) {
-    const n = inferChambers(rec);
-    if (n) specs.количество_камер = n;
+  if (dict.byCode.has('chambers')) {
+    const k = specKeyFromAttr(dict.byCode.get('chambers')).key;
+    if (specs[k] == null) {
+      const n = inferChambers(rec);
+      if (n) specs[k] = n;
+    }
   }
   return specs;
 }
 
-/**
- * Одна запись справочника → товар для buildV2.
- * Если уже есть enriched с ИИ — его не переписываем: эталонные абзацы от модели.
- */
-export function dictToV2Row(rec, dict) {
+export function dictToV2Row(rec, dict, opts = {}) {
   if (rec?.enriched?.specs) {
     return {
       sku: rec.sku ?? rec.id,
@@ -175,13 +176,12 @@ export function dictToV2Row(rec, dict) {
       enriched: rec.enriched,
     };
   }
-  const specs = buildSpecs(rec, dict);
   return {
     sku: rec.id,
     name: rec.name,
     price: rec.price,
     enriched: {
-      specs,
+      specs: buildSpecs(rec, dict, opts),
       h1: rec.name || '',
       short_description: '',
       seo_description: '',
@@ -191,6 +191,8 @@ export function dictToV2Row(rec, dict) {
   };
 }
 
-export function dictToV2Rows(recs, dict) {
-  return (recs || []).map(r => dictToV2Row(r, dict));
+export function dictToV2Rows(recs, dict, opts = {}) {
+  return (recs || []).map(r => dictToV2Row(r, dict, opts));
 }
+
+export { specKeyFromAttr, productTypeFromCategories, singularProductType };

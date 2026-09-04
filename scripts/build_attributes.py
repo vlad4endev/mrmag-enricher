@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Собрать attributes_{cat_id}.json из согласованного Excel-справочника."""
+"""Обновить synonyms/blacklist/coverage в dictionaries/attributes_{id}.json из Excel.
+
+Источник истины по facet / tier / valid_range / value_aliases — уже лежащий JSON.
+Скрипт не задаёт FACET_*/VALID_RANGE/EXTRA_* в коде: новая категория = новый JSON.
+"""
 from __future__ import annotations
 
 import json
@@ -11,67 +15,7 @@ from pathlib import Path
 NS = {"m": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"}
 XLSX = Path("/Users/vl4endev/Desktop/02_Spravochnik_harakteristik_i_brendov.xlsx")
 ROOT = Path(__file__).resolve().parents[1]
-
-# Вид фильтра и шаг — из контракта приёмки, не из разброса данных.
-# enabled=true только у фасетов, которые заказчик ждёт в filters_*.json.
-FACET_467 = {
-    "brand":        {"enabled": True,  "label": "Бренд", "kind": "enum"},
-    "load_type":    {"enabled": True,  "label": "Тип загрузки", "kind": "enum"},
-    "load_max":     {"enabled": True,  "label": "Загрузка белья, кг", "kind": "enum"},
-    "spin_max":     {"enabled": True,  "label": "Скорость отжима, об/мин", "kind": "range", "step": 200},
-    "energy_class": {"enabled": True,  "label": "Класс энергоэффективности", "kind": "enum"},
-    "noise_wash":   {"enabled": True,  "label": "Уровень шума, дБ", "kind": "range", "step": 5},
-    "motor_type":   {"enabled": True,  "label": "Тип двигателя", "kind": "enum"},
-    "install":      {"enabled": True,  "label": "Установка", "kind": "enum"},
-    "drying":       {"enabled": True,  "label": "Сушка", "kind": "enum"},
-    "width":        {"enabled": True,  "label": "Ширина, см", "kind": "range", "step": 5},
-    "depth":        {"enabled": True,  "label": "Глубина, см", "kind": "range", "step": 5},
-    "height":       {"enabled": True,  "label": "Высота, см", "kind": "range", "step": 5},
-    "control_type": {"enabled": True,  "label": "Тип управления", "kind": "enum"},
-    "color":        {"enabled": True,  "label": "Цвет корпуса", "kind": "enum"},
-}
-FACET_523 = {
-    "brand":          {"enabled": True,  "label": "Бренд", "kind": "enum"},
-    "fridge_type":    {"enabled": True,  "label": "Тип холодильника", "kind": "enum"},
-    "chambers":       {"enabled": True,  "label": "Количество камер", "kind": "enum"},
-    "freezer_pos":    {"enabled": True,  "label": "Расположение морозильной камеры", "kind": "enum"},
-    "vol_total":      {"enabled": True,  "label": "Общий объём, л", "kind": "range", "step": 50},
-    "vol_fridge":     {"enabled": True,  "label": "Объём холодильной камеры, л", "kind": "range", "step": 50},
-    "vol_freezer":    {"enabled": True,  "label": "Объём морозильной камеры, л", "kind": "range", "step": 50},
-    "cooling":        {"enabled": True,  "label": "Система охлаждения", "kind": "enum"},
-    "energy_class":   {"enabled": True,  "label": "Класс энергоэффективности", "kind": "enum"},
-    "noise":          {"enabled": True,  "label": "Уровень шума, дБ", "kind": "range", "step": 5},
-    "compressor_type":{"enabled": True,  "label": "Тип компрессора", "kind": "enum"},
-    "freeze_power":   {"enabled": True,  "label": "Мощность замораживания, кг/сут", "kind": "range", "step": 2},
-    "height":         {"enabled": True,  "label": "Высота, см", "kind": "range", "step": 5},
-    "width":          {"enabled": True,  "label": "Ширина, см", "kind": "range", "step": 5},
-    "depth":          {"enabled": True,  "label": "Глубина, см", "kind": "range", "step": 5},
-    "control_type":   {"enabled": True,  "label": "Тип управления", "kind": "enum"},
-    "color":          {"enabled": True,  "label": "Цвет корпуса", "kind": "enum"},
-}
-
-# Выбросы из спецификации: вес 3468 кг, высота 1768 см, расход воды 11000 л.
-VALID_RANGE = {
-    "load_max": [1, 25],
-    "spin_max": [300, 2200],
-    "noise_wash": [24.5, 128.0],
-    "noise_spin": [30, 100],
-    "noise": [15, 90],
-    "height": [40, 250],
-    "width": [30, 200],
-    "depth": [25, 150],
-    "weight": [5, 400],
-    "water_use": [5, 250],
-    "energy_year": [20, 900],
-    "programs_qty": [1, 40],
-    "vol_total": [15, 1200],
-    "vol_fridge": [5, 900],
-    "vol_freezer": [1, 600],
-    "freeze_power": [0.5, 40],
-    "chambers": [1, 5],
-    "doors": [1, 5],
-    "compressors": [1, 3],
-}
+DICT_DIR = ROOT / "dictionaries"
 
 TYPE_MAP = {
     "число": "number",
@@ -85,55 +29,6 @@ TYPE_MAP = {
     "логическое": "boolean",
     "три размера": "dimensions",
     "габариты": "dimensions",
-}
-
-# Дополнения, без которых сквозные тесты и покрытие не сходятся,
-# а в Excel-вариантах этих написаний нет.
-EXTRA_SYN = {
-    "display": ["Тип дисплея", "Тип индикации"],
-    "install": ["Тип установки"],
-    "energy_year": ["Потребляемая энергия", "Годовое потребление электроэнергии", "Взвешенное годовое потребление энергии"],
-    "dims": [
-        "Ширина х Высота х Глубина без упаковки (см)",
-        "Ширина х Высота х Глубина без упаковки",
-        "Ширина х Высота х Глубина (см)",
-        "Габариты без упаковки",
-        "Размеры без упаковки",
-        "Габаритные размеры (Ш х В х Г см)",
-        "Габаритные размеры",
-    ],
-}
-EXTRA_BLK = {
-    "weight": ["Вес брутто (кг)", "Вес брутто, кг", "Масса брутто"],
-    "dims": [
-        "Ширина х Высота х Глубина в упаковке (см)",
-        "Ширина х Высота х Глубина в упаковке",
-        "Габариты с учётом упаковки",
-        "Размеры товарной упаковки",
-    ],
-    "noise_wash": [
-        "Уровень шума при отжиме",
-        "Уровень шума цикла отжима дБ (А)",
-        "Уровень шума при отжиме (дБ)",
-    ],
-}
-
-# Порядок brand=0, чтобы фильтр «Бренд» шёл первым. Остальное — из Excel.
-BRAND_ATTR = {
-    "code": "brand",
-    "name": "Бренд",
-    "description": "Производитель, как будет отображаться в карточке и фильтре",
-    "type": "enum",
-    "unit": None,
-    "cardinality": "single",
-    "order": 0,
-    "show_in_annotation": True,
-    "highlight": True,
-    "inferable": True,
-    "tier": "A",
-    "decision_reason": "Идентичность товара; извлекается из наименования без обратной записи",
-    "coverage_now": 0,
-    "valid_range": None,
 }
 
 
@@ -210,39 +105,12 @@ def unit_of(s):
     return None if s in {"", "—", "-", "–"} else s
 
 
-def coverage_of(row_pct, cat_name, name):
-    return pct(row_pct)
-
-
 def inferable_of(typ, code):
     if code == "brand":
         return True
     if typ in {"number", "integer", "dimensions"}:
         return False
     return True
-
-
-def tier_of(code, coverage, facet_map):
-    facet = facet_map.get(code) or {}
-    if not facet.get("enabled"):
-        return "C"
-    return "A" if coverage >= 70 else "B"
-
-
-def facet_of(code, facet_map):
-    spec = facet_map.get(code)
-    if not spec:
-        return {"enabled": False, "reason": "Не входит в согласованный набор фасетов категории"}
-    out = {
-        "enabled": True,
-        "label": spec["label"],
-        "kind": spec["kind"],
-    }
-    if spec["kind"] == "range":
-        out["step"] = spec["step"]
-        out["bound_rule"] = "left_closed"
-        out["open_last"] = True
-    return out
 
 
 def uniq_keep(seq):
@@ -257,49 +125,77 @@ def uniq_keep(seq):
     return out
 
 
+def load_existing(cid: int) -> dict[str, dict]:
+    path = DICT_DIR / f"attributes_{cid}.json"
+    if not path.exists():
+        raise SystemExit(
+            f"Нет {path}: создайте dictionaries/attributes_{cid}.json вручную "
+            f"(facet/tier/valid_range), затем перезапустите скрипт для синонимов из Excel."
+        )
+    return {a["code"]: a for a in json.loads(path.read_text(encoding="utf-8"))}
+
+
 def main():
+    if not XLSX.exists():
+        raise SystemExit(f"нет файла {XLSX}")
+
     get = load_book(XLSX)
-    chars = get("2. Характеристики")
-    variants = get("3. Варианты названий")
-    bans = get("4. Запреты")
-    brands = get("6. Бренды")
+    attrs_sheet = get("Атрибуты")
+    syn_sheet = get("Синонимы")
+    black_sheet = get("Чёрный список")
+    brand_sheet = get("Бренды")
 
     syn = defaultdict(lambda: defaultdict(list))
-    for i in range(5, max(variants) + 1):
-        r = variants.get(i, {})
-        cat, name, variant, code = r.get(1, ""), r.get(2, ""), r.get(4, ""), r.get(7, "")
-        if code and variant:
-            syn[cat][code].append(str(variant).strip())
+    for r in syn_sheet.values():
+        cat = str(r.get(1, "")).strip()
+        code = str(r.get(2, "")).strip()
+        name = str(r.get(3, "")).strip()
+        if cat and code and name:
+            syn[cat][code].append(name)
 
     black = defaultdict(lambda: defaultdict(list))
-    for i in range(5, max(bans) + 1):
-        r = bans.get(i, {})
-        cat, name, banned, code = r.get(1, ""), r.get(2, ""), r.get(3, ""), r.get(6, "")
-        if code and banned:
-            black[cat][code].append(str(banned).strip())
+    for r in black_sheet.values():
+        cat = str(r.get(1, "")).strip()
+        code = str(r.get(2, "")).strip()
+        name = str(r.get(3, "")).strip()
+        if cat and code and name:
+            black[cat][code].append(name)
 
     brand_aliases = defaultdict(list)
-    for i in range(5, max(brands) + 1):
-        r = brands.get(i, {})
-        canon, variant = str(r.get(1, "")).strip(), str(r.get(3, "")).strip()
-        if canon:
-            brand_aliases[canon].append(canon)
-        if canon and variant:
-            brand_aliases[canon].append(variant)
+    for r in brand_sheet.values():
+        canon = str(r.get(1, "")).strip()
+        alias = str(r.get(2, "")).strip()
+        if canon and alias:
+            brand_aliases[canon].append(alias)
+
+    # Excel category name → cat_id only for known shop sections that already have a dictionary.
+    cat_id = {}
+    for path in sorted(DICT_DIR.glob("attributes_*.json")):
+        cid = int(path.stem.split("_")[1])
+        # Resolve name from categories.json when possible.
+        cats_path = ROOT / "categories.json"
+        name = None
+        if cats_path.exists():
+            for c in json.loads(cats_path.read_text(encoding="utf-8")):
+                if int(c["id"]) == cid:
+                    name = c["name"]
+                    break
+        if name:
+            cat_id[name] = cid
 
     by_cat = defaultdict(list)
-    for i in range(5, max(chars) + 1):
-        r = chars.get(i, {})
-        cat = r.get(1, "").strip()
-        if not cat:
+    for r in attrs_sheet.values():
+        cat = str(r.get(1, "")).strip()
+        code = str(r.get(2, "")).strip()
+        name = str(r.get(4, "")).strip()
+        if not cat or not code or code == "code" or cat not in cat_id:
             continue
-        code = str(r.get(10, "")).strip()
-        name = str(r.get(2, "")).strip()
-        typ = TYPE_MAP[str(r.get(11, "")).strip().lower()]
-        unit = unit_of(r.get(12))
+        typ_raw = str(r.get(10, "")).strip().lower()
+        typ = TYPE_MAP.get(typ_raw, "string")
+        unit = unit_of(r.get(11))
         card = "multi" if "нескольк" in str(r.get(13, "")).lower() or "мульти" in str(r.get(13, "")).lower() else "single"
-        coverage = coverage_of(r.get(5), cat, name)
-        rec = {
+        coverage = pct(r.get(5))
+        by_cat[cat].append({
             "code": code,
             "name": name,
             "description": str(r.get(3, "")).strip(),
@@ -310,43 +206,61 @@ def main():
             "show_in_annotation": yes(r.get(6)),
             "highlight": yes(r.get(15)),
             "inferable": inferable_of(typ, code),
-            "tier": None,  # fill after facet map
             "decision_reason": str(r.get(9) or "").strip() or str(r.get(3, "")).strip(),
             "coverage_now": coverage,
-            "valid_range": VALID_RANGE.get(code),
             "synonyms": uniq_keep([name] + syn[cat][code]),
             "blacklist": uniq_keep(black[cat][code]),
-        }
-        by_cat[cat].append(rec)
+        })
 
-    cat_id = {"Стиральные машины": 467, "Холодильники": 523}
-    facet_maps = {467: FACET_467, 523: FACET_523}
+    DICT_DIR.mkdir(parents=True, exist_ok=True)
 
     for cat, recs in by_cat.items():
         cid = cat_id[cat]
-        fmap = facet_maps[cid]
-        brand = dict(BRAND_ATTR)
-        brand["synonyms"] = uniq_keep(["Бренд", "Производитель", "Марка", "Торговая марка"])
-        brand["blacklist"] = ["Артикул", "Модель", "Линейка"]
-        brand["value_aliases"] = {k: uniq_keep(v) for k, v in brand_aliases.items()}
-        brand["facet"] = facet_of("brand", fmap)
-        brand["tier"] = "A"
-        out = [brand]
+        existing = load_existing(cid)
+        out = []
+
+        # Brand: keep facet/tier/aliases from JSON; refresh value_aliases from Excel when present.
+        if "brand" in existing:
+            brand = dict(existing["brand"])
+            brand["synonyms"] = uniq_keep(
+                brand.get("synonyms") or ["Бренд", "Производитель", "Марка", "Торговая марка"]
+            )
+            brand["blacklist"] = uniq_keep(brand.get("blacklist") or ["Артикул", "Модель", "Линейка"])
+            if brand_aliases:
+                brand["value_aliases"] = {k: uniq_keep(v) for k, v in brand_aliases.items()}
+            out.append(brand)
+
         for rec in recs:
-            rec["facet"] = facet_of(rec["code"], fmap)
-            rec["tier"] = tier_of(rec["code"], rec["coverage_now"], fmap)
-            extra_syn = EXTRA_SYN.get((cid, rec["code"])) or EXTRA_SYN.get(rec["code"])
-            extra_blk = EXTRA_BLK.get((cid, rec["code"])) or EXTRA_BLK.get(rec["code"])
-            if extra_syn:
-                rec["synonyms"] = uniq_keep(rec["synonyms"] + extra_syn)
-            if extra_blk:
-                rec["blacklist"] = uniq_keep(rec["blacklist"] + extra_blk)
-            out.append(rec)
-        out.sort(key=lambda x: (x["order"], x["code"]))
-        path = ROOT / f"attributes_{cid}.json"
+            if rec["code"] == "brand":
+                continue
+            prev = existing.get(rec["code"], {})
+            merged = {
+                **rec,
+                # Не перетираем контракт справочника полями из генератора.
+                "tier": prev.get("tier", "C"),
+                "facet": prev.get("facet", {"enabled": False, "reason": "Нет в dictionaries/attributes JSON"}),
+                "valid_range": prev.get("valid_range"),
+                "coverage_final": prev.get("coverage_final", rec["coverage_now"]),
+                "synonyms": uniq_keep((prev.get("synonyms") or []) + rec["synonyms"]),
+                "blacklist": uniq_keep((prev.get("blacklist") or []) + rec["blacklist"]),
+            }
+            if prev.get("value_aliases"):
+                merged["value_aliases"] = prev["value_aliases"]
+            if prev.get("inferable") is not None:
+                merged["inferable"] = prev["inferable"]
+            out.append(merged)
+
+        # Preserve attributes that exist only in JSON (not in this Excel run).
+        seen = {a["code"] for a in out}
+        for code, prev in existing.items():
+            if code not in seen:
+                out.append(prev)
+
+        out.sort(key=lambda x: (x.get("order", 0), x["code"]))
+        path = DICT_DIR / f"attributes_{cid}.json"
         path.write_text(json.dumps(out, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-        enabled = [a["code"] for a in out if a["facet"].get("enabled")]
-        print(f"{path.name}: {len(out)} attrs, {len(enabled)} facets → {enabled}")
+        enabled = [a["code"] for a in out if (a.get("facet") or {}).get("enabled")]
+        print(f"{path.relative_to(ROOT)}: {len(out)} attrs, {len(enabled)} facets → {enabled}")
 
 
 if __name__ == "__main__":

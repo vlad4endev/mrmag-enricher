@@ -1,9 +1,14 @@
 /** Разбор annotation/description в пары ключ–значение. Без канонизации. */
 
-import { annotationFormat, splitHtmlChunks, stripHtml, hasBr, hasLi } from './text.js';
-import { matchLine, matchKey } from './match.js';
+import { annotationFormat, splitHtmlChunks, stripHtml, hasBr, hasLi, isHeadingLine, normKey } from './text.js';
+import { matchLine, exactMatch, longestPrefixMatch } from './match.js';
 
+/** Явные разделители M1: первое вхождение. */
 const SEP = /\s+[-–—]\s+|\s*:\s+/;
+
+function hasExplicitSep(text) {
+  return SEP.test(String(text));
+}
 
 function splitBySep(text) {
   const m = String(text).match(SEP);
@@ -15,39 +20,67 @@ function splitBySep(text) {
   return { key, value };
 }
 
+/**
+ * M3: граница «строчная буква или ) → заглавная или цифра».
+ */
+function splitByCaseBoundary(text) {
+  const s = String(text || '').trim();
+  const m = s.match(/^(.+?[a-zа-яё)])\s*(?=[A-ZА-ЯЁ0-9])/u);
+  if (!m) return null;
+  const key = m[1].trim();
+  const value = s.slice(m[0].length).trim();
+  if (key.length < 3 || !value) return null;
+  if (!/[а-яёa-z]/i.test(key)) return null;
+  return { key, value, via: 'case' };
+}
+
+/**
+ * Каскад до первого успеха. Порядок принципиален.
+ * Без явного разделителя: M2 → M3 → M4.
+ * С разделителем: M1; если ключ не в справочнике — M2 на всю строку (контроль «Интерфейс 2D - …»).
+ */
 function pairFromChunk(chunk, dict) {
   const text = chunk.replace(/\s+/g, ' ').trim().replace(/[.;]\s*$/, '');
   if (!text) return null;
+  if (isHeadingLine(text)) return null;
 
+  const withSep = hasExplicitSep(text);
+
+  // Без явного разделителя — M2 раньше всего.
+  if (!withSep && dict) {
+    const m2 = tryM2(text, dict);
+    if (m2) return m2;
+    const m3 = splitByCaseBoundary(text);
+    if (m3) return m3;
+    return null;
+  }
+
+  // M1: явный разделитель.
   const sep = splitBySep(text);
   if (sep) {
-    const parts = sep.key.split(/\s+/);
-    const last = parts[parts.length - 1];
-    if (parts.length > 1 && /^[A-Z0-9]{1,4}$/i.test(last) && /[а-яё]/i.test(parts[0])) {
-      sep.key = parts.slice(0, -1).join(' ');
-    }
     if (dict) {
-      const m = matchKey(sep.key, dict, { value: sep.value });
-      if (m.how === 'shorten' && m.raw) return { key: m.raw, value: sep.value, via: 'sep-shorten' };
+      const exact = exactMatch(sep.key, dict, sep.value);
+      if (exact) return { ...sep, via: 'sep' };
+      // Ключ M1 не в справочнике (Интерфейс 2D) → M2 на всю строку.
+      const m2 = tryM2(text, dict);
+      if (m2) return m2;
     }
     return { ...sep, via: 'sep' };
   }
 
-  // Тройка габаритов: «Размеры (Ш х В х Г см) 59.6 х 85 х 46.5».
-  // tailnum взял бы только 46.5, оставив две оси в ключе.
-  if (dict && /\d+(?:[.,]\d+)?\s*[x×хX]\s*\d+(?:[.,]\d+)?\s*[x×хX]\s*\d/.test(text)) {
-    const prefixed = matchLine(text, dict);
-    if (prefixed?.attr && prefixed.value) {
-      return { key: prefixed.raw || prefixed.attr.name, value: prefixed.value, via: 'dict' };
-    }
+  if (dict) {
+    const m2 = tryM2(text, dict);
+    if (m2) return m2;
   }
 
-  const tail = text.match(/^(.*?)(\d+(?:[.,]\d+)?(?:\s*[а-яёa-z/%²³·\*]+)?)\s*$/i);
-  if (tail && tail[1].trim().length >= 3 && /[а-яёa-z]/i.test(tail[1])) {
-    return { key: tail[1].trim(), value: tail[2].trim(), via: 'tailnum' };
-  }
+  const m3 = splitByCaseBoundary(text);
+  if (m3) return m3;
 
-  const prefixed = dict ? matchLine(text, dict) : null;
+  return null;
+}
+
+function tryM2(text, dict) {
+  const prefixed = matchLine(text, dict);
   if (prefixed?.attr && prefixed.value) {
     return { key: prefixed.raw || prefixed.attr.name, value: prefixed.value, via: 'dict' };
   }
@@ -68,11 +101,36 @@ function expandPlain(plain) {
   return null;
 }
 
+function splitOffNextPair(value, dict) {
+  if (!dict || !value) return null;
+  const parts = String(value).trim().split(/\s+/);
+  for (let i = 1; i < parts.length; i++) {
+    const rest = parts.slice(i).join(' ');
+    if (!hasExplicitSep(rest)) continue;
+    const sep = splitBySep(rest);
+    if (!sep || !exactMatch(sep.key, dict, sep.value)) continue;
+    return { head: parts.slice(0, i).join(' '), rest };
+  }
+  return null;
+}
+
 function collectPairs(chunks, dict) {
   const pairs = [];
   for (const ch of chunks) {
-    const p = pairFromChunk(ch, dict);
-    if (p) pairs.push(p);
+    let rest = ch;
+    let guard = 0;
+    while (rest && guard++ < 20) {
+      const p = pairFromChunk(rest, dict);
+      if (!p) break;
+      const split = splitOffNextPair(p.value, dict);
+      if (split) {
+        pairs.push({ ...p, value: split.head });
+        rest = split.rest;
+      } else {
+        pairs.push(p);
+        break;
+      }
+    }
   }
   return pairs;
 }
@@ -80,10 +138,16 @@ function collectPairs(chunks, dict) {
 export function extractPairs(html, dict) {
   const chunks = splitHtmlChunks(html);
   let pairs = collectPairs(chunks, dict);
-  // Один длинный абзац даёт 0–1 пару на весь текст — режем по предложениям.
   if (chunks.length <= 1 && pairs.length <= 1) {
     const expanded = expandPlain(stripHtml(html));
     if (expanded) pairs = collectPairs(expanded, dict);
+  }
+  // <ul> забирает только li: соседний <p> с объёмами иначе выпадает.
+  if (hasLi(html)) {
+    const rest = String(html).replace(/<(ul|ol)\b[\s\S]*?<\/\1>/gi, ' ');
+    if (stripHtml(rest).length > 20) {
+      pairs = pairs.concat(extractPairs(rest, dict));
+    }
   }
   return pairs;
 }
@@ -101,6 +165,7 @@ export function extractPairsFromPage(html, dict) {
     const v = String(value || '').replace(/\s+/g, ' ').trim();
     if (!k || !v || k === v) return;
     if (k.length > 80 || v.length > 200 || /^https?:/i.test(v)) return;
+    if (isHeadingLine(k)) return;
     const id = k.toLowerCase();
     if (seen.has(id)) return;
     seen.add(id);
@@ -144,7 +209,6 @@ export function parseProductFields(product, dict) {
   if (format === 'EMPTY' || fromAnn.length < 3) {
     dump = detectDump(product.description);
     fromDesc = extractPairs(product.description, dict).map(p => ({ ...p, source: 'S2' }));
-    // EMPTY без br/тире: характеристики всё равно могут лежать в абзаце.
     if (!dump && fromDesc.length < 3) fromDesc = [];
     if (fromDesc.length >= 3) dump = true;
   }

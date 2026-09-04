@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * CLI справочнико-управляемого пайплайна.
- * Третья категория — это новый attributes_{cat_id}.json, без правок этого файла.
+ * Третья категория — это новый dictionaries/attributes_{cat_id}.json, без правок этого файла.
  *
  *   node cli.mjs inspect   data_467.json
  *   node cli.mjs normalize data_467.json
@@ -12,7 +12,7 @@
  *     → текущие настройки поиска (config.json + env), в т.ч. DuckDuckGo
  *   node cli.mjs facets    data_467.json
  *   node cli.mjs artifacts data_467.json data_523.json
- *     → attributes_467.json, attributes_523.json, categories.json
+ *     → dictionaries/attributes_*.json, categories.json
  *   node cli.mjs validate  out/products_467.json
  *   node cli.mjs report    467
  */
@@ -22,7 +22,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import {
   catIdFromFile, loadConfig, loadDictionary, loadProducts, writeJson,
-  loadCategories, writeCategories, attrsWithCoverage,
+  loadCategories, writeCategories, attrsWithCoverage, dictionaryPath,
 } from './pipeline/dict.js';
 import { extractPairs } from './pipeline/parse.js';
 import { annotationFormat, stripHtml, normKey } from './pipeline/text.js';
@@ -146,24 +146,46 @@ function coverageMap(cov, dict) {
   return out;
 }
 
-/** Клиентский выход после обогащения: attributes_{id}.json + categories.json ({id, name}[]). */
+/** Клиентский выход после обогащения: dictionaries/attributes_{id}.json + categories.json. */
 function writeCustomerDeliverables({ recs, dict, catId, cov }) {
   const attrsOut = attrsWithCoverage(dict, coverageMap(cov, dict));
-  writeJson(path.join(ROOT, `attributes_${catId}.json`), attrsOut);
+  writeJson(dictionaryPath(catId, ROOT), attrsOut);
   writeCategories(path.join(ROOT, 'categories.json'), loadCategories(ROOT));
   return attrsOut;
+}
+
+function writeContractData(recs, dict, catId) {
+  const rows = recs.map((r) => {
+    const card = r.card || renderCard(r, dict);
+    return {
+      id: r.id,
+      name: r.name,
+      description: card.description ?? r.description ?? '',
+      annotation: card.annotation ?? r.annotation ?? '',
+    };
+  });
+  writeJson(path.join(OUT, `data_${catId}.json`), rows, 2);
+  return rows;
 }
 
 function writeOutputs({ recs, dict, config, catId, cov, covAfter, formats, unmapped }, { customer = false } = {}) {
   fs.mkdirSync(OUT, { recursive: true });
   const after = covAfter || cov;
+  for (const rec of recs) {
+    if (!rec.card) rec.card = renderCard(rec, dict);
+  }
   const built = buildFilters(recs, dict, config);
+  writeContractData(recs, dict, catId);
   writeJson(path.join(OUT, `products_${catId}.json`), serializeProducts(recs, dict, built.debug), 4);
   writeJson(path.join(OUT, `filters_${catId}.json`), serializeFilters(built), 4);
 
   const v2 = buildV2(dictToV2Rows(recs, dict));
   writeJson(path.join(OUT, `products_v2_${catId}.json`), v2.products, 2);
   writeJson(path.join(OUT, `filters_v2_${catId}.json`), { filters: v2.filters }, 2);
+  const cat = loadCategories(ROOT).find(c => Number(c.id) === Number(catId));
+  writeJson(path.join(OUT, 'categories_v2.json'), {
+    categories: [{ id: Number(catId), name: cat?.name || String(catId) }],
+  }, 2);
 
   const attrsOut = attrsWithCoverage(dict, coverageMap(after, dict));
   writeJson(path.join(OUT, `attributes_${catId}.json`), attrsOut);
@@ -186,7 +208,7 @@ function writeOutputs({ recs, dict, config, catId, cov, covAfter, formats, unmap
   writeJson(path.join(OUT, `provenance_${catId}.json`), provenance);
 
   if (customer) writeCustomerDeliverables({ recs, dict, catId, cov: after });
-  console.log(`v2: products_v2_${catId}.json, filters_v2_${catId}.json`);
+  console.log(`v2: categories_v2.json, products_v2_${catId}.json, filters_v2_${catId}.json`);
   return built;
 }
 
@@ -290,7 +312,7 @@ async function runEnrich(dataFile, { external = true, limit = null } = {}) {
   }
   for (const rec of r.recs) rec.card = renderCard(rec, r.dict);
   writeOutputs(r, { customer: true });
-  console.log(`customer: attributes_${r.catId}.json, categories.json`);
+  console.log(`customer: dictionaries/attributes_${r.catId}.json, categories.json`);
   return r;
 }
 
@@ -323,7 +345,7 @@ else if (cmd === 'artifacts') {
     for (const rec of r.recs) rec.card = renderCard(rec, r.dict);
     writeOutputs(r, { customer: true });
   }
-  console.log('customer: attributes_467.json, attributes_523.json, categories.json');
+  console.log('customer: dictionaries/attributes_*.json, categories.json');
 }
 else if (cmd === 'config') showConfig();
 else if (cmd === 'validate') validateFile(files[0]);

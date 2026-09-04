@@ -129,9 +129,21 @@ export async function lookupExternal(rec, dict, config, io = {}) {
 export async function enrichMissing(recs, dict, config, io = {}) {
   if (!resolveSearchSettings(config).enabled) return [];
   const minAttrs = config?.description?.min_attrs ?? 5;
+  // Tier B — высокий приоритет дообогащения; A — низкий; X не дообогащается.
+  const need = recs.filter(r => needsExternal(r, { minAttrs }));
+  const score = (rec) => {
+    let b = 0, a = 0;
+    for (const attr of dict.attrs) {
+      if (attr.tier === 'X' || attr.inferable === false) continue;
+      if (rec.attrs[attr.code] != null) continue;
+      if (attr.tier === 'B') b++;
+      else if (attr.tier === 'A') a++;
+    }
+    return b * 1000 + a;
+  };
+  need.sort((x, y) => score(y) - score(x));
   const results = [];
-  for (const rec of recs) {
-    if (!needsExternal(rec, { minAttrs })) continue;
+  for (const rec of need) {
     results.push(await lookupExternal(rec, dict, config, io));
   }
   return results;

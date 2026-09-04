@@ -5,7 +5,7 @@
     "min_attrs": 5
   },
   "fuzzy": {
-    "min_score": 0.93
+    "min_score": 0.90
   },
   "model": {
     "name": "",
@@ -20,7 +20,7 @@
     "min_attrs": 5,
     "facet_min_coverage": 70,
     "target_coverage": 90,
-    "fuzzy_min_score": 0.93
+    "fuzzy_min_score": 0.90
   },
   "providers": [
     {

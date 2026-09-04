@@ -20,6 +20,8 @@
  *   GET  /api/categories      разделы из требований и схемы полей
  *   GET  /api/catalog?category=kholodilniki[&limit=N]
  *                             обход раздела: товары с описаниями + автофильтры
+ *   POST /api/export          выгрузка заказчика: products + filters + held
+ *   POST /api/export-v2       витрина v2: filters + products
  *   POST /api/filters         фильтры по переданному списку товаров
  *   POST /api/quality         качество исходных данных по списку товаров
  *   POST /api/enrich          обогащение одного товара {model, product, category?}
@@ -54,6 +56,7 @@ import {
 } from './lib.js';
 import { CATEGORIES, findCategory, crawlCategory, loadFeed, buildFilters, ensureSource, WEB_LOOKUP } from './catalog.js';
 import { buildV2 } from './export_v2.js';
+import { buildCustomerExport } from './pipeline/export.js';
 import { createJobStore } from './jobs.js';
 import { loadConfig } from './pipeline/dict.js';
 import { publicParserStatus } from './pipeline/search.js';
@@ -501,10 +504,10 @@ async function apiQuality(req, res) {
 }
 
 /**
- * Выгрузка v2 по переданным товарам: POST { products } → { filters, products }.
- * Считает buildV2 на сервере по той же причине, что и фильтры: значение фасета
- * у товара и в списке каталога должна давать одна функция, а не её копия в
- * браузере.
+ * Выгрузка v2: POST { products, category } → { products, filters, held }.
+ * Раздел со справочником идёт через тот же слой атрибутов, что /api/export.
+ * Без справочника остаётся старый buildV2 — иначе универсальные 16 полей
+ * не из чего нормализовать.
  */
 async function apiExportV2(req, res) {
   const raw = await readBody(req, BULK_BODY_LIMIT);
@@ -518,9 +521,50 @@ async function apiExportV2(req, res) {
   const catKey = category ?? category_id
     ?? products.find(p => p.category)?.category
     ?? products.find(p => p.category_id)?.category_id;
-  const dict = schemaFor(catKey)?.dict;
-  const out = buildV2(products, dict ? { dict } : {});
+  const schema = schemaForProduct(products[0], catKey);
+  if (schema?.dict) {
+    let config;
+    try { config = loadConfig(ROOT); }
+    catch { return json(res, 500, { error: 'не прочитался config.json' }); }
+    const out = buildCustomerExport(products, { dict: schema.dict, config, root: ROOT });
+    if (!out.products.length) {
+      return json(res, 400, { error: 'нет товаров с полными характеристиками', held: out.held });
+    }
+    return json(res, 200, out);
+  }
+  const out = buildV2(products, {});
   if (!out.products.length) return json(res, 400, { error: 'Нет обогащённых товаров — в v2 нечего выгружать' });
+  json(res, 200, out);
+}
+
+/**
+ * Выгрузка заказчика: POST { products, category } → { products, filters, held }.
+ * Семь полей, бакеты, annotation_html. Та же сборка, что пишет CLI в out/.
+ */
+async function apiExport(req, res) {
+  const raw = await readBody(req, BULK_BODY_LIMIT);
+  let body;
+  try { body = JSON.parse(raw); } catch { return json(res, 400, { error: 'Тело запроса не JSON' }); }
+
+  const { products, category, category_id } = body || {};
+  if (!Array.isArray(products) || !products.length) {
+    return json(res, 400, { error: 'Не передан список товаров' });
+  }
+  const catKey = category ?? category_id
+    ?? products.find(p => p.category)?.category
+    ?? products.find(p => p.category_id)?.category_id;
+  const schema = schemaForProduct(products[0], catKey);
+  const dict = schema?.dict;
+  if (!dict) {
+    return json(res, 400, { error: 'нет справочника категории — выгрузка заказчика только для разделов со справочником' });
+  }
+  let config;
+  try { config = loadConfig(ROOT); }
+  catch { return json(res, 500, { error: 'не прочитался config.json' }); }
+  const out = buildCustomerExport(products, { dict, config, root: ROOT });
+  if (!out.products.length) {
+    return json(res, 400, { error: 'нет товаров с полными характеристиками', held: out.held });
+  }
   json(res, 200, out);
 }
 
@@ -907,6 +951,7 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'POST' && u.pathname === '/api/filters')    return apiFilters(req, res);
     if (req.method === 'POST' && u.pathname === '/api/quality')    return apiQuality(req, res);
     if (req.method === 'POST' && u.pathname === '/api/export-v2')  return await apiExportV2(req, res);
+    if (req.method === 'POST' && u.pathname === '/api/export')     return await apiExport(req, res);
     if (req.method === 'GET'  && u.pathname === '/api/catalog')    return await apiCatalog(res, u.searchParams.get('category'), u.searchParams.get('limit'));
     if (req.method === 'GET'  && u.pathname === '/api/product')    return await apiProduct(res, u.searchParams.get('url'));
     if (req.method === 'POST' && u.pathname === '/api/enrich')     return await apiEnrich(req, res);

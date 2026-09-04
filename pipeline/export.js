@@ -1,10 +1,12 @@
 /** Клиентская выгрузка: products_{id}.json и filters_{id}.json, как в эталоне. */
 
 import { splitHtmlChunks } from './text.js';
-import { assignFilterValues } from './facets.js';
-import { renderCard, renderAnnotation, renderDescription, productTypeFor, annotationRows } from './generate.js';
+import { assignFilterValues, buildFilters } from './facets.js';
+import { renderCard, renderAnnotation, renderDescription, productTypeFor, annotationRows, MIN_ANNOTATION_ROWS } from './generate.js';
 import { annotationText, annotationCase } from './types.js';
 import { webInfoFrom } from './reviews.js';
+import { normalizeProduct, ingestPairs } from './normalize.js';
+import { specDest } from './schema.js';
 
 function esc(s) {
   return String(s)
@@ -122,11 +124,18 @@ export function metaKeywords(rec, dict, { root = '.' } = {}) {
     .filter(a => a.tier !== 'X' && a.code !== 'brand' && rec.attrs[a.code] != null)
     .sort((a, b) => (b.highlight ? 1 : 0) - (a.highlight ? 1 : 0) || (a.order ?? 0) - (b.order ?? 0));
 
+  // «Узкая» — глубина до 40 см, не ширина 60 см. Иначе запрос ведёт не туда.
+  const slimOk = typeof rec.attrs.depth === 'number' && rec.attrs.depth <= 40;
+  const pushSafe = (phrase) => {
+    if (/узк(?:ая|ий|ое|ие|ой)\b/i.test(phrase || '') && !slimOk) return;
+    push(phrase);
+  };
+
   for (const a of ranked) {
     if (out.length >= KEYWORDS.max) break;
     const raw = rec.attrs[a.code];
     const one = Array.isArray(raw) ? raw[0] : raw;
-    push(phraseFor(a, one, type));
+    pushSafe(phraseFor(a, one, type));
   }
 
   // У скудной карточки предметных характеристик меньше семи. Добираем теми же
@@ -190,4 +199,79 @@ export function serializeProducts(recs, dict, debugFacets, opts = {}) {
 
 export function serializeFilters(built) {
   return { filters: built.filters || [] };
+}
+
+/**
+ * Товар из UI/фида → вход normalizeProduct.
+ * В окне id часто лежит в sku (строка «11391»), в эталоне — число.
+ */
+export function toPipelineProduct(p) {
+  const rawId = p?.id ?? p?.sku;
+  const id = rawId != null && /^\d+$/.test(String(rawId)) ? Number(rawId) : rawId;
+  return {
+    id,
+    name: p?.name,
+    description: p?.description ?? '',
+    annotation: p?.annotation ?? '',
+    web_info: p?.web_info
+      ?? p?.review
+      ?? p?.external?.web_info
+      ?? p?.external?.review
+      ?? '',
+  };
+}
+
+/**
+ * Добирает пустые attrs из enriched.specs. Аннотация магазина уже в rec —
+ * setAttr не перезаписывает. Ключи specs те же, что у ИИ (высота_мм и т.д.).
+ */
+export function applyEnrichedSpecs(rec, specs, dict, config) {
+  if (!specs || typeof specs !== 'object') return;
+  const pairs = [];
+  for (const attr of dict.attrs) {
+    if (attr.tier === 'X') continue;
+    const dest = specDest(attr);
+    const key = typeof dest === 'object' ? dest.key : dest;
+    const mul = typeof dest === 'object' ? dest.mul : 1;
+    let val = specs[key];
+    if (val == null || val === '') continue;
+    if (typeof val === 'number' && mul !== 1) val = val / mul;
+    pairs.push({
+      key: attr.name,
+      value: Array.isArray(val) ? val.join(', ') : String(val),
+      source: 'S3',
+    });
+  }
+  if (pairs.length) ingestPairs(rec, pairs, dict, config);
+}
+
+/**
+ * Семь полей заказчика + фасеты. Неполные карточки (< 8 строк) — в held,
+ * не в products: пустой annotation_html у клиента считается дефектом.
+ */
+export function buildCustomerExport(products, { dict, config, root = '.' } = {}) {
+  if (!dict) throw new Error('нет справочника категории');
+  if (!config) throw new Error('нет config');
+  const recs = (products || []).map((p) => {
+    const src = toPipelineProduct(p);
+    const rec = normalizeProduct(src, dict, config);
+    rec.web_info = src.web_info;
+    rec.name = p.name;
+    applyEnrichedSpecs(rec, p.enriched?.specs, dict, config);
+    return rec;
+  });
+  const held = recs.filter(r => annotationRows(r, dict).length < MIN_ANNOTATION_ROWS);
+  const heldIds = new Set(held.map(r => r.id));
+  const exported = recs.filter(r => !heldIds.has(r.id));
+  const built = buildFilters(exported, dict, config);
+  return {
+    products: serializeProducts(exported, dict, built.debug, { root }),
+    filters: built.filters,
+    held: held.map(r => ({
+      id: r.id,
+      name: r.name,
+      rows: annotationRows(r, dict).length,
+      reason: `характеристик ${annotationRows(r, dict).length} < ${MIN_ANNOTATION_ROWS}`,
+    })),
+  };
 }

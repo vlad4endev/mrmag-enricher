@@ -33,8 +33,6 @@ import { renderCard, annotationRows, MIN_ANNOTATION_ROWS } from './pipeline/gene
 import { serializeProducts, serializeFilters } from './pipeline/export.js';
 import { validateProducts } from './pipeline/validate.js';
 import { webInfoFrom } from './pipeline/reviews.js';
-import { buildV2 } from './export_v2.js';
-import { dictToV2Rows } from './pipeline/v2.js';
 import { enrichMissing } from './pipeline/external.js';
 import { resolveSearchSettings } from './pipeline/search.js';
 
@@ -204,9 +202,8 @@ function writeOutputs({ recs, dict, config, catId, cov, covAfter, formats, unmap
     console.log(`validate ${catId}: ${verdict.errors.length} нарушений`);
   }
 
-  const v2 = buildV2(dictToV2Rows(recs, dict), { dict });
-  writeJson(path.join(OUT, `products_v2_${catId}.json`), v2.products, 2);
-  writeJson(path.join(OUT, `filters_v2_${catId}.json`), { filters: v2.filters }, 2);
+  writeJson(path.join(OUT, `products_v2_${catId}.json`), products, 4);
+  writeJson(path.join(OUT, `filters_v2_${catId}.json`), serializeFilters(built), 4);
   const cat = loadCategories(ROOT).find(c => Number(c.id) === Number(catId));
   writeJson(path.join(OUT, 'categories_v2.json'), {
     categories: [{ id: Number(catId), name: cat?.name || String(catId) }],
@@ -234,7 +231,7 @@ function writeOutputs({ recs, dict, config, catId, cov, covAfter, formats, unmap
   writeJson(path.join(OUT, `provenance_${catId}.json`), provenance);
 
   if (customer) writeCustomerDeliverables({ recs, dict, catId, cov: after });
-  console.log(`v2: categories_v2.json, products_v2_${catId}.json, filters_v2_${catId}.json`);
+  console.log(`выгрузка: products_${catId}.json и products_v2_${catId}.json — семь полей заказчика`);
   return built;
 }
 

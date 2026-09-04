@@ -781,6 +781,15 @@ const v2Product = (id, name) => ({
   id, name, meta_keywords: '', description_html: `<p>${name}</p>`, filters: { Цвет: 'белый' },
 });
 const v2Ok = (products, filters = [{ name: 'Цвет', value: ['белый'] }]) => reply({ filters, products });
+const customerProduct = (id, name) => ({
+  id, name, meta_keywords: 'а, б, в, г, д, е, ж',
+  description_html: `<p>${name}</p>`,
+  annotation_html: '<ul><li>Тип: стиральная машина</li></ul>',
+  filters: { Цвет: ['белый'] },
+  web_info: '',
+});
+const customerOk = (products, filters = [{ name: 'Цвет', value: ['белый'] }]) =>
+  reply({ filters, products, held: [] });
 
 const catchFiles = async fn => {
   const files = [];
@@ -809,7 +818,7 @@ t('после прогона видны JSON, TXT, JSON v2 и 2 файла', () 
   assert.strictEqual(G('dlCatBtn').style.display, 'inline-block');
 });
 
-await tAsync('одна категория выгружается парой products_v2/filters_v2', async () => {
+await tAsync('одна категория выгружается парой products/filters заказчика', async () => {
   st.categories = [{ slug: 'kholodilniki', name: 'Холодильники', id: 523, url: 'u1' }];
   setWindow([{ sku: '1', name: 'A', category: 'Холодильники' }, { sku: '2', name: 'B', category: 'Холодильники' }],
     [{ enriched: { specs: { цвет: 'белый' }, warnings: [] }, iT: 10, oT: 5, cost: 0.001 }, null]);
@@ -818,17 +827,19 @@ await tAsync('одна категория выгружается парой prod
   const realFetch = globalThis.fetch;
   globalThis.fetch = (url, opts) => {
     sent = { url, body: JSON.parse(opts.body) };
-    return v2Ok([v2Product(1, 'A')]);
+    return customerOk([customerProduct(1, 'A')]);
   };
   let files;
   try { files = await catchFiles(() => api.downloadCategoryFiles()); }
   finally { globalThis.fetch = realFetch; }
 
-  assert.strictEqual(sent.url, '/api/export-v2');
+  assert.strictEqual(sent.url, '/api/export');
   assert.strictEqual(sent.body.products.length, 1, 'необработанные в витрину не идут');
-  assert.deepStrictEqual(files.map(f => f.name), ['products_v2_523.json', 'filters_v2_523.json']);
+  assert.deepStrictEqual(files.map(f => f.name), ['products_523.json', 'filters_523.json']);
   const products = JSON.parse(files[0].body);
   assert.strictEqual(products[0].description_html, '<p>A</p>');
+  assert.ok(products[0].annotation_html);
+  assert.ok('web_info' in products[0]);
   assert.ok(!('enriched' in products[0]), 'сырой дамп прогона в витрину не идёт');
 });
 
@@ -863,15 +874,15 @@ await tAsync('товары из нескольких разделов идут �
   const realFetch = globalThis.fetch;
   globalThis.fetch = (url, opts) => {
     asked.push({ url, body: JSON.parse(opts.body) });
-    return v2Ok([v2Product(1, 'Холодильник'), v2Product(2, 'Кастрюля')]);
+    return customerOk([customerProduct(1, 'Холодильник'), customerProduct(2, 'Кастрюля')]);
   };
   let files;
   try { files = await catchFiles(() => api.downloadCategoryFiles()); }
   finally { globalThis.fetch = realFetch; }
 
-  assert.deepStrictEqual(files.map(f => f.name), ['products_v2_all.json', 'filters_v2_all.json'],
+  assert.deepStrictEqual(files.map(f => f.name), ['products_all.json', 'filters_all.json'],
     'прогон — одна пара файлов; на нескольких разделах id в имени соврал бы, поэтому all');
-  assert.strictEqual(asked[0].url, '/api/export-v2');
+  assert.strictEqual(asked[0].url, '/api/export');
   assert.strictEqual(asked[0].body.products.length, 2, 'в один файл идут товары всех разделов');
 });
 
@@ -897,7 +908,7 @@ await tAsync('окно сузилось после прогона — в фай�
   let sent = null;
   globalThis.fetch = (url, opts) => {
     sent = JSON.parse(opts.body);
-    return v2Ok(sent.products.map(p => v2Product(Number(p.sku), p.name)));
+    return customerOk(sent.products.map(p => customerProduct(Number(p.sku), p.name)));
   };
   let files;
   try { files = await catchFiles(() => api.downloadCategoryFiles()); }
@@ -937,13 +948,13 @@ await tAsync('магазинные filters_*.json в витрину v2 не по
   const realFetch = globalThis.fetch;
   globalThis.fetch = (url, opts) => {
     sent = { url, body: JSON.parse(opts.body) };
-    return v2Ok([v2Product(1, 'A')], [{ name: 'Цвет', value: ['белый'] }]);
+    return customerOk([customerProduct(1, 'A')], [{ name: 'Цвет', value: ['белый'] }]);
   };
   let files;
   try { files = await catchFiles(() => api.downloadCategoryFiles()); }
   finally { globalThis.fetch = realFetch; }
-  assert.strictEqual(sent.url, '/api/export-v2');
-  assert.deepStrictEqual(files.map(f => f.name), ['products_v2_523.json', 'filters_v2_523.json']);
+  assert.strictEqual(sent.url, '/api/export');
+  assert.deepStrictEqual(files.map(f => f.name), ['products_523.json', 'filters_523.json']);
   assert.notDeepStrictEqual(JSON.parse(files[1].body), FILTERS_FMT,
     'файл витрины заказчика — фасеты из прогона, не загруженный filters_*.json');
 });
@@ -965,22 +976,22 @@ await tAsync('три файла: категории, фасеты диапазо
   const realFetch = globalThis.fetch;
   globalThis.fetch = (url, opts) => {
     sent = { url, body: JSON.parse(opts.body) };
-    return reply({
-      filters: [{ name: 'Цвет', value: ['белый', 'чёрный'] }],
-      products: [{ id: 1, name: 'Холодильник A', meta_keywords: '', description_html: '<p>a</p>', filters: { Цвет: 'белый' } }],
-    });
+    return customerOk([customerProduct(1, 'Холодильник A')], [{ name: 'Цвет', value: ['белый', 'чёрный'] }]);
   };
   let files;
   try { files = await catchFiles(() => api.downloadV2()); }
   finally { globalThis.fetch = realFetch; }
 
-  assert.strictEqual(sent.url, '/api/export-v2');
-  assert.strictEqual(sent.body.products.length, 2, 'необработанные товары в v2 не идут — им нечем быть');
+  assert.strictEqual(sent.url, '/api/export');
+  assert.strictEqual(sent.body.products.length, 2, 'необработанные товары в выгрузку не идут — им нечем быть');
   assert.deepStrictEqual(files.map(f => f.name),
-    ['categories_v2.json', 'filters_v2_523.json', 'products_v2_523.json']);
+    ['categories_v2.json', 'filters_523.json', 'products_523.json']);
   assert.deepStrictEqual(JSON.parse(files[0].body), { categories: [{ id: 523, name: 'Холодильники' }] });
   assert.deepStrictEqual(JSON.parse(files[1].body).filters[0].name, 'Цвет');
-  assert.strictEqual(JSON.parse(files[2].body)[0].description_html, '<p>a</p>');
+  const row = JSON.parse(files[2].body)[0];
+  assert.ok(row.annotation_html);
+  assert.ok('web_info' in row);
+  assert.strictEqual(row.description_html, '<p>Холодильник A</p>');
 });
 
 await tAsync('без прогона выгрузка v2 не зовёт сервер', async () => {

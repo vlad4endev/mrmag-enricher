@@ -298,7 +298,7 @@ export function renderDescription(rec, dict, { root = '.' } = {}) {
   const func = attrsByRole(rec, dict, 'func').filter(a => !used.has(a.code));
   const keyFunc = func.find(a => a.highlight && typeof rec.attrs[a.code] === 'number')
     || func.find(a => a.highlight);
-  for (const a of func.slice(0, 6)) {
+  for (const a of func.slice(0, 4)) {
     used.add(a.code);
     const emp = a === keyFunc && strongs < DESC.maxStrong;
     if (emp) strongs += 1;
@@ -328,11 +328,14 @@ export function renderDescription(rec, dict, { root = '.' } = {}) {
   const pads = [...PADS];
 
   let html = assemble(p1, p2, p3, bullets, p4);
+  let p3Extra = 0;
   while (textLen(html) < DESC.minChars) {
-    if (leftover.length) {
+    // В третий абзац — не больше двух доборов: иначе это выгрузка, не текст.
+    if (leftover.length && p3Extra < 2) {
       const a = leftover.shift();
       used.add(a.code);
       p3.splice(-1, 0, sentenceOf(a, rec.attrs[a.code]));
+      p3Extra += 1;
     } else if (pads.length) {
       p4.push(pads.shift());
     } else {
@@ -363,18 +366,27 @@ export function renderCard(rec, dict, opts = {}) {
   return { annotation, description, highlights, rows: annotationRows(rec, dict).length };
 }
 
+function attrOwnsNumber(attr, value, n, unit) {
+  if (typeof value !== 'number') return false;
+  if (value === n) return true;
+  const au = String(attr.unit || '').toLowerCase();
+  const u = String(unit || '').toLowerCase();
+  if (au === 'см' && u === 'мм' && Math.abs(value * 10 - n) < 0.05) return true;
+  if (au === 'мм' && u === 'см' && Math.abs(value / 10 - n) < 0.05) return true;
+  if (au === 'см' && u === 'см' && Math.round(value) === n) return true;
+  return false;
+}
+
 export function verifyDescription(html, rec, dict) {
   const errors = [];
   const text = String(html || '');
-  const re = /(\d+(?:[.,]\d+)?)\s*(мм|см|м|кг|л|дБ|дб|об\/мин)/gi;
+  const re = /(\d+(?:[.,]\d+)?)\s*(мм|см|кг|л|дБ|дб|об\/мин|лет|мес(?:яц(?:ев|а)?)?|кВт\*ч\/кг|кВт|Вт)(?![а-яёa-z])/gi;
   let m;
   while ((m = re.exec(text))) {
     const n = parseFloat(m[1].replace(',', '.'));
-    const unit = m[2].toLowerCase() === 'дб' ? 'дБ' : m[2];
-    const hit = dict.attrs.find(a => rec.attrs[a.code] === n || rec.attrs[a.code] === n / 10 || rec.attrs[a.code] === n * 10);
-    if (hit && hit.unit && hit.unit.toLowerCase() !== String(unit).toLowerCase() && !(hit.unit === 'дБ' && /дб/i.test(unit))) {
-      errors.push({ kind: 'unit_mismatch', number: n, unit, attr: hit.code, attr_unit: hit.unit });
-    }
+    const unit = m[2];
+    const hit = dict.attrs.find(a => attrOwnsNumber(a, rec.attrs[a.code], n, unit));
+    if (!hit) errors.push({ kind: 'number_not_in_attrs', number: n, unit });
   }
   return errors;
 }

@@ -937,8 +937,8 @@ input[type=range]::-moz-range-thumb{
         <span class="bdg bdg-b" id="cpyBtn" style="display:none;cursor:pointer" onclick="copyJSON()" title="Скопировать JSON товара"><i class="ti ti-copy" aria-hidden="true"></i> Копировать</span>
         <span class="bdg bdg-b" id="dlBtn" style="display:none;cursor:pointer" onclick="downloadAll('json')" title="Выгрузить все результаты в JSON"><i class="ti ti-download" aria-hidden="true"></i> JSON</span>
         <span class="bdg bdg-g" id="dlTxtBtn" style="display:none;cursor:pointer" onclick="downloadAll('txt')" title="Выгрузить все результаты в TXT"><i class="ti ti-file-text" aria-hidden="true"></i> TXT</span>
-        <span class="bdg bdg-b" id="dlV2Btn" style="display:none;cursor:pointer" onclick="downloadV2()" title="Выгрузка v2: категории, фасеты и товары с description_html"><i class="ti ti-braces" aria-hidden="true"></i> JSON v2</span>
-        <span class="bdg bdg-b" id="dlCatBtn" style="display:none;cursor:pointer" onclick="downloadCategoryFiles()" title="Два файла витрины: products_v2_(id).json и filters_v2_(id).json"><i class="ti ti-files" aria-hidden="true"></i> 2 файла</span>
+        <span class="bdg bdg-b" id="dlV2Btn" style="display:none;cursor:pointer" onclick="downloadV2()" title="Выгрузка заказчика плюс categories: products_(id).json, filters_(id).json"><i class="ti ti-braces" aria-hidden="true"></i> JSON v2</span>
+        <span class="bdg bdg-b" id="dlCatBtn" style="display:none;cursor:pointer" onclick="downloadCategoryFiles()" title="Два файла заказчика: products_(id).json и filters_(id).json"><i class="ti ti-files" aria-hidden="true"></i> 2 файла</span>
         <span class="bdg bdg-a" id="clrBtn" style="display:none;cursor:pointer" onclick="clearResults()" title="Удалить сохранённый прогон">✕ Сброс</span>
       </div>
     </div>
@@ -2931,13 +2931,12 @@ function saveFile(content,filename,type='application/json'){
 
 // ── ВЫГРУЗКА ВИТРИНЫ ─────────────────────────────────────────
 /**
- * «2 файла» и «JSON v2» — один контракт: products_v2 + filters_v2 из
- * /api/export-v2 (description_html, фасеты строками/диапазонами). Раньше
- * «2 файла» писала сырой дамп {…товар, enriched} — это внутренний слепок
- * прогона, его по-прежнему отдаёт кнопка JSON.
+ * Две выгрузки после прогона. Обе собирают карточку и фильтры из
+ * нормализованных атрибутов (/api/export): семь полей, annotation_html,
+ * бакеты. «JSON v2» дополнительно кладёт categories_v2.json.
  *
- * Без enriched у товара нет ни HTML карточки, ни характеристик: в витрину
- * ему нечем быть. Необработанные позиции пропускаются.
+ * Без прогона кнопки скрыты: необработанные позиции пропускаются,
+ * чтобы в файл не уехали пустые карточки из окна.
  */
 function catOf(p){
   const name=p?.category||'';
@@ -2990,7 +2989,7 @@ function groupItems(onlyEnriched=false){
 
 /**
  * Один набор файлов на весь прогон, а не по паре на раздел. Пока раздел
- * один, имена несут его id: products_v2_523.json. Разделов несколько —
+ * один, имена несут его id: products_523.json. Разделов несколько —
  * товары склеиваются, ключ имени становится all: писать в один файл id
  * одного из них значило бы соврать про остальные.
  */
@@ -3001,25 +3000,29 @@ function mergeGroups(groups){
     rows:all.flatMap(g=>g.rows)}];
 }
 
-/** Собрать витрину на сервере. null — обогащённых товаров нет, fetch не нужен. */
-async function loadV2Export(){
+/** Собрать выгрузку на сервере. null — обогащённых товаров нет, fetch не нужен. */
+async function loadExport(path){
   const groups=groupItems(true);
   if(!groups.size) return null;
   const [key,g]=mergeGroups(groups);
-  const d=await serverV2(g.rows, g.cat);
+  const d=await apiJson(path,{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({products:g.rows, category: g.cat?.id ?? g.cat?.name ?? g.cat?.slug})});
   return {key,g,d,groups};
 }
+
+async function loadV2Export(){ return loadExport('/api/export'); }
+async function loadCustomerExport(){ return loadExport('/api/export'); }
 
 async function downloadCategoryFiles(){
   const b=document.getElementById('dlCatBtn'), was=b.innerHTML;
   b.innerHTML='<span class="spin"></span> готовим';
   try{
-    const payload=await loadV2Export();
+    const payload=await loadCustomerExport();
     if(!payload){ setSt('er','Нет обработанных товаров'); return; }
     const {key,d}=payload;
     const files=[
-      [`products_v2_${key}.json`,d.products],
-      [`filters_v2_${key}.json`,{filters:d.filters}],
+      [`products_${key}.json`,d.products],
+      [`filters_${key}.json`,{filters:d.filters}],
     ];
     files.forEach(([name,data])=>saveFile(JSON.stringify(data,null,2),name));
     setSt('ok',`Файлов: ${files.length} · товаров: ${d.products.length}`);
@@ -3031,38 +3034,32 @@ async function downloadCategoryFiles(){
 }
 
 /**
- * JSON v2 — та же витрина плюс categories_v2.json. Диапазоны фасетов считает
- * сервер той же buildV2, что и значения у товаров: копия в браузере разошлась
- * бы в округлении, и товар не попал бы в свой же фильтр.
+ * JSON v2 — та же клиентская выгрузка плюс categories_v2.json.
+ * Карточка и фильтры считаются из атрибутов, не из текста модели.
  */
 async function downloadV2(){
   const b=document.getElementById('dlV2Btn'), was=b.innerHTML;
   b.innerHTML='<span class="spin"></span> готовим';
   try{
-    const payload=await loadV2Export();
+    const payload=await loadCustomerExport();
     if(!payload){ setSt('er','Нет обработанных товаров'); return; }
     const {key,d,groups}=payload;
     const files=[
       ['categories_v2.json',{categories:[...groups.values()]
         .map(g=>({id:g.cat.id??g.cat.slug,name:g.cat.name}))}],
-      [`filters_v2_${key}.json`,{filters:d.filters}],
-      [`products_v2_${key}.json`,d.products],
+      [`filters_${key}.json`,{filters:d.filters}],
+      [`products_${key}.json`,d.products],
     ];
     files.forEach(([name,data])=>saveFile(JSON.stringify(data,null,2),name));
     setSt('ok',`Файлов: ${files.length} · товаров: ${d.products.length}`);
   }catch(e){
-    setSt('er',`Выгрузка v2: ${e.message}`);
+    setSt('er',`Выгрузка: ${e.message}`);
   }finally{
     b.innerHTML=was;
   }
 }
 
-async function serverV2(products, cat){
-  return await apiJson('/api/export-v2',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({products, category: cat?.id ?? cat?.name ?? cat?.slug})});
-}
-
-/** Загруженные filters_*.json — для справки на экране, в витрину v2 не идут. */
+/** Загруженные filters_*.json — для справки на экране, в витрину не идут. */
 function filtersForExport(key, cat){
   if(!srcFilters.size) return null;
   const id=cat?.id!=null?String(cat.id):'';

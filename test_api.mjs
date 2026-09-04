@@ -335,27 +335,20 @@ try {
     assert.strictEqual(d.products[0].id, 1);
     assert.ok(d.filters.find(f => f.name === 'Цвет').value.includes(d.products[0].filters['Цвет']));
   });
-  await t('категория 523 не кладёт хладагент и вес в filters_v2', async () => {
-    const r = await postV2({
-      category: 523,
-      products: [{
-        sku: '260',
-        name: 'Pozis',
-        category: 'Холодильники',
-        enriched: {
-          specs: { цвет: 'белый', хладагент: 'R600a', вес_кг: 74 },
-          short_description: 'Коротко',
-          seo_keywords: [],
-        },
-      }],
-    });
+  await t('категория 523 — семь полей, хладагент и вес не в filters', async () => {
+    const src = JSON.parse(fs.readFileSync(path.join(ROOT, 'data_523.json'), 'utf8'))
+      .find(p => p.id === 260);
+    assert.ok(src, 'в data_523.json нет 260');
+    const r = await postV2({ category: 523, products: [src] });
     assert.strictEqual(r.status, 200);
     const d = await r.json();
-    assert.ok(d.products[0].filters['Цвет']);
+    assert.deepStrictEqual(Object.keys(d.products[0]), [
+      'id', 'name', 'meta_keywords', 'description_html', 'annotation_html', 'filters', 'web_info',
+    ]);
     assert.ok(!('Хладагент' in d.products[0].filters));
     assert.ok(!('Вес, кг' in d.products[0].filters));
-    assert.match(d.products[0].description_html, /Хладагент: R600a/);
-    assert.match(d.products[0].description_html, /Вес: 74 кг/);
+    assert.ok(d.products[0].annotation_html);
+    assert.ok(!d.products[0].description_html.includes('<h1'));
     assert.ok(!d.filters.some(f => /Хладагент|Вес/.test(f.name)));
   });
   await t('прогон целиком — тело больше мегабайта не отбивается', async () => {
@@ -370,6 +363,46 @@ try {
     const r = await postV2({ products });
     assert.strictEqual(r.status, 200);
     assert.strictEqual((await r.json()).products.length, 259);
+  });
+
+  console.log('\nВыгрузка заказчика');
+  const postExport = body => fetch(url('/api/export'), {
+    method: 'POST',
+    headers: { authorization: auth, 'Content-Type': 'application/json' },
+    body: typeof body === 'string' ? body : JSON.stringify(body),
+  });
+  await t('без пароля не считает', async () => {
+    assert.strictEqual((await fetch(url('/api/export'), { method: 'POST', body: '{}' })).status, 401);
+  });
+  await t('битое тело и пустой список — 400', async () => {
+    assert.strictEqual((await postExport('{не json')).status, 400);
+    assert.strictEqual((await postExport({ products: [] })).status, 400);
+  });
+  await t('товар без характеристик — 400 и held', async () => {
+    const r = await postExport({
+      category: 467,
+      products: [{ sku: '1', name: 'Стиральная машина X', annotation: '', description: '' }],
+    });
+    assert.strictEqual(r.status, 400);
+    const d = await r.json();
+    assert.ok(Array.isArray(d.held) && d.held.length === 1);
+  });
+  await t('ATLANT 11391 — семь полей и бакеты', async () => {
+    const src = JSON.parse(fs.readFileSync(path.join(ROOT, 'data_467.json'), 'utf8'))
+      .find(p => p.id === 11391);
+    assert.ok(src, 'в data_467.json нет 11391');
+    const r = await postExport({ category: 467, products: [{ ...src, sku: String(src.id) }] });
+    assert.strictEqual(r.status, 200);
+    const d = await r.json();
+    assert.strictEqual(d.products.length, 1);
+    assert.deepStrictEqual(Object.keys(d.products[0]), [
+      'id', 'name', 'meta_keywords', 'description_html', 'annotation_html', 'filters', 'web_info',
+    ]);
+    assert.strictEqual(d.products[0].id, 11391);
+    assert.strictEqual(d.products[0].name, src.name);
+    assert.match(d.products[0].annotation_html, /ATLANT/);
+    assert.ok(Array.isArray(d.products[0].filters['Высота, см']));
+    assert.ok(!d.products[0].description_html.includes('<h1'));
   });
 
   console.log('\nВалидация обогащения');

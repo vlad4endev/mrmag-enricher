@@ -4,7 +4,7 @@
  */
 
 import { facetKind } from './facets.js';
-import { DESC, MIN_ANNOTATION_ROWS } from './generate.js';
+import { DESC, MIN_ANNOTATION_ROWS, verifyDescription } from './generate.js';
 import { WEB_INFO } from './reviews.js';
 import { KEYWORDS } from './export.js';
 
@@ -148,6 +148,17 @@ export function validateProducts(rows, dict, sourceById = new Map()) {
     }
     if (/гарант|экономи[яи]|продав|магазин/i.test(r.description_html)) {
       add(r.id, 'description.forbidden', 'гарантия/экономия/магазин');
+    }
+    if (src?.attrs) {
+      for (const e of verifyDescription(r.description_html, src, dict)) {
+        add(r.id, `description.${e.kind}`, e.detail || `${e.number} ${e.unit || ''}`.trim());
+      }
+    }
+    if (/узк(?:ая|ий|ое|ие|ой)\b/i.test(r.meta_keywords || '')) {
+      const depth = src?.attrs?.depth;
+      if (!(typeof depth === 'number' && depth <= 40)) {
+        add(r.id, 'meta_keywords_narrow', r.meta_keywords);
+      }
     }
 
     if (!r.filters || typeof r.filters !== 'object' || Array.isArray(r.filters)) {

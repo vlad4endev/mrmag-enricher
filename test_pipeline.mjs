@@ -1,10 +1,9 @@
 import { loadConfig, loadDictionary, loadProducts, attrsWithCoverage, loadCategories } from './pipeline/dict.js';
 import { normalizeProduct, formatCounts } from './pipeline/normalize.js';
 import { bucketLabel, buildFilters } from './pipeline/facets.js';
-import { renderCard } from './pipeline/generate.js';
-import { compactAnnotation, compactHtml, serializeProduct, metaKeywords } from './pipeline/export.js';
+import { renderCard, annotationRows, MIN_ANNOTATION_ROWS, verifyDescription } from './pipeline/generate.js';
+import { compactAnnotation, compactHtml, serializeProduct, metaKeywords, buildCustomerExport } from './pipeline/export.js';
 import { validateProducts, validateDescription, expectedFilters, PRODUCT_FIELDS } from './pipeline/validate.js';
-import { annotationRows, MIN_ANNOTATION_ROWS } from './pipeline/generate.js';
 import { webInfoFrom, cleanReviewText, isReview } from './pipeline/reviews.js';
 import { buildV2 } from './export_v2.js';
 import { dictToV2Rows, v2FacetSpecKeys } from './pipeline/v2.js';
@@ -891,12 +890,13 @@ console.log('golden tests passed');
   const ids = [11391, 29921, 44772, 12957, 44773, 44782, 52904, 128925, 182681, 190925];
   const recs = ids.map(id => all.find(x => x.id === id)).filter(Boolean);
   const rows = recs.map(r => serializeProduct(r, d467, built.debug));
-  const src = new Map(ids.map(id => [id, p467[id]]).filter(([, p]) => p));
+  const src = new Map(recs.map(r => [r.id, r]));
   const { errors } = validateProducts(rows, d467, src);
   const blocking = errors.filter(e => e.kind !== 'filter_missing');
   assert.equal(blocking.length, 0, JSON.stringify(blocking.slice(0, 8), null, 2));
 
   const a = rows.find(r => r.id === 11391);
+  assert.deepEqual(Object.keys(a), PRODUCT_FIELDS);
   assert.match(a.annotation_html, /Максимальная загрузка белья: 6 кг/);
   assert.match(a.annotation_html, /Максимальная скорость отжима: 1000 об\/мин/);
   assert.match(a.annotation_html, /Класс энергоэффективности: A\+\+/);
@@ -906,7 +906,15 @@ console.log('golden tests passed');
   assert.deepEqual(a.filters['Скорость отжима, об/мин'], ['1000-1200']);
   assert.deepEqual(a.filters['Уровень шума, дБ'], ['55-60']);
   assert.deepEqual(a.filters['Ширина, см'], ['55-60']);
+  assert.deepEqual(a.filters['Глубина, см'], ['55-60']);
+  assert.deepEqual(a.filters['Высота, см'], ['80-85']);
+  assert.ok(Object.keys(a.filters).length >= 8, Object.keys(a.filters).join(','));
   assert.ok(!/экономи[яи]|гарант/i.test(a.description_html));
+  assert.ok(!/узк(?:ая|ий|ое|ие|ой)\b/i.test(a.meta_keywords));
+  assert.ok(!a.description_html.includes('<h1'));
+  assert.equal((a.description_html.match(/<ul\b/g) || []).length, 1);
+  const strongs = (a.description_html.match(/<strong\b/g) || []).length;
+  assert.ok(strongs >= 1 && strongs <= 3, strongs);
   assert.equal(validateDescription(a.description_html).length, 0);
 
   const c = rows.find(r => r.id === 29921);
@@ -920,5 +928,34 @@ console.log('golden tests passed');
   assert.equal(i.filters.Бренд[0], 'Indesit');
   assert.ok(i.name.includes('"Indesit"'));
   console.log('ok checklist 10×467 (11391 / 29921 / 44772)');
+}
+
+{
+  const p = { ...p467[11391], sku: String(p467[11391].id) };
+  delete p.id;
+  const out = buildCustomerExport([p], { dict: d467, config, root: '.' });
+  assert.equal(out.products.length, 1);
+  assert.equal(out.products[0].id, 11391);
+  assert.equal(out.products[0].name, p467[11391].name);
+  assert.deepEqual(Object.keys(out.products[0]), PRODUCT_FIELDS);
+  assert.match(out.products[0].annotation_html, /ATLANT/);
+  const thin = buildCustomerExport(
+    [{ sku: '1', name: 'Стиральная машина X', annotation: '', description: '' }],
+    { dict: d467, config, root: '.' },
+  );
+  assert.equal(thin.products.length, 0);
+  assert.equal(thin.held.length, 1);
+  assert.equal(thin.held[0].id, 1);
+  console.log('ok buildCustomerExport sku→id / hold');
+}
+
+{
+  const r = normalizeProduct(p467[11391], d467, config);
+  const fake = '<p>Гарантия на двигатель составляет 5 лет, общая гарантия — 5 месяцев.</p>';
+  const bad = verifyDescription(fake, r, d467);
+  assert.ok(bad.some(e => e.kind === 'number_not_in_attrs' && e.number === 5), JSON.stringify(bad));
+  const kw = metaKeywords(r, d467);
+  assert.ok(!/узк(?:ая|ий|ое|ие|ой)\b/i.test(kw), kw);
+  console.log('ok verifyDescription / no false «узкая»');
 }
 

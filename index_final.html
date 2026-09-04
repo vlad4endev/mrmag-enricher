@@ -6,56 +6,64 @@
 <title>Enricher — обогащение каталога</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,500;0,600;0,700;1,500&family=IBM+Plex+Mono:wght@400;500;600&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Sora:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.19.0/dist/tabler-icons.min.css">
 <style>
 /* ═══════════════════════════════════════════════════════════════════
-   Enricher — тёплая витрина: камень, золото, антикварный серif.
+   Enricher — холодный инструмент: slate, teal, геометрический Sora.
    Светлая по умолчанию, тёмная по переключателю (localStorage).
    Сигнальный цвет один; зелёный / янтарь / красный — только статусы.
    ═══════════════════════════════════════════════════════════════════ */
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 
 :root{
-  /* Тёплый камень и золото: витрина, а не «ещё одна панель». */
-  --bg:#efe8dc;  --bg2:#fbf7f1; --bg3:#f4eee4; --bg4:#ece4d6;
-  --b1:#e4d9c8;  --b2:#d4c4aa;
-  --t1:#1a1612;  --t2:#5c5348; --t3:#8a7d6e;
-  --ac:#8b5e2a;  --ac-w:#f4ead8; --ac-b:#dfc7a0;
-  --green:#14764c; --gbg:#e2f2e9; --gbd:#b3dbc6;
-  --amber:#8b5506; --abg:#fbf0d9; --abd:#eed5a3;
-  --red:#ac2e27;   --rbg:#fbe8e6; --rbd:#efc3be;
-  --blue-bg:#f4ead8;
-  --sh1:0 1px 2px rgba(26,22,18,.05);
-  --sh2:0 2px 8px rgba(26,22,18,.07), 0 1px 2px rgba(26,22,18,.04);
-  --sh3:0 14px 36px rgba(26,22,18,.12);
-  --focus:0 0 0 3px rgba(139,94,42,.22);
-  --serif:"Cormorant Garamond",Georgia,"Iowan Old Style","Times New Roman",serif;
+  /* Холодный slate + teal: консоль данных, не «антикварная витрина». */
+  --bg:#e6eaef;  --bg2:#ffffff; --bg3:#f1f4f8; --bg4:#e2e7ee;
+  --b1:#d0d7e2;  --b2:#b8c2d0;
+  --t1:#0b1220;  --t2:#4a5568; --t3:#7b8799;
+  --ac:#0d7377;  --ac-w:#e6f7f7; --ac-b:#9ad4d6;
+  --green:#0f7a4d; --gbg:#e3f5ec; --gbd:#a8d9c0;
+  --amber:#9a6700; --abg:#fff6e0; --abd:#edd59a;
+  --red:#c0392b;   --rbg:#fdecea; --rbd:#f0b8b2;
+  --blue-bg:#e6f7f7;
+  --sh1:0 1px 2px rgba(11,18,32,.04);
+  --sh2:0 2px 10px rgba(11,18,32,.06), 0 1px 2px rgba(11,18,32,.04);
+  --sh3:0 16px 40px rgba(11,18,32,.1);
+  --focus:0 0 0 3px rgba(13,115,119,.22);
+  --display:"Sora",system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
   --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
-  --sans:"Manrope",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
-  --r:10px; --r2:8px; --r3:5px;
+  --sans:"Sora",system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+  --r:6px; --r2:4px; --r3:3px;
 }
 :root[data-theme="dark"]{
-  --bg:#0e0c0a;  --bg2:#161310; --bg3:#1e1a16; --bg4:#28231d;
-  --b1:#2e2822;  --b2:#3d352c;
-  --t1:#f3ece3;  --t2:#b7ab9c; --t3:#8a7d6e;
-  --ac:#e0c49a;  --ac-w:#241c12; --ac-b:#5a4630;
-  --green:#5cbd90; --gbg:#122a20; --gbd:#215139;
-  --amber:#ddab5e; --abg:#2c2314; --abd:#59451f;
-  --red:#e8887f;   --rbg:#2d1917; --rbd:#5b2c27;
-  --blue-bg:#241c12;
-  --sh1:0 1px 2px rgba(0,0,0,.4);
-  --sh2:0 2px 8px rgba(0,0,0,.4);
-  --sh3:0 14px 36px rgba(0,0,0,.5);
-  --focus:0 0 0 3px rgba(224,196,154,.26);
+  --bg:#0a0e14;  --bg2:#121820; --bg3:#1a222d; --bg4:#243040;
+  --b1:#2a3544;  --b2:#3d4b5c;
+  --t1:#e8eef6;  --t2:#9aa8ba; --t3:#6b7a8d;
+  --ac:#2dd4bf;  --ac-w:#12302e; --ac-b:#1a5c58;
+  --green:#34d399; --gbg:#0f2a1f; --gbd:#1a4d38;
+  --amber:#fbbf24; --abg:#2a2210; --abd:#5c4a18;
+  --red:#f87171;   --rbg:#2a1515; --rbd:#5c2828;
+  --blue-bg:#12302e;
+  --sh1:0 1px 2px rgba(0,0,0,.35);
+  --sh2:0 2px 10px rgba(0,0,0,.4);
+  --sh3:0 16px 40px rgba(0,0,0,.55);
+  --focus:0 0 0 3px rgba(45,212,191,.28);
 }
 
 /* ── БАЗА ─────────────────────────────────────────────────────── */
 html,body{height:100%}
 body{
   font-family:var(--sans);background:var(--bg);color:var(--t1);
-  font-size:13.5px;line-height:1.55;-webkit-font-smoothing:antialiased;
-  font-feature-settings:"kern" 1;letter-spacing:-.01em;
+  font-size:13px;line-height:1.5;-webkit-font-smoothing:antialiased;
+  font-feature-settings:"kern" 1,"ss01" 1;letter-spacing:-.015em;
+  background-image:
+    linear-gradient(180deg,rgba(13,115,119,.04),transparent 180px),
+    radial-gradient(ellipse 80% 50% at 100% 0%,rgba(13,115,119,.05),transparent 50%);
+}
+:root[data-theme="dark"] body{
+  background-image:
+    linear-gradient(180deg,rgba(45,212,191,.05),transparent 200px),
+    radial-gradient(ellipse 70% 40% at 100% 0%,rgba(45,212,191,.06),transparent 55%);
 }
 /* Цифры в интерфейсе постоянно пересчитываются — фиксированная ширина
    не даёт числам «прыгать» при каждом обновлении. */
@@ -75,52 +83,60 @@ button:focus-visible,input:focus-visible,textarea:focus-visible,[tabindex]:focus
 
 /* ── ШАПКА ────────────────────────────────────────────────────── */
 .nav{
-  height:62px;padding:0 22px;background:var(--bg2);
+  height:52px;padding:0 18px;background:rgba(255,255,255,.88);
   border-bottom:1px solid var(--b1);display:flex;align-items:center;
   position:sticky;top:0;z-index:300;flex-shrink:0;
+  backdrop-filter:saturate(1.2) blur(10px);-webkit-backdrop-filter:saturate(1.2) blur(10px);
 }
-.logo{display:flex;align-items:center;gap:12px;margin-right:26px;flex-shrink:0}
+:root[data-theme="dark"] .nav{background:rgba(18,24,32,.9)}
+.logo{display:flex;align-items:center;gap:10px;margin-right:22px;flex-shrink:0}
 .logo-icon{
-  width:32px;height:32px;background:transparent;color:var(--ac);border-radius:0;
+  width:28px;height:28px;background:var(--ac);color:#fff;border-radius:var(--r2);
   display:flex;align-items:center;justify-content:center;flex-shrink:0;
 }
-.logo-icon svg{width:32px;height:32px;display:block}
-.logo-name{font-family:var(--serif);font-weight:600;font-size:22px;letter-spacing:-.03em;white-space:nowrap;color:var(--t1);line-height:1}
-.logo-name small{display:block;font-family:var(--sans);font-size:9px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:var(--ac);margin-top:3px}
-.nav-tabs{display:flex;gap:3px;flex:1;min-width:0}
+.logo-icon svg{width:18px;height:18px;display:block}
+.logo-name{
+  font-family:var(--display);font-weight:700;font-size:15px;letter-spacing:-.04em;
+  white-space:nowrap;color:var(--t1);line-height:1.15;
+}
+.logo-name small{
+  display:block;font-family:var(--sans);font-size:9px;font-weight:600;
+  letter-spacing:.14em;text-transform:uppercase;color:var(--t3);margin-top:2px;
+}
+.nav-tabs{display:flex;gap:2px;flex:1;min-width:0;height:100%;align-items:stretch}
 .ntab{
-  padding:8px 14px;border-radius:var(--r2);border:none;background:transparent;
-  color:var(--t2);cursor:pointer;font-size:13px;font-family:var(--sans);
-  font-weight:600;transition:background .15s,color .15s;white-space:nowrap;
-  display:flex;align-items:center;gap:6px;
+  padding:0 14px;border-radius:0;border:none;border-bottom:2px solid transparent;
+  background:transparent;color:var(--t2);cursor:pointer;font-size:12.5px;font-family:var(--sans);
+  font-weight:600;transition:color .15s,border-color .15s,background .15s;white-space:nowrap;
+  display:flex;align-items:center;gap:6px;margin-bottom:-1px;
 }
 .ntab:hover{color:var(--t1);background:var(--bg3)}
-.ntab.on{color:var(--ac);background:var(--ac-w);font-weight:600}
-.nav-right{margin-left:auto;display:flex;align-items:center;gap:9px;flex-shrink:0}
+.ntab.on{color:var(--ac);background:transparent;border-bottom-color:var(--ac);font-weight:700}
+.nav-right{margin-left:auto;display:flex;align-items:center;gap:8px;flex-shrink:0}
 .spill{
-  display:flex;align-items:center;gap:7px;padding:5px 11px;background:var(--bg3);
-  border:1px solid var(--b1);border-radius:20px;font-size:11.5px;color:var(--t2);white-space:nowrap;
+  display:flex;align-items:center;gap:7px;padding:4px 10px;background:var(--bg3);
+  border:1px solid var(--b1);border-radius:var(--r2);font-size:11px;color:var(--t2);white-space:nowrap;
 }
-.sdot{width:7px;height:7px;border-radius:50%;background:var(--t3);flex-shrink:0;transition:background .3s}
+.sdot{width:6px;height:6px;border-radius:50%;background:var(--t3);flex-shrink:0;transition:background .3s}
 .sdot.ok{background:var(--green)}
 .sdot.ld{background:var(--amber);animation:pulse 1.1s infinite}
 .sdot.er{background:var(--red)}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.28}}
 .themebtn{
-  width:34px;height:34px;border-radius:var(--r2);border:1px solid var(--b1);
-  background:var(--bg3);color:var(--t2);cursor:pointer;font-size:14px;
+  width:32px;height:32px;border-radius:var(--r2);border:1px solid var(--b1);
+  background:var(--bg2);color:var(--t2);cursor:pointer;font-size:14px;
   display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:all .15s;
 }
 .themebtn:hover{color:var(--ac);border-color:var(--ac-b);background:var(--ac-w)}
 .outbtn{
-  height:34px;padding:0 12px;border-radius:var(--r2);border:1px solid var(--b1);
-  background:var(--bg3);color:var(--t2);cursor:pointer;font-size:12px;font-weight:650;
+  height:32px;padding:0 11px;border-radius:var(--r2);border:1px solid var(--b1);
+  background:var(--bg2);color:var(--t2);cursor:pointer;font-size:12px;font-weight:650;
   font-family:var(--sans);display:flex;align-items:center;gap:6px;flex-shrink:0;transition:all .15s;
 }
 .outbtn:hover{color:var(--ac);border-color:var(--ac-b);background:var(--ac-w)}
 
 /* ── СТРАНИЦЫ ─────────────────────────────────────────────────── */
-.page{display:none;height:calc(100vh - 62px);overflow:hidden;width:100%}
+.page{display:none;height:calc(100vh - 52px);overflow:hidden;width:100%}
 .page.on{display:flex}
 .app{display:flex;width:100%;height:100%;overflow:hidden}
 
@@ -266,12 +282,12 @@ textarea{
   border-top:1px solid var(--b1);background:var(--bg3);position:sticky;bottom:0;
 }
 .run-btn{
-  width:100%;padding:14px;background:var(--ac);border:none;border-radius:var(--r);
-  color:#fff;font-family:var(--sans);font-size:14px;font-weight:700;cursor:pointer;
-  display:flex;align-items:center;justify-content:center;gap:9px;letter-spacing:.02em;
-  transition:filter .15s,transform .1s;box-shadow:var(--sh2);
+  width:100%;padding:13px;background:var(--ac);border:none;border-radius:var(--r);
+  color:#fff;font-family:var(--sans);font-size:13.5px;font-weight:700;cursor:pointer;
+  display:flex;align-items:center;justify-content:center;gap:8px;letter-spacing:.01em;
+  transition:filter .15s,transform .1s,box-shadow .15s;box-shadow:var(--sh2);
 }
-.run-btn:hover:not(:disabled){filter:brightness(1.12)}
+.run-btn:hover:not(:disabled){filter:brightness(1.08);box-shadow:var(--sh3)}
 .run-btn:active:not(:disabled){transform:translateY(1px)}
 .run-btn:disabled{background:var(--b2);color:var(--bg2);cursor:not-allowed;box-shadow:none}
 :root[data-theme="dark"] .run-btn,
@@ -279,10 +295,11 @@ textarea{
 :root[data-theme="dark"] .cnt-btn.on,
 :root[data-theme="dark"] .fbtn.on,
 :root[data-theme="dark"] .rtab.on{
-  color:#1a1612;
+  color:#042f2e;
 }
 :root[data-theme="dark"] .run-btn:disabled{color:var(--bg2)}
-:root[data-theme="dark"] .dcat-btn.on .cat-n{color:rgba(26,22,18,.7)}
+:root[data-theme="dark"] .dcat-btn.on .cat-n{color:rgba(4,47,46,.75)}
+:root[data-theme="dark"] .logo-icon{color:#042f2e}
 .run-why{font-size:11.5px;color:var(--t3);margin-top:9px;text-align:center;line-height:1.5}
 .inline-err{
   background:var(--rbg);border:1px solid var(--rbd);border-radius:var(--r2);
@@ -376,22 +393,22 @@ textarea{
    заголовком и на узкой колонке уезжали за край: JSON v2 и TXT пропадали. */
 .pt{display:flex;flex-direction:column;gap:2px;min-width:0;flex:1}
 .pt-name{
-  font-family:var(--serif);font-size:15px;line-height:1.25;color:var(--t1);
-  font-weight:500;letter-spacing:-.02em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  font-family:var(--display);font-size:14px;line-height:1.3;color:var(--t1);
+  font-weight:650;letter-spacing:-.03em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
 }
 .ph-actions{display:flex;gap:5px;align-items:center;flex-wrap:wrap}
 .pt-meta{font-family:var(--mono);font-size:10.5px;color:var(--t3);font-variant-numeric:tabular-nums;display:flex;gap:8px;flex-wrap:wrap}
 .pt-meta b{color:var(--t2);font-weight:600}
 .pb{flex:1;overflow-y:auto;padding:18px 20px;min-height:0}
-.rtabs{display:flex;gap:4px;flex-shrink:0}
+.rtabs{display:flex;gap:2px;flex-shrink:0;background:var(--bg3);border:1px solid var(--b1);border-radius:var(--r2);padding:2px}
 .rtab{
-  padding:4px 12px;border-radius:20px;border:1px solid var(--b1);background:var(--bg3);
-  color:var(--t2);cursor:pointer;font-size:11px;font-family:var(--sans);font-weight:550;transition:all .15s;
+  padding:4px 11px;border-radius:var(--r3);border:none;background:transparent;
+  color:var(--t2);cursor:pointer;font-size:11px;font-family:var(--sans);font-weight:600;transition:all .15s;
 }
-.rtab:hover{color:var(--t1);border-color:var(--b2)}
-.rtab.on{border-color:var(--ac);color:#fff;background:var(--ac);font-weight:650}
+.rtab:hover{color:var(--t1)}
+.rtab.on{border:none;color:#fff;background:var(--ac);font-weight:650}
 .bdg{
-  font-size:10.5px;padding:3px 9px;border-radius:20px;white-space:nowrap;
+  font-size:10.5px;padding:3px 8px;border-radius:var(--r3);white-space:nowrap;
   font-weight:600;border:1px solid transparent;transition:all .15s;
 }
 .bdg-g{background:var(--gbg);color:var(--green);border-color:var(--gbd)}
@@ -404,13 +421,20 @@ textarea{
 
 /* Вводная подсказка */
 .guide{
-  max-width:460px;text-align:left;font-size:14px;color:var(--t2);line-height:1.7;
+  max-width:440px;text-align:left;font-size:13.5px;color:var(--t2);line-height:1.65;
   background:var(--bg2);border:1px solid var(--b1);border-radius:var(--r);
-  padding:28px 28px 24px;box-shadow:var(--sh2);
+  padding:26px 26px 22px;box-shadow:var(--sh2);
+  position:relative;overflow:hidden;
+}
+.guide::before{
+  content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--ac);
 }
 .guide b{color:var(--t1);font-weight:650}
-.guide .guide-k{font-size:10px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:var(--ac);margin-bottom:8px}
-.guide h3{font-family:var(--serif);font-size:28px;font-weight:500;letter-spacing:-.03em;color:var(--t1);line-height:1.15;margin:0 0 10px}
+.guide .guide-k{font-size:10px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ac);margin-bottom:8px}
+.guide h3{
+  font-family:var(--display);font-size:22px;font-weight:700;letter-spacing:-.04em;
+  color:var(--t1);line-height:1.2;margin:0 0 10px;
+}
 .guide ol{margin:12px 0 0;padding-left:20px;display:flex;flex-direction:column;gap:7px}
 .guide li{padding-left:2px}
 .guide li::marker{color:var(--ac);font-weight:700}
@@ -451,10 +475,10 @@ textarea{
 /* Страница товара во вкладке «Поля»: как эталон, а не простыня JSON. */
 .pcard{margin:0 0 22px}
 .pcard-title{font-family:var(--mono);font-size:11px;color:var(--t3);margin:0 0 8px;word-break:break-word}
-.pcard-h1{font-family:var(--serif);font-size:26px;font-weight:500;letter-spacing:-.03em;line-height:1.2;color:var(--t1);margin:0 0 10px}
+.pcard-h1{font-family:var(--display);font-size:22px;font-weight:700;letter-spacing:-.04em;line-height:1.25;color:var(--t1);margin:0 0 10px}
 .pcard-meta{font-size:12.5px;color:var(--t3);line-height:1.55;margin:0 0 16px}
-.pcard-lead{font-size:15px;line-height:1.6;color:var(--t1);margin:0 0 16px}
-.pcard-body p{font-family:var(--serif);font-size:14.5px;line-height:1.75;color:var(--t2);margin:0 0 14px}
+.pcard-lead{font-size:14.5px;line-height:1.55;color:var(--t1);margin:0 0 16px;font-weight:500}
+.pcard-body p{font-family:var(--sans);font-size:13.5px;line-height:1.7;color:var(--t2);margin:0 0 14px}
 .pcard-body p:last-child{margin-bottom:18px}
 .pcard-bullets{margin:0 0 22px;padding-left:18px;display:flex;flex-direction:column;gap:6px;font-size:13.5px;line-height:1.5;color:var(--t1)}
 .sp.empty .sp-v{color:var(--t3);font-weight:400}
@@ -466,7 +490,7 @@ textarea{
 .warnbox code{font-size:11.5px;color:var(--t1);background:var(--bg2);border:1px solid var(--abd);padding:1px 5px;border-radius:var(--r3)}
 /* Врезка с линейкой слева: сгенерированный текст отличается структурой,
    а не очередной рамкой вокруг. */
-.seobox{border-left:2px solid var(--ac-b);padding:2px 0 2px 16px;margin:0 0 20px;font-size:13.5px;line-height:1.7;color:var(--t2);font-family:var(--serif)}
+.seobox{border-left:3px solid var(--ac);padding:2px 0 2px 14px;margin:0 0 20px;font-size:13.5px;line-height:1.65;color:var(--t2);font-family:var(--sans)}
 .seobox .st{font-family:var(--sans);font-size:10px;letter-spacing:.11em;text-transform:uppercase;color:var(--t3);margin-bottom:6px;font-weight:700}
 .errbox{
   background:var(--rbg);border:1px solid var(--rbd);border-radius:var(--r);padding:12px 14px;
@@ -504,7 +528,7 @@ textarea{
 
 /* ── СТРАНИЦА КАЛЬКУЛЯТОРА ────────────────────────────────────── */
 .calc-page{flex-direction:column;width:100%}
-.calc-body{display:flex;flex:1;overflow:hidden;height:calc(100vh - 62px)}
+.calc-body{display:flex;flex:1;overflow:hidden;height:calc(100vh - 52px)}
 .calc-left{
   background:var(--bg2);border-right:1px solid var(--b1);padding:18px;display:flex;
   flex-direction:column;gap:14px;overflow-y:auto;width:308px;min-width:250px;flex-shrink:0;
@@ -541,7 +565,7 @@ input[type=range]::-moz-range-thumb{
 .mcard-rub{font-size:10px;color:var(--t3);font-family:var(--mono);font-variant-numeric:tabular-nums}
 .tcost{font-family:var(--mono);font-variant-numeric:tabular-nums;color:var(--t1);font-weight:700}
 .tcost.cheap{color:var(--green)}
-.mcard-badge{position:absolute;top:9px;right:9px;font-size:9px;padding:2px 7px;border-radius:20px;font-weight:700;border:1px solid transparent}
+.mcard-badge{position:absolute;top:9px;right:9px;font-size:9px;padding:2px 6px;border-radius:var(--r3);font-weight:700;border:1px solid transparent}
 .mb-cheap{background:var(--gbg);color:var(--green);border-color:var(--gbd)}
 .mb-best{background:var(--blue-bg);color:var(--ac);border-color:var(--ac-b)}
 .mb-ru{background:var(--abg);color:var(--amber);border-color:var(--abd)}
@@ -573,10 +597,10 @@ input[type=range]::-moz-range-thumb{
 
 /* ── СТРАНИЦА НАСТРОЕК ─────────────────────────────────────────── */
 .set-page{flex-direction:column;width:100%}
-.set-body{display:flex;flex:1;overflow:hidden;height:calc(100vh - 54px)}
+.set-body{display:flex;flex:1;overflow:hidden;height:calc(100vh - 52px)}
 .set-nav{
-  background:var(--bg2);border-right:1px solid var(--b1);padding:16px 12px;
-  display:flex;flex-direction:column;gap:4px;width:220px;min-width:180px;flex-shrink:0;
+  background:var(--bg2);border-right:1px solid var(--b1);padding:14px 10px;
+  display:flex;flex-direction:column;gap:2px;width:210px;min-width:170px;flex-shrink:0;
 }
 .set-nav button{
   text-align:left;padding:9px 12px;border:none;border-radius:var(--r2);
@@ -588,7 +612,7 @@ input[type=range]::-moz-range-thumb{
 .set-main{flex:1;min-width:0;overflow-y:auto;padding:22px 28px 80px;background:var(--bg);display:flex;flex-direction:column;gap:16px}
 .set-panel{display:none}
 .set-panel.on{display:block}
-.set-h{font-size:18px;font-weight:650;letter-spacing:-.3px;margin-bottom:4px}
+.set-h{font-family:var(--display);font-size:17px;font-weight:700;letter-spacing:-.03em;margin-bottom:4px}
 .set-lead{font-size:12.5px;color:var(--t2);margin-bottom:16px;max-width:62ch;line-height:1.5}
 .set-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
 .set-card{
@@ -597,7 +621,7 @@ input[type=range]::-moz-range-thumb{
 }
 .set-card-h{display:flex;align-items:center;gap:8px;justify-content:space-between}
 .set-card-h b{font-size:13.5px;font-weight:650}
-.set-badge{font-size:10px;font-weight:700;padding:2px 7px;border-radius:20px;border:1px solid var(--gbd);background:var(--gbg);color:var(--green)}
+.set-badge{font-size:10px;font-weight:700;padding:2px 6px;border-radius:var(--r3);border:1px solid var(--gbd);background:var(--gbg);color:var(--green)}
 .set-badge.off{background:var(--bg3);border-color:var(--b1);color:var(--t3)}
 .set-row{display:flex;flex-direction:column;gap:4px}
 .set-row label{font-size:11.5px;color:var(--t2);font-weight:500}
@@ -622,6 +646,43 @@ input[type=range]::-moz-range-thumb{
 .set-note{font-size:12px;color:var(--t2);flex:1;min-width:0}
 .set-warn{background:var(--abg);border:1px solid var(--abd);border-radius:var(--r);padding:10px 12px;font-size:12px;color:var(--amber)}
 .set-presets{display:flex;flex-wrap:wrap;gap:6px}
+.set-tpl-tabs{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px}
+.set-tpl-tabs button{
+  padding:7px 12px;border-radius:var(--r2);border:1px solid var(--b2);background:var(--bg2);
+  color:var(--t2);cursor:pointer;font-size:12px;font-family:var(--sans);font-weight:600;
+}
+.set-tpl-tabs button:hover{border-color:var(--ac-b);color:var(--t1)}
+.set-tpl-tabs button.on{background:var(--ac-w);border-color:var(--ac-b);color:var(--ac)}
+.set-tpl-pane{display:none}
+.set-tpl-pane.on{display:block}
+.set-file{
+  font-family:var(--mono);font-size:11.5px;font-weight:600;color:var(--t1);
+  background:var(--bg3);border:1px solid var(--b1);border-radius:var(--r3);
+  padding:3px 8px;display:inline-block;margin-bottom:8px;
+}
+.set-pre{
+  margin:0;padding:12px 14px;background:var(--bg3);border:1px solid var(--b1);
+  border-radius:var(--r2);font-family:var(--mono);font-size:11.5px;line-height:1.55;
+  color:var(--t1);overflow:auto;max-height:min(52vh,520px);white-space:pre;tab-size:2;
+}
+.set-field-list{display:flex;flex-direction:column;gap:8px;margin:0 0 14px}
+.set-field-list dt{font-family:var(--mono);font-size:11.5px;font-weight:600;color:var(--ac)}
+.set-field-list dd{margin:2px 0 0;font-size:12px;color:var(--t2);line-height:1.45}
+.set-prompt{
+  width:100%;min-height:280px;resize:vertical;font-family:var(--mono);font-size:11.5px;
+  line-height:1.5;padding:12px 14px;border:1px solid var(--b2);border-radius:var(--r2);
+  background:var(--bg3);color:var(--t1);
+}
+.set-prompt:focus{outline:none;border-color:var(--ac);box-shadow:var(--focus)}
+.set-ph{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.set-ph code{
+  font-family:var(--mono);font-size:10.5px;padding:3px 7px;border-radius:var(--r3);
+  background:var(--bg3);border:1px solid var(--b1);color:var(--t2);cursor:pointer;
+}
+.set-ph code:hover{border-color:var(--ac-b);color:var(--ac)}
+.set-prompt-meta{display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:space-between;margin-bottom:8px}
+.set-prompt-meta .set-row{flex-direction:row;align-items:center;gap:8px}
+.set-prompt-meta select{min-width:180px}
 @media(max-width:768px){
   .set-body{flex-direction:column;height:auto;overflow:visible}
   .set-nav{width:100%;flex-direction:row;flex-wrap:wrap;border-right:none;border-bottom:1px solid var(--b1)}
@@ -680,7 +741,7 @@ input[type=range]::-moz-range-thumb{
   transition:width .4s ease-out;z-index:-1;
 }
 .run-btn.working{background:var(--ac);color:#fff;cursor:progress}
-:root[data-theme="dark"] .run-btn.working{color:#1a1612}
+:root[data-theme="dark"] .run-btn.working{color:#042f2e}
 .run-btn.working .rb-fill{box-shadow:0 0 12px rgba(255,255,255,.35)}
 
 /* Полоса прогресса: заливка + бегущие полосы поверх, пока идёт работа */
@@ -748,9 +809,8 @@ input[type=range]::-moz-range-thumb{
 
 /* Морозный водяной знак за вводной подсказкой — единственное чистое
    украшение, и оно из предметной области */
-.guide{position:relative;overflow:hidden}
-.guide .frost{position:absolute;right:-26px;bottom:-30px;width:150px;height:150px;color:var(--ac);opacity:.055;pointer-events:none}
-:root[data-theme="dark"] .guide .frost{opacity:.09}
+.guide .frost{position:absolute;right:-26px;bottom:-30px;width:140px;height:140px;color:var(--ac);opacity:.06;pointer-events:none}
+:root[data-theme="dark"] .guide .frost{opacity:.1}
 
 @media(prefers-reduced-motion:reduce){
   /* Движение убираем, различимость состояний оставляем */
@@ -1031,6 +1091,8 @@ input[type=range]::-moz-range-thumb{
       <button type="button" id="snParse" onclick="setTab('parse')"><i class="ti ti-world-search"></i> Парсеры</button>
       <button type="button" id="snCond" onclick="setTab('cond')"><i class="ti ti-adjustments"></i> Условия</button>
       <button type="button" id="snRun" onclick="setTab('run')"><i class="ti ti-player-play"></i> Прогон</button>
+      <button type="button" id="snPrompt" onclick="setTab('prompt')"><i class="ti ti-message-2-code"></i> Промпт</button>
+      <button type="button" id="snExport" onclick="setTab('export')"><i class="ti ti-file-code"></i> Выгрузка</button>
     </nav>
     <div class="set-main">
       <div id="setOverrides"></div>
@@ -1160,6 +1222,86 @@ input[type=range]::-moz-range-thumb{
         </div>
       </section>
 
+      <section class="set-panel" id="setPrompt">
+        <div class="set-h">Промпт обогащения</div>
+        <p class="set-lead">Системный текст, который уходит в модель вместе с карточкой товара. Поля вида <code>{{category_name}}</code> подставляются из схемы раздела перед запросом. Сохраните — и следующий прогон пойдёт с этим шаблоном.</p>
+        <div class="set-card" style="margin-bottom:12px">
+          <div class="set-prompt-meta">
+            <div class="set-row">
+              <label for="setPromptCat">Превью для раздела</label>
+              <select id="setPromptCat" onchange="refreshPromptPreview()"></select>
+            </div>
+            <div class="set-actions">
+              <span class="set-badge" id="setPromptBadge">встроенный</span>
+              <button type="button" class="sbtn ghost" onclick="resetPromptTemplate()">Сбросить к встроенному</button>
+            </div>
+          </div>
+          <label for="setSystemPrompt" class="flbl" style="margin-bottom:6px">Шаблон (system)</label>
+          <textarea id="setSystemPrompt" class="set-prompt" spellcheck="false" oninput="onPromptTemplateEdit()"></textarea>
+          <div class="hint" style="margin-top:8px">Клик по плейсхолдеру вставляет его в курсор. Если шаблон совпадает со встроенным, в файл ничего лишнего не пишется.</div>
+          <div class="set-ph" id="setPromptPh"></div>
+        </div>
+        <div class="set-card">
+          <div class="set-card-h"><b>Как уйдёт в модель</b><span class="set-note" id="setPromptPrevNote" style="flex:0"></span></div>
+          <pre class="set-pre" id="setPromptPreview" style="max-height:min(40vh,420px)">Загрузка…</pre>
+        </div>
+      </section>
+
+      <section class="set-panel" id="setExport">
+        <div class="set-h">Шаблон выгрузки</div>
+        <p class="set-lead">Кнопки «JSON v2» и «2 файла» после прогона отдают один и тот же формат заказчика: семь полей в карточке и checkbox-фасеты. «JSON v2» дополнительно кладёт <code>categories_v2.json</code>. Ниже — схема файлов, не живые данные прогона.</p>
+        <div class="set-tpl-tabs" role="tablist" aria-label="Тип выгрузки">
+          <button type="button" class="on" id="tplTabTwo" onclick="setExportTpl('two')">2 файла</button>
+          <button type="button" id="tplTabV2" onclick="setExportTpl('v2')">JSON v2</button>
+        </div>
+
+        <div class="set-tpl-pane on" id="tplTwo">
+          <div class="set-card" style="margin-bottom:12px">
+            <div class="set-card-h"><b>Два файла</b><span class="set-badge">products + filters</span></div>
+            <p class="hint" style="margin:0">Имена: <code>products_(id).json</code> и <code>filters_(id).json</code>. Если в прогоне несколько разделов — <code>(id)</code> становится <code>all</code>. В файлы попадают только карточки с полными характеристиками.</p>
+          </div>
+          <div class="set-card" style="margin-bottom:12px">
+            <div class="set-card-h"><b>Поля товара</b></div>
+            <dl class="set-field-list">
+              <div><dt>id</dt><dd>SKU магазина; чисто цифровой — числом</dd></div>
+              <div><dt>name</dt><dd>Название как в каталоге, без правок</dd></div>
+              <div><dt>meta_keywords</dt><dd>7–9 фраз через запятую</dd></div>
+              <div><dt>description_html</dt><dd>4 абзаца, один список плюсов, 1–3 &lt;strong&gt;, без &lt;h1&gt;</dd></div>
+              <div><dt>annotation_html</dt><dd>Список точных характеристик: «Подпись: значение»</dd></div>
+              <div><dt>filters</dt><dd>Объект фасетов; значения всегда массивы (в т.ч. бакеты)</dd></div>
+              <div><dt>web_info</dt><dd>Отзыв или пустая строка — поле всегда на месте</dd></div>
+            </dl>
+          </div>
+          <div class="set-card" style="margin-bottom:12px">
+            <span class="set-file">products_(id).json</span>
+            <pre class="set-pre" id="tplProductsPre"></pre>
+          </div>
+          <div class="set-card">
+            <span class="set-file">filters_(id).json</span>
+            <pre class="set-pre" id="tplFiltersPre"></pre>
+          </div>
+        </div>
+
+        <div class="set-tpl-pane" id="tplV2">
+          <div class="set-card" style="margin-bottom:12px">
+            <div class="set-card-h"><b>JSON v2</b><span class="set-badge">+ categories</span></div>
+            <p class="hint" style="margin:0">Та же пара <code>products_(id).json</code> / <code>filters_(id).json</code>, плюс список разделов прогона. Карточка и фасеты совпадают с выгрузкой «2 файла» — иначе импорт и витрина разъедутся.</p>
+          </div>
+          <div class="set-card" style="margin-bottom:12px">
+            <span class="set-file">categories_v2.json</span>
+            <pre class="set-pre" id="tplCategoriesPre"></pre>
+          </div>
+          <div class="set-card" style="margin-bottom:12px">
+            <span class="set-file">products_(id).json</span>
+            <pre class="set-pre" id="tplProductsV2Pre"></pre>
+          </div>
+          <div class="set-card">
+            <span class="set-file">filters_(id).json</span>
+            <pre class="set-pre" id="tplFiltersV2Pre"></pre>
+          </div>
+        </div>
+      </section>
+
       <div class="set-foot">
         <span class="set-note" id="setStatus">Загрузка…</span>
         <button type="button" class="sbtn" onclick="loadSettings()">Отменить</button>
@@ -1256,19 +1398,167 @@ function showPage(id, btn){
   if(id==='enricher') applyDefaultProviderModels();
 }
 
-const SET_TABS={prov:['setProv','snProv'],parse:['setParse','snParse'],cond:['setCond','snCond'],run:['setRun','snRun']};
+const SET_TABS={prov:['setProv','snProv'],parse:['setParse','snParse'],cond:['setCond','snCond'],run:['setRun','snRun'],prompt:['setPrompt','snPrompt'],export:['setExport','snExport']};
 function setTab(id){
   Object.entries(SET_TABS).forEach(([k,[panel,nav]])=>{
     document.getElementById(panel).classList.toggle('on',k===id);
     document.getElementById(nav).classList.toggle('on',k===id);
   });
+  const foot=document.querySelector('.set-foot');
+  if(foot) foot.style.display=id==='export'?'none':'flex';
+  if(id==='prompt') refreshPromptPreview();
 }
 
+/** Эталон выгрузки заказчика — семь полей + checkbox-фасеты. Живые данные сюда не подмешиваются. */
+const EXPORT_TPL={
+  product:{
+    id:21670,
+    name:'Кухонная вытяжка Elikor Врезной блок 52H-400-ПЗД …',
+    meta_keywords:'вытяжка Elikor, полновстраиваемая вытяжка, вытяжка 50 см, …',
+    description_html:'<p>Полновстраиваемая кухонная вытяжка <strong>Elikor …</strong> — …</p><p>…</p><p>…</p><ul><li>…</li><li>…</li><li>…</li></ul><p>…</p>',
+    annotation_html:'<ul><li>Тип: вытяжка</li><li>Конструкция: полновстраиваемая</li><li>Цвет: нержавеющая сталь</li><li>Ширина: 52 см</li></ul>',
+    filters:{
+      'Тип товара':['Вытяжка'],
+      'Конструкция':['Полновстраиваемая'],
+      'Ширина, см':['50-55'],
+      'Цвет':['Нержавеющая сталь'],
+    },
+    web_info:'Купила месяц назад. Достоинства: тихая, простота монтажа. …',
+  },
+  filters:{filters:[
+    {name:'Тип товара',value:['Вытяжка']},
+    {name:'Конструкция',value:['Полновстраиваемая','Каминная']},
+    {name:'Ширина, см',value:['50-55','55-60','60-65']},
+    {name:'Цвет',value:['Белый','Нержавеющая сталь','Чёрный']},
+  ]},
+  categories:{categories:[{id:929,name:'Встраиваемые вытяжки'}]},
+};
+
+function fillExportTemplates(){
+  const pretty=o=>JSON.stringify(o,null,2);
+  const productsArr=[EXPORT_TPL.product];
+  const set=(id,text)=>{ const el=document.getElementById(id); if(el) el.textContent=text; };
+  set('tplProductsPre', pretty(productsArr));
+  set('tplFiltersPre', pretty(EXPORT_TPL.filters));
+  set('tplCategoriesPre', pretty(EXPORT_TPL.categories));
+  set('tplProductsV2Pre', pretty(productsArr));
+  set('tplFiltersV2Pre', pretty(EXPORT_TPL.filters));
+}
+
+function setExportTpl(kind){
+  document.getElementById('tplTwo')?.classList.toggle('on',kind==='two');
+  document.getElementById('tplV2')?.classList.toggle('on',kind==='v2');
+  document.getElementById('tplTabTwo')?.classList.toggle('on',kind==='two');
+  document.getElementById('tplTabV2')?.classList.toggle('on',kind==='v2');
+}
+fillExportTemplates();
+
 let setPayload=null;
+let promptDefault='';
+let promptPreviewTimer=null;
 const setV=(id,v)=>{ const el=document.getElementById(id); if(el) el.value=v==null?'':String(v); };
 const setC=(id,on)=>{ const el=document.getElementById(id); if(el) el.checked=!!on; };
 const getV=id=>document.getElementById(id)?.value??'';
 const getC=id=>!!document.getElementById(id)?.checked;
+
+/** Пусто или = встроенному → в файл не пишем кастом. */
+function effectiveSystemPromptForSave(){
+  const cur=getV('setSystemPrompt');
+  if(!cur.trim()) return '';
+  if(promptDefault && cur===promptDefault) return '';
+  return cur;
+}
+
+function updatePromptBadge(){
+  const badge=document.getElementById('setPromptBadge');
+  if(!badge) return;
+  const custom=!!effectiveSystemPromptForSave();
+  badge.className='set-badge'+(custom?'':' off');
+  badge.textContent=custom?'свой шаблон':'встроенный';
+}
+
+function renderPromptPlaceholders(list){
+  const box=document.getElementById('setPromptPh');
+  if(!box) return;
+  box.innerHTML=(list||[]).map(p=>
+    `<code title="${esc(p.note||'')}" data-ph="${esc(p.key)}">${esc(p.key)}</code>`
+  ).join('');
+  box.querySelectorAll('[data-ph]').forEach(el=>{
+    el.addEventListener('click',()=>insertPromptPlaceholder(el.dataset.ph));
+  });
+}
+
+function insertPromptPlaceholder(token){
+  const ta=document.getElementById('setSystemPrompt');
+  if(!ta||!token) return;
+  const start=ta.selectionStart??ta.value.length;
+  const end=ta.selectionEnd??start;
+  ta.value=ta.value.slice(0,start)+token+ta.value.slice(end);
+  const pos=start+token.length;
+  ta.focus();
+  ta.setSelectionRange(pos,pos);
+  onPromptTemplateEdit();
+}
+
+function fillPromptCategories(selected){
+  const sel=document.getElementById('setPromptCat');
+  if(!sel) return;
+  const opts=(categories||[]).map(c=>{
+    const key=c.slug||c.id;
+    return `<option value="${esc(key)}">${esc(c.name||key)}</option>`;
+  });
+  if(!opts.length){
+    const fromSchema=Object.entries(schemas||{}).map(([slug,s])=>
+      `<option value="${esc(slug)}">${esc(s.name||slug)}</option>`);
+    sel.innerHTML=fromSchema.join('')||'<option value="kholodilniki">Холодильники</option>';
+  }else sel.innerHTML=opts.join('');
+  if(selected) sel.value=String(selected);
+}
+
+function renderPromptEditor(d){
+  const p=d.prompt||{};
+  promptDefault=p.default_template||'';
+  const custom=String(p.template||'').trim();
+  setV('setSystemPrompt', custom||promptDefault);
+  fillPromptCategories(p.preview_category);
+  renderPromptPlaceholders(p.placeholders);
+  const prev=document.getElementById('setPromptPreview');
+  if(prev) prev.textContent=p.preview||'';
+  const note=document.getElementById('setPromptPrevNote');
+  if(note) note.textContent=p.preview_category?`раздел: ${p.preview_category}`:'';
+  updatePromptBadge();
+}
+
+function resetPromptTemplate(){
+  setV('setSystemPrompt', promptDefault||'');
+  updatePromptBadge();
+  refreshPromptPreview();
+}
+
+function onPromptTemplateEdit(){
+  updatePromptBadge();
+  clearTimeout(promptPreviewTimer);
+  promptPreviewTimer=setTimeout(refreshPromptPreview, 400);
+}
+
+async function refreshPromptPreview(){
+  const prev=document.getElementById('setPromptPreview');
+  const note=document.getElementById('setPromptPrevNote');
+  if(!prev) return;
+  const category=getV('setPromptCat')||undefined;
+  const template=getV('setSystemPrompt');
+  try{
+    const d=await apiJson('/api/prompt/preview',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({ template, category }),
+    });
+    prev.textContent=d.preview||'';
+    if(note) note.textContent=d.category?`раздел: ${d.category}`:'';
+  }catch(e){
+    prev.textContent='Не удалось собрать превью: '+e.message;
+  }
+}
 
 function renderSettings(d){
   setPayload=d;
@@ -1323,6 +1613,7 @@ function renderSettings(d){
   setV('setRetries', model.max_retries??3);
   setV('setAiTimeout', model.timeout_ms??60000);
   setV('setMaxTokens', model.max_tokens??3200);
+  renderPromptEditor(d);
   const ov=d.overrides||[];
   document.getElementById('setOverrides').innerHTML=ov.length
     ? `<div class="set-warn">${ov.map(o=>`${esc(o.key)}=${esc(o.value)} — ${esc(o.note)}`).join('<br>')}</div>`
@@ -1504,6 +1795,7 @@ function readSettingsPatch(){
       max_retries:Number(getV('setRetries'))||3,
       timeout_ms:Number(getV('setAiTimeout'))||60000,
       max_tokens:Number(getV('setMaxTokens'))||3200,
+      system_prompt:effectiveSystemPromptForSave(),
     },
   };
 }

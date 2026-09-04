@@ -13,8 +13,9 @@
  * Маршруты:
  *   GET  /healthz             проба живости, без аутентификации
  *   GET  /api/models          список моделей включённых провайдеров (кэш MODELS_TTL_MS)
- *   GET  /api/settings        провайдеры ИИ, парсеры, условия (ключи скрыты)
+ *   GET  /api/settings        провайдеры ИИ, парсеры, условия, шаблон промпта (ключи скрыты)
  *   PUT  /api/settings        сохранить настройки; пустой api_key оставляет прежний
+ *   POST /api/prompt/preview  превью системного промпта { template?, category }
  *   GET  /api/parser          статус и настройки поиска пустых карточек
  *   GET  /api/product?url=... прокси к каталогу, только по разрешённым хостам
  *   GET  /api/categories      разделы из требований и схемы полей
@@ -53,6 +54,7 @@ import { fileURLToPath } from 'url';
 import {
   RateLimiter, enrichProduct, rpmFor, schemaFor, schemaForProduct, SCHEMAS, netError,
   RUB_PER_USD, RUB_RATE_DATE, isEnrichable, productFacts,
+  buildSystemPrompt, defaultSystemPromptTemplate, PROMPT_PLACEHOLDERS,
 } from './lib.js';
 import { CATEGORIES, findCategory, crawlCategory, loadFeed, buildFilters, ensureSource, WEB_LOOKUP } from './catalog.js';
 import { buildV2 } from './export_v2.js';
@@ -339,6 +341,20 @@ function apiParser(res) {
   json(res, 200, parser);
 }
 
+function promptMeta(settings, category = null) {
+  const custom = String(settings?.model?.system_prompt || '').trim();
+  const template = custom || defaultSystemPromptTemplate();
+  const cat = category || CATEGORIES[0]?.slug || 'kholodilniki';
+  return {
+    template: custom,
+    default_template: defaultSystemPromptTemplate(),
+    custom: !!custom,
+    placeholders: PROMPT_PLACEHOLDERS,
+    preview: buildSystemPrompt(cat, template),
+    preview_category: cat,
+  };
+}
+
 function apiSettingsGet(res) {
   const settings = loadSettings(ROOT);
   json(res, 200, {
@@ -347,6 +363,7 @@ function apiSettingsGet(res) {
     conditions: conditionsView(settings.conditions),
     presets: PROVIDER_PRESETS,
     overrides: envOverrides(),
+    prompt: promptMeta(settings),
   });
 }
 
@@ -368,10 +385,35 @@ async function apiSettingsPut(req, res) {
       conditions: conditionsView(settings.conditions),
       presets: PROVIDER_PRESETS,
       overrides: envOverrides(),
+      prompt: promptMeta(settings),
     });
   } catch (e) {
     json(res, e.status || 400, { error: e.message, details: e.details });
   }
+}
+
+/**
+ * Превью собранного промпта: POST { template?, category }.
+ * Без template берётся сохранённый или встроенный — чтобы вкладка «Промпт»
+ * показывала то же, что уйдёт в модель после сохранения.
+ */
+async function apiPromptPreview(req, res) {
+  const raw = await readBody(req, 1_000_000);
+  let body;
+  try { body = JSON.parse(raw || '{}'); } catch { return json(res, 400, { error: 'Тело запроса не JSON' }); }
+  const settings = loadSettings(ROOT);
+  const category = body?.category || CATEGORIES[0]?.slug || 'kholodilniki';
+  const fromBody = body?.template != null ? String(body.template) : null;
+  const custom = String(settings.model?.system_prompt || '').trim();
+  const template = fromBody != null
+    ? (String(fromBody).trim() ? fromBody : defaultSystemPromptTemplate())
+    : (custom || defaultSystemPromptTemplate());
+  json(res, 200, {
+    category,
+    custom: fromBody != null ? String(fromBody).trim() !== '' && fromBody !== defaultSystemPromptTemplate() : !!custom,
+    preview: buildSystemPrompt(category, template),
+    placeholders: PROMPT_PLACEHOLDERS,
+  });
 }
 
 /**
@@ -641,6 +683,7 @@ async function enrichOne(product, { model, category, provider } = {}) {
     maxRetries: settings.model.max_retries,
     timeoutMs: settings.model.timeout_ms,
     maxTokens: settings.model.max_tokens,
+    systemPrompt: settings.model.system_prompt || '',
     referer: ep.headers['HTTP-Referer'] || 'https://mrmag.ru',
     title: ep.headers['X-Title'] || 'mrmag enricher',
   });
@@ -952,6 +995,7 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'GET'  && u.pathname === '/api/parser')     return apiParser(res);
     if (req.method === 'GET'  && u.pathname === '/api/settings')   return apiSettingsGet(res);
     if (req.method === 'PUT'  && u.pathname === '/api/settings')   return await apiSettingsPut(req, res);
+    if (req.method === 'POST' && u.pathname === '/api/prompt/preview') return await apiPromptPreview(req, res);
     if (req.method === 'GET'  && u.pathname === '/api/categories') return apiCategories(res);
     if (req.method === 'POST' && u.pathname === '/api/filters')    return apiFilters(req, res);
     if (req.method === 'POST' && u.pathname === '/api/quality')    return apiQuality(req, res);

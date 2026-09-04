@@ -808,14 +808,26 @@ export function schemaForProduct(product, category) {
 // фильтр «Цвет» в список из сотни значений по одному товару в каждом.
 const COLOR_FACETS = 'белый, чёрный, серый, серебристый, бежевый, коричневый, красный, синий, зелёный, жёлтый, розовый, оранжевый, фиолетовый, золотистый, нержавеющая сталь, дерево, прозрачный, разноцветный';
 
-export function buildSystemPrompt(schemaKey) {
-  const s = schemaFor(schemaKey);
-  const enumLines = Object.entries(s.enums)
-    .map(([k, vals]) => `- ${k}: ${vals.map(v => `"${v}"`).join(' | ')}`);
+/** Плейсхолдеры шаблона: подставляются из схемы категории перед запросом к модели. */
+export const PROMPT_PLACEHOLDERS = [
+  { key: '{{category_name}}', note: 'название раздела' },
+  { key: '{{subject}}', note: 'предмет категории' },
+  { key: '{{hints}}', note: 'строки «Что сюда входит…»' },
+  { key: '{{axis_rule}}', note: 'правило осей без подписи Ш×В×Г' },
+  { key: '{{unit_notes}}', note: 'заметки по единицам раздела' },
+  { key: '{{enums}}', note: 'допустимые значения фасетов' },
+  { key: '{{color_facets}}', note: 'палитра цвета' },
+  { key: '{{spec_keys}}', note: 'скелет specs в JSON-ответе' },
+];
 
+/**
+ * Встроенный шаблон системного промпта. Пустой system_prompt в настройках
+ * означает «использовать этот». Правка в UI сохраняется в config.json.
+ */
+export function defaultSystemPromptTemplate() {
   return `Ты — контент-редактор карточек товаров интернет-магазина и SEO-специалист.
-Категория: ${s.name}. Предмет: ${s.subject}.
-${s.hints.map(h => `Что сюда входит: ${h}.\n`).join('')}Тебе передан ОДИН товар. Верни ОДИН JSON-объект — без markdown, без пояснений
+Категория: {{category_name}}. Предмет: {{subject}}.
+{{hints}}Тебе передан ОДИН товар. Верни ОДИН JSON-объект — без markdown, без пояснений
 до и после. Язык всех текстов — русский.
 
 1. ИСТОЧНИКИ И ДОВЕРИЕ
@@ -845,18 +857,16 @@ ${s.hints.map(h => `Что сюда входит: ${h}.\n`).join('')}Тебе п
   "57.4x61x171 см" → умножь каждое число на 10.
 - Порядок осей в тройке размеров НЕ фиксирован. Есть подпись — "(Ш×В×Г)",
   "(В×Ш×Г)" — следуй ей.
-${s.tallest
-    ? '  Подписи нет — самое большое число это высота.'
-    : '  Подписи нет — у этой категории самая большая сторона обычно не высота:\n  определи оси по смыслу товара, а не по величине числа.'}
+{{axis_rule}}
 - Габариты "в упаковке", "брутто", "с учётом упаковки" не подходят: нужны
   размеры самого товара.
 - Дробное разделяй точкой. Диапазон в числовом поле недопустим: "5–7 кг" → null.
-${s.unitNotes.map(x => `- ${x}`).join('\n')}
+{{unit_notes}}
 
 4. ЗНАЧЕНИЯ ДЛЯ ФИЛЬТРОВ
 Эти поля питают фасетный фильтр сайта. Пиши значение ТОЧНО из списка, символ в
 символ. Ничего не подходит — null, свой вариант придумывать нельзя.
-${enumLines.length ? enumLines.join('\n') : '- (в этой категории таких полей нет)'}
+{{enums}}
 
 5. НОРМАЛИЗАЦИЯ
 - тип_товара — существительное в единственном числе, нижним регистром:
@@ -864,7 +874,7 @@ ${enumLines.length ? enumLines.join('\n') : '- (в этой категории �
 - бренд — как пишет производитель: латиницей для латинских ("LG", "Haier"),
   кириллицей для российских ("Бирюса", "Позис"). Без кавычек и без "ООО".
 - модель — только индекс, без бренда и без слова "модель": "GA-B419SQGL".
-- цвет — один базовый цвет из палитры: ${COLOR_FACETS}. Оттенок из описания
+- цвет — один базовый цвет из палитры: {{color_facets}}. Оттенок из описания
   ("графитовый металлик") сведи к базовому ("серый").
 - Значения без служебного мусора: без "шт.", "прибл.", "*", сносок и HTML.
 
@@ -912,7 +922,7 @@ ${enumLines.length ? enumLines.join('\n') : '- (в этой категории �
 8. СХЕМА ОТВЕТА (ровно эти ключи, ничего не добавляй и не удаляй)
 {
   "specs": {
-${s.specKeys.map(k => `    "${k}": ${s.numericKeys.includes(k) ? 'null' : '"..."'}`).join(',\n')}
+{{spec_keys}}
   },
   "seo_description": "",
   "bullets": [],
@@ -924,6 +934,44 @@ ${s.specKeys.map(k => `    "${k}": ${s.numericKeys.includes(k) ? 'null' : '"..."
   "search_aliases": [],
   "seo_keywords": []
 }`;
+}
+
+/** Значения плейсхолдеров для схемы — и для сборки промпта, и для превью в UI. */
+export function promptVarsForSchema(schemaKey) {
+  const s = schemaFor(schemaKey);
+  const enumLines = Object.entries(s.enums || {})
+    .map(([k, vals]) => `- ${k}: ${(vals || []).map(v => `"${v}"`).join(' | ')}`);
+  return {
+    category_name: s.name,
+    subject: s.subject,
+    hints: (s.hints || []).map(h => `Что сюда входит: ${h}.\n`).join(''),
+    axis_rule: s.tallest
+      ? '  Подписи нет — самое большое число это высота.'
+      : '  Подписи нет — у этой категории самая большая сторона обычно не высота:\n  определи оси по смыслу товара, а не по величине числа.',
+    unit_notes: (s.unitNotes || []).map(x => `- ${x}`).join('\n'),
+    enums: enumLines.length ? enumLines.join('\n') : '- (в этой категории таких полей нет)',
+    color_facets: COLOR_FACETS,
+    spec_keys: (s.specKeys || [])
+      .map(k => `    "${k}": ${(s.numericKeys || []).includes(k) ? 'null' : '"..."'}`)
+      .join(',\n'),
+  };
+}
+
+function applyPromptVars(template, vars) {
+  let out = String(template ?? '');
+  for (const [k, v] of Object.entries(vars)) {
+    out = out.split(`{{${k}}}`).join(v == null ? '' : String(v));
+  }
+  return out;
+}
+
+/**
+ * Системный промпт категории. template — из настроек; пустой/нет → встроенный.
+ * Так правка в UI сразу попадает в прогон, а тесты без настроек видят дефолт.
+ */
+export function buildSystemPrompt(schemaKey, template) {
+  const tpl = String(template || '').trim() ? template : defaultSystemPromptTemplate();
+  return applyPromptVars(tpl, promptVarsForSchema(schemaKey));
 }
 
 
@@ -1425,7 +1473,7 @@ function thinkingOff(model) {
   };
 }
 
-function buildRequestBody(model, product, maxTokens = 3200, schemaKey) {
+function buildRequestBody(model, product, maxTokens = 3200, schemaKey, systemPrompt) {
   return {
     model,
     max_tokens:  maxTokens,
@@ -1436,7 +1484,7 @@ function buildRequestBody(model, product, maxTokens = 3200, schemaKey) {
     usage: { include: true },
     ...thinkingOff(model),
     messages: [
-      { role: 'system', content: buildSystemPrompt(schemaKey) },
+      { role: 'system', content: buildSystemPrompt(schemaKey, systemPrompt) },
       { role: 'user',   content: product },
     ],
   };
@@ -1550,6 +1598,7 @@ export async function enrichProduct(product, opts) {
     chatUrl = 'https://openrouter.ai/api/v1/chat/completions',
     headers: extraHeaders = {},
     mismatchPolicy = MISMATCH_POLICY,
+    systemPrompt = '',
   } = opts;
 
   // Схему берём из опции, иначе из категории самого товара. Молчаливого
@@ -1581,7 +1630,7 @@ export async function enrichProduct(product, opts) {
           'X-Title':        title,
           ...extraHeaders,
         },
-        body:   JSON.stringify(buildRequestBody(model, userContent, tokenBudget, schema)),
+        body:   JSON.stringify(buildRequestBody(model, userContent, tokenBudget, schema, systemPrompt)),
         signal: AbortSignal.timeout(timeoutMs),
       });
       // Шлюз может ответить HTML — читаем текстом, чтобы res.json() не съел ошибку.

@@ -41,13 +41,16 @@ import {
   buildFilters, writeCategoryFiles, ensureSource,
 } from './catalog.js';
 import { setupProxy } from './socks.js';
+import { loadSettings } from './settings.js';
 
 // ── КОНФИГ ───────────────────────────────────────────────────
 const API_KEY    = process.env.OPENROUTER_API_KEY;
 const MODEL      = process.env.MODEL || 'deepseek/deepseek-v3.2';
 const FRESH      = process.env.FRESH === '1';
 const OUT_DIR    = process.env.OUT_DIR || '.';
-const MAX_RETRIES = 3;
+const SETTINGS   = (() => { try { return loadSettings(); } catch { return null; } })();
+const MAX_RETRIES = SETTINGS?.model?.max_retries || 3;
+const SYSTEM_PROMPT = SETTINGS?.model?.system_prompt || '';
 
 // Категория задаётся slug, id, названием или адресом раздела.
 const CATEGORY_KEY = process.env.CATEGORY || 'kholodilniki';
@@ -299,6 +302,7 @@ async function main() {
       const { enriched, iT, oT, cost, costSource } = await enrichProduct(item, {
         model: MODEL, apiKey: API_KEY, limiter, pricing, schema,
         maxRetries: MAX_RETRIES,
+        systemPrompt: SYSTEM_PROMPT,
         onNote: n => process.stdout.write(` [${n}]`),
       });
 

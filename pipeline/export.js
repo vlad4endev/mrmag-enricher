@@ -275,3 +275,93 @@ export function buildCustomerExport(products, { dict, config, root = '.' } = {})
     })),
   };
 }
+
+/** Подпись ключа specs: цвет → Цвет; объем_л → Объем, л. */
+function humanizeSpecKey(key) {
+  const raw = String(key || '').replace(/_/g, ' ').replace(/\s+/g, ' ').trim();
+  if (!raw) return '';
+  return raw.replace(/^./, c => c.toUpperCase()).replace(/\s+л$/, ', л')
+    .replace(/\s+мм$/, ', мм').replace(/\s+см$/, ', см')
+    .replace(/\s+кг$/, ', кг').replace(/\s+вт$/, ', Вт')
+    .replace(/\s+дб$/, ', дБ');
+}
+
+function specValue(v) {
+  if (Array.isArray(v)) return v.map(x => String(x)).filter(Boolean);
+  if (v == null || v === '') return [];
+  return [String(v)];
+}
+
+function specsToAnnotation(specs) {
+  if (!specs || typeof specs !== 'object') return '';
+  const lis = Object.entries(specs).flatMap(([k, v]) => {
+    const label = humanizeSpecKey(k);
+    return specValue(v).map(one => `<li>${esc(label)}: ${esc(one)}</li>`);
+  });
+  return lis.length ? `<ul>${lis.join('')}</ul>` : '';
+}
+
+function filtersFromSpecs(specs) {
+  const out = {};
+  if (!specs || typeof specs !== 'object') return out;
+  for (const [k, v] of Object.entries(specs)) {
+    const label = humanizeSpecKey(k);
+    const list = specValue(v);
+    if (label && list.length) out[label] = list;
+  }
+  return out;
+}
+
+function stripH1(html) {
+  return String(html || '').replace(/<h1\b[^>]*>[\s\S]*?<\/h1>/gi, '').trim();
+}
+
+function keywordsFrom(p) {
+  const raw = p?.enriched?.seo_keywords ?? p?.meta_keywords ?? '';
+  if (Array.isArray(raw)) return raw.map(s => String(s).trim()).filter(Boolean).slice(0, 9).join(', ');
+  return String(raw || '').trim();
+}
+
+/**
+ * Семь полей эталона без справочника. Аннотация — все строки источника
+ * (или specs), не старый 5-польный v2. Бакетов нет: их задаёт словарь.
+ */
+export function serializeLooseProduct(p) {
+  const src = toPipelineProduct(p);
+  const annotation = compactAnnotation(src.annotation)
+    || specsToAnnotation(p?.enriched?.specs);
+  const desc = compactHtml(stripH1(
+    p?.enriched?.seo_description
+    || p?.enriched?.short_description
+    || src.description
+    || '',
+  ));
+  return {
+    id: src.id,
+    name: p?.name ?? src.name,
+    meta_keywords: keywordsFrom(p),
+    description_html: desc,
+    annotation_html: annotation,
+    filters: filtersFromSpecs(p?.enriched?.specs),
+    web_info: webInfoFrom(reviewSource({ ...src, ...p })),
+  };
+}
+
+/** «2 файла» без attributes_{id}: та же оболочка, что у эталона. */
+export function buildGoldShapeExport(products) {
+  const rows = (products || []).map(serializeLooseProduct)
+    .filter(p => p.annotation_html || p.description_html);
+  const catalog = new Map();
+  for (const p of rows) {
+    for (const [name, vals] of Object.entries(p.filters || {})) {
+      const set = catalog.get(name) || new Set();
+      for (const v of vals) set.add(v);
+      catalog.set(name, set);
+    }
+  }
+  return {
+    products: rows,
+    filters: [...catalog].map(([name, set]) => ({ name, value: [...set] })),
+    held: [],
+  };
+}

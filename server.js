@@ -56,7 +56,7 @@ import {
 } from './lib.js';
 import { CATEGORIES, findCategory, crawlCategory, loadFeed, buildFilters, ensureSource, WEB_LOOKUP } from './catalog.js';
 import { buildV2 } from './export_v2.js';
-import { buildCustomerExport } from './pipeline/export.js';
+import { buildCustomerExport, buildGoldShapeExport } from './pipeline/export.js';
 import { dictForProducts } from './pipeline/schema.js';
 import { createJobStore } from './jobs.js';
 import { loadConfig } from './pipeline/dict.js';
@@ -540,7 +540,7 @@ async function apiExportV2(req, res) {
 
 /**
  * Выгрузка заказчика: POST { products, category } → { products, filters, held }.
- * Семь полей, бакеты, annotation_html. Та же сборка, что пишет CLI в out/.
+ * Справочник есть — слой атрибутов. Нет — семь полей из источника, не buildV2.
  */
 async function apiExport(req, res) {
   const raw = await readBody(req, BULK_BODY_LIMIT);
@@ -556,7 +556,8 @@ async function apiExport(req, res) {
     ?? products.find(p => p.category_id)?.category_id;
   const dict = dictForProducts(products, catKey, ROOT);
   if (!dict) {
-    const out = buildV2(products, {});
+    // Не buildV2: пять полей без annotation_html — это «опять старая выгрузка».
+    const out = buildGoldShapeExport(products);
     if (!out.products.length) {
       return json(res, 400, { error: 'Нет товаров для выгрузки' });
     }

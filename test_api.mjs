@@ -427,7 +427,11 @@ try {
     assert.strictEqual(r.status, 200);
     const d = await r.json();
     assert.ok(d.products.length);
-    assert.ok(!('annotation_html' in d.products[0]) || d.products[0].description_html);
+    assert.deepStrictEqual(Object.keys(d.products[0]), [
+      'id', 'name', 'meta_keywords', 'description_html', 'annotation_html', 'filters', 'web_info',
+    ]);
+    assert.match(d.products[0].annotation_html, /цвет: белый/i);
+    assert.ok(Array.isArray(d.products[0].filters['Цвет']));
   });
 
   console.log('\nВалидация обогащения');

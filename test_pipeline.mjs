@@ -2,7 +2,7 @@ import { loadConfig, loadDictionary, loadProducts, attrsWithCoverage, loadCatego
 import { normalizeProduct, formatCounts } from './pipeline/normalize.js';
 import { bucketLabel, buildFilters } from './pipeline/facets.js';
 import { renderCard, annotationRows, MIN_ANNOTATION_ROWS, verifyDescription } from './pipeline/generate.js';
-import { compactAnnotation, compactHtml, serializeProduct, metaKeywords, buildCustomerExport } from './pipeline/export.js';
+import { compactAnnotation, compactHtml, serializeProduct, metaKeywords, buildCustomerExport, buildGoldShapeExport } from './pipeline/export.js';
 import { validateProducts, validateDescription, expectedFilters, PRODUCT_FIELDS } from './pipeline/validate.js';
 import { webInfoFrom, cleanReviewText, isReview } from './pipeline/reviews.js';
 import { dictForProducts } from './pipeline/schema.js';
@@ -948,6 +948,29 @@ console.log('golden tests passed');
   assert.equal(thin.held.length, 1);
   assert.equal(thin.held[0].id, 1);
   console.log('ok buildCustomerExport sku→id / hold');
+}
+
+{
+  const src = p467[11391];
+  const out = buildGoldShapeExport([{
+    ...src,
+    enriched: { specs: { цвет: 'белый' }, seo_keywords: ['стиральная машина ATLANT'] },
+  }]);
+  assert.equal(out.products.length, 1);
+  assert.deepEqual(Object.keys(out.products[0]), PRODUCT_FIELDS);
+  assert.ok(out.products[0].annotation_html.includes('<li>'));
+  assert.match(out.products[0].annotation_html, /Тип загрузки/);
+  assert.ok(Array.isArray(out.products[0].filters['Цвет']));
+  const hood = buildGoldShapeExport([{
+    sku: '21670',
+    name: 'Кухонная вытяжка X',
+    annotation: '<ul><li>Тип - вытяжка</li><li>Максимальная производительность - 400 м³/ч</li></ul>',
+    enriched: { specs: { цвет: 'нержавеющая сталь' }, short_description: '<h1>X</h1><p>Текст</p>' },
+  }]);
+  assert.deepEqual(Object.keys(hood.products[0]), PRODUCT_FIELDS);
+  assert.match(hood.products[0].annotation_html, /производительность/i);
+  assert.ok(!hood.products[0].description_html.includes('<h1'));
+  console.log('ok buildGoldShapeExport keeps 7 fields and source rows');
 }
 
 {

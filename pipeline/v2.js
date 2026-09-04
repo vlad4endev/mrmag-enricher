@@ -10,8 +10,10 @@ import { loadCategories } from './dict.js';
 import { attrLabel } from './types.js';
 import { CODE_TO_SPEC } from './schema.js';
 
-/** Всегда в filters_v2, даже если в справочнике нет таких code. */
-const IDENTITY_SPEC_KEYS = ['тип_товара', 'бренд', 'модель'];
+/** Всегда в filters_v2, даже если в справочнике нет таких code.
+ *  Модель — паспорт, не фасет: у каждого товара своя, галочка «RK FNF-172 W»
+ *  в каталоге никого не группирует. В description_html она остаётся. */
+const IDENTITY_SPEC_KEYS = ['тип_товара', 'бренд'];
 
 /**
  * Ключи specs, которые можно класть в filters_v2.

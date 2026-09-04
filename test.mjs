@@ -716,7 +716,7 @@ t('фасеты обогащения попадают в файл фильтро
   const cool = f.filters.find(x => x.code === 'система_охлаждения');
   assert.strictEqual(cool.name, 'Система охлаждения');
   assert.strictEqual(cool.source, 'enriched', 'видно, что фасет из прогона, а не из магазина');
-  assert.deepStrictEqual(cool.values, [{ value: 'No Frost', count: 2 }, { value: 'капельная', count: 1 }]);
+  assert.deepStrictEqual(cool.values, [{ value: 'No Frost', count: 2 }, { value: 'Капельная', count: 1 }]);
 
   const vol = f.filters.find(x => x.code === 'объем_общий_л');
   assert.strictEqual(vol.name, 'Объем общий, л', 'единица уезжает в имя фасета');
@@ -736,7 +736,7 @@ t('фасеты считаются по обогащённым, бренд и ц
   const f = buildFilters({ id: 523, name: 'Х', url: 'u' }, listing, { facetsFrom: run });
   assert.strictEqual(f.products_total, 2, 'бренд и цена — по разделу');
   assert.strictEqual(f.enriched_total, 1);
-  assert.deepStrictEqual(f.filters.find(x => x.code === 'цвет').values, [{ value: 'белый', count: 1 }]);
+  assert.deepStrictEqual(f.filters.find(x => x.code === 'цвет').values, [{ value: 'Белый', count: 1 }]);
 });
 t('пустая категория не роняет фильтры', () => {
   const f = buildFilters({ id: 1, name: 'X', url: 'u' }, []);
@@ -1142,13 +1142,15 @@ t('ключ схемы разбирается на подпись и едини�
 });
 
 t('значение товара совпадает со значением фасета', () => {
-  // Эталон заказчика: точное число, не корзина. Разойдись подпись у товара
-  // и в списке фасета — товар не попадёт ни в один свой фильтр.
+  // Восемь объёмов сворачиваются в корзины шагом 50; подпись у товара
+  // и в списке фасета обязана совпасть — иначе товар не попадёт в фильтр.
   const vols = [190, 225, 298, 310, 355, 364, 420, 455];
   const rows = vols.map((v, i) => v2row(String(i + 1), { объем_общий_л: v }));
   const { filters, products } = buildV2(rows);
   const facet = filters.find(f => f.name === 'Объем общий, л');
-  assert.deepStrictEqual(facet.value, vols.map(String));
+  assert.deepStrictEqual(facet.value, [
+    '150-200', '200-250', '250-300', '300-350', '350-400', '400-450', '450-500',
+  ]);
   for (const p of products) {
     assert.ok(facet.value.includes(p.filters['Объем общий, л']),
       `значение ${p.filters['Объем общий, л']} товара ${p.id} отсутствует в фасете`);
@@ -1182,8 +1184,8 @@ t('таблица заказчика: выключенный фасет оста
     вес_кг: 74,
     тип_товара: 'холодильник',
   })], { dict }).products;
-  assert.strictEqual(p.filters['Цвет'], 'белый');
-  assert.strictEqual(p.filters['Тип товара'], 'холодильник');
+  assert.strictEqual(p.filters['Цвет'], 'Белый');
+  assert.strictEqual(p.filters['Тип товара'], 'Холодильник');
   assert.ok(!('Хладагент' in p.filters));
   assert.ok(!('Вес, кг' in p.filters));
   assert.match(p.description_html, /<li>Хладагент: R600a<\/li>/);
@@ -1230,6 +1232,27 @@ t('html в описании экранируется', () => {
 
 t('без обогащения выгружать нечего', () => {
   assert.deepStrictEqual(buildV2([{ sku: '1', name: 'A', enriched: null }]), { filters: [], products: [] });
+});
+
+t('enum сводится к одному написанию, модель и комплектация не фасеты', () => {
+  const rows = [
+    v2row('1', { бренд: 'АТЛАНТ', цвет: 'чёрный', модель: 'X-1', комплектация: 'полки, ящики, лоток для яиц' }),
+    v2row('2', { бренд: 'Атлант', цвет: 'черный', модель: 'X-2', комплектация: 'полки, ящики, подставка для яиц' }),
+    v2row('3', { бренд: 'ATLANT', цвет: 'Черный', модель: 'X-3' }),
+  ];
+  const { filters, products } = buildV2(rows);
+  const brands = filters.find(f => f.name === 'Бренд').value;
+  assert.ok(brands.includes('Атлант'));
+  assert.ok(!brands.includes('АТЛАНТ'));
+  const colors = filters.find(f => f.name === 'Цвет').value;
+  assert.equal(colors.length, 1);
+  assert.ok(!filters.some(f => f.name === 'Модель'));
+  assert.ok(!filters.some(f => f.name === 'Комплектация'));
+  for (const p of products) {
+    assert.ok(!('Модель' in p.filters));
+    assert.ok(!('Комплектация' in p.filters));
+    assert.equal(p.filters['Цвет'], colors[0]);
+  }
 });
 
 console.log('\nОграничитель частоты под параллелью');

@@ -742,11 +742,11 @@ export const GENERIC_SCHEMA = defineSchema({
 
 /** Схема по slug, id категории, названию или объекту схемы. */
 export function schemaFor(key) {
-  if (!key) return GENERIC_SCHEMA;
-  if (typeof key === 'object') {
+  if (key && typeof key === 'object') {
     if (key.fromDictionary || key.specKeys) return key;
-    return GENERIC_SCHEMA;
+    return schemaFor(key.id ?? key.slug ?? key.name ?? key.category ?? key.category_id);
   }
+  if (key == null || key === '') return GENERIC_SCHEMA;
   // Категории со справочником — только из dictionaries/attributes_{id}.json.
   const fromDict = tryLoadDictSchema(key);
   if (fromDict) return fromDict;
@@ -764,6 +764,27 @@ export function schemaFor(key) {
          .filter(x => x.at >= 0)
          .sort((a, b) => b.at - a.at || b.s.name.length - a.s.name.length)[0]?.s
     || GENERIC_SCHEMA;
+}
+
+/** По имени: «Холодильник Pozis…» не должен уезжать в универсальные 16 полей. */
+function schemaFromProductName(name) {
+  const n = String(name || '').toLowerCase().replace(/ё/g, 'е');
+  if (/стиральн/.test(n)) return tryLoadDictSchema(467);
+  if (/холодильник/.test(n)) return tryLoadDictSchema(523);
+  return null;
+}
+
+/**
+ * Схема для прогона: явная категория, поле товара, иначе тип из названия.
+ * Иначе карточка холодильника получает шаблон «мощность / напряжение / назначение».
+ */
+export function schemaForProduct(product, category) {
+  if (category && typeof category === 'object' && (category.fromDictionary || category.specKeys)) {
+    return category;
+  }
+  const hinted = schemaFor(category || product?.category || product?.category_id);
+  if (hinted.slug !== '_generic') return hinted;
+  return schemaFromProductName(product?.name) || hinted;
 }
 
 // ── ПРОМПТ ───────────────────────────────────────────────────
@@ -1518,7 +1539,7 @@ export async function enrichProduct(product, opts) {
   // Схему берём из опции, иначе из категории самого товара. Молчаливого
   // «по умолчанию холодильник» здесь быть не должно: телевизор получил бы
   // в промпте объём морозильной камеры.
-  const schema = schemaFor(schemaOpt || product.category);
+  const schema = schemaForProduct(product, schemaOpt);
   const src = sourceText(product);
   const { facts } = productFacts(product, schema);
   const userContent = buildUserContent(product, facts);

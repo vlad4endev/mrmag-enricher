@@ -49,7 +49,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import {
-  RateLimiter, enrichProduct, rpmFor, schemaFor, SCHEMAS, netError,
+  RateLimiter, enrichProduct, rpmFor, schemaFor, schemaForProduct, SCHEMAS, netError,
   RUB_PER_USD, RUB_RATE_DATE, isEnrichable, productFacts,
 } from './lib.js';
 import { CATEGORIES, findCategory, crawlCategory, loadFeed, buildFilters, ensureSource, WEB_LOOKUP } from './catalog.js';
@@ -494,7 +494,7 @@ async function apiQuality(req, res) {
   // не ответа модели, — значит видно до прогона и без единого запроса к ней.
   json(res, 200, {
     quality: products.map(p => {
-      const schema = schemaFor(category || p?.category);
+      const schema = schemaForProduct(p || {}, category);
       return { ...isEnrichable(p || {}, schema), conflicts: productFacts(p || {}, schema).conflicts };
     }),
   });
@@ -532,7 +532,7 @@ async function apiExportV2(req, res) {
 async function enrichOne(product, { model, category, provider } = {}) {
   // Категория определяет схему полей и промпт. Явное поле важнее, иначе берём
   // category самого товара — её проставляет и фид, и обход раздела.
-  const schema = schemaFor(category || product.category);
+  const schema = schemaForProduct(product, category);
   const settings = loadSettings(ROOT);
   const prov = resolveProvider(settings, provider);
   const ep = providerEndpoint(prov);

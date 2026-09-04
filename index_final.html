@@ -2014,13 +2014,14 @@ function setCntFree(inp){
 const catKey=p=>String(p?.category??'').trim();
 
 /**
- * Категория прогона — выбранный чип: одна схема полей на весь прогон вместо
- * схемы на товар. Ответ один и тот же для /api/quality и /api/enrich: разойдись
- * они, фильтр «Без данных» считал бы по одной схеме, а прогон шёл по другой.
- * Пустая строка («без категории») уходит как есть — сервер вернётся к категории
- * самого товара, ничего не выбрано — тоже.
+ * Категория прогона — выбранный чип, иначе единственная категория в окне.
+ * Если и её нет, сервер смотрит product.category и имя («Холодильник …»).
  */
-const runCat=()=>pickCat??undefined;
+const runCat=()=>{
+  if(pickCat!=null) return pickCat;
+  const cats=[...new Set(items.map(catKey).filter(Boolean))];
+  return cats.length===1?cats[0]:undefined;
+};
 
 /** Единственное место, где items получает значение. */
 function applySource(){

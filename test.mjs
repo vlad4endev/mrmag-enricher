@@ -13,7 +13,7 @@ import {
   repairTruncatedJson, MAX_COMPLETION_TOKENS,
   normalizeResponse as normalizeResponseIn, stripHtml, RateLimiter, isEnrichable,
   buildUserContent, rpmFor, attrFacts, productFacts, modelToken,
-  SCHEMAS, GENERIC_SCHEMA, schemaFor, buildSystemPrompt, enrichProduct, netError,
+  SCHEMAS, GENERIC_SCHEMA, schemaFor, schemaForProduct, buildSystemPrompt, enrichProduct, netError,
 } from './lib.js';
 
 // Схема по умолчанию — универсальная, а не холодильник: неизвестная категория
@@ -437,6 +437,14 @@ t('схема находится по slug, id и названию', () => {
   assert.strictEqual(schemaFor('Техника для дома/Холодильники').slug, 'kholodilniki',
     'из пути категории берётся самый точный раздел');
   assert.strictEqual(schemaFor('Посуда').slug, 'posuda');
+  assert.strictEqual(schemaFor({ id: 523 }).slug, 'kholodilniki', 'объект категории с id — не generic');
+});
+t('холодильник без category не уходит в универсальные 16 полей', () => {
+  const s = schemaForProduct({ name: 'Холодильник Pozis RK-103 W' });
+  assert.strictEqual(s.id, 523);
+  assert.ok(s.specKeys.includes('система_охлаждения'));
+  assert.ok(!s.specKeys.includes('назначение'), 'это не generic');
+  assert.strictEqual(schemaForProduct({ name: 'Стиральная машина ATLANT' }).id, 467);
 });
 t('поля категорий не пересекаются по смыслу', () => {
   const f = schemaFor('kholodilniki').specKeys, w = schemaFor('stiralnye_mashiny').specKeys;

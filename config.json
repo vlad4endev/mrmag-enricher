@@ -36,7 +36,7 @@
       "chat_path": "/chat/completions",
       "headers": {
         "HTTP-Referer": "https://mrmag.ru",
-        "X-Title": "mrmag enricher"
+        "X-Title": "Ogran"
       },
       "models": [],
       "notes": ""

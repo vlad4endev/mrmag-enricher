@@ -3,14 +3,14 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Enricher — обогащение каталога</title>
+<title>Ogran — огранка каталога</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Sora:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.19.0/dist/tabler-icons.min.css">
 <style>
 /* ═══════════════════════════════════════════════════════════════════
-   Enricher — холодный инструмент: slate, teal, геометрический Sora.
+   Ogran — холодный инструмент: slate, teal, геометрический Sora.
    Светлая по умолчанию, тёмная по переключателю (localStorage).
    Сигнальный цвет один; зелёный / янтарь / красный — только статусы.
    ═══════════════════════════════════════════════════════════════════ */
@@ -150,22 +150,32 @@ button:focus-visible,input:focus-visible,textarea:focus-visible,[tabindex]:focus
   display:flex;flex-direction:column;
   width:var(--left-w);min-width:280px;max-width:400px;flex-shrink:0;
 }
+.left-head{
+  padding:14px var(--pad) 12px;border-bottom:1px solid var(--b1);flex-shrink:0;
+  background:linear-gradient(180deg,var(--bg3),var(--bg2));
+}
+.left-title{font-family:var(--display);font-size:14px;font-weight:700;letter-spacing:-.03em;color:var(--t1)}
+.left-lead{font-size:11px;color:var(--t3);margin-top:3px;line-height:1.4}
+.left-flow{display:flex;align-items:center;gap:6px;margin-top:8px;font-size:10px;font-weight:650;color:var(--t3);letter-spacing:.02em}
+.left-flow span{color:var(--t2)}
+.left-flow i{font-size:10px;opacity:.5;font-style:normal}
 .sec-lbl{
   font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;
   color:var(--t3);margin-bottom:var(--gap-sm);
 }
 .card{background:var(--bg2);border:1px solid var(--b1);border-radius:var(--r);padding:var(--pad-sm) var(--pad)}
 .flbl{font-size:11.5px;color:var(--t2);margin-bottom:var(--gap-sm);font-weight:550}
-.flbl + .cnt-grid,.flbl + .irow,.flbl + input,.flbl + .cat-row{margin-top:0}
+.flbl + .cnt-grid,.flbl + .irow,.flbl + input,.flbl + .cat-row,.flbl + .src-tabs{margin-top:0}
 .flbl.mt,.stack-gap{margin-top:var(--pad-sm)}
-.hint{font-size:11.5px;color:var(--t3);margin-top:var(--gap-sm);line-height:1.45}
+.hint{font-size:11px;color:var(--t3);margin-top:6px;line-height:1.4}
 
-/* Шаги: колонка номера + контент на одной сетке */
+/* Шаги: 1 → 2 → запуск. Парсер — служебный блок, не номер. */
 .step{border-bottom:1px solid var(--b1);transition:opacity .2s}
-.step.locked{opacity:.5}
+.step.locked{opacity:.55;pointer-events:none}
+.step.locked .step-b{filter:grayscale(.12)}
 .step-h{
   display:grid;grid-template-columns:28px 1fr auto;align-items:center;gap:var(--gap);
-  padding:var(--pad) var(--pad) 0;min-height:0;
+  padding:14px var(--pad) 0;
 }
 .step-n{
   font-family:var(--mono);font-size:11px;font-weight:700;color:var(--t3);flex-shrink:0;
@@ -176,13 +186,45 @@ button:focus-visible,input:focus-visible,textarea:focus-visible,[tabindex]:focus
 .step-t{font-size:13px;font-weight:650;color:var(--t1);min-width:0;letter-spacing:-.02em}
 .step-sub{
   font-size:11px;color:var(--t3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
-  max-width:120px;font-family:var(--mono);text-align:right;
+  max-width:132px;font-family:var(--mono);text-align:right;
 }
 .step.done .step-sub{color:var(--green)}
-.step-b{padding:var(--gap) var(--pad) var(--pad);display:flex;flex-direction:column;gap:0}
+.step-b{padding:10px var(--pad) 14px;display:flex;flex-direction:column;gap:0}
 .step-b > .flbl:first-child{margin-top:0}
-.parser-kv{display:flex;justify-content:space-between;align-items:baseline;gap:var(--gap);font-size:12px;color:var(--t2)}
-.parser-kv b{color:var(--t1);font-weight:650;font-size:12px;text-align:right;word-break:break-word}
+.parser-kv{display:flex;justify-content:space-between;align-items:baseline;gap:var(--gap);font-size:12px;color:var(--t2);padding:3px 0}
+.parser-kv b{color:var(--t1);font-weight:650;font-size:12px;text-align:right;word-break:break-word;max-width:58%}
+
+/* Источники товаров — вкладки, один способ за раз */
+.src-tabs{
+  display:grid;grid-template-columns:repeat(3,1fr);gap:0;margin-bottom:10px;
+  border:1px solid var(--b1);border-radius:var(--r2);overflow:hidden;background:var(--bg3);
+}
+.src-tab{
+  border:none;border-right:1px solid var(--b1);background:transparent;color:var(--t2);
+  font:650 11.5px/1 var(--sans);padding:8px 6px;cursor:pointer;transition:all .12s;
+}
+.src-tab:last-child{border-right:none}
+.src-tab:hover{color:var(--t1);background:var(--bg4)}
+.src-tab.on{background:var(--bg2);color:var(--ac);box-shadow:inset 0 -2px 0 var(--ac)}
+.src-pane{display:none}
+.src-pane.on{display:block}
+
+/* Парсер — свёрнутый служебный блок, не шаг визарда */
+.step-aside{border-bottom:1px solid var(--b1);background:var(--bg3)}
+.step-aside .parser-fold{margin:0}
+.step-aside .parser-fold > summary{
+  list-style:none;cursor:pointer;display:grid;grid-template-columns:28px minmax(0,1fr) auto 14px;
+  align-items:center;gap:8px;padding:12px var(--pad);user-select:none;
+}
+.step-aside .parser-fold > summary::-webkit-details-marker{display:none}
+.step-aside .parser-fold > summary::after{content:"▾";color:var(--t3);font-size:10px;line-height:1}
+.step-aside .parser-fold[open] > summary::after{content:"▴"}
+.step-aside .step-n{
+  width:22px;height:22px;font-size:10px;background:var(--bg2);
+}
+.step-aside.done .step-n{background:var(--gbg);color:var(--green);border-color:var(--gbd)}
+.step-aside .step-t{font-size:12.5px}
+.step-aside .step-b{padding:0 var(--pad) 12px;border-top:1px dashed var(--b1)}
 
 /* Поля ввода — одна высота с кнопками */
 input[type=text],input[type=password],input[type=number],input[type=url],textarea,select{
@@ -195,8 +237,8 @@ input:hover,textarea:hover{border-color:var(--t3)}
 input:focus,textarea:focus,select:focus{border-color:var(--ac);box-shadow:var(--focus)}
 input::placeholder,textarea::placeholder{color:var(--t3)}
 textarea{
-  resize:vertical;font-family:var(--mono);font-size:11.5px;min-height:96px;
-  line-height:1.55;margin-top:var(--gap-sm);background:var(--bg3);
+  resize:vertical;font-family:var(--mono);font-size:11.5px;min-height:110px;
+  line-height:1.55;margin-top:0;background:var(--bg3);
 }
 .irow{display:flex;gap:var(--gap-sm);align-items:stretch}
 .irow input{flex:1;min-width:0}
@@ -238,6 +280,9 @@ textarea{
 }
 #fileIn::file-selector-button:hover{border-color:var(--ac-b);color:var(--t1);background:var(--bg3)}
 .hint code{font-family:var(--mono);font-size:10.5px;color:var(--t2)}
+.file-box{
+  border:1px dashed var(--b2);border-radius:var(--r2);padding:10px;background:var(--bg3);
+}
 
 /* Выбор модели */
 .msel{
@@ -252,7 +297,7 @@ textarea{
 .msearch{margin-top:var(--gap-sm);display:none}
 .msearch.open{display:block}
 .mdrop{
-  display:none;max-height:236px;overflow-y:auto;border:1px solid var(--b1);
+  display:none;max-height:220px;overflow-y:auto;border:1px solid var(--b1);
   border-radius:var(--r2);background:var(--bg2);margin-top:var(--gap-sm);box-shadow:var(--sh2);
 }
 .mdrop.open{display:block}
@@ -272,27 +317,21 @@ textarea{
 .mi-empty{padding:16px;text-align:center;font-size:12px;color:var(--t3)}
 .mi-prov{font-size:9.5px;color:var(--t3);text-transform:uppercase;letter-spacing:.04em;font-weight:700;flex-shrink:0}
 
-/* Раскрывающийся JSON */
-.adv{margin-top:var(--pad-sm);border-top:1px solid var(--b1);padding-top:var(--gap)}
-.adv summary{
-  font-size:11.5px;color:var(--t3);cursor:pointer;list-style:none;
-  display:flex;align-items:center;gap:6px;user-select:none;transition:color .15s;
-}
-.adv summary::-webkit-details-marker{display:none}
-.adv summary::before{content:"▸";font-size:9px;transition:transform .18s}
-.adv[open] summary::before{transform:rotate(90deg)}
-.adv summary:hover{color:var(--ac)}
-
-/* Оценка стоимости */
-.est{display:flex;flex-direction:column;gap:var(--gap-sm)}
+/* Оценка стоимости — в подвале рядом с запуском */
+.est{display:flex;flex-direction:column;gap:6px;margin-bottom:10px}
 .est-row{display:flex;justify-content:space-between;align-items:baseline;gap:var(--gap);font-size:12.5px;color:var(--t2)}
-.est-row b{color:var(--t1);font-weight:700;font-size:15px}
-.est-note{font-size:11px;color:var(--t3);line-height:1.5}
+.est-row b{color:var(--t1);font-weight:700;font-size:16px;font-family:var(--mono);font-variant-numeric:tabular-nums}
+.est-note{font-size:11px;color:var(--t3);line-height:1.45}
 
 /* Запуск */
 .run-wrap{
   margin-top:auto;flex-shrink:0;padding:var(--pad);
   border-top:1px solid var(--b1);background:var(--bg3);position:sticky;bottom:0;
+}
+.run-wrap.locked{opacity:.7;pointer-events:none}
+.run-wrap .step-cap{
+  font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;
+  color:var(--t3);margin-bottom:8px;
 }
 .run-btn{
   width:100%;padding:13px;background:var(--ac);border:none;border-radius:var(--r);
@@ -326,18 +365,18 @@ textarea{
   display:flex;flex-direction:column;overflow:hidden;flex-shrink:0;
 }
 .mid-h{
-  min-height:var(--panel-h);padding:var(--pad-sm) var(--pad-sm);border-bottom:1px solid var(--b1);
-  background:var(--bg2);flex-shrink:0;display:flex;flex-direction:column;justify-content:center;gap:var(--gap-sm);
+  min-height:var(--panel-h);padding:var(--pad-sm);border-bottom:1px solid var(--b1);
+  background:var(--bg2);flex-shrink:0;display:flex;flex-direction:column;justify-content:flex-start;gap:var(--gap-sm);
 }
-/* Фильтры — сетка 2×3, без обрезки подписей */
+/* Фильтры — сетка 2×3, короткие подписи помещаются целиком */
 .filters{
   display:grid;grid-template-columns:repeat(2,1fr);gap:4px;border:none;border-radius:0;overflow:visible;
 }
 .fbtn{
-  padding:6px 8px;border:1px solid var(--b1);border-radius:var(--r2);background:var(--bg2);
+  padding:7px 6px;border:1px solid var(--b1);border-radius:var(--r2);background:var(--bg2);
   color:var(--t2);font-size:11px;cursor:pointer;font-family:var(--sans);
   font-weight:600;transition:all .15s;white-space:nowrap;min-width:0;text-align:center;
-  overflow:hidden;text-overflow:ellipsis;
+  overflow:hidden;text-overflow:ellipsis;line-height:1.2;
 }
 .fbtn:last-child{border-right:1px solid var(--b1)}
 .fbtn:hover:not(:disabled){color:var(--t1);border-color:var(--b2);background:var(--bg4)}
@@ -770,22 +809,67 @@ input[type=range]::-moz-range-thumb{
 }
 @keyframes stripes{to{transform:translateX(14px)}}
 
-/* Строка состояния прогона над списком */
+/* Строка состояния прогона — карточка в 2–3 ряда: узкая колонка не даёт
+   уместить hint + таймер + кнопку в одну линию. */
 .runline{
-  display:flex;align-items:center;gap:7px;margin-bottom:8px;padding:6px 9px;
-  background:var(--ac-w);border:1px solid var(--ac-b);border-radius:var(--r2);
-  font-size:11px;color:var(--ac);font-weight:600;
+  display:flex;flex-direction:column;align-items:stretch;gap:8px;
+  margin:0;padding:10px;background:var(--ac-w);border:1px solid var(--ac-b);
+  border-radius:var(--r);font-size:12px;color:var(--ac);font-weight:600;
+  min-width:0;overflow:hidden;
 }
+.runline .rl-top{
+  display:flex;align-items:center;gap:8px;min-width:0;
+}
+.runline .rl-top .flake{flex-shrink:0}
+.runline .rl-title{flex:1;min-width:0;line-height:1.3}
 .runline .rl-n{font-family:var(--mono);font-variant-numeric:tabular-nums}
-.runline .rl-t{margin-left:auto;color:var(--t2);font-weight:500;font-family:var(--mono);font-variant-numeric:tabular-nums}
-/* Прогон идёт на сервере: подсказка про вкладку и остановка живут здесь же —
-   строка видна ровно тогда, когда прогон работает. */
-.runline .rl-hint{color:var(--t2);font-weight:500}
-.runline .rl-stop{
-  border:1px solid var(--ac-b);background:var(--card);color:var(--ac);
-  font:inherit;font-weight:600;padding:2px 8px;border-radius:var(--r3,6px);cursor:pointer;
+.runline .rl-t{
+  flex-shrink:0;color:var(--t2);font-weight:500;font-family:var(--mono);
+  font-variant-numeric:tabular-nums;font-size:11px;
 }
-.runline .rl-stop:hover{background:var(--ac-w);border-color:var(--ac)}
+.runline .rl-hint{
+  color:var(--t2);font-weight:500;font-size:11px;line-height:1.4;
+  margin:0;
+}
+.runline .rl-stop{
+  width:100%;border:1px solid var(--ac-b);background:var(--bg2);color:var(--ac);
+  font:inherit;font-weight:650;padding:7px 10px;border-radius:var(--r2);cursor:pointer;
+  text-align:center;
+}
+.runline .rl-stop:hover{background:var(--bg3);border-color:var(--ac)}
+
+/* Пошаговый лог прогона — живой журнал под прогрессом */
+.runlog{
+  display:none;flex-direction:column;flex-shrink:0;
+  border-bottom:1px solid var(--b1);background:var(--bg3);max-height:42%;min-height:0;
+}
+.runlog.on{display:flex}
+.runlog-h{
+  display:flex;align-items:center;gap:8px;padding:7px 10px;
+  border-bottom:1px solid var(--b1);flex-shrink:0;min-width:0;
+}
+.runlog-t{flex:1;min-width:0;font-size:11px;font-weight:650;color:var(--t1);letter-spacing:-.02em}
+.runlog-n{font-family:var(--mono);font-size:10px;color:var(--t3);font-variant-numeric:tabular-nums}
+.runlog-copy,.runlog-clr{
+  border:1px solid var(--b1);background:var(--bg2);color:var(--t2);
+  font:inherit;font-size:10.5px;font-weight:600;padding:4px 8px;border-radius:var(--r2);
+  cursor:pointer;flex-shrink:0;line-height:1.2;
+}
+.runlog-copy:hover,.runlog-clr:hover{border-color:var(--ac);color:var(--ac);background:var(--ac-w)}
+.runlog-copy.ok{border-color:var(--gbd);color:var(--green);background:var(--gbg)}
+.runlog-body{
+  flex:1;overflow-y:auto;padding:6px 8px 8px;margin:0;
+  font-family:var(--mono);font-size:10.5px;line-height:1.45;color:var(--t2);
+  white-space:pre-wrap;word-break:break-word;min-height:72px;
+}
+.runlog-line{display:block;padding:1px 0}
+.runlog-line .rl-ts{color:var(--t3);margin-right:6px}
+.runlog-line.l-ok{color:var(--green)}
+.runlog-line.l-err{color:var(--red)}
+.runlog-line.l-warn{color:var(--amber)}
+.runlog-line.l-skip{color:var(--t3)}
+.runlog-line.l-info{color:var(--t2)}
+.runlog-empty{color:var(--t3);font-style:normal;padding:8px 2px}
 
 /* Товар, который обрабатывается прямо сейчас */
 .ri.s-run{border-left-color:var(--ac);background:var(--ac-w);animation:breathe 1.6s ease-in-out infinite}
@@ -848,7 +932,7 @@ input[type=range]::-moz-range-thumb{
         <path d="M4 14.2h28M18 3.5v29M10.2 14.2 18 32.5l7.8-18.3" stroke="currentColor" stroke-width="1.15" opacity=".7"/>
       </svg>
     </div>
-    <div class="logo-name">Enricher<small>обогащение</small></div>
+    <div class="logo-name">Ogran<small>огранка</small></div>
   </div>
   <div class="nav-tabs">
     <button class="ntab on" data-page="enricher" onclick="showPage('enricher',this)"><i class="ti ti-sparkles"></i> Обогащение</button>
@@ -871,8 +955,13 @@ input[type=range]::-moz-range-thumb{
 <div class="page on" id="page-enricher">
 <div class="app">
 
-  <!-- НАСТРОЙКА: три шага в том порядке, в котором они выполняются -->
+  <!-- НАСТРОЙКА: модель → товары → запуск. Парсер — служебный статус. -->
   <aside class="left">
+    <header class="left-head">
+      <div class="left-title">Настройка прогона</div>
+      <div class="left-lead">Выберите модель, загрузите товары и оцените стоимость.</div>
+      <div class="left-flow" aria-hidden="true"><span>1 модель</span><i>→</i><span>2 товары</span><i>→</i><span>запуск</span></div>
+    </header>
 
     <section class="step" id="step1">
       <div class="step-h">
@@ -912,57 +1001,62 @@ input[type=range]::-moz-range-thumb{
                  oninput="setCntFree(this)" aria-label="Своё количество товаров">
         </div>
 
-        <div class="flbl stack-gap">Адрес JSON</div>
-        <div class="irow">
-          <input type="text" id="urlIn" placeholder="https://mrmag.ru/scripts/sync_local/products.json" aria-label="URL каталога товаров">
-          <button class="ibtn" id="fetchBtn" onclick="fetchProducts()" title="Загрузить товары" aria-label="Загрузить товары">
-            <i class="ti ti-download" aria-hidden="true"></i><span class="ico-fb">↓</span>
-          </button>
-        </div>
-        <div class="hint" id="fetchHint">Загрузит первые 10 товаров по адресу</div>
-
-        <div class="flbl stack-gap">Или файлы JSON с компьютера</div>
-        <input type="file" id="fileIn" accept=".json,application/json" multiple
-               onchange="loadFile(this)" aria-label="Файлы JSON: data_*.json и filters_*.json">
-        <div class="hint">data_523.json — товары <code>{id, name, description, annotation}</code>. filters_929.json — <code>{filters:[{name, value}]}</code>. Можно выбрать несколько сразу.</div>
-
-        <div id="dataCats" style="display:none">
-          <div class="flbl stack-gap">Категории в загруженных товарах</div>
-          <div class="cat-row" id="dataCatRow"></div>
+        <div class="flbl stack-gap">Откуда взять</div>
+        <div class="src-tabs" role="tablist" aria-label="Источник товаров">
+          <button type="button" class="src-tab on" role="tab" aria-selected="true" data-src="url" onclick="setSrcTab('url',this)">URL</button>
+          <button type="button" class="src-tab" role="tab" aria-selected="false" data-src="file" onclick="setSrcTab('file',this)">Файл</button>
+          <button type="button" class="src-tab" role="tab" aria-selected="false" data-src="json" onclick="setSrcTab('json',this)">JSON</button>
         </div>
 
-        <details class="adv" id="advBox">
-          <summary id="advSum">JSON товаров — можно вставить вручную</summary>
+        <div class="src-pane on" id="src-url" role="tabpanel">
+          <div class="irow">
+            <input type="text" id="urlIn" placeholder="https://…/products.json" aria-label="URL каталога товаров">
+            <button class="ibtn" id="fetchBtn" onclick="fetchProducts()" title="Загрузить товары" aria-label="Загрузить товары">
+              <i class="ti ti-download" aria-hidden="true"></i><span class="ico-fb">↓</span>
+            </button>
+          </div>
+          <div class="hint" id="fetchHint">Загрузит первые 10 товаров по адресу</div>
+        </div>
+
+        <div class="src-pane" id="src-file" role="tabpanel">
+          <div class="file-box">
+            <input type="file" id="fileIn" accept=".json,application/json" multiple
+                   onchange="loadFile(this)" aria-label="Файлы JSON: data_*.json и filters_*.json">
+            <div class="hint">Можно несколько файлов: <code>data_*.json</code> (товары) и <code>filters_*.json</code> (фасеты).</div>
+          </div>
+        </div>
+
+        <div class="src-pane" id="src-json" role="tabpanel">
           <textarea id="prod" oninput="onProdInput()" aria-label="JSON товаров"
                     placeholder='[{"id":123,"name":"...","description":"...","annotation":"..."}]'></textarea>
-        </details>
-      </div>
-    </section>
+          <div class="hint" id="advSum">Вставьте массив товаров вручную</div>
+        </div>
 
-    <section class="step" id="parserStep">
-      <div class="step-h">
-        <span class="step-n" id="parserDot">·</span>
-        <span class="step-t">Парсер</span>
-        <span class="step-sub" id="parserSub">загрузка…</span>
-      </div>
-      <div class="step-b" id="parserBox">
-        <div class="est-note">Статус поиска пустых карточек в сети.</div>
-      </div>
-    </section>
-
-    <section class="step" id="step3">
-      <div class="step-h">
-        <span class="step-n" id="n3">3</span>
-        <span class="step-t">Проверьте и запустите</span>
-      </div>
-      <div class="step-b">
-        <div class="est" id="est">
-          <div class="est-note">Выберите модель и загрузите товары — здесь появится стоимость прогона.</div>
+        <div id="dataCats" style="display:none">
+          <div class="flbl stack-gap">Категории в данных</div>
+          <div class="cat-row" id="dataCatRow"></div>
         </div>
       </div>
     </section>
 
-    <div class="run-wrap">
+    <section class="step-aside" id="parserStep">
+      <details class="parser-fold">
+        <summary>
+          <span class="step-n" id="parserDot">·</span>
+          <span class="step-t">Парсер сети</span>
+          <span class="step-sub" id="parserSub">загрузка…</span>
+        </summary>
+        <div class="step-b" id="parserBox">
+          <div class="est-note">Статус поиска пустых карточек в сети.</div>
+        </div>
+      </details>
+    </section>
+
+    <div class="run-wrap" id="step3">
+      <div class="step-cap">Стоимость и запуск</div>
+      <div class="est" id="est">
+        <div class="est-note">Выберите модель и загрузите товары — здесь появится стоимость.</div>
+      </div>
       <button class="run-btn" id="runBtn" onclick="run()" disabled>
         <span class="rb-fill" id="rbFill"></span>
         <i class="ti ti-player-play" aria-hidden="true"></i>
@@ -992,6 +1086,15 @@ input[type=range]::-moz-range-thumb{
       <div class="dhint" id="dateHint" style="display:none"></div>
     </div>
     <div class="mid-bar"><div class="mid-bar-f" id="midBarF"></div></div>
+    <div class="runlog" id="runLog" aria-live="polite">
+      <div class="runlog-h">
+        <span class="runlog-t">Лог обогащения</span>
+        <span class="runlog-n" id="runLogN">0</span>
+        <button type="button" class="runlog-copy" id="runLogCopy" onclick="copyRunLog()" title="Скопировать весь процесс">Копировать</button>
+        <button type="button" class="runlog-clr" id="runLogClr" onclick="clearRunLog()" title="Очистить лог на экране">✕</button>
+      </div>
+      <pre class="runlog-body" id="runLogBody"><span class="runlog-empty">Здесь появятся шаги прогона.</span></pre>
+    </div>
     <div class="mid-list" id="midList">
       <div class="mid-empty">Здесь появятся товары.<br>Загрузите их в шаге 2.</div>
     </div>
@@ -1021,13 +1124,13 @@ input[type=range]::-moz-range-thumb{
       <div class="empty">
         <div class="guide">
           <svg class="flake frost" viewBox="0 0 24 24" aria-hidden="true"><g><path d="M12 2v20M3.34 7l17.32 10M3.34 17L20.66 7"/><path d="M12 6.4 9.9 4.3M12 6.4l2.1-2.1M12 17.6l-2.1 2.1M12 17.6l2.1 2.1"/><path d="M7.3 9.3 4.4 8.5M7.3 9.3 6.5 6.4M16.7 14.7l2.9.8M16.7 14.7l.8 2.9"/><path d="M7.3 14.7l-2.9.8M7.3 14.7l.8-2.9M16.7 9.3l2.9-.8M16.7 9.3l-.8-2.9"/></g></svg>
-          <div class="guide-k">Сервис обогащения</div>
-          <h3>Каталог становится витриной</h3>
+          <div class="guide-k">Огранка каталога</div>
+          <h3>Сырая карточка — готовая витрина</h3>
           Берёт товары с описаниями и достаёт из них характеристики, синонимы и SEO-текст.
           <ol>
             <li>Выберите <b>модель</b> — рядом видна её цена за 1M токенов.</li>
-            <li>Укажите, <b>сколько</b> товаров обработать, и загрузите <code>data_*.json</code> или адрес фида.</li>
-            <li>Сверьте <b>стоимость</b> прогона и нажмите «Обогатить».</li>
+            <li>Укажите <b>сколько</b> товаров и загрузите их по URL, из файла или JSON.</li>
+            <li>Сверьте <b>стоимость</b> внизу слева и нажмите «Обогатить».</li>
           </ol>
         </div>
       </div>
@@ -2086,8 +2189,7 @@ function renderParser(p){
   if((p.engines||[]).length) rows.push(['Свои парсеры', p.engines.map(e=>e.name||e.url).join(', ')]);
   if(ddg.url) rows.push(['URL выдачи', ddg.url]);
   box.innerHTML=rows.map(([k,v])=>`<div class="parser-kv"><span>${esc(k)}</span><b>${esc(v)}</b></div>`).join('')
-    +'<div class="est-note" style="margin-top:8px">Страница принимается, если на ней есть артикул или опознавательные слова имени. Соцсети и футер поисковика в выдачу не входят.</div>'
-    +'<button type="button" class="sbtn ghost" style="margin-top:10px" onclick="showPage(\'settings\');setTab(\'parse\')">Настроить парсеры</button>';
+    +'<button type="button" class="sbtn ghost" style="margin-top:8px" onclick="showPage(\'settings\');setTab(\'parse\')">Настроить в параметрах</button>';
 }
 
 async function loadParser(){
@@ -2317,6 +2419,19 @@ function setCntFree(inp){
   cntTimer=setTimeout(()=>applyCnt(n),400);
 }
 
+/** Переключатель источника товаров: URL / файл / JSON — один способ за раз. */
+function setSrcTab(src,btn){
+  document.querySelectorAll('.src-tab').forEach(b=>{
+    const on=b.dataset.src===src;
+    b.classList.toggle('on',on);
+    b.setAttribute('aria-selected',on?'true':'false');
+  });
+  document.querySelectorAll('.src-pane').forEach(p=>{
+    p.classList.toggle('on',p.id==='src-'+src);
+  });
+  if(btn){ /* клик уже выставил data-src */ }
+}
+
 // ── ИСТОЧНИК ТОВАРОВ И КАТЕГОРИИ В НЁМ ───────────────────────
 // Товары в фиде лежат вперемешку по категориям, а насыщать обычно нужно одну.
 // Поэтому загруженное хранится целиком в srcItems, а items — это срез: сначала
@@ -2499,6 +2614,7 @@ async function loadFile(inp){
     const extra=loaded.length!==items.length?` · в окне ${items.length}`:'';
     document.getElementById('fetchHint').textContent=notes.join(' · ')+extra;
     setSt('ok',`Файл: ${items.length}`);
+    setSrcTab('file');
   }catch(e){
     setSt('er','Файл не прочитан');
     stepError(2,`Файл не читается: ${e.message}`);
@@ -2538,7 +2654,10 @@ function readProd(){
 function onProdInput(){
   const err=readProd();
   stepError(2,err);
-  if(!err){ runStore.clear(); results=[]; renderList(); loadQualitySoon(); }
+  if(!err){
+    runStore.clear(); results=[]; renderList(); loadQualitySoon();
+    setSrcTab('json');
+  }
   syncSteps();
 }
 
@@ -2576,6 +2695,7 @@ async function fetchProducts(){
     if(!Array.isArray(all)||!all.length) throw new Error('В ответе нет товаров');
     setSource(all.map(p=>normalizeCatalogProduct(p,'')));
     hint.textContent=`Загружено ${items.length} из ${all.length} доступных`;
+    setSrcTab('url');
   }catch(e){
     hint.textContent=`Загрузит первые ${selCnt} ${plural(selCnt,'товар','товара','товаров')} по адресу`;
     stepError(2,e.message);
@@ -2617,8 +2737,8 @@ function syncSteps(){
 
   document.getElementById('step3').classList.toggle('locked',!(hasModel&&hasItems));
   document.getElementById('advSum').textContent=items.length
-    ? `JSON товаров — ${items.length} ${plural(items.length,'запись','записи','записей')}`
-    : 'JSON товаров — можно вставить вручную';
+    ? `${items.length} ${plural(items.length,'запись','записи','записей')} в окне — можно править JSON`
+    : 'Вставьте массив товаров вручную';
 
   renderEstimate();
 
@@ -2727,12 +2847,11 @@ function renderRunline(){
   const elapsed=Date.now()-runT0;
   const eta=done>0?(elapsed/done)*(total-done):null;
   el.style.display='flex';
-  el.innerHTML=flake('spinning')
-    +`<span>Обрабатываем <span class="rl-n">${Math.min(done+1,total)} из ${total}</span></span>`
-    +`<span class="rl-hint">· вкладку можно закрыть, считает сервер</span>`
-    +`<span class="rl-t">${dur(elapsed)}${eta!=null?` · осталось ~${dur(eta)}`:''}</span>`
-    // Остановка здесь, а не на большой кнопке: строка видна ровно тогда, когда
-    // прогон идёт.
+  el.innerHTML=
+    `<div class="rl-top">${flake('spinning')}`
+    +`<span class="rl-title">Обрабатываем <span class="rl-n">${Math.min(done+1,total)} из ${total}</span></span>`
+    +`<span class="rl-t">${dur(elapsed)}${eta!=null?` · ~${dur(eta)}`:''}</span></div>`
+    +`<p class="rl-hint">Вкладку можно закрыть — считает сервер</p>`
     +`<button type="button" class="rl-stop" onclick="stopJob()">Остановить</button>`;
   bar?.classList.add('running');
   document.getElementById('rbFill').style.width=total?`${Math.round(done/total*100)}%`:'0';
@@ -2746,7 +2865,7 @@ function renderList(){
   const cnt={all:items.length,thin:0,warn:0,err:0,conf:0};
   results.forEach((_,i)=>{const c=statusOf(i).cls; if(c==='wa')cnt.warn++; if(c==='er')cnt.err++;});
   items.forEach((_,i)=>{ if(isThin(i)) cnt.thin++; if(confOf(i).length) cnt.conf++; });
-  const LBL={all:'Все',thin:'Без данных',warn:'Расхождения',err:'Ошибки',conf:'Ошибки каталога'};
+  const LBL={all:'Все',thin:'Без данных',warn:'Расхождения',err:'Ошибки',conf:'Каталог'};
   document.querySelectorAll('.fbtn').forEach(b=>{
     const f=b.dataset.f;
     if(!f) return;

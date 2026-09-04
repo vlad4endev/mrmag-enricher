@@ -620,7 +620,7 @@ async function apiExport(req, res) {
  * (jobs.js). Возвращает то же тело, что уходит в браузер; при провале бросает
  * ошибку с .status и .usage, чтобы потраченное на неудачные попытки не терялось.
  */
-async function enrichOne(product, { model, category, provider } = {}) {
+async function enrichOne(product, { model, category, provider, onNote = () => {} } = {}) {
   // Категория определяет схему полей и промпт. Явное поле важнее, иначе берём
   // category самого товара — её проставляет и фид, и обход раздела.
   const schema = schemaForProduct(product, category);
@@ -628,6 +628,7 @@ async function enrichOne(product, { model, category, provider } = {}) {
   const prov = resolveProvider(settings, provider);
   const ep = providerEndpoint(prov);
   const apiKey = ep.apiKey || API_KEY;
+  const note = (msg, meta) => { try { onNote(msg, meta); } catch { /* лог клиента не роняет прогон */ } };
 
   const skip = reason => ({
     enriched: null,
@@ -635,10 +636,20 @@ async function enrichOne(product, { model, category, provider } = {}) {
     usage:    { prompt_tokens: 0, completion_tokens: 0, cost: 0 },
   });
 
+  note(`Схема «${schema.slug}» · провайдер «${prov.name}»`, { step: 'schema' });
+
   // Дешёвый вердикт без сети: своего текста нет и в названии не за что
   // зацепиться (нет ни артикула, ни бренда/модели) — искать нечего.
   const first = isEnrichable(product, schema);
-  if (!first.ok && !first.web) return skip(first.reason);
+  if (!first.ok && !first.web) {
+    note(`Предпроверка: пропуск — ${first.reason}`, { step: 'gate', level: 'skip' });
+    return skip(first.reason);
+  }
+  if (!first.ok && first.web) {
+    note(`Предпроверка: своего текста нет — ищем описание в сети`, { step: 'gate' });
+  } else {
+    note(`Предпроверка: ок, есть исходный текст`, { step: 'gate' });
+  }
 
   if (!apiKey) {
     const e = new Error(`нет ключа у провайдера «${prov.name}»`);
@@ -665,13 +676,22 @@ async function enrichOne(product, { model, category, provider } = {}) {
     if (e.status === 400) throw e;
   }
 
+  note(`Модель ${model}`, { step: 'model' });
+
   // Пустая карточка — описание из сети. Карточка с текстом, но без страны —
   // отдельный поиск только страны по модели. ensureSource сам решает, что
   // искать: чужую таблицу в уже заполненные поля не мешает.
-  const found = await ensureSource(product, schema);
-  if (!found.gate.ok) return skip(found.gate.reason);
+  const found = await ensureSource(product, schema, {
+    onNote: msg => note(msg, { step: 'web' }),
+  });
+  if (!found.gate.ok) {
+    note(`После поиска: пропуск — ${found.gate.reason}`, { step: 'gate', level: 'skip' });
+    return skip(found.gate.reason);
+  }
   const filled = found.product;
   const sourceUrl = found.source ?? null;
+  if (sourceUrl) note(`Исходный текст готов (сеть: ${sourceUrl})`, { step: 'web' });
+  else note(`Исходный текст готов, отправляем в модель`, { step: 'model' });
 
   const { enriched, iT, oT, cost, costSource, attempts } = await enrichProduct(filled, {
     model, apiKey, schema,
@@ -685,7 +705,8 @@ async function enrichOne(product, { model, category, provider } = {}) {
     maxTokens: settings.model.max_tokens,
     systemPrompt: settings.model.system_prompt || '',
     referer: ep.headers['HTTP-Referer'] || 'https://mrmag.ru',
-    title: ep.headers['X-Title'] || 'mrmag enricher',
+    title: ep.headers['X-Title'] || 'Ogran',
+    onNote: msg => note(msg, { step: /retry|rate limit|обрыв|parse/i.test(msg) ? 'retry' : 'model', level: /retry|обрыв|parse/i.test(msg) ? 'warn' : 'info' }),
   });
   return {
     enriched,
@@ -746,6 +767,7 @@ function apiJobState(res, id, u) {
   if (!job) return json(res, 404, { error: 'Прогон не найден — возможно, он уже удалён' });
   json(res, 200, store.state(job, {
     from:     u.searchParams.get('from'),
+    logFrom:  u.searchParams.get('logFrom'),
     products: u.searchParams.get('products') === '1',
   }));
 }
@@ -1033,7 +1055,7 @@ const server = http.createServer(async (req, res) => {
 
 server.listen(PORT, HOST, () => {
   const shown = HOST === '0.0.0.0' ? 'localhost' : HOST;
-  console.log(`\n  AI Enricher → http://${shown}:${PORT}`);
+  console.log(`\n  Ogran → http://${shown}:${PORT}`);
   console.log(`  Разделы: ${CATEGORIES.map(c => `${c.name} (${c.id})`).join(', ')}`);
   console.log(`  Прокси разрешён для: ${ALLOWED_HOSTS.join(', ')}`);
   console.log(`  Курс: ${RUB_PER_USD} ₽/$ на ${RUB_RATE_DATE} | политика расхождений: ${loadSettings(ROOT).conditions.mismatch_policy}`);

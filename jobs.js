@@ -24,6 +24,8 @@ import path from 'path';
 import crypto from 'crypto';
 
 const now = () => Date.now();
+/** Сколько строк лога держим в задаче: хватает на длинный прогон, диск не раздуваем. */
+const LOG_CAP = Number(process.env.JOBS_LOG_CAP || 4000);
 
 export function createJobStore({
   enrichOne,
@@ -67,6 +69,31 @@ export function createJobStore({
     pending.set(job.id, setTimeout(() => flush(job), 1000));
   }
 
+  /**
+   * Строка пошагового лога прогона. level: info | ok | warn | err | skip.
+   * step — короткий код этапа (start, gate, web, model, retry, done…).
+   */
+  function pushLog(job, entry) {
+    if (!Array.isArray(job.log)) job.log = [];
+    const row = {
+      t: now(),
+      level: entry.level || 'info',
+      step: entry.step || 'note',
+      msg: String(entry.msg ?? ''),
+    };
+    if (entry.pos != null) row.pos = entry.pos;
+    job.log.push(row);
+    if (job.log.length > LOG_CAP) job.log.splice(0, job.log.length - LOG_CAP);
+  }
+
+  function productLabel(p, pos) {
+    if (!p || typeof p !== 'object') return `товар №${pos + 1}`;
+    const name = p.name || p.title || null;
+    const sku = p.sku != null ? String(p.sku) : (p.id != null ? String(p.id) : null);
+    if (name && sku) return `${name} (арт. ${sku})`;
+    return name || (sku ? `арт. ${sku}` : `товар №${pos + 1}`);
+  }
+
   /** Итог по задаче: то же, что подвал интерфейса считает по результатам. */
   function usageOf(job) {
     let prompt_tokens = 0, completion_tokens = 0, cost = 0, ok = 0, err = 0, skip = 0;
@@ -93,14 +120,21 @@ export function createJobStore({
    * Состояние задачи для интерфейса. from — сколько результатов у клиента уже
    * есть: результаты приходят по порядку очереди, поэтому хвоста достаточно, и
    * опрос раз в секунду не тащит по мегабайту одного и того же.
+   * logFrom — то же для пошагового лога: клиент дописывает хвост, не весь журнал.
    */
-  function state(job, { from = 0, products = false } = {}) {
+  function state(job, { from = 0, products = false, logFrom = 0 } = {}) {
     const at = Math.max(0, Math.min(Number(from) || 0, job.total));
+    const log = Array.isArray(job.log) ? job.log : [];
+    const lf = Math.max(0, Math.min(Number(logFrom) || 0, log.length));
     return {
       ...summary(job),
       indices: job.indices,
       from: at,
       results: job.results.slice(at),
+      at_position: job.at_position,
+      log_from: lf,
+      log_total: log.length,
+      log: log.slice(lf),
       ...(products ? { products: job.products } : {}),
     };
   }
@@ -146,15 +180,43 @@ export function createJobStore({
     job.error = null;
     job.note = null;
     job.started_at = job.started_at || now();
+    if (!Array.isArray(job.log)) job.log = [];
+    const resumed = job.results.some(Boolean);
+    pushLog(job, {
+      level: 'info', step: 'job',
+      msg: resumed
+        ? `Продолжаем прогон: ${job.total} товаров, модель ${job.model}${job.provider ? `, ${job.provider}` : ''}`
+        : `Старт прогона: ${job.total} товаров, модель ${job.model}${job.provider ? `, ${job.provider}` : ''}`,
+    });
     save(job, true);
     log(`▶ job ${job.id}: ${job.total} товаров, модель ${job.model}`);
 
     for (let k = 0; k < job.total; k++) {
-      if (job.stopping) break;
+      if (job.stopping) {
+        pushLog(job, { level: 'warn', step: 'stop', msg: `Остановка: осталось ${job.total - k} из ${job.total}` });
+        break;
+      }
       if (job.results[k]) continue;                    // возобновление после перезапуска
       job.at_position = k;
+      const label = productLabel(job.products[k], k);
+      pushLog(job, {
+        level: 'info', step: 'item', pos: k,
+        msg: `[${k + 1}/${job.total}] ${label}`,
+      });
+      save(job);
       try {
-        const d = await enrichOne(job.products[k], { model: job.model, category: job.category, provider: job.provider });
+        const d = await enrichOne(job.products[k], {
+          model: job.model, category: job.category, provider: job.provider,
+          onNote: (msg, meta = {}) => {
+            pushLog(job, {
+              level: meta.level || 'info',
+              step: meta.step || 'note',
+              pos: k,
+              msg: String(msg),
+            });
+            save(job);
+          },
+        });
         job.results[k] = {
           enriched: d.enriched ?? null,
           ...(d.skipped ? { skipped: d.skipped } : {}),
@@ -163,6 +225,21 @@ export function createJobStore({
           oT:   d.usage?.completion_tokens ?? 0,
           cost: typeof d.usage?.cost === 'number' ? d.usage.cost : 0,
         };
+        if (d.skipped) {
+          pushLog(job, { level: 'skip', step: 'skip', pos: k, msg: `⊘ Пропуск: ${d.skipped}` });
+        } else {
+          const iT = d.usage?.prompt_tokens ?? 0;
+          const oT = d.usage?.completion_tokens ?? 0;
+          const cost = typeof d.usage?.cost === 'number' ? d.usage.cost : null;
+          const attempts = d.usage?.attempts;
+          pushLog(job, {
+            level: 'ok', step: 'done', pos: k,
+            msg: `✓ Готово · in=${iT} out=${oT}`
+              + (cost != null ? ` · $${cost.toFixed(5)}` : '')
+              + (attempts > 1 ? ` · попыток ${attempts}` : '')
+              + (d.source_url ? ` · источник ${d.source_url}` : ''),
+          });
+        }
       } catch (e) {
         // Провал одного товара не отменяет прогон — ровно как в браузере.
         // Неудачные попытки оплачены, поэтому usage сохраняем и на ошибке.
@@ -170,6 +247,7 @@ export function createJobStore({
           enriched: null, error: e.message,
           iT: e.usage?.iT ?? 0, oT: e.usage?.oT ?? 0, cost: e.usage?.cost ?? 0,
         };
+        pushLog(job, { level: 'err', step: 'error', pos: k, msg: `✗ Ошибка: ${e.message}` });
       }
       job.done = job.results.filter(Boolean).length;
       save(job);
@@ -179,8 +257,13 @@ export function createJobStore({
     else if (job.status === 'running') job.status = 'done';
     job.finished_at = now();
     job.at_position = -1;
-    save(job, true);
     const u = usageOf(job);
+    pushLog(job, {
+      level: job.status === 'error' ? 'err' : (job.status === 'stopped' ? 'warn' : 'ok'),
+      step: 'finish',
+      msg: `Итог: ${job.status} · готово ${u.ok}, пропущено ${u.skip}, ошибок ${u.err}, $${u.cost.toFixed(5)}`,
+    });
+    save(job, true);
     log(`■ job ${job.id}: ${job.status}, готово ${u.ok}, пропущено ${u.skip}, ошибок ${u.err}, $${u.cost.toFixed(5)}`);
   }
 
@@ -203,6 +286,7 @@ export function createJobStore({
       indices: indices?.length === products.length ? indices : products.map((_, i) => i),
       products,
       results: new Array(products.length).fill(null),
+      log: [],
     };
     jobs.set(job.id, job);
     // Прогон не ждёт ответа на запрос: клиент получает id и опрашивает прогресс.
@@ -210,6 +294,7 @@ export function createJobStore({
       job.status = 'error';
       job.error = e.message;
       job.finished_at = now();
+      pushLog(job, { level: 'err', step: 'fail', msg: `Прогон упал: ${e.message}` });
       save(job, true);
       log(`✗ job ${job.id}: ${e.message}`);
     });
@@ -229,6 +314,7 @@ export function createJobStore({
       try { job = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf-8')); } catch { continue; }
       if (!job?.id || !Array.isArray(job.products)) continue;
       job.results = Array.isArray(job.results) ? job.results : [];
+      job.log = Array.isArray(job.log) ? job.log : [];
       job.done = job.results.filter(Boolean).length;
       jobs.set(job.id, job);
       if (job.status === 'running' || job.status === 'queued') {

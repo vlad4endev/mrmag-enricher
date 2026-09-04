@@ -30,7 +30,7 @@ export const PROVIDER_PRESETS = [
     api_key_env: 'OPENROUTER_API_KEY',
     models_path: '/models',
     chat_path: '/chat/completions',
-    headers: { 'HTTP-Referer': 'https://mrmag.ru', 'X-Title': 'mrmag enricher' },
+    headers: { 'HTTP-Referer': 'https://mrmag.ru', 'X-Title': 'Ogran' },
   },
   {
     id: 'openai',
@@ -152,7 +152,7 @@ export function defaultProvider() {
     default: true,
     models_path: '/models',
     chat_path: '/chat/completions',
-    headers: { 'HTTP-Referer': 'https://mrmag.ru', 'X-Title': 'mrmag enricher' },
+    headers: { 'HTTP-Referer': 'https://mrmag.ru', 'X-Title': 'Ogran' },
     models: [],
     notes: '',
   };

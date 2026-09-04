@@ -240,7 +240,7 @@ async function main() {
   const pricing = await fetchModelPricing(MODEL, API_KEY);
 
   console.log(`\n${'═'.repeat(60)}`);
-  console.log(`  Enricher — ${cat.name} (id ${cat.id})`);
+  console.log(`  Ogran — ${cat.name} (id ${cat.id})`);
   console.log(`  Раздел:  ${cat.url}`);
   console.log(`  Схема:   ${schema.slug} — ${schema.specKeys.length} полей`);
   console.log(`  Модель:  ${MODEL}${pricing ? '' : '  (тариф не получен — стоимость из ответов API)'}`);

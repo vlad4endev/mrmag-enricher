@@ -3,7 +3,7 @@
   "version": "1.1.0",
   "private": true,
   "type": "module",
-  "description": "Обогащение каталога mrmag.ru через OpenRouter: обход разделов, автофильтры, CLI + веб-интерфейс",
+  "description": "Ogran — огранка каталога mrmag.ru через OpenRouter: обход разделов, автофильтры, CLI + веб-интерфейс",
   "scripts": {
     "start": "node server.js",
     "catalog": "node catalog.js",

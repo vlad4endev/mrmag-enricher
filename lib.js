@@ -1594,7 +1594,7 @@ export async function enrichProduct(product, opts) {
   const {
     model, apiKey, limiter, pricing = null, schema: schemaOpt = null,
     maxRetries = 3, maxTokens = 3200, timeoutMs = 60_000,
-    onNote = () => {}, referer = 'https://mrmag.ru', title = 'mrmag enricher',
+    onNote = () => {}, referer = 'https://mrmag.ru', title = 'Ogran',
     chatUrl = 'https://openrouter.ai/api/v1/chat/completions',
     headers: extraHeaders = {},
     mismatchPolicy = MISMATCH_POLICY,

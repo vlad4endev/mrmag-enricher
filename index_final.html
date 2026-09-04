@@ -34,6 +34,10 @@
   --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
   --sans:"Sora",system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
   --r:6px; --r2:4px; --r3:3px;
+  /* Единая сетка: всё кратно 4, контролы одной высоты */
+  --pad:16px; --pad-sm:12px; --gap:10px; --gap-sm:6px;
+  --ctrl-h:36px; --panel-h:48px;
+  --left-w:340px; --mid-w:268px;
 }
 :root[data-theme="dark"]{
   --bg:#0a0e14;  --bg2:#121820; --bg3:#1a222d; --bg4:#243040;
@@ -83,7 +87,7 @@ button:focus-visible,input:focus-visible,textarea:focus-visible,[tabindex]:focus
 
 /* ── ШАПКА ────────────────────────────────────────────────────── */
 .nav{
-  height:52px;padding:0 18px;background:rgba(255,255,255,.88);
+  height:52px;width:100%;padding:0 var(--pad);background:rgba(255,255,255,.92);
   border-bottom:1px solid var(--b1);display:flex;align-items:center;
   position:sticky;top:0;z-index:300;flex-shrink:0;
   backdrop-filter:saturate(1.2) blur(10px);-webkit-backdrop-filter:saturate(1.2) blur(10px);
@@ -141,86 +145,95 @@ button:focus-visible,input:focus-visible,textarea:focus-visible,[tabindex]:focus
 .app{display:flex;width:100%;height:100%;overflow:hidden}
 
 /* ── ЛЕВАЯ КОЛОНКА: НАСТРОЙКА ─────────────────────────────────── */
-/* Одна непрерывная поверхность; шаги разделены линейками. Три плавающие
-   карточки на сером фоне читались как набор виджетов, а не как форма. */
 .left{
   background:var(--bg2);border-right:1px solid var(--b1);overflow-y:auto;
   display:flex;flex-direction:column;
-  width:342px;min-width:290px;max-width:400px;flex-shrink:0;
+  width:var(--left-w);min-width:280px;max-width:400px;flex-shrink:0;
 }
 .sec-lbl{
-  font-size:10px;font-weight:700;letter-spacing:.11em;text-transform:uppercase;
-  color:var(--t3);margin-bottom:8px;
+  font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;
+  color:var(--t3);margin-bottom:var(--gap-sm);
 }
-.card{background:var(--bg2);border:1px solid var(--b1);border-radius:var(--r);padding:14px}
-.flbl{font-size:11.5px;color:var(--t2);margin-bottom:6px;font-weight:500}
-.hint{font-size:11.5px;color:var(--t3);margin-top:7px;line-height:1.45}
+.card{background:var(--bg2);border:1px solid var(--b1);border-radius:var(--r);padding:var(--pad-sm) var(--pad)}
+.flbl{font-size:11.5px;color:var(--t2);margin-bottom:var(--gap-sm);font-weight:550}
+.flbl + .cnt-grid,.flbl + .irow,.flbl + input,.flbl + .cat-row{margin-top:0}
+.flbl.mt,.stack-gap{margin-top:var(--pad-sm)}
+.hint{font-size:11.5px;color:var(--t3);margin-top:var(--gap-sm);line-height:1.45}
 
-/* Шаги: номер слева, состояние справа — видно, что готово, а что нет */
+/* Шаги: колонка номера + контент на одной сетке */
 .step{border-bottom:1px solid var(--b1);transition:opacity .2s}
 .step.locked{opacity:.5}
-.step-h{display:flex;align-items:baseline;gap:9px;padding:15px 18px 0}
-/* Номер — единственное украшение шага. Полноширинная зелёная плашка
-   «выполнено» — генерик-троп визарда, от неё осталась только цифра. */
-.step-n{font-family:var(--mono);font-size:11px;font-weight:700;color:var(--t3);flex-shrink:0;width:14px;transition:color .2s}
-.step.done .step-n{color:var(--green)}
-.step-t{font-size:13px;font-weight:600;color:var(--t1);flex:1;min-width:0;letter-spacing:-.1px}
-.step-sub{font-size:11px;color:var(--t3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:130px;font-family:var(--mono)}
+.step-h{
+  display:grid;grid-template-columns:28px 1fr auto;align-items:center;gap:var(--gap);
+  padding:var(--pad) var(--pad) 0;min-height:0;
+}
+.step-n{
+  font-family:var(--mono);font-size:11px;font-weight:700;color:var(--t3);flex-shrink:0;
+  width:28px;height:28px;border-radius:var(--r2);background:var(--bg3);border:1px solid var(--b1);
+  display:inline-flex;align-items:center;justify-content:center;transition:color .2s,background .2s,border-color .2s;
+}
+.step.done .step-n{color:#fff;background:var(--green);border-color:var(--green)}
+.step-t{font-size:13px;font-weight:650;color:var(--t1);min-width:0;letter-spacing:-.02em}
+.step-sub{
+  font-size:11px;color:var(--t3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  max-width:120px;font-family:var(--mono);text-align:right;
+}
 .step.done .step-sub{color:var(--green)}
-.step-b{padding:11px 18px 17px 41px}
-.parser-kv{display:flex;justify-content:space-between;align-items:baseline;gap:9px;font-size:12px;color:var(--t2)}
+.step-b{padding:var(--gap) var(--pad) var(--pad);display:flex;flex-direction:column;gap:0}
+.step-b > .flbl:first-child{margin-top:0}
+.parser-kv{display:flex;justify-content:space-between;align-items:baseline;gap:var(--gap);font-size:12px;color:var(--t2)}
 .parser-kv b{color:var(--t1);font-weight:650;font-size:12px;text-align:right;word-break:break-word}
 
-/* Поля ввода */
+/* Поля ввода — одна высота с кнопками */
 input[type=text],input[type=password],input[type=number],input[type=url],textarea,select{
-  width:100%;background:var(--bg2);border:1px solid var(--b2);border-radius:var(--r2);
-  color:var(--t1);padding:9px 11px;font-family:var(--sans);font-size:13px;
+  width:100%;height:var(--ctrl-h);background:var(--bg2);border:1px solid var(--b2);border-radius:var(--r2);
+  color:var(--t1);padding:0 12px;font-family:var(--sans);font-size:13px;
   outline:none;transition:border-color .15s,box-shadow .15s;
 }
+textarea{height:auto;padding:10px 12px}
 input:hover,textarea:hover{border-color:var(--t3)}
 input:focus,textarea:focus,select:focus{border-color:var(--ac);box-shadow:var(--focus)}
 input::placeholder,textarea::placeholder{color:var(--t3)}
 textarea{
   resize:vertical;font-family:var(--mono);font-size:11.5px;min-height:96px;
-  line-height:1.55;margin-top:6px;background:var(--bg3);
+  line-height:1.55;margin-top:var(--gap-sm);background:var(--bg3);
 }
-.irow{display:flex;gap:7px;align-items:center}
+.irow{display:flex;gap:var(--gap-sm);align-items:stretch}
 .irow input{flex:1;min-width:0}
 .ibtn{
-  width:38px;height:38px;background:var(--ac);border:1px solid var(--ac);border-radius:var(--r2);
+  width:var(--ctrl-h);height:var(--ctrl-h);background:var(--ac);border:1px solid var(--ac);border-radius:var(--r2);
   color:#fff;cursor:pointer;display:flex;align-items:center;justify-content:center;
-  flex-shrink:0;font-size:16px;transition:all .15s;box-shadow:var(--sh1);
+  flex-shrink:0;font-size:16px;transition:all .15s;box-shadow:var(--sh1);padding:0;
 }
-.ibtn:hover:not(:disabled){filter:brightness(1.12)}
+.ibtn:hover:not(:disabled){filter:brightness(1.08)}
 .ibtn:active:not(:disabled){transform:translateY(1px)}
 .ibtn:disabled{opacity:.45;cursor:not-allowed}
 
-/* Количество */
-.cnt-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:5px;margin-top:2px}
+/* Количество — ровная сетка 3×2 */
+.cnt-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:var(--gap-sm)}
 .cnt-btn{
-  padding:7px 4px;border-radius:var(--r2);border:1px solid var(--b2);background:var(--bg2);
+  height:var(--ctrl-h);padding:0 4px;border-radius:var(--r2);border:1px solid var(--b2);background:var(--bg2);
   color:var(--t2);cursor:pointer;font-size:12px;font-family:var(--mono);
   font-variant-numeric:tabular-nums;text-align:center;transition:all .15s;font-weight:600;
+  display:flex;align-items:center;justify-content:center;
 }
 .cnt-btn:hover{border-color:var(--ac-b);color:var(--t1);background:var(--bg3)}
 .cnt-btn.on{border-color:var(--ac);background:var(--ac);color:#fff;box-shadow:var(--sh1)}
-/* Своё число: кнопки покрывают частые случаи, поле — все остальные */
 .cnt-in{
-  padding:7px 4px;border-radius:var(--r2);border:1px dashed var(--b2);background:var(--bg2);
+  height:var(--ctrl-h);padding:0 4px;border-radius:var(--r2);border:1px dashed var(--b2);background:var(--bg2);
   color:var(--t1);font-size:12px;font-family:var(--mono);font-variant-numeric:tabular-nums;
   font-weight:600;text-align:center;width:100%;min-width:0;transition:all .15s;
 }
 .cnt-in:hover{border-color:var(--ac-b)}
 .cnt-in:focus{outline:none;border-style:solid;border-color:var(--ac);background:var(--bg3)}
 .cnt-in.on{border-style:solid;border-color:var(--ac);color:var(--ac);box-shadow:var(--sh1)}
-/* Категории из данных: названия длинные, поэтому строка, а не сетка на 5 */
-.cat-row{display:flex;flex-wrap:wrap;gap:5px;margin-top:2px}
-.dcat-btn{flex:1 1 140px;font-family:inherit;font-size:12px;font-weight:600;text-align:left;padding:8px 10px}
+.cat-row{display:flex;flex-wrap:wrap;gap:var(--gap-sm)}
+.dcat-btn{flex:1 1 140px;font-family:inherit;font-size:12px;font-weight:600;text-align:left;padding:8px 10px;min-height:var(--ctrl-h)}
 .dcat-btn .cat-n{display:block;font-size:10.5px;font-weight:500;color:var(--t3);margin-top:2px}
 .dcat-btn.on .cat-n{color:rgba(255,255,255,.85)}
-#fileIn{width:100%;margin-top:2px;font-size:11.5px;color:var(--t2);font-family:inherit}
+#fileIn{width:100%;height:auto;padding:0;border:none;background:transparent;font-size:11.5px;color:var(--t2);font-family:inherit}
 #fileIn::file-selector-button{
-  padding:6px 10px;margin-right:8px;border-radius:var(--r2);border:1px solid var(--b2);
+  height:var(--ctrl-h);padding:0 12px;margin-right:8px;border-radius:var(--r2);border:1px solid var(--b2);
   background:var(--bg2);color:var(--t2);font-family:inherit;font-size:11.5px;font-weight:600;cursor:pointer;
 }
 #fileIn::file-selector-button:hover{border-color:var(--ac-b);color:var(--t1);background:var(--bg3)}
@@ -228,24 +241,24 @@ textarea{
 
 /* Выбор модели */
 .msel{
-  padding:10px 12px;background:var(--bg2);border:1px solid var(--b2);border-radius:var(--r2);
-  cursor:pointer;display:flex;align-items:center;gap:9px;transition:all .15s;
+  min-height:var(--ctrl-h);padding:0 12px;background:var(--bg2);border:1px solid var(--b2);border-radius:var(--r2);
+  cursor:pointer;display:flex;align-items:center;gap:var(--gap);transition:all .15s;
 }
 .msel:hover{border-color:var(--ac);background:var(--ac-w)}
 .msel.none{border-style:dashed;border-color:var(--b2)}
 .msel-n{font-size:12.5px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:550}
 .msel.none .msel-n{color:var(--t3);font-weight:400}
 .msel-p{font-size:10.5px;color:var(--ac);white-space:nowrap;flex-shrink:0;font-weight:600}
-.msearch{margin-top:8px;display:none}
+.msearch{margin-top:var(--gap-sm);display:none}
 .msearch.open{display:block}
 .mdrop{
   display:none;max-height:236px;overflow-y:auto;border:1px solid var(--b1);
-  border-radius:var(--r2);background:var(--bg2);margin-top:6px;box-shadow:var(--sh2);
+  border-radius:var(--r2);background:var(--bg2);margin-top:var(--gap-sm);box-shadow:var(--sh2);
 }
 .mdrop.open{display:block}
 .mitem{
-  padding:9px 12px;cursor:pointer;border-bottom:1px solid var(--b1);display:flex;
-  justify-content:space-between;align-items:center;gap:9px;transition:background .12s;
+  padding:10px 12px;cursor:pointer;border-bottom:1px solid var(--b1);display:flex;
+  justify-content:space-between;align-items:center;gap:var(--gap);transition:background .12s;
 }
 .mitem:last-child{border-bottom:none}
 .mitem:hover{background:var(--ac-w)}
@@ -260,7 +273,7 @@ textarea{
 .mi-prov{font-size:9.5px;color:var(--t3);text-transform:uppercase;letter-spacing:.04em;font-weight:700;flex-shrink:0}
 
 /* Раскрывающийся JSON */
-.adv{margin-top:12px;border-top:1px solid var(--b1);padding-top:11px}
+.adv{margin-top:var(--pad-sm);border-top:1px solid var(--b1);padding-top:var(--gap)}
 .adv summary{
   font-size:11.5px;color:var(--t3);cursor:pointer;list-style:none;
   display:flex;align-items:center;gap:6px;user-select:none;transition:color .15s;
@@ -271,14 +284,14 @@ textarea{
 .adv summary:hover{color:var(--ac)}
 
 /* Оценка стоимости */
-.est{display:flex;flex-direction:column;gap:8px}
-.est-row{display:flex;justify-content:space-between;align-items:baseline;gap:9px;font-size:12.5px;color:var(--t2)}
+.est{display:flex;flex-direction:column;gap:var(--gap-sm)}
+.est-row{display:flex;justify-content:space-between;align-items:baseline;gap:var(--gap);font-size:12.5px;color:var(--t2)}
 .est-row b{color:var(--t1);font-weight:700;font-size:15px}
-.est-note{font-size:10.5px;color:var(--t3);line-height:1.5}
+.est-note{font-size:11px;color:var(--t3);line-height:1.5}
 
 /* Запуск */
 .run-wrap{
-  margin-top:auto;flex-shrink:0;padding:16px 18px;
+  margin-top:auto;flex-shrink:0;padding:var(--pad);
   border-top:1px solid var(--b1);background:var(--bg3);position:sticky;bottom:0;
 }
 .run-btn{
@@ -302,61 +315,63 @@ textarea{
 :root[data-theme="dark"] .logo-icon{color:#042f2e}
 .run-why{font-size:11.5px;color:var(--t3);margin-top:9px;text-align:center;line-height:1.5}
 .inline-err{
-  background:var(--rbg);border:1px solid var(--rbd);border-radius:var(--r2);
-  padding:9px 11px;font-size:11.5px;color:var(--red);margin-top:9px;line-height:1.5;
+  background:var(--rbg);border:1px solid var(--rbd);border-left:3px solid var(--red);
+  border-radius:var(--r2);padding:8px 10px;font-size:11.5px;color:var(--red);
+  margin-top:8px;line-height:1.5;
 }
 
 /* ── СРЕДНЯЯ КОЛОНКА: СПИСОК ТОВАРОВ (он же прогресс) ─────────── */
 .mid{
-  width:274px;min-width:210px;background:var(--bg2);border-right:1px solid var(--b1);
+  width:var(--mid-w);min-width:220px;background:var(--bg2);border-right:1px solid var(--b1);
   display:flex;flex-direction:column;overflow:hidden;flex-shrink:0;
 }
-.mid-h{padding:10px 11px;border-bottom:1px solid var(--b1);background:var(--bg2);flex-shrink:0}
-/* Сегментированный переключатель: фильтры — не бейджи, и не должны
-   выглядеть как они. Пилюли повсюду — вторая примета шаблона. */
-.filters{display:flex;border:1px solid var(--b1);border-radius:var(--r2);overflow:hidden}
-.fbtn{
-  flex:1;padding:5px 6px;border:none;border-right:1px solid var(--b1);background:var(--bg2);
-  color:var(--t2);font-size:10.5px;cursor:pointer;font-family:var(--sans);
-  font-weight:600;transition:all .15s;white-space:nowrap;min-width:0;
+.mid-h{
+  min-height:var(--panel-h);padding:var(--pad-sm) var(--pad-sm);border-bottom:1px solid var(--b1);
+  background:var(--bg2);flex-shrink:0;display:flex;flex-direction:column;justify-content:center;gap:var(--gap-sm);
 }
-.fbtn:last-child{border-right:none}
+/* Фильтры — сетка 2×3, без обрезки подписей */
+.filters{
+  display:grid;grid-template-columns:repeat(2,1fr);gap:4px;border:none;border-radius:0;overflow:visible;
+}
+.fbtn{
+  padding:6px 8px;border:1px solid var(--b1);border-radius:var(--r2);background:var(--bg2);
+  color:var(--t2);font-size:11px;cursor:pointer;font-family:var(--sans);
+  font-weight:600;transition:all .15s;white-space:nowrap;min-width:0;text-align:center;
+  overflow:hidden;text-overflow:ellipsis;
+}
+.fbtn:last-child{border-right:1px solid var(--b1)}
 .fbtn:hover:not(:disabled){color:var(--t1);border-color:var(--b2);background:var(--bg4)}
 .fbtn.on{border-color:var(--ac);color:#fff;background:var(--ac);font-weight:650}
 .fbtn:disabled{opacity:.4;cursor:default}
-/* Серьёзность видна до нажатия — не нужно кликать, чтобы понять, что горит */
+.fbtn[data-f="all"]{grid-column:1 / -1}
 .fbtn[data-f="warn"]:not(.on):not(:disabled){background:var(--abg);border-color:var(--abd);color:var(--amber)}
 .fbtn[data-f="err"]:not(.on):not(:disabled){background:var(--rbg);border-color:var(--rbd);color:var(--red)}
 .fbtn[data-f="warn"].on{background:var(--amber);border-color:var(--amber)}
 .fbtn[data-f="err"].on{background:var(--red);border-color:var(--red)}
 .fbtn[data-f="thin"]:not(.on):not(:disabled){color:var(--t1)}
-/* Дата импорта. Строка появляется только если в загруженных товарах нашлось
-   поле с датой: у фида mrmag его нет, и пустой диапазон сбивал бы с толку. */
-.dfilter{display:flex;align-items:center;gap:5px;margin-top:6px}
+.dfilter{display:flex;align-items:center;gap:5px}
 .dfilter label{font-size:10px;color:var(--t3);flex-shrink:0}
 .dfilter input[type=date]{
-  flex:1;min-width:0;background:var(--bg2);border:1px solid var(--b1);border-radius:var(--r2);
-  color:var(--t1);padding:4px 5px;font-family:var(--sans);font-size:10.5px;outline:none;
+  flex:1;min-width:0;height:28px;background:var(--bg2);border:1px solid var(--b1);border-radius:var(--r2);
+  color:var(--t1);padding:0 6px;font-family:var(--sans);font-size:10.5px;outline:none;
 }
 .dfilter input[type=date]:focus{border-color:var(--ac);box-shadow:var(--focus)}
 .dfilter .dclr{
   background:none;border:none;color:var(--t3);cursor:pointer;font-size:12px;padding:2px 4px;
 }
 .dfilter .dclr:hover{color:var(--t1)}
-.dhint{margin-top:4px;font-size:10px;color:var(--t3);line-height:1.45}
-.mid-bar{height:2px;background:var(--b1);flex-shrink:0;overflow:hidden}
+.dhint{font-size:10px;color:var(--t3);line-height:1.45}
+.mid-bar{height:3px;background:var(--b1);flex-shrink:0;overflow:hidden}
 .mid-bar-f{height:100%;width:0;background:var(--ac);transition:width .35s ease-out}
-.mid-list{flex:1;overflow-y:auto;padding:6px;display:flex;flex-direction:column;gap:3px}
-/* Цветная полоска слева — состояние читается, не вглядываясь */
+.mid-list{flex:1;overflow-y:auto;padding:var(--gap-sm);display:flex;flex-direction:column;gap:2px}
+.mid-list:has(.mid-empty){justify-content:center}
 .ri{
-  display:flex;align-items:flex-start;gap:9px;padding:8px 9px 8px 8px;
+  display:flex;align-items:flex-start;gap:var(--gap);padding:9px 10px;
   border-radius:var(--r2);cursor:pointer;border:1px solid transparent;
   border-left:3px solid var(--b2);text-align:left;background:none;
   font-family:var(--sans);width:100%;transition:background .12s,border-color .15s;
 }
 .ri:hover{background:var(--bg3)}
-/* Выделение меняет фон и рамку, но НЕ полоску статуса — иначе
-   выбранный товар перестаёт показывать своё состояние. */
 .ri.on{background:var(--ac-w);border-color:var(--ac-b);box-shadow:var(--sh1)}
 .ri.on.s-pd{border-left-color:var(--ac)}
 .ri.s-ok{border-left-color:var(--green)}
@@ -364,7 +379,7 @@ textarea{
 .ri.s-er{border-left-color:var(--red)}
 .ri.s-sk{border-left-color:var(--b2)}
 .ri.s-pd{border-left-color:var(--b1)}
-.ri-st{font-family:var(--mono);font-size:11px;flex-shrink:0;width:13px;text-align:center;line-height:1.5;font-weight:700}
+.ri-st{font-family:var(--mono);font-size:11px;flex-shrink:0;width:14px;text-align:center;line-height:1.5;font-weight:700}
 .ri-st.ok{color:var(--green)}
 .ri-st.wa{color:var(--amber)}
 .ri-st.er{color:var(--red)}
@@ -372,59 +387,60 @@ textarea{
 .ri-st.pd{color:var(--t3);opacity:.45}
 .ri-b{min-width:0;flex:1}
 .ri-n{
-  font-size:11.5px;color:var(--t2);line-height:1.4;overflow:hidden;
+  font-size:12px;color:var(--t2);line-height:1.4;overflow:hidden;
   display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;
 }
 .ri.on .ri-n{color:var(--t1);font-weight:550}
-.ri-m{font-size:9.5px;color:var(--t3);margin-top:3px}
+.ri-m{font-size:10px;color:var(--t3);margin-top:3px}
 .mid-empty{
-  margin:10px 6px;padding:22px 14px;text-align:center;font-size:11.5px;color:var(--t3);
-  line-height:1.6;background:var(--bg3);border:1px dashed var(--b2);border-radius:var(--r2);
+  margin:auto var(--gap-sm);padding:24px 14px;text-align:center;font-size:12px;color:var(--t3);
+  line-height:1.6;background:transparent;border:1px dashed var(--b2);border-radius:var(--r);
 }
 
 /* ── ПРАВАЯ КОЛОНКА: ДЕТАЛИ ───────────────────────────────────── */
-.right{flex:1;min-width:0;display:flex;flex-direction:column;overflow:hidden;background:var(--bg)}
+.right{flex:1;min-width:0;display:flex;flex-direction:column;overflow:hidden;background:transparent}
 .ph{
-  padding:10px 16px 8px;border-bottom:1px solid var(--b1);display:flex;
-  flex-direction:column;gap:8px;background:var(--bg2);flex-shrink:0;
+  min-height:var(--panel-h);padding:var(--pad-sm) var(--pad);border-bottom:1px solid var(--b1);
+  display:flex;flex-direction:column;justify-content:center;gap:var(--gap-sm);background:var(--bg2);flex-shrink:0;
 }
-.ph-top{display:flex;align-items:center;gap:10px;min-width:0}
-/* Название — в своей строке. Кнопки выгрузки раньше стояли рядом с 22px
-   заголовком и на узкой колонке уезжали за край: JSON v2 и TXT пропадали. */
+.ph-top{display:flex;align-items:center;justify-content:space-between;gap:var(--gap);min-width:0}
 .pt{display:flex;flex-direction:column;gap:2px;min-width:0;flex:1}
 .pt-name{
   font-family:var(--display);font-size:14px;line-height:1.3;color:var(--t1);
   font-weight:650;letter-spacing:-.03em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
 }
-.ph-actions{display:flex;gap:5px;align-items:center;flex-wrap:wrap}
-.pt-meta{font-family:var(--mono);font-size:10.5px;color:var(--t3);font-variant-numeric:tabular-nums;display:flex;gap:8px;flex-wrap:wrap}
+.ph-actions{display:flex;gap:var(--gap-sm);align-items:center;flex-wrap:wrap}
+.pt-meta{font-family:var(--mono);font-size:10.5px;color:var(--t3);font-variant-numeric:tabular-nums;display:flex;gap:var(--gap);flex-wrap:wrap}
 .pt-meta b{color:var(--t2);font-weight:600}
-.pb{flex:1;overflow-y:auto;padding:18px 20px;min-height:0}
+.pb{flex:1;overflow-y:auto;padding:var(--pad) 24px;min-height:0}
 .rtabs{display:flex;gap:2px;flex-shrink:0;background:var(--bg3);border:1px solid var(--b1);border-radius:var(--r2);padding:2px}
 .rtab{
-  padding:4px 11px;border-radius:var(--r3);border:none;background:transparent;
+  padding:5px 12px;border-radius:var(--r3);border:none;background:transparent;
   color:var(--t2);cursor:pointer;font-size:11px;font-family:var(--sans);font-weight:600;transition:all .15s;
 }
 .rtab:hover{color:var(--t1)}
 .rtab.on{border:none;color:#fff;background:var(--ac);font-weight:650}
 .bdg{
-  font-size:10.5px;padding:3px 8px;border-radius:var(--r3);white-space:nowrap;
+  font-size:11px;padding:5px 10px;border-radius:var(--r2);white-space:nowrap;
   font-weight:600;border:1px solid transparent;transition:all .15s;
+  display:inline-flex;align-items:center;gap:5px;height:28px;
 }
 .bdg-g{background:var(--gbg);color:var(--green);border-color:var(--gbd)}
 .bdg-b{background:var(--blue-bg);color:var(--ac);border-color:var(--ac-b)}
 .bdg-a{background:var(--abg);color:var(--amber);border-color:var(--abd)}
-.bdg-b:hover,.bdg-g:hover,.bdg-a:hover{filter:brightness(.97);transform:translateY(-1px)}
-.empty{display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;gap:11px;color:var(--t3);min-height:80px}
+.bdg-b:hover,.bdg-g:hover,.bdg-a:hover{filter:brightness(.97)}
+.empty{
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  height:100%;gap:var(--gap);color:var(--t3);min-height:120px;padding:24px 0;
+}
 .empty .ti{font-size:28px;opacity:.3}
 .empty p{font-size:12.5px;text-align:center;line-height:1.6;max-width:280px}
 
 /* Вводная подсказка */
 .guide{
-  max-width:440px;text-align:left;font-size:13.5px;color:var(--t2);line-height:1.65;
+  width:100%;max-width:460px;text-align:left;font-size:13.5px;color:var(--t2);line-height:1.65;
   background:var(--bg2);border:1px solid var(--b1);border-radius:var(--r);
-  padding:26px 26px 22px;box-shadow:var(--sh2);
-  position:relative;overflow:hidden;
+  padding:28px;box-shadow:var(--sh2);position:relative;overflow:hidden;
 }
 .guide::before{
   content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--ac);
@@ -435,7 +451,7 @@ textarea{
   font-family:var(--display);font-size:22px;font-weight:700;letter-spacing:-.04em;
   color:var(--t1);line-height:1.2;margin:0 0 10px;
 }
-.guide ol{margin:12px 0 0;padding-left:20px;display:flex;flex-direction:column;gap:7px}
+.guide ol{margin:14px 0 0;padding-left:20px;display:flex;flex-direction:column;gap:8px}
 .guide li{padding-left:2px}
 .guide li::marker{color:var(--ac);font-weight:700}
 
@@ -511,9 +527,9 @@ textarea{
 /* Итоги — одна строка приборной панели. Переносы съедали область
    результата, поэтому вместо wrap — горизонтальная прокрутка. */
 .foot{
-  border-top:1px solid var(--b1);background:var(--bg2);padding:8px 20px;display:flex;
+  border-top:1px solid var(--b1);background:var(--bg2);padding:10px var(--pad);display:flex;
   gap:12px;align-items:center;font-size:11.5px;color:var(--t3);flex-shrink:0;
-  overflow-x:auto;white-space:nowrap;scrollbar-width:thin;
+  overflow-x:auto;white-space:nowrap;scrollbar-width:thin;min-height:40px;
 }
 .foot>span{flex-shrink:0}
 .foot b{color:var(--t1);font-weight:700}
@@ -530,28 +546,28 @@ textarea{
 .calc-page{flex-direction:column;width:100%}
 .calc-body{display:flex;flex:1;overflow:hidden;height:calc(100vh - 52px)}
 .calc-left{
-  background:var(--bg2);border-right:1px solid var(--b1);padding:18px;display:flex;
-  flex-direction:column;gap:14px;overflow-y:auto;width:308px;min-width:250px;flex-shrink:0;
+  background:var(--bg2);border-right:1px solid var(--b1);padding:var(--pad);display:flex;
+  flex-direction:column;gap:var(--pad-sm);overflow-y:auto;width:var(--left-w);min-width:250px;flex-shrink:0;
 }
-.calc-right{flex:1;min-width:0;overflow-y:auto;padding:20px;display:flex;flex-direction:column;gap:20px;background:var(--bg)}
-.slider-row{display:flex;flex-direction:column;gap:8px}
-.slider-row label{font-size:11.5px;color:var(--t2);display:flex;justify-content:space-between;flex-wrap:wrap;gap:5px;font-weight:500}
+.calc-right{flex:1;min-width:0;overflow-y:auto;padding:var(--pad) 24px;display:flex;flex-direction:column;gap:var(--pad);background:transparent}
+.slider-row{display:flex;flex-direction:column;gap:var(--gap-sm)}
+.slider-row label{font-size:11.5px;color:var(--t2);display:flex;justify-content:space-between;flex-wrap:wrap;gap:5px;font-weight:550}
 .slider-row label span{font-family:var(--mono);color:var(--t1);font-weight:700;font-variant-numeric:tabular-nums}
 input[type=range]{
   width:100%;-webkit-appearance:none;appearance:none;height:5px;border-radius:3px;
-  background:var(--b2);outline:none;border:none;padding:0;cursor:pointer;
+  background:var(--b2);outline:none;border:none;padding:0;cursor:pointer;height:auto;
 }
 input[type=range]::-webkit-slider-thumb{
-  -webkit-appearance:none;appearance:none;width:17px;height:17px;border-radius:50%;
+  -webkit-appearance:none;appearance:none;width:16px;height:16px;border-radius:50%;
   background:var(--ac);cursor:pointer;border:3px solid var(--bg2);box-shadow:var(--sh2);
 }
 input[type=range]::-moz-range-thumb{
-  width:17px;height:17px;border-radius:50%;background:var(--ac);
+  width:16px;height:16px;border-radius:50%;background:var(--ac);
   cursor:pointer;border:3px solid var(--bg2);box-shadow:var(--sh2);
 }
-.model-cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:10px}
+.model-cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:var(--gap)}
 .mcard{
-  background:var(--bg2);border:1px solid var(--b1);border-radius:var(--r);padding:12px 14px;
+  background:var(--bg2);border:1px solid var(--b1);border-radius:var(--r);padding:var(--pad-sm) var(--pad);
   cursor:pointer;transition:all .15s;position:relative;box-shadow:var(--sh1);
 }
 .mcard:hover{border-color:var(--ac-b);box-shadow:var(--sh2);transform:translateY(-1px)}
@@ -599,25 +615,25 @@ input[type=range]::-moz-range-thumb{
 .set-page{flex-direction:column;width:100%}
 .set-body{display:flex;flex:1;overflow:hidden;height:calc(100vh - 52px)}
 .set-nav{
-  background:var(--bg2);border-right:1px solid var(--b1);padding:14px 10px;
+  background:var(--bg2);border-right:1px solid var(--b1);padding:var(--pad-sm) var(--gap);
   display:flex;flex-direction:column;gap:2px;width:210px;min-width:170px;flex-shrink:0;
 }
 .set-nav button{
-  text-align:left;padding:9px 12px;border:none;border-radius:var(--r2);
+  text-align:left;padding:10px 12px;border:none;border-radius:var(--r2);
   background:transparent;color:var(--t2);cursor:pointer;font-size:13px;font-family:var(--sans);
-  font-weight:500;display:flex;align-items:center;gap:8px;
+  font-weight:500;display:flex;align-items:center;gap:8px;min-height:var(--ctrl-h);
 }
 .set-nav button:hover{color:var(--t1);background:var(--bg3)}
 .set-nav button.on{color:var(--ac);background:var(--ac-w);font-weight:600}
-.set-main{flex:1;min-width:0;overflow-y:auto;padding:22px 28px 80px;background:var(--bg);display:flex;flex-direction:column;gap:16px}
+.set-main{flex:1;min-width:0;overflow-y:auto;padding:var(--pad) 28px 80px;background:transparent;display:flex;flex-direction:column;gap:var(--pad)}
 .set-panel{display:none}
 .set-panel.on{display:block}
 .set-h{font-family:var(--display);font-size:17px;font-weight:700;letter-spacing:-.03em;margin-bottom:4px}
-.set-lead{font-size:12.5px;color:var(--t2);margin-bottom:16px;max-width:62ch;line-height:1.5}
-.set-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.set-lead{font-size:12.5px;color:var(--t2);margin-bottom:var(--pad-sm);max-width:62ch;line-height:1.5}
+.set-grid{display:grid;grid-template-columns:1fr 1fr;gap:var(--gap)}
 .set-card{
-  background:var(--bg2);border:1px solid var(--b1);border-radius:var(--r);padding:14px 16px;
-  box-shadow:var(--sh1);display:flex;flex-direction:column;gap:10px;
+  background:var(--bg2);border:1px solid var(--b1);border-radius:var(--r);padding:var(--pad-sm) var(--pad);
+  box-shadow:var(--sh1);display:flex;flex-direction:column;gap:var(--gap);
 }
 .set-card-h{display:flex;align-items:center;gap:8px;justify-content:space-between}
 .set-card-h b{font-size:13.5px;font-weight:650}
@@ -698,12 +714,11 @@ input[type=range]::-moz-range-thumb{
 
 /* ── АДАПТИВНОСТЬ ─────────────────────────────────────────────── */
 @media(max-width:1200px){
-  .left{width:310px}
-  .mid{width:238px}
+  :root{--left-w:310px;--mid-w:240px}
   .model-cards{grid-template-columns:repeat(auto-fill,minmax(170px,1fr))}
 }
 @media(max-width:900px){
-  .mid{width:210px}
+  :root{--mid-w:220px}
   .fgrid{grid-template-columns:1fr}
 }
 @media(max-width:768px){
@@ -897,7 +912,7 @@ input[type=range]::-moz-range-thumb{
                  oninput="setCntFree(this)" aria-label="Своё количество товаров">
         </div>
 
-        <div class="flbl" style="margin-top:12px">Адрес JSON</div>
+        <div class="flbl stack-gap">Адрес JSON</div>
         <div class="irow">
           <input type="text" id="urlIn" placeholder="https://mrmag.ru/scripts/sync_local/products.json" aria-label="URL каталога товаров">
           <button class="ibtn" id="fetchBtn" onclick="fetchProducts()" title="Загрузить товары" aria-label="Загрузить товары">
@@ -906,13 +921,13 @@ input[type=range]::-moz-range-thumb{
         </div>
         <div class="hint" id="fetchHint">Загрузит первые 10 товаров по адресу</div>
 
-        <div class="flbl" style="margin-top:12px">Или файлы JSON с компьютера</div>
+        <div class="flbl stack-gap">Или файлы JSON с компьютера</div>
         <input type="file" id="fileIn" accept=".json,application/json" multiple
                onchange="loadFile(this)" aria-label="Файлы JSON: data_*.json и filters_*.json">
         <div class="hint">data_523.json — товары <code>{id, name, description, annotation}</code>. filters_929.json — <code>{filters:[{name, value}]}</code>. Можно выбрать несколько сразу.</div>
 
         <div id="dataCats" style="display:none">
-          <div class="flbl" style="margin-top:12px">Категории в загруженных товарах</div>
+          <div class="flbl stack-gap">Категории в загруженных товарах</div>
           <div class="cat-row" id="dataCatRow"></div>
         </div>
 
@@ -964,9 +979,9 @@ input[type=range]::-moz-range-thumb{
       <div class="filters" id="filters">
         <button class="fbtn on" data-f="all" onclick="setFilter(this)" disabled>Все</button>
         <button class="fbtn" data-f="thin" onclick="setFilter(this)" disabled title="Нет описания и характеристик — такой товар модели обогащать не из чего">Без данных</button>
-        <button class="fbtn" data-f="warn" onclick="setFilter(this)" disabled>Расхождения</button>
-        <button class="fbtn" data-f="conf" onclick="setFilter(this)" disabled title="Текст карточки и атрибуты магазина говорят разное — ошибка в самом каталоге, модель тут ни при чём">Ошибки каталога</button>
-        <button class="fbtn" data-f="err" onclick="setFilter(this)" disabled>Ошибки</button>
+        <button class="fbtn" data-f="warn" onclick="setFilter(this)" disabled title="Расхождения с источником">Расхождения</button>
+        <button class="fbtn" data-f="conf" onclick="setFilter(this)" disabled title="Текст карточки и атрибуты магазина говорят разное — ошибка в самом каталоге">Каталог</button>
+        <button class="fbtn" data-f="err" onclick="setFilter(this)" disabled title="Ошибки прогона">Ошибки</button>
       </div>
       <div class="dfilter" id="dateFilter" style="display:none">
         <label for="dFrom">Импорт</label>
@@ -987,7 +1002,7 @@ input[type=range]::-moz-range-thumb{
     <div class="ph">
       <div class="ph-top">
         <span class="pt" id="detailTitle"><i class="ti ti-sparkles" aria-hidden="true"></i> Результат</span>
-        <div class="rtabs" id="rtabs" style="display:none;padding:0;border:none;background:none">
+        <div class="rtabs" id="rtabs" style="display:none">
           <button class="rtab on" onclick="switchTab('vis',this)">Поля</button>
           <button class="rtab" onclick="switchTab('json',this)">JSON</button>
         </div>
@@ -3634,12 +3649,12 @@ function hide(id){document.getElementById(id).style.display='none';}
 function sleep(ms){return new Promise(r=>setTimeout(r,ms));}
 
 // ── ТЕМА ─────────────────────────────────────────────────────
-// Светлая по умолчанию. Выбор запоминается; при первом заходе уважаем
-// системную настройку, чтобы не бить по глазам тем, у кого всё тёмное.
+// Светлая по умолчанию. Тёмная — только по явному выбору пользователя.
 const THEME_KEY='enricher.theme';
 
 function applyTheme(t){
-  document.documentElement.setAttribute('data-theme',t);
+  if(t==='dark') document.documentElement.setAttribute('data-theme','dark');
+  else document.documentElement.removeAttribute('data-theme');
   document.getElementById('themeIcon').textContent=t==='dark'?'☀':'☾';
   document.getElementById('themeBtn').title=t==='dark'?'Включить светлую тему':'Включить тёмную тему';
 }
@@ -3657,10 +3672,7 @@ function logout(){
 function initTheme(){
   let saved=null;
   try{ saved=localStorage.getItem(THEME_KEY); }catch{}
-  if(saved!=='light'&&saved!=='dark'){
-    saved=window.matchMedia?.('(prefers-color-scheme: dark)')?.matches?'dark':'light';
-  }
-  applyTheme(saved);
+  applyTheme(saved==='dark'?'dark':'light');
 }
 
 // Иконочный шрифт с CDN может не загрузиться — тогда включаем текстовые подписи.

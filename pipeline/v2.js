@@ -102,9 +102,22 @@ function snapLoad(v) {
   return specText(v);
 }
 
+function formatDimensions(v) {
+  if (v == null || typeof v !== 'object' || Array.isArray(v)) return null;
+  const w = v.width ?? v.w;
+  const h = v.height ?? v.h;
+  const d = v.depth ?? v.d;
+  if (w == null || h == null || d == null) return null;
+  const n = x => (typeof x === 'number' ? String(+(+x).toFixed(3)) : String(x));
+  return `${n(w)}x${n(h)}x${n(d)}`;
+}
+
 function specFromAttr(raw, attr) {
   const v = unwrap(raw);
   if (v == null || v === '') return null;
+  if (attr?.type === 'dimensions' || (v && typeof v === 'object' && !Array.isArray(v))) {
+    return formatDimensions(v);
+  }
   if (attr?.type === 'boolean' || typeof v === 'boolean') return v ? 'да' : 'нет';
   if (typeof v === 'number') return v;
   if (attr?.type === 'class_scale') return String(v);

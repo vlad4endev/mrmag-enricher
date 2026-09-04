@@ -128,6 +128,26 @@ function isBareBooleanWord(val) {
   return BOOL_TRUE.has(k) || BOOL_FALSE.has(k);
 }
 
+/**
+ * «Инверторный двигатель: Да» → значение «Инверторный», если ключ — синоним,
+ * а не каноническое имя атрибута («Тип двигателя»).
+ */
+function impliedEnumFromKey(attr, keyText) {
+  const key = String(keyText || '').trim();
+  if (!key) return null;
+  if (valueFold(key) === valueFold(attr.name)) return null;
+  const stripped = key
+    .replace(/\s*\([^)]*\)\s*/g, ' ')
+    .replace(/\b(?:тип|вид)\b/gi, ' ')
+    .replace(/\b(?:двигател\w*|мотор\w*|engine|motor)\b/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const candidate = displayEnum(stripped || key);
+  if (!candidate || isBareBooleanWord(candidate) || isEchoOnly(candidate)) return null;
+  if (valueFold(candidate) === valueFold(attr.name)) return null;
+  return candidate;
+}
+
 function pickMode(list) {
   const c = new Map();
   for (const x of list) c.set(x, (c.get(x) || 0) + 1);
@@ -276,6 +296,12 @@ export function normalizeValue(attr, raw, { keyText = '' } = {}) {
       const val = displayEnum(aliased || v);
       if (!val) return empty;
       if (typ === 'enum' && isBareBooleanWord(val)) {
+        const k = val.trim().toLowerCase().replace(/ё/g, 'е');
+        if (BOOL_FALSE.has(k)) {
+          return { ok: false, value: null, reason: 'bool_false_in_enum', raw: v };
+        }
+        const implied = impliedEnumFromKey(attr, keyText);
+        if (implied) return { ok: true, value: implied };
         return { ok: false, value: null, reason: 'bool_in_enum', raw: v };
       }
       return { ok: true, value: val };

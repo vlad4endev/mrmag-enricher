@@ -1371,6 +1371,8 @@ console.log('\nТовар без описания: поиск в сети');
           + '<tr><td>Система разморозки</td><td>капельная</td></tr>'
           + '<tr><td>Ширина</td><td>58 см</td></tr>'
           + '<tr><td>Высота</td><td>171 см</td></tr></table>',
+    '/country': '<h1>Холодильник LG GC Q247CAMT</h1>'
+          + '<table><tr><td>Страна изготовления</td><td>Китай</td></tr></table>',
   };
 
   t('страница принимается по артикулу или по имени, соседняя модель — нет', () => {
@@ -1383,7 +1385,10 @@ console.log('\nТовар без описания: поиск в сети');
     const url = new URL(req.url, 'http://x');
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
     if (url.pathname === '/serp') {
-      // localhost и [::1] — разные домены для дедупликации, оба сюда же.
+      const q = decodeURIComponent(url.search || '');
+      if (/стран/i.test(q)) {
+        return res.end(`<a href="http://[::1]:${port}/country">c</a>`);
+      }
       return res.end(`<a href="http://localhost:${port}/wrong">1</a><a href="http://[::1]:${port}/right">2</a>`);
     }
     res.end(pages[url.pathname] ?? 'нет такой страницы');
@@ -1411,6 +1416,35 @@ console.log('\nТовар без описания: поиск в сети');
     assert.match(got.product.annotation, /Общий объём - 310 л/);
     assert.strictEqual(got.product.source_url, got.source, 'источник обязан ехать вместе с текстом');
     assert.deepStrictEqual(product.description, '', 'исходный товар не переписывается на месте');
+  });
+
+  await tAsync('нет страны в исходнике — ищем по модели, своё описание не трогаем', async () => {
+    const product = {
+      sku: '320420',
+      name: 'Холодильник LG GC-Q247CAMT',
+      brand: 'LG',
+      description: 'Двухкамерный холодильник с нижней морозильной камерой, общим объёмом 310 литров и системой No Frost.',
+      annotation: 'Общий объём - 310 л<br>Система разморозки - No Frost',
+    };
+    const got = await web.ensureSource(product, 'kholodilniki');
+    assert.strictEqual(got.gate.ok, true, got.gate.reason);
+    assert.match(got.product.annotation, /Страна производства - Китай/);
+    assert.match(got.product.description, /Двухкамерный холодильник/);
+    assert.strictEqual(got.source, `http://[::1]:${port}/country`);
+  });
+
+  await tAsync('страна уже в исходнике — в сеть за ней не ходим', async () => {
+    const product = {
+      sku: '320420',
+      name: 'Холодильник LG GC-Q247CAMT',
+      description: 'Двухкамерный холодильник с нижней морозильной камерой, общим объёмом 310 литров и системой No Frost.',
+      annotation: 'Общий объём - 310 л<br>Страна производства - Россия',
+    };
+    const got = await web.ensureSource(product, 'kholodilniki');
+    assert.strictEqual(got.gate.ok, true);
+    assert.strictEqual(got.source, undefined);
+    assert.match(got.product.annotation, /Россия/);
+    assert.doesNotMatch(got.product.annotation, /Китай/);
   });
 
   await tAsync('чужие характеристики без совпадения артикула не подставляются, имя всё равно идёт в модель', async () => {

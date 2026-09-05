@@ -15,6 +15,7 @@ import {
   buildUserContent, rpmFor, attrFacts, productFacts, modelToken, hasCountryFact,
   SCHEMAS, GENERIC_SCHEMA, schemaFor, schemaForProduct, buildSystemPrompt, enrichProduct, netError,
   seoPackageEmpty, cardTextsEmpty, validateModelResponse, buildDescriptionHtml,
+  sanitizeEnrichedResult,
 } from './lib.js';
 
 // Схема по умолчанию — универсальная, а не холодильник: неизвестная категория
@@ -83,7 +84,7 @@ t('\\w не ломает кириллические суффиксы', () => {
   assert.strictEqual(extractFacts('Количество камер - 3').количество_камер, 3);
 });
 t('система охлаждения', () => {
-  assert.strictEqual(extractFacts('Система охлаждения - No Frost').система_охлаждения, 'No Frost');
+  assert.strictEqual(extractFacts('Система охлаждения - No Frost').система_охлаждения, 'Автоматическая разморозка (No Frost)');
   assert.strictEqual(extractFacts('Система охлаждения - капельная').система_охлаждения, 'Капельная');
 });
 t('страна производства и изготовления — одно поле', () => {
@@ -251,12 +252,12 @@ console.log('\nАтрибуты магазина как источник фак�
 // Все значения ниже взяты дословно из products_523.json и products_467.json.
 t('однозначное значение атрибута становится фактом', () => {
   const f = k => attrFacts([attr('Система разморозки', k)], 'kholodilniki').facts.система_охлаждения;
-  assert.strictEqual(f('Total No Frost'), 'No Frost');
-  assert.strictEqual(f('Full No Frost'), 'No Frost');
-  assert.strictEqual(f('Капельная система'), 'капельная');
-  assert.strictEqual(f('Ручная разморозка'), 'ручная разморозка');
-  // «Автоматическая» в атрибутах магазина — та же No Frost.
-  assert.strictEqual(f('Автоматическая/ No Frost'), 'No Frost');
+  assert.strictEqual(f('Total No Frost'), 'Автоматическая разморозка (No Frost)');
+  assert.strictEqual(f('Full No Frost'), 'Автоматическая разморозка (No Frost)');
+  assert.strictEqual(f('Капельная система'), 'Капельная');
+  assert.strictEqual(f('Ручная разморозка'), 'Ручная разморозка');
+  // «Автоматическая» в атрибутах магазина — та же авторазморозка No Frost.
+  assert.strictEqual(f('Автоматическая/ No Frost'), 'Автоматическая разморозка (No Frost)');
 });
 t('атрибут с двумя системами сразу — это фасет фильтра, а не характеристика', () => {
   const f = k => attrFacts([attr('Система разморозки', k)], 'kholodilniki').facts.система_охлаждения;
@@ -323,7 +324,7 @@ t('округление магазина по границе не придирк
 t('атрибут добирает поле, которое модель оставила пустым', () => {
   const r = normalizeResponse({ specs: { система_охлаждения: null } }, 'Холодильник',
     'kholodilniki', [attr('Система разморозки', 'Total No Frost')]);
-  assert.strictEqual(r.specs.система_охлаждения, 'No Frost');
+  assert.strictEqual(r.specs.система_охлаждения, 'Автоматическая разморозка (No Frost)');
   assert.ok(r.filled_from_text.includes('система_охлаждения'));
 });
 
@@ -423,8 +424,23 @@ t('«No Frost Нет» не становится положительным No F
   assert.notStrictEqual(extractFacts('Система охлаждения - Нет').система_охлаждения, 'No Frost');
 });
 t('пара «Система охлаждения - No Frost»', () => {
-  assert.strictEqual(extractFacts('Система охлаждения - No Frost').система_охлаждения, 'No Frost');
+  assert.strictEqual(extractFacts('Система охлаждения - No Frost').система_охлаждения, 'Автоматическая разморозка (No Frost)');
   assert.strictEqual(extractFacts('Система охлаждения - капельная').система_охлаждения, 'Капельная');
+});
+t('No Frost в specs пишется понятным языком', () => {
+  const r = normalizeResponse({
+    specs: {
+      система_охлаждения: 'No Frost',
+      размораживание_холодильной_камеры: 'No Frost',
+      размораживание_морозильной_камеры: 'No Frost',
+    },
+    short_description: 'x'.repeat(120),
+    description: 'Система автоматической разморозки.\n\nb\n\nc\n\nd',
+    bullets: ['a', 'b', 'c'], strong: [], meta_keywords: 'а, б, в, г, д, е, ж', web_info: null,
+  }, 'Система охлаждения - No Frost', 'kholodilniki', [], 'prefer_source');
+  assert.match(String(r.specs.система_охлаждения), /автоматическ.*No Frost/i);
+  assert.match(String(r.specs.размораживание_холодильной_камеры), /автоматическ.*No Frost/i);
+  assert.ok(!/^No Frost$/i.test(String(r.specs.система_охлаждения)));
 });
 t('кириллическая «А+» приводится к латинской', () => {
   assert.strictEqual(extractFacts('Класс энергоэффективности - А+').класс_энергоэффективности, 'A+');
@@ -499,8 +515,7 @@ t('хладагент: R600a ≡ R600a,58 / R600a 57 г', () => {
   assert.strictEqual(r.source_facts.хладагент, 'R600a');
   assert.ok(!(r.warnings || []).some(w => w.field === 'хладагент'));
 });
-t('sanitizeEnrichedResult убирает dump-warning освещения из старой карточки', async () => {
-  const { sanitizeEnrichedResult } = await import('./lib.js');
+t('sanitizeEnrichedResult убирает dump-warning освещения из старой карточки', () => {
   const dump = 'Да перевешиваемые двери - да габаритные размеры нетто , мм. - 216х58х61 габаритные размеры брутто , мм. - 221х60х62';
   const d = sanitizeEnrichedResult({
     specs: { тип_освещения: dump, хладагент: 'R600a,58' },
@@ -515,6 +530,26 @@ t('sanitizeEnrichedResult убирает dump-warning освещения из с
   assert.ok(!d.source_facts.тип_освещения);
   assert.strictEqual(d.source_facts.хладагент, 'R600a');
   assert.deepStrictEqual(d.warnings, []);
+});
+t('тип_управления: массив модели → строка, не multi', () => {
+  const data = JSON.parse(fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), 'data_523.json'), 'utf8'));
+  const p = (Array.isArray(data) ? data : []).find(x => String(x.id) === '260');
+  assert.ok(p, 'товар 260 Pozis RK FNF-172 W');
+  const r = normalizeResponse({
+    specs: { тип_управления: ['Механическое'], система_охлаждения: 'No Frost', объем_общий_л: 344 },
+    short_description: 'x'.repeat(120),
+    description: 'Управление механическое.\n\nb\n\nc\n\nd',
+    bullets: ['a', 'b', 'c'], strong: [], meta_keywords: 'а, б, в, г, д, е, ж', web_info: null,
+  }, '', 'kholodilniki', [], 'prefer_source', p);
+  assert.strictEqual(typeof r.specs.тип_управления, 'string');
+  assert.match(String(r.specs.тип_управления), /механическ/i);
+  assert.ok(!Array.isArray(r.specs.тип_управления));
+  const scrubbed = sanitizeEnrichedResult({
+    specs: { тип_управления: ['Механическое'] },
+    source_facts: {},
+    warnings: [],
+  });
+  assert.strictEqual(scrubbed.specs.тип_управления, 'Механическое');
 });
 t('DON R-299: LED освещение - да → светодиодное, не габариты', () => {
   const data = JSON.parse(fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), 'data_523.json'), 'utf8'));
@@ -1029,8 +1064,8 @@ t('бренд берётся из обогащения, когда магази�
 t('фасеты обогащения попадают в файл фильтров со счётчиками', () => {
   const row = (sku, specs, price) => ({ sku, name: 'Товар ' + sku, price, enriched: { specs } });
   const f = buildFilters({ id: 523, name: 'Холодильники', url: 'u' }, [
-    row('1', { система_охлаждения: 'No Frost', объем_общий_л: 310, высота_мм: 1900 }, 30000),
-    row('2', { система_охлаждения: 'No Frost', объем_общий_л: 365 }, 45000),
+    row('1', { система_охлаждения: 'Автоматическая разморозка (No Frost)', объем_общий_л: 310, высота_мм: 1900 }, 30000),
+    row('2', { система_охлаждения: 'Автоматическая разморозка (No Frost)', объем_общий_л: 365 }, 45000),
     row('3', { система_охлаждения: 'капельная', объем_общий_л: 419, высота_мм: 1880 }, 18000),
   ]);
   assert.strictEqual(f.enriched_total, 3, 'файл должен говорить, сколько товаров обогащено');
@@ -1038,7 +1073,7 @@ t('фасеты обогащения попадают в файл фильтро
   const cool = f.filters.find(x => x.code === 'система_охлаждения');
   assert.strictEqual(cool.name, 'Система охлаждения');
   assert.strictEqual(cool.source, 'enriched', 'видно, что фасет из прогона, а не из магазина');
-  assert.deepStrictEqual(cool.values, [{ value: 'No Frost', count: 2 }, { value: 'Капельная', count: 1 }]);
+  assert.deepStrictEqual(cool.values, [{ value: 'Автоматическая разморозка (No Frost)', count: 2 }, { value: 'Капельная', count: 1 }]);
 
   const vol = f.filters.find(x => x.code === 'объем_общий_л');
   assert.strictEqual(vol.name, 'Объем общий, л', 'единица уезжает в имя фасета');

@@ -4880,6 +4880,34 @@ function sanitizeEnriched(d){
   if(facts&&typeof facts.хладагент==='string'){
     const c=refrigerantCode(facts.хладагент); if(c) facts.хладагент=c;
   }
+  if(specs&&Array.isArray(specs.тип_управления)){
+    const parts=specs.тип_управления.map(x=>String(x??'').trim()).filter(Boolean);
+    specs.тип_управления=parts[0]??null;
+  }
+  const plainNoFrost=v=>{
+    const s=String(v??'').trim();
+    if(!s) return null;
+    if(/^no\s*frost$/i.test(s)||/^(total|full)\s*no\s*frost$/i.test(s)) return 'Автоматическая разморозка (No Frost)';
+    return null;
+  };
+  const plainDefrost=v=>{
+    const s=String(v??'').trim();
+    if(!s) return null;
+    if(/^no\s*frost$/i.test(s)||/^(total|full)\s*no\s*frost$/i.test(s)) return 'Автоматическое (No Frost)';
+    return null;
+  };
+  if(specs){
+    const c=plainNoFrost(specs.система_охлаждения); if(c) specs.система_охлаждения=c;
+    for(const k of ['размораживание_холодильной_камеры','размораживание_морозильной_камеры']){
+      const d=plainDefrost(specs[k]); if(d) specs[k]=d;
+    }
+  }
+  if(facts){
+    const c=plainNoFrost(facts.система_охлаждения); if(c) facts.система_охлаждения=c;
+    for(const k of ['размораживание_холодильной_камеры','размораживание_морозильной_камеры']){
+      const d=plainDefrost(facts[k]); if(d) facts[k]=d;
+    }
+  }
   return d;
 }
 

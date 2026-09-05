@@ -91,7 +91,9 @@ function singularProductType(name) {
 function snapCooling(v) {
   const t = String(v).toLowerCase().replace(/ё/g, 'е');
   if (/без\s*no\s*frost|капельн/.test(t)) return 'капельная';
-  if (/no\s*frost|ноу\s*фрост|full\s*no/.test(t)) return 'No Frost';
+  if (/no\s*frost|ноу\s*фрост|full\s*no|авторазмороз|автоматическ/.test(t)) {
+    return 'автоматическая разморозка (No Frost)';
+  }
   return specText(v);
 }
 

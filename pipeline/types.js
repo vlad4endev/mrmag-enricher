@@ -90,7 +90,12 @@ export function valueStem(s) {
 export function displayEnum(raw) {
   let t = String(raw ?? '').replace(/\s+/g, ' ').trim();
   if (!t) return t;
-  t = t.replace(/\s*\([^)]*\)\s*/g, ' ').replace(/\s+/g, ' ').trim();
+  // Кириллические «эхо»-скобки убираем; латиницу оставляем: «… (No Frost)».
+  t = t.replace(/\s*\(([^)]*)\)\s*/g, (_, inner) => {
+    const i = String(inner).trim();
+    if (/[A-Za-z]/.test(i)) return ` (${i})`;
+    return ' ';
+  }).replace(/\s+/g, ' ').trim();
   t = t.replace(/[.;,]+$/g, '').trim();
   t = t.replace(ECHO_LEAD, '').replace(ECHO_TAIL, '').trim();
   if (!t || isEchoOnly(t)) return '';

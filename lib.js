@@ -24,7 +24,7 @@ import { nameKeyTokens } from './pipeline/identity.js';
 import { tryLoadDictSchema, extractFactsFromDictionary, loadConfigSafe, CRAWL_SLUGS, specDest, expectedDictCatId } from './pipeline/schema.js';
 import { alignCardTextsToSpecs } from './pipeline/prose_align.js';
 import { matchKey } from './pipeline/match.js';
-import { normalizeValue, aliasValue, enumValuesEqual, isGluedFactDump } from './pipeline/types.js';
+import { normalizeValue, aliasValue, enumValuesEqual, isGluedFactDump, displayEnum } from './pipeline/types.js';
 import { loadBenchmarks, dictDebugInfo, formatDictDebug, resolveDictRoot } from './pipeline/dict.js';
 import {
   validateModelResponse, validationFeedbackLine, MODEL_KEYS, buildDescriptionHtml,
@@ -449,10 +449,10 @@ function pickEnum(value, variants) {
   return hit.length === 1 ? hit[0] : null;
 }
 
-// «Автоматическая» в атрибутах магазина — та же No Frost. Без этой строки
-// «Автоматическая/ручная» опознавалась бы как однозначно ручная.
+// «Автоматическая» в атрибутах магазина — та же авторазморозка No Frost.
+const COOLING_LABEL = 'автоматическая разморозка (No Frost)';
 const COOLING_VARIANTS = [
-  [/no\s*frost|автоматическ/i, 'No Frost'],
+  [/no\s*frost|автоматическ|авторазмороз/i, COOLING_LABEL],
   [/капельн/i,                  'капельная'],
   [/ручн/i,                     'ручная разморозка'],
 ];
@@ -963,6 +963,10 @@ export function defaultSystemPromptTemplate() {
 - цвет — один базовый цвет из палитры: {{color_facets}}. Оттенок из описания
   ("графитовый металлик") сведи к базовому ("серый").
 - Значения без служебного мусора: без "шт.", "прибл.", "*", сносок и HTML.
+- Технические ярлыки пиши понятным языком, термин можно оставить в скобках:
+  «No Frost» → «автоматическая разморозка (No Frost)»; то же для размораживания
+  камер («автоматическое (No Frost)»). В description и bullets не оставляй
+  голое «No Frost» без пояснения, что камеры не нужно размораживать вручную.
 
 6. ТЕКСТЫ КАРТОЧКИ
 Пиши тексты СРАЗУ после открытия объекта — до specs: иначе при обрыве страница
@@ -1139,7 +1143,7 @@ export function attrFacts(attributes, schemaKey) {
       if (attr.code === 'cooling') {
         const snapped = pickEnum(raw, COOLING_VARIANTS);
         if (snapped == null) continue;
-        facts[key] = snapped;
+        facts[key] = displayEnum(snapped) || snapped;
         sources[key] = src;
         continue;
       }
@@ -1313,6 +1317,44 @@ export function sanitizeEnrichedResult(data) {
   if (facts && typeof facts.хладагент === 'string') {
     const code = refrigerantCode(facts.хладагент);
     if (code) facts.хладагент = code;
+  }
+  // Старые карточки: тип_управления как ["Механическое"]
+  if (specs && Array.isArray(specs.тип_управления)) {
+    const parts = specs.тип_управления.map(x => String(x ?? '').trim()).filter(Boolean);
+    specs.тип_управления = parts[0] ?? null;
+  }
+  // No Frost → понятная формулировка
+  const plainNoFrost = (v) => {
+    const s = String(v ?? '').trim();
+    if (!s) return null;
+    if (/^no\s*frost$/i.test(s) || /^(total|full)\s*no\s*frost$/i.test(s)) {
+      return displayEnum('автоматическая разморозка (No Frost)');
+    }
+    return null;
+  };
+  const plainDefrost = (v) => {
+    const s = String(v ?? '').trim();
+    if (!s) return null;
+    if (/^no\s*frost$/i.test(s) || /^(total|full)\s*no\s*frost$/i.test(s)) {
+      return displayEnum('автоматическое (No Frost)');
+    }
+    return null;
+  };
+  if (specs) {
+    const c = plainNoFrost(specs.система_охлаждения);
+    if (c) specs.система_охлаждения = c;
+    for (const k of ['размораживание_холодильной_камеры', 'размораживание_морозильной_камеры']) {
+      const d = plainDefrost(specs[k]);
+      if (d) specs[k] = d;
+    }
+  }
+  if (facts) {
+    const c = plainNoFrost(facts.система_охлаждения);
+    if (c) facts.система_охлаждения = c;
+    for (const k of ['размораживание_холодильной_камеры', 'размораживание_морозильной_камеры']) {
+      const d = plainDefrost(facts[k]);
+      if (d) facts[k] = d;
+    }
   }
   return d;
 }
@@ -1513,19 +1555,35 @@ export function normalizeResponse(data, sourceText = '', schemaKey, attributes =
   for (const k of schema.specKeys) {
     const v = raw[k];
     if (schema.numericKeys.includes(k)) {
-      specs[k] = coerceNumber(v);
+      specs[k] = coerceNumber(Array.isArray(v) ? v[0] : v);
       continue;
     }
-    const s = v == null ? null : String(v).trim();
-    const clean = s && !/^(нет данных|не указано|-|—|n\/?a)$/i.test(s) ? s : null;
     const attr = attrForSpecKey(schema, k);
+    // Модель иногда отдаёт enum как ["Механическое"] при ошибочном multi.
+    let scalar = v;
+    if (Array.isArray(v)) {
+      const parts = v.map(x => String(x ?? '').trim()).filter(Boolean);
+      if (attr?.cardinality === 'multi') {
+        const joined = parts.join(', ');
+        if (!joined || /^(нет данных|не указано|-|—|n\/?a)$/i.test(joined)) {
+          specs[k] = null;
+          continue;
+        }
+        const norm = normalizeValue(attr, joined, { keyText: attr.name });
+        specs[k] = norm.ok ? norm.value : parts;
+        continue;
+      }
+      scalar = parts[0] ?? null;
+    }
+    const s = scalar == null ? null : String(scalar).trim();
+    const clean = s && !/^(нет данных|не указано|-|—|n\/?a)$/i.test(s) ? s : null;
     if (clean && isGluedFactDump(clean)) {
       specs[k] = null;
     } else if (clean && schema.enums[k]) {
       const viaAlias = attr ? aliasValue(attr, clean) : null;
       const snapped = viaAlias || snapEnum(clean, schema.enums[k]);
       if (!snapped) enumIssues.push({ field: k, model: clean, source: null, note: `значение вне списка (${schema.enums[k].join(' | ')})` });
-      specs[k] = snapped;
+      specs[k] = snapped ? (displayEnum(snapped) || snapped) : null;
     } else if (clean && attr && (attr.type === 'enum' || attr.type === 'text')) {
       const norm = normalizeValue(attr, clean, { keyText: attr.name });
       specs[k] = norm.ok ? norm.value : (aliasValue(attr, clean) || clean);

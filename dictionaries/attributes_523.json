@@ -198,10 +198,9 @@
     ],
     "blacklist": [],
     "facet": {
-      "enabled": false,
+      "enabled": true,
       "label": "Количество камер",
-      "kind": "enum",
-      "disabled_reason": "Счётное значение, дублирует «Тип холодильника»"
+      "kind": "enum"
     }
   },
   {
@@ -229,10 +228,9 @@
     ],
     "blacklist": [],
     "facet": {
-      "enabled": false,
+      "enabled": true,
       "label": "Количество дверей",
-      "kind": "enum",
-      "disabled_reason": "Счётное значение, дублирует «Тип холодильника»"
+      "kind": "enum"
     }
   },
   {
@@ -319,9 +317,18 @@
       "enabled": true,
       "label": "Общий объём, л",
       "kind": "range",
-      "step": 50,
+      "step": 100,
       "bound_rule": "left_closed",
-      "open_last": true
+      "open_last": true,
+      "breaks": [
+        0,
+        100,
+        200,
+        300,
+        400,
+        500
+      ],
+      "origin": 0
     }
   },
   {
@@ -373,7 +380,17 @@
       "kind": "range",
       "step": 50,
       "bound_rule": "left_closed",
-      "open_last": true
+      "open_last": true,
+      "breaks": [
+        0,
+        50,
+        100,
+        150,
+        200,
+        250,
+        300
+      ],
+      "origin": 0
     }
   },
   {
@@ -427,7 +444,15 @@
       "kind": "range",
       "step": 50,
       "bound_rule": "left_closed",
-      "open_last": true
+      "open_last": true,
+      "breaks": [
+        0,
+        50,
+        100,
+        150,
+        200
+      ],
+      "origin": 0
     }
   },
   {
@@ -545,10 +570,9 @@
       "Размораживание холодильной камеры"
     ],
     "facet": {
-      "enabled": false,
+      "enabled": true,
       "label": "Размораживание морозильной камеры",
-      "kind": "enum",
-      "disabled_reason": "Перекрывается с «Системой охлаждения» и размораживанием холодильной камеры"
+      "kind": "enum"
     }
   },
   {
@@ -747,7 +771,14 @@
       "kind": "range",
       "step": 5,
       "bound_rule": "left_closed",
-      "open_last": true
+      "open_last": true,
+      "breaks": [
+        35,
+        40,
+        45,
+        50
+      ],
+      "origin": 35
     }
   },
   {
@@ -791,9 +822,16 @@
       "enabled": true,
       "label": "Мощность замораживания, кг/сут",
       "kind": "range",
-      "step": 2,
+      "step": 5,
       "bound_rule": "left_closed",
-      "open_last": true
+      "open_last": true,
+      "breaks": [
+        0,
+        5,
+        10,
+        15
+      ],
+      "origin": 0
     }
   },
   {
@@ -831,9 +869,19 @@
       "enabled": true,
       "label": "Высота, см",
       "kind": "range",
-      "step": 5,
+      "step": 25,
       "bound_rule": "left_closed",
-      "open_last": true
+      "open_last": true,
+      "breaks": [
+        50,
+        75,
+        100,
+        125,
+        150,
+        175,
+        200
+      ],
+      "origin": 50
     }
   },
   {
@@ -872,7 +920,17 @@
       "kind": "range",
       "step": 5,
       "bound_rule": "left_closed",
-      "open_last": true
+      "open_last": true,
+      "breaks": [
+        40,
+        45,
+        50,
+        55,
+        60,
+        65,
+        70
+      ],
+      "origin": 40
     }
   },
   {
@@ -911,7 +969,16 @@
       "kind": "range",
       "step": 5,
       "bound_rule": "left_closed",
-      "open_last": true
+      "open_last": true,
+      "breaks": [
+        45,
+        50,
+        55,
+        60,
+        65,
+        70
+      ],
+      "origin": 45
     }
   },
   {
@@ -1088,10 +1155,9 @@
     ],
     "blacklist": [],
     "facet": {
-      "enabled": false,
+      "enabled": true,
       "label": "Дисплей",
-      "kind": "enum",
-      "disabled_reason": "Одно значение у 87% при покрытии 15%"
+      "kind": "enum"
     }
   },
   {
@@ -1119,10 +1185,9 @@
     ],
     "blacklist": [],
     "facet": {
-      "enabled": false,
+      "enabled": true,
       "label": "Перенавешиваемые двери",
-      "kind": "enum",
-      "disabled_reason": "Значение «есть» у 99% заполненных — фильтр не различает товары"
+      "kind": "enum"
     }
   },
   {

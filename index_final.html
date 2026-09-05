@@ -889,18 +889,60 @@ input[type=range]::-moz-range-thumb{
 .sch-err{background:var(--rbg);color:var(--red);border-color:var(--rbd)}
 
 .sch-drawer{
-  display:none;position:sticky;top:12px;max-height:calc(100vh - 100px);overflow:auto;
+  display:block;position:sticky;top:12px;max-height:calc(100vh - 100px);overflow:auto;
   border:1px solid var(--b1);border-radius:var(--r);background:var(--bg2);
-  box-shadow:0 8px 24px rgba(11,18,32,.06);
+  box-shadow:0 8px 24px rgba(11,18,32,.06);min-height:280px;
 }
 :root[data-theme="dark"] .sch-drawer{box-shadow:0 8px 28px rgba(0,0,0,.35)}
-.sch-drawer.open{display:block}
 .sch-drawer-h{
+  display:flex;align-items:center;justify-content:space-between;gap:10px;
   position:sticky;top:0;z-index:2;padding:14px 16px 12px;margin:0;
   font-weight:700;font-size:15px;letter-spacing:-.02em;color:var(--t1);
-  background:linear-gradient(180deg,var(--bg2),var(--bg2) 70%,transparent);
-  border-bottom:1px solid var(--b1);
+  background:var(--bg2);border-bottom:1px solid var(--b1);
 }
+.sch-drawer-h .sch-drawer-sub{font-size:11px;font-weight:550;color:var(--t3);letter-spacing:0}
+.sch-drawer-idle{
+  display:flex;flex-direction:column;align-items:flex-start;justify-content:center;
+  gap:8px;min-height:220px;padding:28px 20px;color:var(--t3);
+}
+.sch-drawer-idle b{color:var(--t2);font-size:14px;font-weight:650}
+.sch-drawer-idle p{margin:0;font-size:12.5px;line-height:1.45;max-width:28ch}
+
+.sch-row{
+  display:grid;grid-template-columns:minmax(0,1fr) auto;gap:6px 12px;align-items:start;
+  padding:11px 12px 11px 14px;margin-bottom:2px;border:1px solid transparent;
+  border-radius:var(--r);cursor:pointer;position:relative;background:transparent;
+  transition:background .12s,border-color .12s,transform .12s;
+}
+.sch-row::before{
+  content:'';position:absolute;left:0;top:8px;bottom:8px;width:3px;border-radius:0 2px 2px 0;
+  background:transparent;transition:background .12s;
+}
+.sch-row:hover{background:var(--bg3);border-color:var(--b1)}
+.sch-row.on{background:var(--ac-w);border-color:var(--ac-b)}
+.sch-row.on::before{background:var(--ac)}
+.sch-row.off{opacity:.55}
+.sch-row.off:hover{opacity:.9}
+.sch-row-main{min-width:0;display:flex;flex-direction:column;gap:5px}
+.sch-row-title{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px 8px}
+.sch-row-name{font-size:13.5px;font-weight:700;letter-spacing:-.02em;color:var(--t1);line-height:1.25}
+.sch-row-unit{font-size:11.5px;color:var(--t3);font-weight:500}
+.sch-row-meta{display:flex;flex-wrap:wrap;gap:6px 8px;align-items:center;font-size:11.5px;color:var(--t3)}
+.sch-row-code{
+  font-family:var(--mono);font-size:11px;color:var(--ac);background:var(--bg);
+  border:1px solid var(--b1);padding:1px 6px;border-radius:4px;
+}
+.sch-row-vals{display:flex;flex-wrap:wrap;gap:4px;margin-top:1px}
+.sch-val{
+  font-size:11px;line-height:1.2;padding:3px 7px;border-radius:4px;
+  background:var(--bg);border:1px solid var(--b1);color:var(--t2);max-width:12rem;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+}
+.sch-val.more{color:var(--t3);border-style:dashed}
+.sch-row-side{display:flex;flex-direction:column;align-items:flex-end;gap:6px;padding-top:1px}
+.sch-row-side-top{display:flex;flex-wrap:wrap;gap:5px;justify-content:flex-end;align-items:center}
+.sch-row-go{color:var(--t3);font-size:16px;line-height:1;opacity:.55}
+.sch-row.on .sch-row-go,.sch-row:hover .sch-row-go{color:var(--ac);opacity:1}
 .sch-drawer-body{padding:4px 16px 16px}
 .sch-drawer-body .set-row{margin-bottom:10px}
 .sch-drawer-body .set-check{margin:4px 0 10px}
@@ -935,7 +977,7 @@ input[type=range]::-moz-range-thumb{
 @media(max-width:900px){
   .dict-table-wrap,.sch-list{max-height:none}
   .sch-row{grid-template-columns:1fr}
-  .sch-row-side{justify-content:flex-start}
+  .sch-row-side{align-items:flex-start}
 }
 @media(max-width:768px){
   .set-body{flex-direction:column;height:auto;overflow:visible}
@@ -1718,8 +1760,13 @@ input[type=range]::-moz-range-thumb{
               </div>
             </div>
             <aside class="sch-drawer" id="schDrawer">
-              <div class="sch-drawer-h" id="schDrawerTitle">Атрибут</div>
-              <div class="sch-drawer-body muted">Выберите атрибут в списке</div>
+              <div class="sch-drawer-h" id="schDrawerTitle">Редактор атрибута <span class="sch-drawer-sub">выберите слева</span></div>
+              <div class="sch-drawer-body" id="schDrawerBody">
+                <div class="sch-drawer-idle">
+                  <b>Список слева → правка здесь</b>
+                  <p>Кликните атрибут, чтобы править тип, каноны, фильтр и «не путать с». Inline-поля в списке убраны — меньше шума.</p>
+                </div>
+              </div>
             </aside>
           </div>
           <div class="hint" id="dictHint">filters_{id}.json — generated output из facet.enabled + canonical values / range breaks + normalized product attrs (pipeline/facets.buildFilters).</div>
@@ -1997,6 +2044,15 @@ let dictCurrent=null;   // { id, name, file, attrs }
 let dictDirty=false;
 
 function dictStatus(msg, ok){
+  if(typeof window.refreshSchemaMeta==='function' && document.getElementById('schConstructor')){
+    if(!dictCurrent){
+      const el=document.getElementById('dictMeta');
+      if(el) el.innerHTML=msg?`<span class="muted">${esc(msg)}</span>`:'';
+      return;
+    }
+    window.refreshSchemaMeta(ok===false?(msg||'ошибка'):(msg||''));
+    return;
+  }
   const el=document.getElementById('dictMeta');
   if(!el) return;
   if(!dictCurrent){ el.innerHTML=msg?`<span class="muted">${esc(msg)}</span>`:''; return; }
@@ -2137,10 +2193,15 @@ function blankDictAttrLocal(order){
 }
 
 function renderDictTable(attrs){
+  if(typeof window.renderSchemaTable==='function' && document.getElementById('schConstructor')){
+    window.renderSchemaTable(attrs||[]);
+    if(typeof window.refreshSchemaMeta==='function') window.refreshSchemaMeta();
+    return;
+  }
   const body=document.getElementById('dictBody');
   if(!body) return;
   if(!attrs.length){
-    body.innerHTML='<tr><td colspan="10" class="muted">Нет атрибутов — добавьте строку</td></tr>';
+    body.innerHTML='<div class="sch-empty">Нет атрибутов — добавьте строку</div>';
     return;
   }
   const rows=[...attrs].sort((a,b)=>(a.order??0)-(b.order??0)||String(a.code).localeCompare(String(b.code)));
@@ -5301,9 +5362,11 @@ async function checkIconFont(){
 
 initTheme();
 checkIconFont();
+</script>
+<script src="schema_constructor.js"></script>
+<script>
 init();
 calcUpdate();
 </script>
-<script src="schema_constructor.js"></script>
 </body>
 </html>

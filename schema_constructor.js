@@ -290,12 +290,15 @@
       const nVals = valueCount(a);
       const selected = editCode === a.code;
       const hay = `${a.code} ${a.name || ''} ${a.unit || ''} ${a.type || ''}`;
+      const canons = Object.keys(a.value_aliases || {});
+      const preview = canons.slice(0, 4).map(v => `<span class="sch-val">${esc(v)}</span>`).join('')
+        + (canons.length > 4 ? `<span class="sch-val more">+${canons.length - 4}</span>` : '');
       const typeChip = `<span class="sch-chip muted">${esc(typeLabel(a.type))}${a.cardinality === 'multi' ? ' · multi' : ''}</span>`;
       const facetChip = on
         ? `<span class="sch-chip facet">${esc(kind)}${nVals ? ` · <span class="n">${nVals}</span>` : ''}</span>`
-        : `<span class="sch-chip muted">не в фильтрах</span>`;
+        : `<span class="sch-chip muted">спека</span>`;
       const covChip = cov != null ? `<span class="sch-chip muted" title="покрытие">покр. <span class="n">${esc(cov)}</span></span>` : '';
-      const warnChip = warn ? `<span class="sch-badge sch-${st === 'ERROR' ? 'err' : 'warn'}">${warn}⚠</span>` : statusBadge(st);
+      const warnChip = warn ? `<span class="sch-badge sch-${st === 'ERROR' ? 'err' : 'warn'}">${warn}</span>` : statusBadge(st);
       return `<div class="sch-row ${on ? '' : 'off'} ${selected ? 'on' : ''}"
         role="listitem" tabindex="0"
         data-code="${esc(a.code)}"
@@ -314,12 +317,16 @@
             <span class="sch-row-code">${esc(a.code)}</span>
             <span>#${a.order ?? 0}</span>
           </div>
+          ${preview ? `<div class="sch-row-vals">${preview}</div>` : ''}
         </div>
         <div class="sch-row-side">
-          ${typeChip}
-          ${facetChip}
-          ${covChip}
-          ${warnChip}
+          <div class="sch-row-side-top">
+            ${typeChip}
+            ${facetChip}
+            ${covChip}
+            ${warnChip}
+            <span class="sch-row-go" aria-hidden="true">›</span>
+          </div>
         </div>
       </div>`;
     }).join('');
@@ -356,7 +363,10 @@
       row.classList.toggle('on', row.dataset.code === code);
     });
     panel.classList.add('open');
-    $('schDrawerTitle').textContent = attr.name || code;
+    const title = $('schDrawerTitle');
+    if (title) {
+      title.innerHTML = `${esc(attr.name || code)} <span class="sch-drawer-sub">${esc(attr.code)}</span>`;
+    }
     const facet = attr.facet || {};
     const kind = facetKindUi(attr);
     const aliases = attr.value_aliases || {};
@@ -485,7 +495,6 @@
     });
     $('schType')?.addEventListener('change', syncEditorBlocks);
     $('schFacetKind')?.addEventListener('change', syncEditorBlocks);
-    renderSchemaTable(dictCurrent.attrs || []);
   };
 
   function syncEditorBlocks() {
@@ -573,7 +582,19 @@
 
   window.closeSchemaEditor = function closeSchemaEditor() {
     editCode = null;
-    $('schDrawer')?.classList.remove('open');
+    const panel = $('schDrawer');
+    panel?.classList.remove('open');
+    const title = $('schDrawerTitle');
+    if (title) {
+      title.innerHTML = 'Редактор атрибута <span class="sch-drawer-sub">выберите слева</span>';
+    }
+    const body = panel?.querySelector('.sch-drawer-body');
+    if (body) {
+      body.innerHTML = `<div class="sch-drawer-idle">
+        <b>Список слева → правка здесь</b>
+        <p>Кликните атрибут, чтобы править тип, каноны, фильтр и «не путать с».</p>
+      </div>`;
+    }
     if (dictCurrent) renderSchemaTable(dictCurrent.attrs || []);
   };
 

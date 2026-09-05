@@ -159,8 +159,9 @@ export function defaultProvider() {
 }
 
 export function defaultConditions(raw = {}) {
+  const policy = raw.mismatch_policy;
   return {
-    mismatch_policy: raw.mismatch_policy === 'strict' ? 'strict' : 'flag',
+    mismatch_policy: ['prefer_source', 'flag', 'strict'].includes(policy) ? policy : 'prefer_source',
     min_source_chars: num(raw.min_source_chars, 100, { min: 0, max: 10_000 }),
     min_attrs: num(raw.min_attrs, 5, { min: 0, max: 50 }),
     facet_min_coverage: num(raw.facet_min_coverage, 70, { min: 0, max: 100 }),
@@ -477,8 +478,8 @@ export function validateSettings(cfg) {
     const probe = e.url.replace('%s', 'q');
     if (!isHttpUrl(probe)) errors.push(`парсер «${e.name || e.id}»: некорректный URL`);
   }
-  if (!['flag', 'strict'].includes(cfg.conditions?.mismatch_policy)) {
-    errors.push('политика расхождений: flag или strict');
+  if (!['prefer_source', 'flag', 'strict'].includes(cfg.conditions?.mismatch_policy)) {
+    errors.push('политика расхождений: prefer_source, flag или strict');
   }
   return errors;
 }
@@ -624,8 +625,8 @@ export function conditionsView(conditions = {}) {
     ...c,
     items: [
       { id: 'mismatch_policy', name: 'Расхождения модели с текстом', kind: 'enum',
-        value: c.mismatch_policy, options: ['flag', 'strict'],
-        hint: 'flag — оставить значение и пометить; strict — обнулить спорное поле' },
+        value: c.mismatch_policy, options: ['prefer_source', 'flag', 'strict'],
+        hint: 'prefer_source — взять факт источника; flag — то же + пометка; strict — вне интервала обнулить' },
       { id: 'min_source_chars', name: 'Минимум символов в описании', kind: 'number',
         value: c.min_source_chars, min: 0, max: 10_000,
         hint: 'короткий текст без фактов товар не обогащается' },

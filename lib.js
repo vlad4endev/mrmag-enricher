@@ -36,9 +36,10 @@ export const RUB_PER_USD = Number(process.env.RUB_PER_USD || 80);
 export const RUB_RATE_DATE = process.env.RUB_RATE_DATE || '18.08.2026';
 
 // ── ПОЛИТИКА РАСХОЖДЕНИЙ ─────────────────────────────────────
-// 'flag'   — записать значение модели, факт из текста и пометку (по умолчанию).
-// 'strict' — при расхождении обнулить поле модели, оставив только факт из текста.
-export const MISMATCH_POLICY = process.env.MISMATCH_POLICY || 'flag';
+// prefer_source — факт источника перекрывает модель без warning (по умолчанию).
+// flag          — то же перекрытие + пометка в warnings (аудит).
+// strict        — как prefer_source для точных фактов; вне bounds/размеров — обнулить.
+export const MISMATCH_POLICY = process.env.MISMATCH_POLICY || 'prefer_source';
 
 // Порог «короткого» текста. Сам по себе он товар не отсекает: короткое описание
 // бывает плотным — "размер 57.4x61x171 см. двухкамерный. класс A. общий объем 310 л."
@@ -1196,9 +1197,34 @@ export function productFacts(product, schemaKey) {
   return { facts, bounds, conflicts };
 }
 
-const sameFact = (key, a, b) => (typeof a === 'number' && typeof b === 'number'
-  ? Math.abs(a - b) <= tolerance(key, b)
-  : String(a).toLowerCase() === String(b).toLowerCase());
+/** Boolean и алиасы → «да»/«нет», чтобы false из атрибута совпадал с «нет» модели. */
+function canonBoolish(v) {
+  if (typeof v === 'boolean') return v ? 'да' : 'нет';
+  if (v == null) return null;
+  const low = String(v).trim().toLowerCase();
+  if (!low) return null;
+  if (['да', 'true', 'yes', 'есть', 'имеется', 'присутствует', '+', 'on'].includes(low)) return 'да';
+  if (['нет', 'false', 'no', 'отсутствует', 'выключено', 'off'].includes(low)) return 'нет';
+  return null;
+}
+
+/** Факт источника в представление specs (boolean → да/нет). */
+export function factToSpec(v) {
+  if (typeof v === 'boolean') return v ? 'да' : 'нет';
+  const b = canonBoolish(v);
+  if (b) return b;
+  return v;
+}
+
+const sameFact = (key, a, b) => {
+  if (typeof a === 'number' && typeof b === 'number') {
+    return Math.abs(a - b) <= tolerance(key, b);
+  }
+  const ba = canonBoolish(a);
+  const bb = canonBoolish(b);
+  if (ba != null && bb != null) return ba === bb;
+  return String(a).toLowerCase() === String(b).toLowerCase();
+};
 
 // ── СВЕРКА ОТВЕТА С ФАКТАМИ ──────────────────────────────────
 const NUM_TOLERANCE = { высота_мм: 20, ширина_мм: 20, глубина_мм: 20, вес_кг: 1 }; // округления в описаниях
@@ -1211,19 +1237,24 @@ const withinBound = (key, v, b) => {
 };
 
 /**
- * Сравнивает specs модели с фактами источника. `bounds` — интервалы из
- * атрибутов магазина: точного значения там нет, но выход за границы — такое же
- * расхождение. Возвращает список расхождений; при MISMATCH_POLICY='strict'
- * спорное поле модели обнуляется.
+ * Сравнивает specs модели с фактами источника. Точный факт всегда побеждает
+ * модель (приоритет источника). `bounds` — интервалы без точного числа.
+ *
+ * Политики:
+ *   prefer_source — перекрыть фактом, без warning (по умолчанию)
+ *   flag          — перекрыть фактом и пометить расхождение
+ *   strict        — как prefer_source для фактов; вне bounds / размеров — обнулить + warning
  */
 export function crossCheck(specs, facts, bounds = {}, policy = MISMATCH_POLICY) {
   const warnings = [];
   const flagged = new Set();
-  const flag = (field, got, expected, note) => {
-    if (flagged.has(field)) return; // одно расхождение на поле, а не два по разным путям
+  const audit = policy === 'flag';
+  const nullOutOfBound = policy === 'strict';
+
+  const noteWarn = (field, got, expected, note) => {
+    if (flagged.has(field)) return;
     flagged.add(field);
     warnings.push({ field, model: got, source: expected, note });
-    if (policy === 'strict') specs[field] = expected ?? null;
   };
 
   for (const [key, exp] of Object.entries(facts)) {
@@ -1232,11 +1263,14 @@ export function crossCheck(specs, facts, bounds = {}, policy = MISMATCH_POLICY) 
     const got = specs[key];
     if (got == null) continue;
 
-    if (typeof exp === 'number') {
-      if (Math.abs(Number(got) - exp) > tolerance(key, exp)) flag(key, got, exp, 'не совпало с текстом');
-    } else if (String(got).toLowerCase() !== String(exp).toLowerCase()) {
-      flag(key, got, exp, 'не совпало с текстом');
-    }
+    const mismatch = typeof exp === 'number'
+      ? Math.abs(Number(got) - exp) > tolerance(key, exp)
+      : !sameFact(key, got, exp);
+    if (!mismatch) continue;
+
+    const corrected = factToSpec(exp);
+    specs[key] = corrected; // всегда приоритет источника
+    if (audit) noteWarn(key, got, corrected, 'не совпало с текстом');
   }
 
   // Интервалы из атрибутов: поле, у которого есть точный факт, уже сверено выше.
@@ -1244,7 +1278,8 @@ export function crossCheck(specs, facts, bounds = {}, policy = MISMATCH_POLICY) 
     if (key in facts) continue;
     const got = Number(specs[key]);
     if (specs[key] == null || !Number.isFinite(got) || withinBound(key, got, b)) continue;
-    flag(key, specs[key], null, `вне значения атрибута магазина («${b.source}»)`);
+    noteWarn(key, specs[key], null, `вне значения атрибута магазина («${b.source}»)`);
+    if (nullOutOfBound) specs[key] = null;
   }
 
   // Оси без подписи: какая из трёх — не знаем, но само число обязано быть в тройке.
@@ -1254,7 +1289,10 @@ export function crossCheck(specs, facts, bounds = {}, policy = MISMATCH_POLICY) 
       const got = specs[key];
       if (got == null) continue;
       const hit = facts.размеры_мм.some(x => Math.abs(x - Number(got)) <= 20);
-      if (!hit) flag(key, got, null, `нет в размерах из текста (${facts.размеры_мм.join('×')} мм)`);
+      if (!hit) {
+        noteWarn(key, got, null, `нет в размерах из текста (${facts.размеры_мм.join('×')} мм)`);
+        if (nullOutOfBound) specs[key] = null;
+      }
     }
   }
 
@@ -1398,7 +1436,7 @@ export function normalizeResponse(data, sourceText = '', schemaKey, attributes =
   const filled_from_text = [];
   for (const k of schema.specKeys) {
     if (specs[k] != null || facts[k] == null) continue;
-    specs[k] = facts[k];
+    specs[k] = factToSpec(facts[k]);
     filled_from_text.push(k);
   }
 

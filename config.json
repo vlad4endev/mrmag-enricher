@@ -15,7 +15,7 @@
     "max_tokens": 3200
   },
   "conditions": {
-    "mismatch_policy": "flag",
+    "mismatch_policy": "prefer_source",
     "min_source_chars": 100,
     "min_attrs": 5,
     "facet_min_coverage": 70,

@@ -20,7 +20,7 @@
  *   OUT              путь к JSONL (по умолчанию enriched_(id).jsonl)
  *   OUT_DIR          куда писать products_(id).json и filters_(id).json
  *   FRESH=1          начать заново, не продолжая существующий JSONL
- *   MISMATCH_POLICY  flag (по умолчанию) | strict — см. lib.js
+ *   MISMATCH_POLICY  prefer_source (по умолчанию) | flag | strict — см. lib.js
  *   MIN_SOURCE_CHARS порог «короткого» текста; товар пропускается, только если
  *                    он короткий И ни одна характеристика в нём не распознана
  *   RUB_PER_USD      курс для рублёвых сумм

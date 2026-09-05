@@ -145,7 +145,7 @@ try {
     assert.ok(d.presets.some(p => p.id === 'deepseek' && p.base_url === 'https://api.deepseek.com'));
     assert.ok(d.settings.providers.some(p => p.id === 'deepseek'));
     assert.ok(d.settings.providers.every(p => !('api_key' in p) || !p.api_key), 'секрет не должен уезжать в браузер');
-    assert.strictEqual(d.conditions.items.find(i => i.id === 'mismatch_policy').value, 'flag');
+    assert.strictEqual(d.conditions.items.find(i => i.id === 'mismatch_policy').value, 'prefer_source');
     assert.ok(d.parsers.parsers.some(p => p.kind === 'duckduckgo'));
     assert.ok(d.parsers.parsers.some(p => p.kind === 'serpapi'));
     assert.ok(!JSON.stringify(d).includes('serp-secret'), 'ключ SerpAPI не должен уезжать в браузер');

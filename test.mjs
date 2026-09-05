@@ -21,7 +21,8 @@ import {
 // не должна молча получать чужие поля. Тесты холодильника называют схему сами,
 // а сам дефолт проверяется отдельно в разделе «Схемы категорий».
 const extractFacts = (text, key = 'kholodilniki') => extractFactsIn(text, key);
-const normalizeResponse = (data, src = '', key = 'kholodilniki', attrs = []) => normalizeResponseIn(data, src, key, attrs);
+const normalizeResponse = (data, src = '', key = 'kholodilniki', attrs = [], policy) =>
+  normalizeResponseIn(data, src, key, attrs, policy);
 const attr = (name, value) => ({ name, value });
 import { parseListing, parseProductPage, buildFilters, assignMissingBrands, writeCategoryFiles,
   parseSearchResults, parseAnyProductPage, pageDescribesProduct } from './catalog.js';
@@ -113,12 +114,21 @@ t('совпадение не даёт предупреждений', () => {
   const specs = { объем_общий_л: 310, класс_энергоэффективности: 'A', высота_мм: 1710, ширина_мм: 574, глубина_мм: 610 };
   assert.deepStrictEqual(crossCheck(specs, facts), []);
 });
-t('расхождение по числу помечается', () => {
-  const facts = extractFacts('Общий объем - 310 л');
-  const w = crossCheck({ объем_общий_л: 250 }, facts);
+t('расхождение по числу перекрывается фактом источника без warning', () => {
+  const facts = extractFacts('Общий объем - 310 л', 'kholodilniki');
+  const specs = { объем_общий_л: 250 };
+  const w = crossCheck(specs, facts);
+  assert.deepStrictEqual(w, []);
+  assert.strictEqual(specs.объем_общий_л, 310);
+});
+t('политика flag перекрывает и помечает', () => {
+  const facts = extractFacts('Общий объем - 310 л', 'kholodilniki');
+  const specs = { объем_общий_л: 250 };
+  const w = crossCheck(specs, facts, {}, 'flag');
   assert.strictEqual(w.length, 1);
   assert.strictEqual(w[0].field, 'объем_общий_л');
   assert.strictEqual(w[0].source, 310);
+  assert.strictEqual(specs.объем_общий_л, 310);
 });
 t('размер не из текста помечается', () => {
   const facts = extractFacts('размер 57.4x61x171 см');
@@ -133,6 +143,17 @@ t('перепутанные оси не считаются ошибкой', () =
 t('null у модели не проверяется', () => {
   const facts = extractFacts('Общий объем - 310 л');
   assert.deepStrictEqual(crossCheck({ объем_общий_л: null }, facts), []);
+});
+t('сушка: false из атрибута и «нет» модели — одно значение', () => {
+  const specs = { сушка: 'нет' };
+  assert.deepStrictEqual(crossCheck(specs, { сушка: false }), []);
+  assert.strictEqual(specs.сушка, 'нет');
+});
+t('шум отжима: модель уступает числу из источника', () => {
+  const specs = { уровень_шума_отжима_дб: 74 };
+  const w = crossCheck(specs, { уровень_шума_отжима_дб: 60 });
+  assert.deepStrictEqual(w, []);
+  assert.strictEqual(specs.уровень_шума_отжима_дб, 60);
 });
 
 console.log('\nОтбор товаров, за которые стоит платить');
@@ -213,10 +234,17 @@ t('не объект бросает', () => {
   assert.throws(() => normalizeResponse(null), /не объект/);
   assert.throws(() => normalizeResponse([1]), /не объект/);
 });
-t('расхождение доезжает до warnings', () => {
-  const r = normalizeResponse({ specs: { объем_общий_л: 250 } }, 'Общий объем - 310 л');
-  assert.strictEqual(r.warnings.length, 1);
+t('расхождение перекрывается фактом, warnings пусты', () => {
+  const r = normalizeResponse({ specs: { объем_общий_л: 250 } }, 'Общий объем - 310 л', 'kholodilniki');
+  assert.deepStrictEqual(r.warnings, []);
+  assert.strictEqual(r.specs.объем_общий_л, 310);
   assert.strictEqual(r.source_facts.объем_общий_л, 310);
+});
+t('политика flag оставляет аудит при перезаписи', () => {
+  const r = normalizeResponse({ specs: { объем_общий_л: 250 } }, 'Общий объем - 310 л',
+    'kholodilniki', [], 'flag');
+  assert.strictEqual(r.warnings.length, 1);
+  assert.strictEqual(r.specs.объем_общий_л, 310);
 });
 
 console.log('\nАтрибуты магазина как источник фактов');
@@ -413,10 +441,19 @@ t('хладагент', () => {
 });
 
 console.log('\nСверка: одно расхождение на поле');
-t('высота не помечается дважды', () => {
+t('точный факт высоты перекрывает модель без warning', () => {
+  // kholodilniki ещё и подписанную высоту из тройки вытаскивает.
   const facts = extractFacts('размер 57.4x61x171 см');
-  const w = crossCheck({ высота_мм: 900 }, facts);
-  assert.strictEqual(w.length, 1, 'общая сверка и проверка тройки не должны дублировать поле');
+  assert.strictEqual(facts.высота_мм, 1710);
+  const specs = { высота_мм: 900 };
+  const w = crossCheck(specs, facts);
+  assert.deepStrictEqual(w, []);
+  assert.strictEqual(specs.высота_мм, 1710);
+});
+t('ось только в тройке размеров — одно предупреждение', () => {
+  const w = crossCheck({ высота_мм: 900 }, { размеры_мм: [574, 610, 1710] });
+  assert.strictEqual(w.length, 1, 'проверка тройки не дублирует поле');
+  assert.match(w[0].note, /нет в размерах/);
 });
 
 console.log('\nДобор пустых полей и передача фактов модели');
@@ -427,10 +464,17 @@ t('null у модели заполняется фактом из текста', 
   assert.ok(r.filled_from_text.includes('объем_общий_л'), 'добор должен быть перечислен');
   assert.deepStrictEqual(r.warnings, [], 'добор — не расхождение');
 });
-t('значение модели не перезаписывается добором', () => {
+t('значение модели уступает точному факту источника', () => {
+  const r = normalizeResponse({ specs: { объем_общий_л: 250 } }, 'Общий объем, л - 310');
+  assert.strictEqual(r.specs.объем_общий_л, 310);
+  assert.deepStrictEqual(r.filled_from_text, []);
+  assert.deepStrictEqual(r.warnings, []);
+});
+t('в пределах допуска факт не перетирает близкое значение модели', () => {
+  // 2% от 310 ≈ 6 л — 305 остаётся.
   const r = normalizeResponse({ specs: { объем_общий_л: 305 } }, 'Общий объем, л - 310');
   assert.strictEqual(r.specs.объем_общий_л, 305);
-  assert.deepStrictEqual(r.filled_from_text, []);
+  assert.deepStrictEqual(r.warnings, []);
 });
 t('facts уезжают в запрос к модели', () => {
   const body = JSON.parse(buildUserContent(
@@ -1630,7 +1674,7 @@ console.log('\nТовар без описания: поиск в сети');
   t('старый config без секций получает провайдера OpenRouter', () => {
     const s = loadSettings();
     assert.ok(s.providers.some(p => p.id === 'openrouter' && p.default));
-    assert.strictEqual(s.conditions.mismatch_policy, 'flag');
+    assert.strictEqual(s.conditions.mismatch_policy, 'prefer_source');
     assert.ok(Array.isArray(s.search.engines));
   });
   t('публичное представление скрывает ключ', () => {

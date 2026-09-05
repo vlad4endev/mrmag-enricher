@@ -818,6 +818,7 @@ input[type=range]::-moz-range-thumb{
   border:1px solid var(--ac-b);border-radius:var(--r);min-width:0;overflow:hidden;
 }
 .runline.on{display:flex}
+.mid-h.running .filters,.mid-h.running .dfilter,.mid-h.running .dhint{display:none}
 .runline .rl-top{display:flex;align-items:flex-start;gap:10px;min-width:0}
 .runline .rl-ring{
   --p:0;flex-shrink:0;width:42px;height:42px;border-radius:50%;
@@ -2891,7 +2892,12 @@ function statusOf(i){
   const r=results[i];
   // Обрабатываемый сейчас товар обязан отличаться от стоящих в очереди —
   // иначе непонятно, где вообще идёт работа.
-  if(!r&&running&&i===runIdx) return {cls:'run',sym:'',txt:'обрабатывается'};
+  if(!r&&running&&i===runIdx){
+    const live=liveItemState(runLog);
+    const tag=stepTag(live?.rawStep||live?.phase||'model');
+    const age=live?.at?` ${dur(Date.now()-live.at)}`:'';
+    return {cls:'run',sym:'',txt:`${tag}${age}`};
+  }
   if(!r) return {cls:'pd',sym:'·',txt:'в очереди'};
   if(r.enriched) return r.enriched.warnings?.length
     ? {cls:'wa',sym:'⚠',txt:`${r.enriched.warnings.length} расхождений`}
@@ -2936,10 +2942,13 @@ function dur(ms){
  */
 function renderRunline(){
   const el=document.getElementById('runline');
+  const head=document.querySelector('.mid-h');
   const bar=document.getElementById('mid-bar-holder')||document.querySelector('.mid-bar');
   if(!running){
     el.classList.remove('on');
+    el.style.display='none';
     el.innerHTML='';
+    head?.classList.remove('running');
     bar?.classList.remove('running');
     document.getElementById('rbFill').style.width='0';
     return;
@@ -2952,19 +2961,25 @@ function renderRunline(){
   const live=liveItemState(runLog);
   const itemName=live?.title
     || (runIdx>=0?(items[runIdx]?.name||items[runIdx]?.title||items[runIdx]?.sku||`Товар №${runIdx+1}`):'—');
+  const phaseAge=live?.at?Date.now()-live.at:0;
+  const phaseSec=phaseAge>0?` · ${dur(phaseAge)} на этапе`:'';
+  const noteText=(live?.note||'Готовим следующий шаг…')+phaseSec;
   const noteCls=live?.level==='err'?'err':live?.level==='warn'?'warn':live?.level==='ok'?'ok':live?.note?'on':'';
+  const phaseLabel=stepTag(live?.rawStep||live?.phase||'gate');
   el.classList.add('on');
+  el.style.display='flex';
+  head?.classList.add('running');
   el.innerHTML=
     `<div class="rl-top">`
     +`<div class="rl-ring" style="--p:${pct}" aria-hidden="true"><span>${pct}%</span></div>`
     +`<div class="rl-meta">`
-    +`<div class="rl-kicker">Огранка</div>`
-    +`<div class="rl-title"><span class="rl-n">${Math.min(done+1,total)}</span> из ${total}</div>`
+    +`<div class="rl-kicker">Огранка · ${esc(phaseLabel)}</div>`
+    +`<div class="rl-title"><span class="rl-n">${Math.min(done+(live?.phase==='done'||live?.phase==='skip'||live?.phase==='error'?0:1),total)}</span> из ${total}</div>`
     +`<div class="rl-sub">${dur(elapsed)}${eta!=null?` · осталось ~${dur(eta)}`:''}</div>`
     +`</div></div>`
     +`<div class="rl-item"><b>Сейчас</b>${esc(String(itemName))}</div>`
     +pipeHtml(live)
-    +`<p class="rl-note ${noteCls}">${esc(live?.note||'Готовим следующий шаг…')}</p>`
+    +`<p class="rl-note ${noteCls}">${esc(noteText)}</p>`
     +`<button type="button" class="rl-stop" onclick="stopJob()">Остановить после текущего</button>`;
   bar?.classList.add('running');
   document.getElementById('rbFill').style.width=total?`${pct}%`:'0';
@@ -3158,14 +3173,15 @@ function renderFoot(s,note){
  * тогда индекс — это позиция в очереди: jobPos.
  */
 const JOB_KEY='enricher.jobId';
-const POLL_MS=800;            // чаще опрос — шаги на экране не «прыгают» раз в 1.5с
-const POLL_GIVEUP=25;         // ~20с молчания сервера при 800мс
+const POLL_MS=500;            // полсекунды — этапы видны без «зависания»
+const POLL_GIVEUP=40;         // ~20с молчания сервера при 500мс
 let jobId=null;           // прогон, за которым следим
 let following=false;      // опрос уже идёт — второй не нужен
 let jobPos=false;         // товары взяты из прогона: индекс = позиция в очереди
 let runLog=[];            // пошаговый журнал текущего/последнего прогона
 let logCursor=0;          // сколько строк лога уже забрали с сервера
 let logStick=true;        // автопрокрутка вниз, пока пользователь сам не ушёл вверх
+let liveSnap=null;        // горячий снимок этапа с сервера (job.live)
 
 /** Этапы одного товара — порядок важен для пайплайна в UI. */
 const PIPE_STEPS=[
@@ -3187,28 +3203,61 @@ function stepTag(step){
 }
 
 /**
- * Состояние текущего товара по хвосту лога.
- * Возвращает phase (gate|web|model|done|skip|error), подпись и ленту заметок.
+ * Состояние текущего товара по хвосту лога + live-снимку с сервера.
+ * liveSnap страхует UI, если лог ещё не доехал или пуст.
  */
 function liveItemState(log){
-  if(!Array.isArray(log)||!log.length) return null;
+  const fromSnap=()=>{
+    if(!liveSnap) return null;
+    const step=liveSnap.step||'gate';
+    let phase='gate';
+    if(step==='error') phase='error';
+    else if(step==='skip') phase='skip';
+    else if(step==='done'||step==='finish') phase='done';
+    else if(step==='model'||step==='retry') phase='model';
+    else if(step==='web') phase='web';
+    else if(step==='gate'||step==='schema'||step==='item') phase='gate';
+    else phase='model';
+    const title=runIdx>=0
+      ?(items[runIdx]?.name||items[runIdx]?.title||items[runIdx]?.sku||null)
+      :null;
+    return {
+      pos:liveSnap.pos??null,
+      title,
+      phase,
+      rawStep:step,
+      note:liveSnap.msg||'',
+      level:liveSnap.level||'info',
+      at:liveSnap.at||Date.now(),
+      rows:[{msg:liveSnap.msg||'',level:liveSnap.level||'info'}],
+    };
+  };
+
+  if(!Array.isArray(log)||!log.length) return fromSnap();
+
   let start=-1;
   for(let i=0;i<log.length;i++){
     if(log[i].step==='item') start=i;
   }
   if(start<0){
+    const snap=fromSnap();
+    if(snap) return snap;
     const last=log[log.length-1];
-    return {pos:null,title:null,phase:'gate',note:last.msg,level:last.level||'info',rows:log.slice(-6)};
+    return {pos:null,title:null,phase:'gate',rawStep:last.step,note:last.msg,level:last.level||'info',at:last.t||Date.now(),rows:log.slice(-6)};
   }
   const rows=log.slice(start);
   const head=rows[0];
   const last=rows[rows.length-1];
+  // Если live свежее последней строки лога — берём его сообщение (лог мог отстать).
+  const useLive=liveSnap&&liveSnap.at&&(!last.t||liveSnap.at>=last.t);
+  const tip=useLive?liveSnap:last;
   const title=(head.msg||'').replace(/^\[[^\]]+\]\s*/,'')||null;
   const seen=new Set(rows.map(e=>e.step));
+  if(liveSnap?.step) seen.add(liveSnap.step);
   let phase='gate';
   if(seen.has('error')) phase='error';
   else if(seen.has('skip')) phase='skip';
-  else if(seen.has('done')) phase='done';
+  else if(seen.has('done')||seen.has('finish')) phase='done';
   else if(seen.has('model')||seen.has('retry')) phase='model';
   else if(seen.has('web')) phase='web';
   else if(seen.has('gate')||seen.has('schema')) phase='gate';
@@ -3216,8 +3265,10 @@ function liveItemState(log){
     pos:head.pos??null,
     title,
     phase,
-    note:last.msg,
-    level:last.level||'info',
+    rawStep:tip.step||phase,
+    note:tip.msg||last.msg,
+    level:tip.level||last.level||'info',
+    at:tip.at||tip.t||last.t||Date.now(),
     rows:rows.filter(e=>e.step!=='item').slice(-8),
   };
 }
@@ -3311,11 +3362,21 @@ function resetRunLog(){
   runLog=[];
   logCursor=0;
   logStick=true;
+  liveSnap=null;
   renderRunLog();
 }
 
+function applyLive(d){
+  if(d?.live&&typeof d.live==='object') liveSnap=d.live;
+}
+
 function applyLog(d){
-  if(!Array.isArray(d?.log)) return;
+  applyLive(d);
+  if(!Array.isArray(d?.log)){
+    if(running) renderRunline();
+    if(running&&curIdx===runIdx&&runIdx>=0) renderDetail();
+    return;
+  }
   const from=typeof d.log_from==='number'?d.log_from:logCursor;
   if(from===0){
     // Полный снимок: новый прогон, подхват или первый опрос.
@@ -3457,8 +3518,8 @@ async function follow(id){
   document.getElementById('foot').classList.remove('done');
   hide('confBdg');
   document.getElementById('runTxt').innerHTML=`${flake('spinning')} Обрабатываем...`;
-  // Таймер тикает сам, иначе «осталось ~» замирает между товарами.
-  const tick=setInterval(renderRunline,1000);
+  // Таймер тикает сам, иначе секунды на этапе замирают между опросами.
+  const tick=setInterval(renderRunline,400);
   syncSteps();
   renderList();
   renderRunLog();

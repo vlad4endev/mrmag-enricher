@@ -84,6 +84,14 @@ export function createJobStore({
     if (entry.pos != null) row.pos = entry.pos;
     job.log.push(row);
     if (job.log.length > LOG_CAP) job.log.splice(0, job.log.length - LOG_CAP);
+    // Горячий снимок для UI: даже без полного лога клиент видит текущий этап.
+    job.live = {
+      step: row.step,
+      msg: row.msg,
+      level: row.level,
+      pos: row.pos ?? job.at_position ?? null,
+      at: row.t,
+    };
   }
 
   function productLabel(p, pos) {
@@ -113,6 +121,8 @@ export function createJobStore({
       status: job.status, total: job.total, done: job.done,
       started_at: job.started_at ?? null, finished_at: job.finished_at ?? null,
       error: job.error ?? null, note: job.note ?? null, usage: usageOf(job),
+      at_position: job.at_position ?? -1,
+      live: job.live ?? null,
     };
   }
 
@@ -181,6 +191,7 @@ export function createJobStore({
     job.note = null;
     job.started_at = job.started_at || now();
     if (!Array.isArray(job.log)) job.log = [];
+    job.live = null;
     const resumed = job.results.some(Boolean);
     pushLog(job, {
       level: 'info', step: 'job',
@@ -263,6 +274,14 @@ export function createJobStore({
       step: 'finish',
       msg: `Итог: ${job.status} · готово ${u.ok}, пропущено ${u.skip}, ошибок ${u.err}, $${u.cost.toFixed(5)}`,
     });
+    // После финиша live не должен выглядеть как «ещё идёт».
+    job.live = {
+      step: 'finish',
+      msg: job.status === 'done' ? 'Прогон завершён' : `Прогон: ${job.status}`,
+      level: job.status === 'error' ? 'err' : (job.status === 'stopped' ? 'warn' : 'ok'),
+      pos: null,
+      at: now(),
+    };
     save(job, true);
     log(`■ job ${job.id}: ${job.status}, готово ${u.ok}, пропущено ${u.skip}, ошибок ${u.err}, $${u.cost.toFixed(5)}`);
   }

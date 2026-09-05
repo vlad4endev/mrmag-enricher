@@ -681,6 +681,7 @@ async function enrichOne(product, { model, category, provider, onNote = () => {}
   // Пустая карточка — описание из сети. Карточка с текстом, но без страны —
   // отдельный поиск только страны по модели. ensureSource сам решает, что
   // искать: чужую таблицу в уже заполненные поля не мешает.
+  note(`Готовим исходный текст (сеть при необходимости)`, { step: 'web' });
   const found = await ensureSource(product, schema, {
     onNote: msg => note(msg, { step: 'web' }),
   });
@@ -693,6 +694,7 @@ async function enrichOne(product, { model, category, provider, onNote = () => {}
   if (sourceUrl) note(`Исходный текст готов (сеть: ${sourceUrl})`, { step: 'web' });
   else note(`Исходный текст готов, отправляем в модель`, { step: 'model' });
 
+  note(`Отправляем в модель ${model}`, { step: 'model' });
   const { enriched, iT, oT, cost, costSource, attempts } = await enrichProduct(filled, {
     model, apiKey, schema,
     limiter: limiterFor(`${prov.id}:${model}`),

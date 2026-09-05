@@ -14,6 +14,7 @@ import {
   normalizeResponse as normalizeResponseIn, stripHtml, RateLimiter, isEnrichable,
   buildUserContent, rpmFor, attrFacts, productFacts, modelToken, hasCountryFact,
   SCHEMAS, GENERIC_SCHEMA, schemaFor, schemaForProduct, buildSystemPrompt, enrichProduct, netError,
+  seoPackageEmpty,
 } from './lib.js';
 
 // Схема по умолчанию — универсальная, а не холодильник: неизвестная категория
@@ -561,9 +562,10 @@ t('промпт требует основной текст первым и аб�
   const p = buildSystemPrompt('kholodilniki');
   assert.match(p, /900–1800 символов, ТРИ абзаца/);
   // Порядок ключей: длинный текст раньше короткого, иначе короткий забирает суть.
-  assert.ok(p.indexOf('"seo_description": ""') < p.indexOf('"short_description": ""'));
-  assert.ok(p.indexOf('"seo_description": ""') < p.indexOf('"seo_title": ""'));
+  assert.ok(p.indexOf('"seo_description": "..."') < p.indexOf('"short_description": "..."'));
+  assert.ok(p.indexOf('"seo_description": "..."') < p.indexOf('"seo_title": "..."'));
   assert.match(p, /Вода запрещена/);
+  assert.match(p, /Нельзя вернуть их пустыми/);
 });
 t('SEO-пакет нормализуется, длины проверяются', () => {
   const r = normalizeResponse({
@@ -578,6 +580,9 @@ t('SEO-пакет нормализуется, длины проверяются'
   assert.ok(r.seo_issues.some(x => x.startsWith('meta_description: 1 симв.')));
   assert.ok(r.seo_issues.some(x => x === 'short_description: пусто'));
   assert.ok(!r.seo_issues.some(x => x.startsWith('seo_title:')), 'нормальный title не повод для заметки');
+  assert.ok(seoPackageEmpty({ specs: { бренд: 'LG' } }));
+  assert.ok(seoPackageEmpty({ seo_description: '...', seo_title: '...' }));
+  assert.ok(!seoPackageEmpty({ seo_description: 'Текст' }));
 });
 
 console.log('\nФакты стиральных машин');
@@ -888,6 +893,37 @@ console.log('\nЗапрос к модели');
     const r = await run({ name: 'X', description: 'Общий объем, л 310' }, { maxTokens: 8000 });
     assert.strictEqual(record.length, 1, 'JSON закрыт — повтор не нужен');
     assert.strictEqual(r.enriched.specs.бренд, 'DON');
+  });
+
+  await tAsync('обрыв без SEO поднимает лимит и повторяет', async () => {
+    record.length = 0;
+    const bare = JSON.stringify({ specs: { бренд: 'DON' } });
+    stub([
+      reply(bare, { finish: 'length', usage: { prompt_tokens: 10, completion_tokens: 2500, cost: 0.002 } }),
+      reply(answer({ бренд: 'DON' }), { usage: { prompt_tokens: 10, completion_tokens: 400, cost: 0.001 } }),
+    ]);
+    const notes = [];
+    const r = await run({ name: 'X', description: 'Общий объем, л 310' }, {
+      maxTokens: 2500, onNote: m => notes.push(m),
+    });
+    assert.strictEqual(record.length, 2);
+    assert.strictEqual(record[1].body.max_tokens, 5000);
+    assert.ok(notes.some(n => /обрыв по длине/.test(n)));
+    assert.ok(!seoPackageEmpty(r.enriched));
+    assert.strictEqual(r.enriched.specs.бренд, 'DON');
+  });
+
+  await tAsync('пустой SEO-пакет на stop повторяется', async () => {
+    record.length = 0;
+    stub([
+      reply(JSON.stringify({ specs: { бренд: 'DON' } }), { usage: { prompt_tokens: 5, completion_tokens: 5 } }),
+      reply(answer({ бренд: 'DON' }), { usage: { prompt_tokens: 5, completion_tokens: 20 } }),
+    ]);
+    const notes = [];
+    const r = await run({ name: 'X', description: 'Общий объем, л 310' }, { onNote: m => notes.push(m) });
+    assert.strictEqual(record.length, 2);
+    assert.ok(notes.some(n => /SEO пусто/.test(n)));
+    assert.strictEqual(r.enriched.seo_description, 'Описание.');
   });
 
   await tAsync('ретрай обрыва идёт до потолка настроек, не до 8000', async () => {

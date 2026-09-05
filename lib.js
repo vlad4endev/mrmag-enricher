@@ -920,16 +920,19 @@ export function defaultSystemPromptTemplate() {
   одной и той же фразы в разных падежах.
 
 8. СХЕМА ОТВЕТА (ровно эти ключи, ничего не добавляй и не удаляй)
+"..." ниже — только типы полей, не готовый ответ: каждое текстовое SEO-поле
+(seo_description, short_description, meta_description, h1, seo_title) обязательно
+заполнить по правилам раздела 6. Нельзя вернуть их пустыми строками.
 {
   "specs": {
 {{spec_keys}}
   },
-  "seo_description": "",
+  "seo_description": "...",
   "bullets": [],
-  "short_description": "",
-  "meta_description": "",
-  "h1": "",
-  "seo_title": "",
+  "short_description": "...",
+  "meta_description": "...",
+  "h1": "...",
+  "seo_title": "...",
   "synonyms": [],
   "search_aliases": [],
   "seo_keywords": []
@@ -1295,6 +1298,19 @@ const RICH_SPECS = 5;
 const seoFloor = (key, filled) =>
   (key === 'seo_description' && filled < RICH_SPECS ? 400 : SEO_LIMITS[key][0]);
 
+/**
+ * Все SEO-тексты пустые — модель не дописала карточку: либо бюджет съел
+ * thinking/specs и finish_reason=length, либо в JSON ушёл скелет с "" / "...".
+ * Такой ответ нельзя принимать как готовый, пока есть смысл повторить.
+ */
+export function seoPackageEmpty(data) {
+  if (!data || typeof data !== 'object') return true;
+  return SEO_TEXT_KEYS.every(k => {
+    const s = String(data[k] ?? '').trim();
+    return !s || s === '...';
+  });
+}
+
 export function normalizeResponse(data, sourceText = '', schemaKey, attributes = [], policy = MISMATCH_POLICY) {
   if (!data || typeof data !== 'object' || Array.isArray(data)) {
     throw new Error('Ответ не объект');
@@ -1337,7 +1353,12 @@ export function normalizeResponse(data, sourceText = '', schemaKey, attributes =
   }
 
   const arr = v => (Array.isArray(v) ? v.map(x => String(x).trim()).filter(Boolean) : []);
-  const str = v => (typeof v === 'string' ? v.trim() : '');
+  const str = v => {
+    if (typeof v !== 'string') return '';
+    const s = v.trim();
+    // Скелет промпта использует "..." как тип поля — в карточку это не значение.
+    return s === '...' ? '' : s;
+  };
 
   const seo = {};
   const seo_issues = [];
@@ -1619,6 +1640,8 @@ export async function enrichProduct(product, opts) {
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     await limiter.wait(ms => onNote(`rate limit ${ms}ms`));
 
+    onNote(`запрос к модели${attempt > 1 ? ` · попытка ${attempt}/${maxRetries}` : ''}…`);
+
     let res, data, bodyText;
     try {
       res = await fetch(chatUrl, {
@@ -1688,21 +1711,30 @@ export async function enrichProduct(product, opts) {
       const enriched = normalizeResponse(data, src, schema, product.attributes, mismatchPolicy);
       return { enriched, ...usage(), costSource, attempts: attempt };
     };
+    const bumpForLength = () => {
+      if (attempt >= maxRetries || tokenBudget >= MAX_COMPLETION_TOKENS) return false;
+      tokenBudget = Math.min(MAX_COMPLETION_TOKENS, tokenBudget * 2);
+      onNote(`обрыв по длине, max_tokens→${tokenBudget}`);
+      return true;
+    };
 
     // Обрыв по длине — детерминированная ошибка: повтор с тем же лимитом бессмыслен.
     // Но JSON мог успеть закрыться на лимите, или specs уже написаны, а хвост
-    // SEO обрезан: это не повод выкидывать товар.
+    // SEO обрезан: это не повод выкидывать товар — если SEO хоть частично есть.
+    // А вот закрытый JSON без единого SEO-текста — это ещё не карточка: бюджет
+    // ушёл в specs/thinking, поднимаем лимит и повторяем.
     if (choice.finish_reason === 'length') {
-      try { return accept(parseResponse(content)); } catch { /* не закрылся */ }
-      const repaired = repairTruncatedJson(content);
-      if (repaired) {
-        try { return accept(repaired); } catch { /* починка дала мусор */ }
+      let parsed = null;
+      try { parsed = parseResponse(content); } catch { /* не закрылся */ }
+      if (!parsed) parsed = repairTruncatedJson(content);
+      if (parsed) {
+        try {
+          const result = accept(parsed);
+          if (seoPackageEmpty(result.enriched) && bumpForLength()) continue;
+          return result;
+        } catch { /* починка дала мусор */ }
       }
-      if (attempt < maxRetries && tokenBudget < MAX_COMPLETION_TOKENS) {
-        tokenBudget = Math.min(MAX_COMPLETION_TOKENS, tokenBudget * 2);
-        onNote(`обрыв по длине, max_tokens→${tokenBudget}`);
-        continue;
-      }
+      if (bumpForLength()) continue;
       fail(new Error(`Ответ обрезан на max_tokens=${tokenBudget}`));
     }
 
@@ -1713,6 +1745,14 @@ export async function enrichProduct(product, opts) {
       lastErr = err;
       if (attempt < maxRetries) { onNote(`parse err, retry ${attempt}`); await sleep(2000); continue; }
       fail(err);
+    }
+
+    // finish_reason=stop, но SEO-пакет пуст — модель вернула скелет. Повтор
+    // часто помогает; если нет — отдаём как есть (заметки seo_issues покажут).
+    if (seoPackageEmpty(enriched) && attempt < maxRetries) {
+      onNote(`SEO пусто, retry ${attempt}`);
+      await sleep(2000);
+      continue;
     }
 
     return { enriched, ...usage(), costSource, attempts: attempt };

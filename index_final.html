@@ -400,8 +400,8 @@ textarea{
 }
 .dfilter .dclr:hover{color:var(--t1)}
 .dhint{font-size:10px;color:var(--t3);line-height:1.45}
-.mid-bar{height:3px;background:var(--b1);flex-shrink:0;overflow:hidden}
-.mid-bar-f{height:100%;width:0;background:var(--ac);transition:width .35s ease-out}
+.mid-bar{height:4px;background:var(--b1);flex-shrink:0;overflow:hidden;position:relative}
+.mid-bar-f{height:100%;width:0;background:var(--ac);transition:width .4s ease-out;position:relative}
 .mid-list{flex:1;overflow-y:auto;padding:var(--gap-sm);display:flex;flex-direction:column;gap:2px}
 .mid-list:has(.mid-empty){justify-content:center}
 .ri{
@@ -3059,12 +3059,7 @@ function renderDetail(){
     const src=[it?.description,it?.annotation].filter(Boolean).join(' ').replace(/<[^>]+>/g,' ').replace(/\s{2,}/g,' ').trim();
     // Пока ждём ответ по этому товару — видно, что работа идёт именно здесь.
     if(running&&curIdx===runIdx){
-      setP('detail',`<div class="skel">`
-        +`<div class="skel-h">${flake('spinning')} Запрос к модели — извлекаем характеристики</div>`
-        +`<div class="sk tall"></div>`
-        +`<div class="sk w80"></div><div class="sk w60"></div>`
-        +`<div class="sk w40"></div><div class="sk"></div><div class="sk w60"></div>`
-        +`</div>`);
+      setP('detail',livePipeHtml(liveItemState(runLog)));
       return;
     }
     setP('detail',conf+`<div class="seobox"><div class="st">Исходный текст — ${src.length} символов</div>${esc(src||'пусто')}</div>`
@@ -3163,14 +3158,105 @@ function renderFoot(s,note){
  * тогда индекс — это позиция в очереди: jobPos.
  */
 const JOB_KEY='enricher.jobId';
-const POLL_MS=1500;
-const POLL_GIVEUP=20;     // ~1 минута молчания сервера: дальше не мучаем
+const POLL_MS=800;            // чаще опрос — шаги на экране не «прыгают» раз в 1.5с
+const POLL_GIVEUP=25;         // ~20с молчания сервера при 800мс
 let jobId=null;           // прогон, за которым следим
 let following=false;      // опрос уже идёт — второй не нужен
 let jobPos=false;         // товары взяты из прогона: индекс = позиция в очереди
 let runLog=[];            // пошаговый журнал текущего/последнего прогона
 let logCursor=0;          // сколько строк лога уже забрали с сервера
 let logStick=true;        // автопрокрутка вниз, пока пользователь сам не ушёл вверх
+
+/** Этапы одного товара — порядок важен для пайплайна в UI. */
+const PIPE_STEPS=[
+  {id:'gate',  label:'Проверка', match:s=>s==='schema'||s==='gate'||s==='item'},
+  {id:'web',   label:'Сеть',     match:s=>s==='web'},
+  {id:'model', label:'Модель',   match:s=>s==='model'||s==='retry'},
+  {id:'done',  label:'Готово',   match:s=>s==='done'||s==='skip'||s==='error'},
+];
+
+/** Короткая метка шага для журнала. */
+function stepTag(step){
+  const map={
+    job:'прогон', start:'прогон', finish:'итог', stop:'стоп', fail:'сбой',
+    item:'товар', schema:'схема', gate:'проверка', web:'сеть',
+    model:'модель', retry:'повтор', note:'шаг',
+    done:'готово', skip:'пропуск', error:'ошибка',
+  };
+  return map[step]||step||'шаг';
+}
+
+/**
+ * Состояние текущего товара по хвосту лога.
+ * Возвращает phase (gate|web|model|done|skip|error), подпись и ленту заметок.
+ */
+function liveItemState(log){
+  if(!Array.isArray(log)||!log.length) return null;
+  let start=-1;
+  for(let i=0;i<log.length;i++){
+    if(log[i].step==='item') start=i;
+  }
+  if(start<0){
+    const last=log[log.length-1];
+    return {pos:null,title:null,phase:'gate',note:last.msg,level:last.level||'info',rows:log.slice(-6)};
+  }
+  const rows=log.slice(start);
+  const head=rows[0];
+  const last=rows[rows.length-1];
+  const title=(head.msg||'').replace(/^\[[^\]]+\]\s*/,'')||null;
+  const seen=new Set(rows.map(e=>e.step));
+  let phase='gate';
+  if(seen.has('error')) phase='error';
+  else if(seen.has('skip')) phase='skip';
+  else if(seen.has('done')) phase='done';
+  else if(seen.has('model')||seen.has('retry')) phase='model';
+  else if(seen.has('web')) phase='web';
+  else if(seen.has('gate')||seen.has('schema')) phase='gate';
+  return {
+    pos:head.pos??null,
+    title,
+    phase,
+    note:last.msg,
+    level:last.level||'info',
+    rows:rows.filter(e=>e.step!=='item').slice(-8),
+  };
+}
+
+function pipeHtml(live){
+  const phase=live?.phase||'gate';
+  const order=['gate','web','model','done'];
+  const cur=phase==='error'||phase==='skip'?'done':phase;
+  const ci=order.indexOf(cur);
+  return `<ul class="pipe" aria-label="Этапы обогащения товара">`
+    +PIPE_STEPS.map((s,i)=>{
+      let cls='';
+      if(phase==='error'&&s.id==='done') cls='fail';
+      else if(phase==='skip'&&s.id==='done') cls='skip';
+      else if(phase==='done'&&s.id==='done') cls='done';
+      else if(i<ci) cls='done';
+      else if(i===ci&&phase!=='done'&&phase!=='skip'&&phase!=='error') cls='on';
+      else if(i===ci) cls='done';
+      const label=s.id==='done'&&phase==='skip'?'Пропуск'
+        :s.id==='done'&&phase==='error'?'Ошибка':s.label;
+      return `<li class="${cls}"><span class="pipe-l">${esc(label)}</span></li>`;
+    }).join('')
+    +`</ul>`;
+}
+
+function livePipeHtml(live){
+  const title=live?.title||'Товар в обработке';
+  const feed=(live?.rows||[]).map(e=>{
+    const cls=e.level==='ok'?'ok':e.level==='err'?'err':e.level==='warn'?'warn':'';
+    const on=e===live.rows[live.rows.length-1]?'on':'';
+    return `<li class="${cls} ${on}">${esc(e.msg)}</li>`;
+  }).join('')||`<li class="on">${esc(live?.note||'Ждём первый шаг…')}</li>`;
+  return `<div class="livepipe">`
+    +`<div class="livepipe-k">${flake('spinning')} Идёт огранка</div>`
+    +`<div class="livepipe-h">${esc(String(title))}</div>`
+    +pipeHtml(live)
+    +`<ul class="livepipe-feed">${feed}</ul>`
+    +`</div>`;
+}
 
 function saveJobId(id){
   jobId=id||null;
@@ -3187,7 +3273,7 @@ function fmtLogTs(t){
 }
 
 function logLineText(e){
-  return `${fmtLogTs(e.t)}  ${e.msg}`;
+  return `${fmtLogTs(e.t)}  [${stepTag(e.step)}]  ${e.msg}`;
 }
 
 function renderRunLog(){
@@ -3197,15 +3283,26 @@ function renderRunLog(){
   if(!box||!body) return;
   const show=running||runLog.length>0;
   box.classList.toggle('on',show);
-  nEl.textContent=String(runLog.length);
+  const n=runLog.length;
+  nEl.textContent=n?`${n} ${plural(n,'шаг','шага','шагов')}`:'0 шагов';
   if(!runLog.length){
-    body.innerHTML='<span class="runlog-empty">Здесь появятся шаги прогона.</span>';
+    body.innerHTML='<div class="runlog-empty">Здесь появятся шаги: проверка → сеть → модель → готово.</div>';
     return;
   }
-  const nearBottom=body.scrollHeight-body.scrollTop-body.clientHeight<40;
+  const nearBottom=body.scrollHeight-body.scrollTop-body.clientHeight<48;
   body.innerHTML=runLog.map(e=>{
-    const cls=e.level==='ok'?'l-ok':e.level==='err'?'l-err':e.level==='warn'?'l-warn':e.level==='skip'?'l-skip':'l-info';
-    return `<span class="runlog-line ${cls}"><span class="rl-ts">${esc(fmtLogTs(e.t))}</span>${esc(e.msg)}</span>`;
+    const lvl=e.level==='ok'?'l-ok':e.level==='err'?'l-err':e.level==='warn'?'l-warn':e.level==='skip'?'l-skip':'l-info';
+    if(e.step==='item'){
+      return `<div class="rl-ev ${lvl} is-item">`
+        +`<span class="rl-ts">${esc(fmtLogTs(e.t))}</span>`
+        +`<span class="rl-msg">${esc(e.msg)}</span>`
+        +`</div>`;
+    }
+    return `<div class="rl-ev ${lvl}">`
+      +`<span class="rl-ts">${esc(fmtLogTs(e.t))}</span>`
+      +`<span class="rl-tag">${esc(stepTag(e.step))}</span>`
+      +`<span class="rl-msg">${esc(e.msg)}</span>`
+      +`</div>`;
   }).join('');
   if(logStick||nearBottom) body.scrollTop=body.scrollHeight;
 }
@@ -3232,6 +3329,9 @@ function applyLog(d){
   }
   logCursor=typeof d.log_total==='number'?d.log_total:from+d.log.length;
   renderRunLog();
+  if(running) renderRunline();
+  // Если смотрим обрабатываемый товар — обновляем правую панель без клика.
+  if(running&&curIdx===runIdx&&runIdx>=0) renderDetail();
 }
 
 async function copyRunLog(){
@@ -3241,10 +3341,10 @@ async function copyRunLog(){
     return;
   }
   const header=[
-    'Лог обогащения',
+    'Ход обогащения Ogran',
     jobId?`Прогон: ${jobId}`:null,
     selModel?`Модель: ${selModel.id}`:null,
-    `Строк: ${runLog.length}`,
+    `Шагов: ${runLog.length}`,
     '',
   ].filter(v=>v!=null).join('\n');
   const text=header+'\n'+runLog.map(logLineText).join('\n');
@@ -3265,6 +3365,7 @@ function clearRunLog(){
   // После очистки ждём новые строки с текущего logCursor.
   runLog=[];
   renderRunLog();
+  if(running) renderRunline();
 }
 
 // Автопрокрутка лога отключается, если пользователь ушёл читать вверх.

@@ -7,6 +7,7 @@ import { facetKind } from './facets.js';
 import { DESC, MIN_ANNOTATION_ROWS, verifyDescription } from './generate.js';
 import { WEB_INFO } from './reviews.js';
 import { KEYWORDS } from './export.js';
+import { valueFold } from './types.js';
 
 /** Порядок и состав полей записи — ровно семь, как в схеме заказчика. */
 export const PRODUCT_FIELDS = [
@@ -186,7 +187,17 @@ export function validateProducts(rows, dict, sourceById = new Map()) {
           }
         }
       }
-      if (spec.unit === 'см' && !/,\s*см$/.test(name)) add(r.id, 'filter_unit_not_cm', name);
+      // Unit берётся из schema/facet (expectedFilters), а не из подписи.
+      // Если в label есть суффикс «, …» — он должен совпадать со schema.unit.
+      const labelUnit = String(name).match(/,\s*([^,]+)$/)?.[1]?.trim();
+      if (labelUnit && spec.unit && valueFold(labelUnit) !== valueFold(spec.unit)) {
+        add(r.id, 'filter_unit_mismatch', `${name} schema=${spec.unit}`);
+      }
+      for (const v of (Array.isArray(val) ? val : [val])) {
+        if (String(v) === '[object Object]') {
+          add(r.id, 'filter_object_stringified', name);
+        }
+      }
 
       const bucket = filterValueCounts.get(name) || new Map();
       for (const v of (Array.isArray(val) ? val : [val])) bucket.set(v, (bucket.get(v) || 0) + 1);

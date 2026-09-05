@@ -189,7 +189,9 @@ export function tryLoadDictSchema(key, root = PROJECT_ROOT) {
 
 const SKIP_CAT_HINT = new Set(['', 'all', 'без раздела', 'bez_razdela', 'все разделы']);
 
-/** Известные справочники: отсутствие файла при таком id — ошибка, не gold. */
+/** Известные справочники: отсутствие файла при таком id — ошибка, не gold.
+ * TODO: сейчас hardcoded (467/523/929 + DICT_FALLBACK); при новых attributes_{id}.json
+ * список нужно расширять или строить из dictionaries/ + categories.json. */
 const KNOWN_DICT_IDS = new Set([
   '467', '523', '929',
   ...Object.keys(DICT_FALLBACK).map(String),

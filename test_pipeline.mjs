@@ -1033,9 +1033,12 @@ console.log('golden tests passed');
   const rows = recs.map(r => serializeProduct(r, d467, built.debug));
   const src = new Map(recs.map(r => [r.id, r]));
   const { errors } = validateProducts(rows, d467, src);
-  // dims facet label без суффикса «, см» при unit=см — известный warning словаря, не блокер P0.
-  const blocking = errors.filter(e => e.kind !== 'filter_missing' && e.kind !== 'filter_unit_not_cm');
+  const blocking = errors.filter(e => e.kind !== 'filter_missing');
   assert.equal(blocking.length, 0, JSON.stringify(blocking.slice(0, 8), null, 2));
+  assert.ok(
+    !errors.some(e => e.kind === 'filter_unit_not_cm' || e.kind === 'filter_object_stringified'),
+    'dims must not stringify objects or require unit in label',
+  );
 
   const a = rows.find(r => r.id === 11391);
   assert.deepEqual(Object.keys(a), PRODUCT_FIELDS);
@@ -1380,5 +1383,92 @@ console.log('golden tests passed');
   assert.ok('Ширина, см' in assigned);
   assert.ok(!('Ширина встраивания, см' in assigned) || !assigned['Ширина встраивания, см']?.length);
   console.log('ok smoke category 929 width vs install_width');
+}
+
+{
+  // P1: dimensions facet — no [object Object]; unit from schema; structure preserved
+  const { formatAttrValue, formatDimensions, valueFold } = await import('./pipeline/types.js');
+  const { assignFilterValues } = await import('./pipeline/facets.js');
+  const { validateProducts, expectedFilters } = await import('./pipeline/validate.js');
+  const { parseDimensions } = await import('./pipeline/dimensions.js');
+
+  const dimsAttr = d467.byCode.get('dims');
+  assert.equal(dimsAttr.type, 'dimensions');
+  assert.equal(dimsAttr.unit, 'см');
+  assert.equal(dimsAttr.facet?.enabled, true);
+  assert.equal(dimsAttr.facet?.label, 'Габариты (ШхГхВ)');
+
+  const parsed = parseDimensions('Габариты (ШхГхВ)', '59.5×42×85 см');
+  assert.ok(parsed?.dims);
+  assert.equal(typeof parsed.dims, 'object');
+  assert.deepEqual(
+    { w: parsed.dims.width, d: parsed.dims.depth, h: parsed.dims.height },
+    { w: 59.5, d: 42, h: 85 },
+  );
+
+  const r = normalizeProduct(p467[44772], d467, config);
+  assert.equal(typeof r.attrs.dims, 'object');
+  assert.ok(r.attrs.dims && !Array.isArray(r.attrs.dims));
+  assert.equal(typeof r.attrs.dims.width, 'number');
+  assert.equal(typeof r.attrs.dims.depth, 'number');
+  assert.equal(typeof r.attrs.dims.height, 'number');
+
+  const asFilter = formatAttrValue(dimsAttr, r.attrs.dims, { withUnit: false });
+  assert.match(asFilter, /^\d+(?:\.\d+)?×\d+(?:\.\d+)?×\d+(?:\.\d+)?$/);
+  assert.notEqual(asFilter, '[object Object]');
+  assert.ok(!asFilter.includes('[object Object]'));
+  assert.equal(
+    formatAttrValue(dimsAttr, r.attrs.dims, { withUnit: false }),
+    formatDimensions(dimsAttr, r.attrs.dims, { withUnit: false }),
+  );
+  assert.match(formatDimensions(dimsAttr, r.attrs.dims, { withUnit: true }), / см$/);
+
+  // Object must survive in attrs until serialize (stringify only at format time)
+  assert.equal(typeof r.attrs.dims, 'object');
+  const built = buildFilters([r], d467, config);
+  const assigned = assignFilterValues(r, d467, built.debug);
+  const lab = 'Габариты (ШхГхВ)';
+  assert.ok(Array.isArray(assigned[lab]), JSON.stringify(assigned));
+  assert.equal(assigned[lab][0], asFilter);
+  assert.ok(!assigned[lab].some(v => String(v) === '[object Object]'));
+
+  const row = serializeProduct(r, d467, built.debug);
+  assert.deepEqual(row.filters[lab], [asFilter]);
+  assert.ok(!JSON.stringify(row.filters).includes('[object Object]'));
+
+  // Unit from schema: label without «, см» is OK when expectedFilters.unit === 'см'
+  const exp = expectedFilters(d467).find(f => f.name === lab);
+  assert.equal(exp?.unit, 'см');
+  const { errors } = validateProducts([row], d467, new Map([[r.id, r]]));
+  assert.ok(!errors.some(e => e.kind === 'filter_unit_not_cm'), JSON.stringify(errors));
+  assert.ok(!errors.some(e => e.kind === 'filter_object_stringified'));
+  assert.ok(!errors.some(e => e.kind === 'filter_unit_mismatch' && String(e.detail).includes(lab)));
+
+  // Label unit must match schema unit when suffix present
+  const badDict = {
+    catId: 'test',
+    attrs: [{
+      ...dimsAttr,
+      facet: { enabled: true, label: 'Габариты (ШхГхВ), кг', kind: 'enum' },
+    }],
+    byCode: new Map([['dims', { ...dimsAttr, facet: { enabled: true, label: 'Габариты (ШхГхВ), кг', kind: 'enum' } }]]),
+  };
+  const badRow = {
+    id: 1,
+    name: 't',
+    meta_keywords: 'а, б, в, г, д, е, ж',
+    description_html: '<p>Описание товара без лишних обещаний.</p>',
+    annotation_html: '<ul><li>Бренд: Test</li><li>Тип: a</li><li>Загрузка: 6 кг</li><li>Отжим: 1000</li><li>Класс: A</li><li>Шум: 50</li><li>Ширина: 60</li></ul>',
+    filters: { 'Габариты (ШхГхВ), кг': [asFilter] },
+    web_info: '',
+  };
+  const badErr = validateProducts([badRow], badDict, new Map()).errors;
+  assert.ok(
+    badErr.some(e => e.kind === 'filter_unit_mismatch'),
+    `expected filter_unit_mismatch, got ${JSON.stringify(badErr)}`,
+  );
+  assert.ok(valueFold('кг') !== valueFold('см'));
+
+  console.log('ok P1 dimensions facet / unit-from-schema / no [object Object]');
 }
 

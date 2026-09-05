@@ -137,7 +137,7 @@ export function annotationCase(attr, s) {
 /** Порядок осей берётся из имени атрибута: «Габариты (ШхГхВ)» ≠ «(ШхВхГ)». */
 const AXIS_FIELD = { ш: 'width', в: 'height', г: 'depth', д: 'depth' };
 
-export function formatDimensions(attr, v) {
+export function formatDimensions(attr, v, { withUnit = true } = {}) {
   if (!v || typeof v !== 'object' || Array.isArray(v)) return '';
   const axes = String(attr.name || '').match(/\(([шхвгд]+)\)/i)?.[1] || 'швг';
   const order = [...axes.toLowerCase()].filter(ch => AXIS_FIELD[ch]).map(ch => AXIS_FIELD[ch]);
@@ -145,7 +145,9 @@ export function formatDimensions(attr, v) {
     .map(f => v[f])
     .filter(x => typeof x === 'number');
   if (parts.length !== 3) return '';
-  return parts.map(String).join('×') + (attr.unit ? ` ${attr.unit}` : '');
+  const body = parts.map(String).join('×');
+  if (withUnit && attr.unit) return `${body} ${attr.unit}`;
+  return body;
 }
 
 /**
@@ -187,6 +189,10 @@ export function formatAttrValue(attr, v, { withUnit = false } = {}) {
   }
   if (v === true) return 'Есть';
   if (v === false) return 'Нет';
+  if (attr.type === 'dimensions' || (v && typeof v === 'object' && !Array.isArray(v))) {
+    // Объект габаритов нельзя отдавать в displayEnum — получится «[object Object]».
+    return formatDimensions(attr, v, { withUnit: withUnit && !!attr.unit });
+  }
   if (typeof v === 'number') {
     const n = Number.isInteger(v) ? String(v) : String(v);
     if (withUnit && attr.unit) return `${n} ${attr.unit}`;

@@ -55,9 +55,9 @@ function pairFromChunk(chunk, dict) {
     return null;
   }
 
-  // M1: явный разделитель.
+  // M1: явный разделитель. Ключ не начинается с цифры («2 – переставляемые»).
   const sep = splitBySep(text);
-  if (sep) {
+  if (sep && !/^\d/.test(sep.key.trim())) {
     if (dict) {
       const exact = exactMatch(sep.key, dict, sep.value);
       if (exact) return { ...sep, via: 'sep' };
@@ -101,17 +101,56 @@ function expandPlain(plain) {
   return null;
 }
 
-function splitOffNextPair(value, dict) {
-  if (!dict || !value) return null;
-  const parts = String(value).trim().split(/\s+/);
-  for (let i = 1; i < parts.length; i++) {
-    const rest = parts.slice(i).join(' ');
-    if (!hasExplicitSep(rest)) continue;
-    const sep = splitBySep(rest);
-    if (!sep || !exactMatch(sep.key, dict, sep.value)) continue;
-    return { head: parts.slice(0, i).join(' '), rest };
+/**
+ * Отрезать от value следующий «Ключ: значение», если он прилип к хвосту.
+ * Справочник помогает, но не обязателен: в dump-прозе следующих ключей часто
+ * нет в dict. Если dict-ключ встретился далеко в хвосте (другое размораживание),
+ * а раньше есть «.… Ключ:», берём самый ранний разрез — иначе первая фраза
+ * превращается в помойку из пяти характеристик.
+ */
+export function splitOffNextPair(value, dict) {
+  if (!value) return null;
+  const s = String(value).trim();
+  if (!s) return null;
+
+  let best = null;
+  const consider = (head, rest) => {
+    const h = String(head || '').trim();
+    const r = String(rest || '').trim();
+    if (h.length < 2 || h.length > 160 || !r) return;
+    if (!best || h.length < best.head.length) best = { head: h, rest: r };
+  };
+
+  // «автоматическое (капельная система). Количество полок: 3 …»
+  const sentRe = /\.\s+([А-ЯЁA-Za-zа-яё][^:\n]{1,80}:\s*\S)/u;
+  const sent = sentRe.exec(s);
+  if (sent && sent.index >= 0) {
+    consider(s.slice(0, sent.index), s.slice(sent.index + 1).replace(/^\.\s*/, ''));
   }
-  return null;
+
+  // «да Перевешиваемые двери - да Габариты…» — без точки между парами после stripHtml(<li>).
+  const boolInline = s.match(/^(да|нет|есть|имеется)\s+([А-ЯЁA-Za-zа-яё][^–—:\n]{2,70}\s+[-–—:]\s*\S[\s\S]*)$/iu);
+  if (boolInline) consider(boolInline[1], boolInline[2]);
+
+  // Короткий ответ + следующий «Ключ - значение» с типовым хвостом каталога.
+  const inline = s.match(/^(.{1,40}?)\s+([А-ЯЁA-Z][^–—:\n]{2,70}\s+[-–—]\s+\S[\s\S]*)$/u);
+  if (inline && /габарит|размер|двер|вес|масс|объ[её]м|нетто|брутто|перевеш|перенавеш|шум|класс/i.test(inline[2])) {
+    consider(inline[1], inline[2]);
+  }
+
+  if (dict) {
+    const parts = s.split(/\s+/);
+    for (let i = 1; i < parts.length; i++) {
+      const rest = parts.slice(i).join(' ');
+      if (!hasExplicitSep(rest)) continue;
+      const sep = splitBySep(rest);
+      if (!sep || !exactMatch(sep.key, dict, sep.value)) continue;
+      consider(parts.slice(0, i).join(' '), rest);
+      break; // ближайший dict-ключ по порядку слов
+    }
+  }
+
+  return best;
 }
 
 function collectPairs(chunks, dict) {
@@ -119,20 +158,59 @@ function collectPairs(chunks, dict) {
   for (const ch of chunks) {
     let rest = ch;
     let guard = 0;
-    while (rest && guard++ < 20) {
+    while (rest && guard++ < 40) {
+      // «Подставка для яиц. Морозильное отделение: …» — отбросить фразу без «:»/«-».
+      rest = skipOrphanLead(rest);
       const p = pairFromChunk(rest, dict);
       if (!p) break;
       const split = splitOffNextPair(p.value, dict);
       if (split) {
-        pairs.push({ ...p, value: split.head });
+        pairs.push(pairFromSplitHead(p, split.head, dict));
         rest = split.rest;
       } else {
-        pairs.push(p);
+        pairs.push(promoteNestedValue(p, dict));
         break;
       }
     }
   }
   return pairs;
+}
+
+/** Фраза без разделителя перед следующим «Ключ:» — не пара, а мусор dump-прозы. */
+function skipOrphanLead(text) {
+  let s = String(text || '').trim();
+  for (let i = 0; i < 5; i++) {
+    const m = s.match(/^([^:–—]{2,80}?)\.\s+([А-ЯЁA-Za-zа-яё][^:\n]{1,80}:\s*\S[\s\S]*)$/u);
+    if (!m) break;
+    if (hasExplicitSep(m[1])) break;
+    s = m[2].trim();
+  }
+  return s;
+}
+
+/**
+ * Head после разреза сам может быть «Ключ: значение»
+ * («Холодильное отделение» → «Размораживание…: автоматическое»).
+ */
+function pairFromSplitHead(outer, head, dict) {
+  const nested = pairFromChunk(head, dict);
+  if (nested && hasExplicitSep(head) && nested.key !== outer.key) {
+    if (!dict || exactMatch(nested.key, dict, nested.value)) return nested;
+    if (nested.via === 'sep' || nested.via === 'dict') return nested;
+  }
+  return { ...outer, value: head };
+}
+
+function promoteNestedValue(p, dict) {
+  if (!p?.value || !hasExplicitSep(p.value)) return p;
+  const nested = pairFromChunk(p.value, dict);
+  if (!nested || nested.key === p.key) return p;
+  if (dict && exactMatch(nested.key, dict, nested.value)) return nested;
+  if (nested.via === 'sep' && nested.value.length < String(p.value).length) {
+    // Внешний ключ — заголовок секции без атрибута в справочнике.
+    if (dict && !exactMatch(p.key, dict, p.value)) return nested;
+  }
+  return p;
 }
 
 export function extractPairs(html, dict) {

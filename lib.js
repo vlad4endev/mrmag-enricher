@@ -24,7 +24,7 @@ import { nameKeyTokens } from './pipeline/identity.js';
 import { tryLoadDictSchema, extractFactsFromDictionary, loadConfigSafe, CRAWL_SLUGS, specDest, expectedDictCatId } from './pipeline/schema.js';
 import { alignCardTextsToSpecs } from './pipeline/prose_align.js';
 import { matchKey } from './pipeline/match.js';
-import { normalizeValue } from './pipeline/types.js';
+import { normalizeValue, aliasValue, enumValuesEqual, isGluedFactDump } from './pipeline/types.js';
 import { loadBenchmarks, dictDebugInfo, formatDictDebug, resolveDictRoot } from './pipeline/dict.js';
 import {
   validateModelResponse, validationFeedbackLine, MODEL_KEYS, buildDescriptionHtml,
@@ -1225,15 +1225,97 @@ export function factToSpec(v) {
   return v;
 }
 
-const sameFact = (key, a, b) => {
+const sameFact = (key, a, b, attr = null) => {
   if (typeof a === 'number' && typeof b === 'number') {
     return Math.abs(a - b) <= tolerance(key, b);
   }
   const ba = canonBoolish(a);
   const bb = canonBoolish(b);
   if (ba != null && bb != null) return ba === bb;
+  if (enumValuesEqual(attr, a, b)) return true;
   return String(a).toLowerCase() === String(b).toLowerCase();
 };
+
+function attrForSpecKey(schema, key) {
+  const attrs = schema?.dict?.attrs;
+  if (!attrs) return null;
+  for (const attr of attrs) {
+    const dest = specDest(attr);
+    const k = typeof dest === 'object' ? dest.key : dest;
+    if (k === key) return attr;
+  }
+  return null;
+}
+
+/** Склеенный dump в факте — не с чем сверять модель. */
+function scrubDumpFacts(facts) {
+  if (!facts || typeof facts !== 'object') return facts;
+  for (const [k, v] of Object.entries(facts)) {
+    if (typeof v === 'string' && isGluedFactDump(v)) delete facts[k];
+  }
+  return facts;
+}
+
+/**
+ * Чистит уже сохранённые карточки: dump в source_facts/specs и ложные warnings
+ * (LED↔dump, R600a↔R600a,58). Без повторного обогащения.
+ */
+export function sanitizeEnrichedResult(data) {
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return data;
+  const d = data;
+  const facts = d.source_facts && typeof d.source_facts === 'object' ? d.source_facts : null;
+  const specs = d.specs && typeof d.specs === 'object' ? d.specs : null;
+  scrubDumpFacts(facts);
+
+  const refrigerantCode = (v) => {
+    const m = String(v ?? '').match(/\b(R-?\d{2,4}[A-Za-z]?)\b/i);
+    return m ? m[1].replace(/-/g, '').replace(/^r/, 'R') : null;
+  };
+
+  if (Array.isArray(d.warnings)) {
+    d.warnings = d.warnings.filter((w) => {
+      if (!w || typeof w !== 'object') return false;
+      if (typeof w.source === 'string' && isGluedFactDump(w.source)) {
+        // dump затёр specs — вернём ответ модели (LED → Светодиодное).
+        if (specs && w.field && isGluedFactDump(specs[w.field]) && w.model != null) {
+          const m = String(w.model);
+          specs[w.field] = /^led$/i.test(m.trim()) ? 'Светодиодное' : m;
+        }
+        return false;
+      }
+      if (w.field === 'тип_освещения'
+        && /led/i.test(String(w.model || ''))
+        && /светодиодн/i.test(String(w.source || ''))) return false;
+      if (w.field === 'хладагент') {
+        const a = refrigerantCode(w.model);
+        const b = refrigerantCode(w.source);
+        if (a && b && a.toLowerCase() === b.toLowerCase()) {
+          if (specs && typeof specs.хладагент === 'string' && specs.хладагент !== a) {
+            specs.хладагент = a;
+          }
+          if (facts && typeof facts.хладагент === 'string') facts.хладагент = a;
+          return false;
+        }
+      }
+      return true;
+    });
+  }
+
+  if (specs) {
+    for (const [k, v] of Object.entries(specs)) {
+      if (typeof v === 'string' && isGluedFactDump(v)) specs[k] = null;
+    }
+    if (typeof specs.хладагент === 'string') {
+      const code = refrigerantCode(specs.хладагент);
+      if (code) specs.хладагент = code;
+    }
+  }
+  if (facts && typeof facts.хладагент === 'string') {
+    const code = refrigerantCode(facts.хладагент);
+    if (code) facts.хладагент = code;
+  }
+  return d;
+}
 
 // ── СВЕРКА ОТВЕТА С ФАКТАМИ ──────────────────────────────────
 const NUM_TOLERANCE = { высота_мм: 20, ширина_мм: 20, глубина_мм: 20, вес_кг: 1 }; // округления в описаниях
@@ -1254,11 +1336,12 @@ const withinBound = (key, v, b) => {
  *   flag          — перекрыть фактом и пометить расхождение
  *   strict        — как prefer_source для фактов; вне bounds / размеров — обнулить + warning
  */
-export function crossCheck(specs, facts, bounds = {}, policy = MISMATCH_POLICY) {
+export function crossCheck(specs, facts, bounds = {}, policy = MISMATCH_POLICY, schema = null) {
   const warnings = [];
   const flagged = new Set();
   const audit = policy === 'flag';
   const nullOutOfBound = policy === 'strict';
+  scrubDumpFacts(facts);
 
   const noteWarn = (field, got, expected, note) => {
     if (flagged.has(field)) return;
@@ -1272,12 +1355,15 @@ export function crossCheck(specs, facts, bounds = {}, policy = MISMATCH_POLICY) 
     const got = specs[key];
     if (got == null) continue;
 
+    const attr = attrForSpecKey(schema, key);
     const mismatch = typeof exp === 'number'
       ? Math.abs(Number(got) - exp) > tolerance(key, exp)
-      : !sameFact(key, got, exp);
+      : !sameFact(key, got, exp, attr);
     if (!mismatch) continue;
 
-    const corrected = factToSpec(exp);
+    const corrected = attr && (attr.type === 'enum' || attr.type === 'text')
+      ? (aliasValue(attr, exp) || factToSpec(exp))
+      : factToSpec(exp);
     specs[key] = corrected; // всегда приоритет источника
     if (audit) noteWarn(key, got, corrected, 'не совпало с текстом');
   }
@@ -1432,10 +1518,17 @@ export function normalizeResponse(data, sourceText = '', schemaKey, attributes =
     }
     const s = v == null ? null : String(v).trim();
     const clean = s && !/^(нет данных|не указано|-|—|n\/?a)$/i.test(s) ? s : null;
-    if (clean && schema.enums[k]) {
-      const snapped = snapEnum(clean, schema.enums[k]);
+    const attr = attrForSpecKey(schema, k);
+    if (clean && isGluedFactDump(clean)) {
+      specs[k] = null;
+    } else if (clean && schema.enums[k]) {
+      const viaAlias = attr ? aliasValue(attr, clean) : null;
+      const snapped = viaAlias || snapEnum(clean, schema.enums[k]);
       if (!snapped) enumIssues.push({ field: k, model: clean, source: null, note: `значение вне списка (${schema.enums[k].join(' | ')})` });
       specs[k] = snapped;
+    } else if (clean && attr && (attr.type === 'enum' || attr.type === 'text')) {
+      const norm = normalizeValue(attr, clean, { keyText: attr.name });
+      specs[k] = norm.ok ? norm.value : (aliasValue(attr, clean) || clean);
     } else {
       specs[k] = clean;
     }
@@ -1447,7 +1540,8 @@ export function normalizeResponse(data, sourceText = '', schemaKey, attributes =
     ? product
     : { description: sourceText, attributes };
   const { facts, bounds, conflicts } = productFacts(factSrc, schema);
-  const warnings = crossCheck(specs, facts, bounds, mismatch).concat(enumIssues);
+  scrubDumpFacts(facts);
+  const warnings = crossCheck(specs, facts, bounds, mismatch, schema).concat(enumIssues);
 
   const filled_from_text = [];
   for (const k of schema.specKeys) {
@@ -1491,7 +1585,7 @@ export function normalizeResponse(data, sourceText = '', schemaKey, attributes =
   else if (web_info == null) web_info = null;
   else web_info = str(web_info);
 
-  return {
+  return sanitizeEnrichedResult({
     specs,
     short_description,
     description,
@@ -1504,7 +1598,7 @@ export function normalizeResponse(data, sourceText = '', schemaKey, attributes =
     filled_from_text,
     prose_fixes: aligned.prose_fixes,
     warnings,
-  };
+  });
 }
 
 // ── ТЕЛО ЗАПРОСА ─────────────────────────────────────────────

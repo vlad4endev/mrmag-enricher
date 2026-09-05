@@ -431,6 +431,128 @@ t('кириллическая «А+» приводится к латинской
   assert.strictEqual(extractFacts('Класс энергоэффективности - A++').класс_энергоэффективности, 'A++');
   assert.strictEqual(extractFacts('класс A').класс_энергоэффективности, 'A');
 });
+t('dump-проза не склеивает размораживание с полками и контейнерами', () => {
+  // Как у Pozis RK-149: одно предложение — пять характеристик через «. Ключ:».
+  const dump =
+    'Размораживание холодильной камеры: автоматическое (капельная система). '
+    + 'Количество полок: 3 полки из ударопрочного стекла. '
+    + 'Контейнеры для овощей и фруктов: 2 шт. '
+    + 'Морозильное отделение: Размораживание морозильной камеры: ручное. '
+    + 'Количество отделений в морозильной камере: 3 ящика';
+  const f = extractFacts(dump, 'kholodilniki');
+  assert.strictEqual(f.размораживание_холодильной_камеры, 'Автоматическое');
+  assert.strictEqual(f.размораживание_морозильной_камеры, 'Ручное');
+  assert.ok(!/полк|контейнер|температур/i.test(String(f.размораживание_холодильной_камеры || '')),
+    'в факте размораживания не должно быть чужих характеристик');
+});
+t('Pozis RK-149 (44582): размораживание из dump-description — короткое значение', () => {
+  const data = JSON.parse(fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), 'data_523.json'), 'utf8'));
+  const p = (Array.isArray(data) ? data : []).find(x => String(x.id) === '44582');
+  assert.ok(p, 'товар 44582 в data_523.json');
+  const { facts } = productFacts(p, 'kholodilniki');
+  assert.strictEqual(facts.размораживание_холодильной_камеры, 'Автоматическое');
+  assert.strictEqual(facts.размораживание_морозильной_камеры, 'Ручное');
+  assert.ok(String(facts.размораживание_холодильной_камеры || '').length < 40);
+});
+t('освещение: «да» + хвост дверей/габаритов не становится типом освещения', () => {
+  const dump = 'Освещение - да Перевешиваемые двери - да Габаритные размеры нетто , мм. - 216х58х61';
+  const f = extractFacts(dump, 'kholodilniki');
+  assert.ok(!f.тип_освещения || !/габарит|двер/i.test(String(f.тип_освещения)),
+    `тип_освещения не должен быть dump: ${f.тип_освещения}`);
+  assert.notStrictEqual(f.тип_освещения, dump.split(' - ').slice(1).join(' - '));
+});
+t('LED ≡ Светодиодное: нет ложного warning, dump не в source', () => {
+  const data = JSON.parse(fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), 'data_523.json'), 'utf8'));
+  const p = (Array.isArray(data) ? data : []).find(x => String(x.id) === '159422');
+  assert.ok(p, 'товар 159422');
+  const glued = 'Освещение - Да перевешиваемые двери - да габаритные размеры нетто , см. - 196х58х61 габаритные размеры брутто , см. - 202х60х62';
+  const r = normalizeResponse({
+    specs: { тип_освещения: 'LED' },
+    short_description: 'x'.repeat(120),
+    description: 'Холодильник с LED-освещением.\n\nb\n\nc\n\nd',
+    bullets: ['a', 'b', 'c'], strong: [], meta_keywords: 'а, б, в, г, д, е, ж', web_info: null,
+  }, glued, 'kholodilniki', [], 'flag', p);
+  assert.ok(!r.source_facts.тип_освещения || !/габарит|перевеш/i.test(String(r.source_facts.тип_освещения)),
+    `source dump: ${r.source_facts.тип_освещения}`);
+  assert.match(String(r.specs.тип_освещения), /светодиодн|led/i);
+  assert.ok(!(r.warnings || []).some(w => w.field === 'тип_освещения'),
+    `ложный warning: ${JSON.stringify((r.warnings || []).filter(w => w.field === 'тип_освещения'))}`);
+});
+t('dump-факт освещения не порождает warning против LED', () => {
+  const dump = 'Да перевешиваемые двери - да габаритные размеры нетто , см. - 196х58х61 габаритные размеры брутто , см. - 202х60х62';
+  const w = crossCheck({ тип_освещения: 'LED' }, { тип_освещения: dump }, {}, 'flag');
+  assert.deepStrictEqual(w.filter(x => x.field === 'тип_освещения'), []);
+});
+t('хладагент: R600a ≡ R600a,58 / R600a 57 г', () => {
+  assert.strictEqual(extractFacts('Хладагент - R600a,58', 'kholodilniki').хладагент, 'R600a');
+  assert.strictEqual(extractFacts('Хладагент и его количество - R600a 57 г', 'kholodilniki').хладагент, 'R600a');
+  assert.strictEqual(extractFacts('Хладагент - R600a (изобутан)', 'kholodilniki').хладагент, 'R600a');
+  const w = crossCheck({ хладагент: 'R600a' }, { хладагент: 'R600a,58' }, {}, 'flag');
+  assert.deepStrictEqual(w.filter(x => x.field === 'хладагент'), []);
+  const r = normalizeResponse({
+    specs: { хладагент: 'R600a' },
+    short_description: 'x'.repeat(120),
+    description: 'Хладагент R600a.\n\nb\n\nc\n\nd',
+    bullets: ['a', 'b', 'c'], strong: [], meta_keywords: 'а, б, в, г, д, е, ж', web_info: null,
+  }, 'Хладагент - R600a,58', 'kholodilniki', [], 'flag');
+  assert.strictEqual(r.specs.хладагент, 'R600a');
+  assert.strictEqual(r.source_facts.хладагент, 'R600a');
+  assert.ok(!(r.warnings || []).some(w => w.field === 'хладагент'));
+});
+t('sanitizeEnrichedResult убирает dump-warning освещения из старой карточки', async () => {
+  const { sanitizeEnrichedResult } = await import('./lib.js');
+  const dump = 'Да перевешиваемые двери - да габаритные размеры нетто , мм. - 216х58х61 габаритные размеры брутто , мм. - 221х60х62';
+  const d = sanitizeEnrichedResult({
+    specs: { тип_освещения: dump, хладагент: 'R600a,58' },
+    source_facts: { тип_освещения: dump, хладагент: 'R600a,58' },
+    warnings: [
+      { field: 'тип_освещения', model: 'LED', source: dump, note: 'не совпало с текстом' },
+      { field: 'хладагент', model: 'R600a', source: 'R600a,58', note: 'не совпало с текстом' },
+    ],
+  });
+  assert.strictEqual(d.specs.тип_освещения, 'Светодиодное');
+  assert.strictEqual(d.specs.хладагент, 'R600a');
+  assert.ok(!d.source_facts.тип_освещения);
+  assert.strictEqual(d.source_facts.хладагент, 'R600a');
+  assert.deepStrictEqual(d.warnings, []);
+});
+t('DON R-299: LED освещение - да → светодиодное, не габариты', () => {
+  const data = JSON.parse(fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), 'data_523.json'), 'utf8'));
+  const p = (Array.isArray(data) ? data : []).find(x => String(x.id) === '191263');
+  assert.ok(p, 'товар 191263 в data_523.json');
+  const { facts } = productFacts(p, 'kholodilniki');
+  assert.ok(!facts.тип_освещения || !/габарит|перевеш/i.test(String(facts.тип_освещения)),
+    `lighting dump: ${facts.тип_освещения}`);
+  if (facts.тип_освещения) {
+    assert.match(String(facts.тип_освещения), /светодиодн|led/i);
+  }
+  assert.strictEqual(facts.перенавешиваемые_двери, true);
+});
+
+console.log('\nUI: строки характеристик');
+t('index_final: value колонка не схлопывается (min-width ≥45%)', () => {
+  const html = fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), 'index_final.html'), 'utf8');
+  const spV = html.match(/\.sp-v\{[^}]+\}/);
+  const spK = html.match(/\.sp-k\{[^}]+\}/);
+  assert.ok(spV, 'есть .sp-v');
+  assert.ok(spK, 'есть .sp-k');
+  assert.match(spV[0], /min-width:\s*45%/);
+  assert.match(spV[0], /max-width:\s*60%/);
+  assert.match(spV[0], /overflow-wrap:\s*break-word/);
+  assert.match(spV[0], /word-break:\s*normal/);
+  assert.doesNotMatch(spV[0], /text-overflow:\s*ellipsis|overflow:\s*hidden/);
+  assert.match(spK[0], /max-width:\s*40%/);
+  assert.match(spK[0], /flex:\s*0\s+1\s+38%/);
+  assert.doesNotMatch(spK[0], /white-space:\s*nowrap/);
+  assert.match(html, /Факты из источника/);
+  assert.match(html, /class="sp"/);
+});
+t('index_final: на узком экране specs в одну колонку', () => {
+  const html = fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), 'index_final.html'), 'utf8');
+  const mob = html.match(/@media\(max-width:768px\)\{[\s\S]*?\.specs\{[^}]+\}/);
+  assert.ok(mob, 'media 768 содержит .specs');
+  assert.match(mob[0], /columns:\s*1/);
+});
 t('климатический класс не уходит в энергоэффективность', () => {
   assert.strictEqual(extractFacts('Климатический класс SN-ST').класс_энергоэффективности, undefined);
   assert.strictEqual(extractFacts('Климатический класс - N, ST').класс_энергоэффективности, undefined);

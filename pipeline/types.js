@@ -125,6 +125,13 @@ export function annotationLabel(attr) {
 /** Регистр значения сохраняют классы, латиница и имена собственные. */
 const KEEP_CASE_CODES = new Set(['brand', 'country', 'refrigerant']);
 
+/** «R600a,58» / «R600a 57 г» / «R-600a (изобутан)» → код хладагента. */
+export function extractRefrigerantCode(raw) {
+  const m = String(raw ?? '').match(/\b(R-?\d{2,4}[A-Za-z]?)\b/i);
+  if (!m) return null;
+  return m[1].replace(/-/g, '').replace(/^r/, 'R');
+}
+
 export function annotationCase(attr, s) {
   const t = String(s ?? '');
   if (!t) return t;
@@ -218,13 +225,18 @@ function impliedEnumFromKey(attr, keyText) {
   const key = String(keyText || '').trim();
   if (!key) return null;
   if (valueFold(key) === valueFold(attr.name)) return null;
+  // \w без флага u не матчит кириллицу — иначе «освещен\w*» не съедает «ие».
+  const word = '[а-яёa-z]*';
   const stripped = key
     .replace(/\s*\([^)]*\)\s*/g, ' ')
-    .replace(/\b(?:тип|вид)\b/gi, ' ')
-    .replace(/\b(?:двигател\w*|мотор\w*|engine|motor)\b/gi, ' ')
+    .replace(new RegExp(`(?<![а-яёa-z])(?:тип|вид)(?![а-яёa-z])`, 'giu'), ' ')
+    .replace(new RegExp(`(?<![а-яёa-z])(?:двигател${word}|мотор${word}|engine|motor)(?![а-яёa-z])`, 'giu'), ' ')
+    .replace(new RegExp(`(?<![а-яёa-z])(?:освещен${word}|подсветк${word}|lighting)(?![а-яёa-z])`, 'giu'), ' ')
     .replace(/\s+/g, ' ')
     .trim();
-  const candidate = displayEnum(stripped || key);
+  let candidate = displayEnum(stripped || key);
+  // «LED освещение: да» → LED → светодиодное
+  if (/^led$/i.test(String(candidate || '').trim())) candidate = 'Светодиодное';
   if (!candidate || isBareBooleanWord(candidate) || isEchoOnly(candidate)) return null;
   if (valueFold(candidate) === valueFold(attr.name)) return null;
   return candidate;
@@ -321,8 +333,8 @@ export function unifyEnumValues(recs, dict) {
   return recs;
 }
 
-function aliasValue(attr, raw) {
-  const aliases = attr.value_aliases;
+export function aliasValue(attr, raw) {
+  const aliases = attr?.value_aliases;
   if (!aliases) return null;
   const folds = new Set([valueFold(raw), valueFold(displayEnum(raw))].filter(Boolean));
   for (const [canon, list] of Object.entries(aliases)) {
@@ -343,6 +355,35 @@ function aliasValue(attr, raw) {
     }
   }
   return best;
+}
+
+/** LED и «Светодиодное» — одно значение для сверки specs ↔ facts. */
+export function enumValuesEqual(attr, a, b) {
+  if (a == null || b == null) return false;
+  const ra = extractRefrigerantCode(a);
+  const rb = extractRefrigerantCode(b);
+  if (ra && rb && valueFold(ra) === valueFold(rb)) return true;
+  const ca = aliasValue(attr, a) || displayEnum(String(a));
+  const cb = aliasValue(attr, b) || displayEnum(String(b));
+  if (valueFold(ca) === valueFold(cb)) return true;
+  // Fallback без справочника: короткий LED ↔ светодиодн*
+  const stem = (v) => {
+    const f = valueFold(v);
+    if (f === 'led' || /^светодиодн/.test(f)) return 'led';
+    return f;
+  };
+  return stem(ca) === stem(cb);
+}
+
+/** Склеенный хвост чужих пар («да Перевешиваемые… Габариты…») — не факт освещения. */
+export function isGluedFactDump(v) {
+  const s = String(v ?? '').trim();
+  if (s.length < 40) return false;
+  if ((s.match(/\s[-–—]\s/g) || []).length >= 1 && /габарит|размер|двер|перевеш|перенавеш|нетто|брутто/i.test(s)) {
+    return true;
+  }
+  if (/^да\s+/i.test(s) && /габарит|перевеш|перенавеш|размер/i.test(s)) return true;
+  return false;
 }
 
 function splitMulti(raw) {
@@ -394,30 +435,58 @@ export function normalizeValue(attr, raw, { keyText = '' } = {}) {
       return { ok: true, value: letter + m[2] };
     }
     if (typ === 'enum' || typ === 'text') {
+      // Хладагент: «R600a,58» / «R600a 57 г» → только код, не qty_in_enum.
+      if (attr.code === 'refrigerant') {
+        const code = extractRefrigerantCode(v);
+        if (code) return { ok: true, value: code };
+        if (/^\d+(?:[.,]\d+)?\s*(?:г|кг)?\s*$/i.test(String(v).trim())) {
+          return { ok: false, value: null, reason: 'qty_not_refrigerant', raw: v };
+        }
+      }
       // Число с единицей в enum — скорее чужой атрибут, чем допустимое значение.
       // \b не работает с кириллицей в JS — смотрим границу вручную.
       if (/\d+(?:[.,]\d+)?\s*(?:кг|г|л|мл|см|мм|дб|об\/?\s*мин|вт|w)(?![а-яёa-z])/i.test(v)
-        && !/фронтал|вертикал|камер|светоди|галоген|накалив|led|алюмин|жиров|угольн/i.test(v)) {
+        && !/фронтал|вертикал|камер|светоди|галоген|накалив|led|алюмин|жиров|угольн|r-?\d{2,4}/i.test(v)) {
         return { ok: false, value: null, reason: 'qty_in_enum', raw: v };
       }
-      const aliased = aliasValue(attr, v);
-      if (!aliased && /^[a-z][a-z0-9]*[-_][a-z0-9_-]+$/.test(String(v).trim())) {
+      // Dump: «Автоматическое. Количество полок: 3…» / «да Перевешиваемые двери - да…»
+      let rawEnum = String(v);
+      if (typ === 'enum') {
+        const dumpCut = rawEnum.match(/^(.+?)\.\s+[А-ЯЁA-Za-zа-яё][^:\n]{1,80}:/u);
+        if (dumpCut) rawEnum = dumpCut[1].trim();
+        const boolLead = rawEnum.match(/^(да|нет|есть|имеется)\s+[А-ЯЁA-Za-zа-яё]/iu);
+        if (boolLead && /\s[-–—:]\s/.test(rawEnum)) rawEnum = boolLead[1];
+        else if (/габарит|размер|двер|вес|масс|объ[её]м|нетто|брутто|перевеш|перенавеш/i.test(rawEnum)) {
+          const inlineCut = rawEnum.match(/^(.{1,40}?)\s+[А-ЯЁA-Z][^–—:\n]{2,70}\s+[-–—]\s+\S/u);
+          if (inlineCut) rawEnum = inlineCut[1].trim();
+        }
+      }
+      const aliased = aliasValue(attr, rawEnum);
+      if (!aliased && /^[a-z][a-z0-9]*[-_][a-z0-9_-]+$/.test(String(rawEnum).trim())) {
         return { ok: false, value: null, reason: 'slug', raw: v };
       }
-      const val = displayEnum(aliased || v);
-      if (!val) return empty;
-      if (!aliased && (isEchoOnly(val) || valueFold(val) === valueFold(attr.name)
-        || /^(?:освещение|подсветка|фильтр|материал|цвет|тип)$/i.test(val))) {
-        return { ok: false, value: null, reason: 'echo_value', raw: v };
-      }
-      if (typ === 'enum' && isBareBooleanWord(val)) {
-        const k = val.trim().toLowerCase().replace(/ё/g, 'е');
+      if (typ === 'enum' && isBareBooleanWord(rawEnum)) {
+        const k = String(rawEnum).trim().toLowerCase().replace(/ё/g, 'е');
         if (BOOL_FALSE.has(k)) {
           return { ok: false, value: null, reason: 'bool_false_in_enum', raw: v };
         }
         const implied = impliedEnumFromKey(attr, keyText);
-        if (implied) return { ok: true, value: aliasValue(attr, implied) || implied };
+        if (implied) return { ok: true, value: aliasValue(attr, implied) || displayEnum(implied) };
         return { ok: false, value: null, reason: 'bool_in_enum', raw: v };
+      }
+      const val = displayEnum(aliased || rawEnum);
+      if (!val) return empty;
+      if (typ === 'enum' && (
+        /:\s*\S/.test(val)
+        || val.length > 80
+        || /\.\s+[а-яё]/i.test(val)
+        || ((val.match(/\s[-–—]\s/g) || []).length >= 1 && val.length > 30)
+      )) {
+        return { ok: false, value: null, reason: 'enum_dump', raw: v };
+      }
+      if (!aliased && (isEchoOnly(val) || valueFold(val) === valueFold(attr.name)
+        || /^(?:освещение|подсветка|фильтр|материал|цвет|тип)$/i.test(val))) {
+        return { ok: false, value: null, reason: 'echo_value', raw: v };
       }
       return { ok: true, value: val };
     }

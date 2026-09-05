@@ -499,11 +499,25 @@ textarea{
    Технические данные — таблица, а не 19 одинаковых коробок: в коробках
    значения не сравнить по вертикали, и прокрутка втрое длиннее.
    Отточие между подписью и значением — приём печатного даташита. */
+/* Label ~38%, value ≥45%: длинное значение не схлопывает колонку до 1 слова/строку. */
 .specs{columns:2;column-gap:40px;column-rule:1px solid var(--b1)}
-.sp{display:flex;align-items:baseline;gap:7px;padding:5px 0;break-inside:avoid;font-size:12.5px}
-.sp-k{color:var(--t2);white-space:nowrap;flex-shrink:0}
-.sp-d{flex:1;min-width:12px;border-bottom:1px dotted var(--b2);transform:translateY(-4px)}
-.sp-v{color:var(--t1);font-family:var(--mono);font-variant-numeric:tabular-nums;font-weight:600;text-align:right;word-break:break-word}
+.sp{
+  display:flex;align-items:baseline;gap:7px;padding:5px 0;break-inside:avoid;
+  font-size:12.5px;width:100%;min-width:0;box-sizing:border-box;
+}
+.sp-k{
+  color:var(--t2);flex:0 1 38%;max-width:40%;min-width:0;
+  white-space:normal;overflow-wrap:break-word;line-height:1.35;
+}
+.sp-d{
+  flex:1 1 8px;min-width:8px;border-bottom:1px dotted var(--b2);
+  transform:translateY(-4px);align-self:center;
+}
+.sp-v{
+  color:var(--t1);font-family:var(--mono);font-variant-numeric:tabular-nums;font-weight:600;
+  flex:1 1 52%;min-width:45%;max-width:60%;text-align:right;
+  overflow-wrap:break-word;word-break:normal;line-height:1.4;white-space:normal;
+}
 /* Расхождение с источником помечено прямо у значения, а не только в блоке сверху */
 .sp.bad .sp-v{color:var(--amber);box-shadow:inset 0 -2px 0 var(--abd)}
 
@@ -835,6 +849,10 @@ input[type=range]::-moz-range-thumb{
   .calc-right{padding:14px}
   .model-cards{grid-template-columns:1fr 1fr}
   .ctbl th:nth-child(3),.ctbl td:nth-child(3),.ctbl th:nth-child(4),.ctbl td:nth-child(4){display:none}
+  /* Одна колонка: value получает ~половину экрана, а не половину половины. */
+  .specs{columns:1;column-rule:none}
+  .sp-k{max-width:38%}
+  .sp-v{min-width:50%;max-width:62%}
 }
 
 /* ═══ АНИМАЦИЯ ПРОЦЕССА ═══════════════════════════════════════════
@@ -2844,7 +2862,10 @@ function restoreResults(){
     : (saved?.results||[]).map((r,i)=>[rowKey(saved.items?.[i]||r?.original,i),r]).filter(([,r])=>r);
   if(!done.length) return;
   runStore.clear();
-  for(const [k,r] of done) runStore.set(k,r);
+  for(const [k,r] of done){
+    if(r?.enriched) sanitizeEnriched(r.enriched);
+    runStore.set(k,r);
+  }
   items=saved.items?.length?saved.items:done.map(([,r])=>r.original||{});
   results=items.map((p,i)=>runStore.get(rowKey(p,i)));
   srcItems=items; pickCat=null;
@@ -3519,9 +3540,12 @@ function statusOf(i){
   }
   if(!r) return {cls:'pd',sym:'·',txt:'в очереди'};
   if(r.needs_review) return {cls:'wa',sym:'⚑',txt:'на проверку'};
-  if(r.enriched) return r.enriched.warnings?.length
-    ? {cls:'wa',sym:'⚠',txt:`${r.enriched.warnings.length} расхождений`}
-    : {cls:'ok',sym:'✓',txt:'готово'};
+  if(r.enriched){
+    sanitizeEnriched(r.enriched);
+    return r.enriched.warnings?.length
+      ? {cls:'wa',sym:'⚠',txt:`${r.enriched.warnings.length} расхождений`}
+      : {cls:'ok',sym:'✓',txt:'готово'};
+  }
   if(r.skipped) return {cls:'sk',sym:'⊘',txt:'пропущен'};
   return {cls:'er',sym:'✗',txt:'ошибка'};
 }
@@ -4315,7 +4339,7 @@ function applyJob(d){
     if(!r) return;
     const i=qIdx(d,d.from+k);
     if(i==null) return;
-    results[i]={original:items[i]??null,enriched:r.enriched??null,skipped:r.skipped,
+    results[i]={original:items[i]??null,enriched:r.enriched?sanitizeEnriched(r.enriched):null,skipped:r.skipped,
       needs_review:r.needs_review||false,
       validation_issues:r.validation_issues||null,
       source:r.source??null,iT:r.iT??0,oT:r.oT??0,
@@ -4803,8 +4827,65 @@ function isEmpty(v){
   return v==null||v===''||(Array.isArray(v)&&!v.length)||(typeof v==='object'&&!Array.isArray(v)&&!Object.keys(v).length);
 }
 
+/** Старые прогоны: dump «Да перевешиваемые… габариты» в warnings/source_facts. */
+function isGluedDump(v){
+  const s=String(v??'').trim();
+  if(s.length<40) return false;
+  if((s.match(/\s[-–—]\s/g)||[]).length>=1&&/габарит|размер|двер|перевеш|перенавеш|нетто|брутто/i.test(s)) return true;
+  return /^да\s+/i.test(s)&&/габарит|перевеш|перенавеш|размер/i.test(s);
+}
+function refrigerantCode(v){
+  const m=String(v??'').match(/\b(R-?\d{2,4}[A-Za-z]?)\b/i);
+  return m?m[1].replace(/-/g,'').replace(/^r/,'R'):null;
+}
+function sanitizeEnriched(d){
+  if(!d||typeof d!=='object'||Array.isArray(d)) return d;
+  const facts=d.source_facts&&typeof d.source_facts==='object'?d.source_facts:null;
+  const specs=d.specs&&typeof d.specs==='object'?d.specs:null;
+  if(facts){
+    for(const [k,v] of Object.entries(facts)){
+      if(typeof v==='string'&&isGluedDump(v)) delete facts[k];
+    }
+  }
+  if(Array.isArray(d.warnings)){
+    d.warnings=d.warnings.filter(w=>{
+      if(!w) return false;
+      if(typeof w.source==='string'&&isGluedDump(w.source)){
+        if(specs&&w.field&&isGluedDump(specs[w.field])&&w.model!=null){
+          const m=String(w.model);
+          specs[w.field]=/^led$/i.test(m.trim())?'Светодиодное':m;
+        }
+        return false;
+      }
+      if(w.field==='тип_освещения'&&/led/i.test(String(w.model||''))&&/светодиодн/i.test(String(w.source||''))) return false;
+      if(w.field==='хладагент'){
+        const a=refrigerantCode(w.model), b=refrigerantCode(w.source);
+        if(a&&b&&a.toLowerCase()===b.toLowerCase()){
+          if(specs&&typeof specs.хладагент==='string') specs.хладагент=a;
+          if(facts&&typeof facts.хладагент==='string') facts.хладагент=a;
+          return false;
+        }
+      }
+      return true;
+    });
+  }
+  if(specs){
+    for(const [k,v] of Object.entries(specs)){
+      if(typeof v==='string'&&isGluedDump(v)) specs[k]=null;
+    }
+    if(typeof specs.хладагент==='string'){
+      const c=refrigerantCode(specs.хладагент); if(c) specs.хладагент=c;
+    }
+  }
+  if(facts&&typeof facts.хладагент==='string'){
+    const c=refrigerantCode(facts.хладагент); if(c) facts.хладагент=c;
+  }
+  return d;
+}
+
 function renderVis(d){
   if(!d||typeof d!=='object') return '<div class="empty"><p>Нет данных</p></div>';
+  d=sanitizeEnriched(d);
   let out=confBox(curIdx);
 
   if(Array.isArray(d.warnings)&&d.warnings.length){

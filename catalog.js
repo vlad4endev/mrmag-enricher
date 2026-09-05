@@ -470,9 +470,19 @@ export function parseSearchResults(html, engineHost = '') {
 const SEARCH_GIVE_UP = Number(process.env.SEARCH_GIVE_UP || 3);
 let searchFails = 0;
 
+/** После SEARCH_GIVE_UP таймаутов подряд сеть не дергаем до перезапуска прогона. */
+export function isWebSearchDisabled() {
+  return searchFails >= SEARCH_GIVE_UP;
+}
+
+export function webSearchSkippedReason() {
+  if (!isWebSearchDisabled()) return null;
+  return `поиск отключён после ${searchFails} неудач подряд — перезапустите прогон`;
+}
+
 export async function searchWeb(query) {
-  if (searchFails >= SEARCH_GIVE_UP) {
-    throw new Error(`поиск отключён после ${searchFails} неудач подряд — перезапустите прогон`);
+  if (isWebSearchDisabled()) {
+    throw new Error(webSearchSkippedReason());
   }
   let config = {};
   try { config = loadConfig(ROOT); } catch { /* значения по умолчанию в resolveSearchSettings */ }
@@ -528,6 +538,12 @@ function countrySearchIdentity(product, schema) {
  */
 async function fillCountryFromWeb(product, schema, { onNote = () => {} } = {}) {
   if (hasCountryFact(product, schema) || !canSearchWeb(product)) {
+    return { ok: false, product };
+  }
+  // Не логируем «ищем страну», если контур уже закрыт — иначе в логе сотни
+  // ложных стартов поиска после трёх таймаутов.
+  if (isWebSearchDisabled()) {
+    onNote(`страну в сети не нашли: ${webSearchSkippedReason()}`);
     return { ok: false, product };
   }
   const query = countryQuery({
@@ -599,13 +615,20 @@ export async function ensureSource(product, schema, { onNote = () => {} } = {}) 
 
     let urls = [];
     let searchFailed = false;
-    try {
-      onNote(`ищем в сети: ${token || product.name}`);
-      urls = await searchWeb(query);
-    } catch (e) {
-      onNote(`поиск не удался, отправляем как есть: ${e.message}`);
-      currentGate = { ...gate, ok: true, reason: `${gate.reason}; поиск в сети не удался: ${e.message}` };
+    if (isWebSearchDisabled()) {
+      const why = webSearchSkippedReason();
+      onNote(`поиск не удался, отправляем как есть: ${why}`);
+      currentGate = { ...gate, ok: true, reason: `${gate.reason}; поиск в сети не удался: ${why}` };
       searchFailed = true;
+    } else {
+      try {
+        onNote(`ищем в сети: ${token || product.name}`);
+        urls = await searchWeb(query);
+      } catch (e) {
+        onNote(`поиск не удался, отправляем как есть: ${e.message}`);
+        currentGate = { ...gate, ok: true, reason: `${gate.reason}; поиск в сети не удался: ${e.message}` };
+        searchFailed = true;
+      }
     }
 
     if (!searchFailed) {

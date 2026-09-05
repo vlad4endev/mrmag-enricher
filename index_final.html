@@ -808,6 +808,30 @@ input[type=range]::-moz-range-thumb{
 .dict-facet-off{opacity:.55}
 .dict-row-actions{display:flex;gap:4px;justify-content:flex-end}
 .dict-foot{display:flex;flex-wrap:wrap;gap:8px;padding:10px;border-top:1px solid var(--b1);background:var(--bg2)}
+.sch-shell{display:grid;grid-template-columns:1fr minmax(300px,380px);gap:12px;align-items:start}
+@media(max-width:1100px){.sch-shell{grid-template-columns:1fr}}
+.sch-badge{display:inline-block;font-size:10px;font-weight:600;padding:2px 6px;border-radius:4px;border:1px solid var(--b1)}
+.sch-ok{background:#e8f5e9;color:#1b5e20;border-color:#a5d6a7}
+.sch-warn{background:var(--abg);color:var(--amber);border-color:var(--abd)}
+.sch-err{background:#fce8e6;color:#b71c1c;border-color:#f5c6c2}
+.sch-row-on td{background:var(--ac-bg,rgba(0,100,200,.08))!important}
+.sch-drawer{display:none;position:sticky;top:12px;max-height:calc(100vh - 100px);overflow:auto;border:1px solid var(--b1);border-radius:var(--r);background:var(--bg2);padding:12px}
+.sch-drawer.open{display:block}
+.sch-drawer-h{font-weight:700;font-size:15px;margin-bottom:10px}
+.sch-block{margin-top:14px;padding-top:12px;border-top:1px solid var(--b1)}
+.sch-block-h{font-weight:600;margin-bottom:6px}
+.sch-canon{margin-bottom:10px;padding:8px;border:1px solid var(--b1);border-radius:var(--r);background:var(--bg)}
+.sch-canon-h{display:flex;gap:6px;margin-bottom:6px}
+.sch-canon textarea,.sch-drawer textarea{width:100%;font-size:12px;padding:6px;border:1px solid var(--b1);border-radius:6px;background:var(--bg);color:var(--t1);resize:vertical}
+.sch-side{display:flex;flex-direction:column;gap:12px}
+.sch-issue-block{margin-bottom:10px;padding:8px;border:1px solid var(--b1);border-radius:var(--r)}
+.sch-issue-h{margin-bottom:4px}
+.sch-issue-block ul{margin:0;padding-left:18px;font-size:12px}
+.sch-acts{display:inline-flex;gap:4px;margin-left:6px;flex-wrap:wrap}
+.sch-prev-card{border:1px solid var(--b1);border-radius:var(--r);padding:8px;margin-bottom:8px}
+.sch-prev-h{font-weight:600;margin-bottom:6px;font-size:13px}
+.sch-prev-row{display:flex;justify-content:space-between;gap:8px;font-size:12px;padding:2px 0;border-bottom:1px dashed var(--b1)}
+.sch-error{color:#b71c1c}.sch-warn{}.sch-info{color:var(--t3)}
 @media(max-width:900px){
   .dict-table-wrap{max-height:none}
 }
@@ -1384,7 +1408,7 @@ input[type=range]::-moz-range-thumb{
       <button type="button" class="on" id="snProv" onclick="setTab('prov')"><i class="ti ti-brain"></i> Провайдеры ИИ</button>
       <button type="button" id="snParse" onclick="setTab('parse')"><i class="ti ti-world-search"></i> Парсеры</button>
       <button type="button" id="snCond" onclick="setTab('cond')"><i class="ti ti-adjustments"></i> Условия</button>
-      <button type="button" id="snDict" onclick="setTab('dict')"><i class="ti ti-book-2"></i> Справочник</button>
+      <button type="button" id="snDict" onclick="setTab('dict')"><i class="ti ti-adjustments-horizontal"></i> Атрибуты и фильтры</button>
       <button type="button" id="snRun" onclick="setTab('run')"><i class="ti ti-player-play"></i> Прогон</button>
       <button type="button" id="snPrompt" onclick="setTab('prompt')"><i class="ti ti-message-2-code"></i> Промпт</button>
       <button type="button" id="snExport" onclick="setTab('export')"><i class="ti ti-file-code"></i> Выгрузка</button>
@@ -1506,20 +1530,22 @@ input[type=range]::-moz-range-thumb{
       </section>
 
       <section class="set-panel" id="setDict">
-        <div class="set-h">Справочник атрибутов</div>
-        <p class="set-lead">Файлы <code>dictionaries/attributes_{id}.json</code> задают характеристики раздела, состав фильтров витрины и строки аннотации. Здесь можно создать справочник, править атрибуты и сохранить на диск.</p>
+        <div class="set-h" id="schConstructor">Атрибуты и фильтры</div>
+        <p class="set-lead">Category schema (<code>attributes_{id}.json</code>) — единственный источник истины для фильтров. AI только извлекает значение; каноны и бакеты задаются здесь. <code>filters_{id}.json</code> строится из schema + нормализованных товаров.</p>
         <div class="dict-layout">
           <div class="set-card">
             <div class="dict-toolbar">
               <div class="set-row">
-                <label for="dictCat">Раздел</label>
+                <label for="dictCat">Категория</label>
                 <select id="dictCat" onchange="onDictCatChange()"></select>
               </div>
               <div class="set-actions">
+                <button type="button" class="sbtn primary" onclick="runSchemaAudit()"><i class="ti ti-shield-check"></i> Проверить категорию</button>
+                <button type="button" class="sbtn ghost" onclick="runSchemaPreview()"><i class="ti ti-eye"></i> Превью фильтров</button>
                 <button type="button" class="sbtn ghost" onclick="toggleDictCreate()"><i class="ti ti-plus"></i> Создать</button>
                 <button type="button" class="sbtn ghost" onclick="dictImportPick()"><i class="ti ti-upload"></i> Импорт</button>
                 <button type="button" class="sbtn ghost" id="dictExport" onclick="exportDictionaryUi()" disabled><i class="ti ti-download"></i> Экспорт</button>
-                <button type="button" class="sbtn ghost" onclick="loadDictList()"><i class="ti ti-refresh"></i> Обновить</button>
+                <button type="button" class="sbtn ghost" onclick="loadDictList()"><i class="ti ti-refresh"></i></button>
                 <button type="button" class="sbtn danger" id="dictDelete" onclick="deleteDictionaryUi()" disabled>Удалить</button>
                 <button type="button" class="sbtn primary" id="dictSave" onclick="saveDictionary()" disabled>Сохранить</button>
               </div>
@@ -1543,37 +1569,55 @@ input[type=range]::-moz-range-thumb{
                 <button type="button" class="sbtn ghost" onclick="dictImportPick()">Импорт из JSON…</button>
                 <button type="button" class="sbtn ghost" onclick="toggleDictCreate(false)">Отмена</button>
               </div>
-              <div class="hint" style="margin-top:8px">ID — числовой код раздела. Импорт принимает массив атрибутов или <code>{"id":929,"attrs":[...]}</code>; имя файла <code>attributes_929.json</code> подставит ID само.</div>
+              <div class="hint" style="margin-top:8px">ID — числовой код раздела. Импорт принимает массив атрибутов или <code>{"id":929,"attrs":[...]}</code>.</div>
             </div>
             <div class="dict-meta" id="dictMeta"></div>
           </div>
-          <div class="set-card" style="padding:0;overflow:hidden">
-            <div class="dict-table-wrap">
-              <table class="dict-table" id="dictTable">
-                <thead>
-                  <tr>
-                    <th style="width:4rem">Порядок</th>
-                    <th style="width:8rem">Код</th>
-                    <th>Имя</th>
-                    <th style="width:6.5rem">Тип</th>
-                    <th style="width:3.5rem" title="В аннотации">Анн.</th>
-                    <th style="width:3.5rem" title="Фильтр витрины">Фасет</th>
-                    <th>Подпись фильтра</th>
-                    <th style="width:7rem">Вид</th>
-                    <th style="width:5rem">Шаг</th>
-                    <th style="width:3rem"></th>
-                  </tr>
-                </thead>
-                <tbody id="dictBody">
-                  <tr><td colspan="10" class="muted">Выберите раздел или создайте справочник…</td></tr>
-                </tbody>
-              </table>
+
+          <div class="sch-shell">
+            <div>
+              <div class="set-card" style="padding:0;overflow:hidden">
+                <div class="dict-table-wrap">
+                  <table class="dict-table" id="dictTable">
+                    <thead>
+                      <tr>
+                        <th style="width:3.5rem">#</th>
+                        <th style="width:7rem">key</th>
+                        <th>Название</th>
+                        <th style="width:5.5rem">Тип</th>
+                        <th style="width:3rem" title="Filter enabled">Ф</th>
+                        <th style="width:5rem">Фильтр</th>
+                        <th style="width:4rem">Знач.</th>
+                        <th style="width:4rem" title="coverage_final / товары">Покр.</th>
+                        <th style="width:4rem">Статус</th>
+                        <th style="width:3rem">⚠</th>
+                      </tr>
+                    </thead>
+                    <tbody id="dictBody">
+                      <tr><td colspan="10" class="muted">Выберите категорию…</td></tr>
+                    </tbody>
+                  </table>
+                </div>
+                <div class="dict-foot">
+                  <button type="button" class="sbtn ghost" id="dictAddAttr" onclick="addDictAttr()" disabled><i class="ti ti-row-insert-bottom"></i> Добавить атрибут</button>
+                  <span class="hint" style="margin:0">Клик по строке — редактор справа. Schema → canonical → filter; AI не создаёт новые значения.</span>
+                </div>
+              </div>
+              <div class="set-card" style="margin-top:12px">
+                <div class="set-card-h"><b>Проверка значений</b></div>
+                <div id="schAuditBox"><p class="muted">Нажмите «Проверить категорию»</p></div>
+              </div>
+              <div class="set-card" style="margin-top:12px">
+                <div class="set-card-h"><b>Превью фильтров</b></div>
+                <div id="schPreviewBox"><p class="muted">Нажмите «Превью фильтров» (каноны схемы; счётчики — если передать товары в API)</p></div>
+              </div>
             </div>
-            <div class="dict-foot">
-              <button type="button" class="sbtn ghost" id="dictAddAttr" onclick="addDictAttr()" disabled><i class="ti ti-row-insert-bottom"></i> Добавить атрибут</button>
-            </div>
+            <aside class="sch-drawer" id="schDrawer">
+              <div class="sch-drawer-h" id="schDrawerTitle">Атрибут</div>
+              <div class="sch-drawer-body muted">Выберите атрибут в таблице</div>
+            </aside>
           </div>
-          <div class="hint" id="dictHint">Код — латиница/цифры/подчёркивание (уникален в файле). «Фасет» включает характеристику в <code>filters_{id}.json</code>.</div>
+          <div class="hint" id="dictHint">filters_{id}.json — generated output из facet.enabled + canonical values / range breaks + normalized product attrs (pipeline/facets.buildFilters).</div>
         </div>
       </section>
 
@@ -5155,5 +5199,6 @@ checkIconFont();
 init();
 calcUpdate();
 </script>
+<script src="schema_constructor.js"></script>
 </body>
 </html>

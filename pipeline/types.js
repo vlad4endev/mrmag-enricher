@@ -313,6 +313,30 @@ export function unifyEnumValues(recs, dict) {
   if (!recs?.length || !dict) return recs;
   for (const attr of dict.attrs) {
     if (attr.type !== 'enum' && attr.type !== 'text') continue;
+    // Строгий ENUM: только value_aliases, без «склейки» новых канонов из данных.
+    if (hasStrictEnum(attr)) {
+      for (const rec of recs) {
+        const v = rec.attrs[attr.code];
+        if (v == null) continue;
+        if (Array.isArray(v)) {
+          const seen = new Set();
+          const next = [];
+          for (const x of v) {
+            if (typeof x !== 'string') continue;
+            const mapped = aliasValue(attr, x);
+            if (!mapped) continue;
+            const k = valueFold(mapped);
+            if (seen.has(k)) continue;
+            seen.add(k);
+            next.push(mapped);
+          }
+          rec.attrs[attr.code] = next.length ? next : null;
+        } else if (typeof v === 'string') {
+          rec.attrs[attr.code] = aliasValue(attr, v) || null;
+        }
+      }
+      continue;
+    }
     const strings = [];
     for (const rec of recs) {
       const v = rec.attrs[attr.code];
@@ -343,6 +367,15 @@ export function unifyEnumValues(recs, dict) {
     }
   }
   return recs;
+}
+
+/** ENUM со справочником канонов: неизвестные значения → needs_review, не в filters. */
+export function hasStrictEnum(attr) {
+  if (!attr || (attr.type !== 'enum' && attr.type !== 'text')) return false;
+  if (attr.strict_enum === false) return false;
+  if (attr.strict_enum === true) return true;
+  const aliases = attr.value_aliases;
+  return !!(aliases && typeof aliases === 'object' && Object.keys(aliases).length > 0);
 }
 
 export function aliasValue(attr, raw) {
@@ -483,8 +516,20 @@ export function normalizeValue(attr, raw, { keyText = '' } = {}) {
           return { ok: false, value: null, reason: 'bool_false_in_enum', raw: v };
         }
         const implied = impliedEnumFromKey(attr, keyText);
-        if (implied) return { ok: true, value: aliasValue(attr, implied) || displayEnum(implied) };
+        if (implied) {
+          const impliedCanon = aliasValue(attr, implied) || (
+            hasStrictEnum(attr) ? null : displayEnum(implied)
+          );
+          if (impliedCanon) return { ok: true, value: impliedCanon };
+          if (hasStrictEnum(attr)) {
+            return { ok: false, value: null, reason: 'enum_not_in_dict', raw: v };
+          }
+        }
         return { ok: false, value: null, reason: 'bool_in_enum', raw: v };
+      }
+      // Schema is SoT: if value_aliases заданы — AI не может создать новое filter value.
+      if (typ === 'enum' && hasStrictEnum(attr) && !aliased) {
+        return { ok: false, value: null, reason: 'enum_not_in_dict', raw: v };
       }
       const val = displayEnum(aliased || rawEnum);
       if (!val) return empty;

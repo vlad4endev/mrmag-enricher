@@ -307,8 +307,37 @@ export function normalizeProduct(product, dict, config) {
   }
 
   ingestPairs(rec, parsed.pairs, dict, config);
+  deriveLinkedAttrs(rec, dict);
 
   return rec;
+}
+
+/**
+ * Связанные факты из сырого значения: «двухкамерный с нижней морозильной»
+ * → fridge_type=Двухкамерный + freezer_pos=Нижнее (если слот пуст).
+ */
+function deriveLinkedAttrs(rec, dict) {
+  if (!dict.byCode.has('freezer_pos') || rec.attrs.freezer_pos != null) return;
+  const raw = rec.provenance?.fridge_type?.raw
+    || rec.provenance?.fridge_type?.evidence?.raw_value
+    || '';
+  const blob = `${raw} ${rec.attrs.fridge_type || ''} ${rec.name || ''}`.toLowerCase().replace(/ё/g, 'е');
+  let label = null;
+  if (/нижн|снизу/.test(blob)) label = 'Нижнее';
+  else if (/верхн|сверху/.test(blob)) label = 'Верхнее';
+  else if (/бок|слева|справа/.test(blob)) label = 'Сбоку';
+  if (!label) return;
+  const attr = dict.byCode.get('freezer_pos');
+  if (attr.tier === 'X') return;
+  const norm = normalizeValue(attr, label, { keyText: attr.name });
+  if (!norm.ok) return;
+  setAttr(rec, 'freezer_pos', norm.value, {
+    level: 'S1',
+    raw: raw || label,
+    model: null,
+    prompt: null,
+    how: 'derived_from_fridge_type',
+  });
 }
 
 export function ingestPairs(rec, pairs, dict, config) {

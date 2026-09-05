@@ -25,6 +25,10 @@ function isDiscreteCount(attr) {
  */
 export function facetKind(attr) {
   const kind = attr.facet?.kind;
+  if (attr.type === 'boolean') {
+    if (kind === 'boolean' || kind === 'enum' || !kind) return 'boolean';
+  }
+  if (kind === 'boolean') return 'boolean';
   if (kind === 'range' && (attr.type === 'integer' || isDiscreteCount(attr))) return 'enum';
   return kind;
 }
@@ -168,14 +172,28 @@ export function buildFilters(recs, dict, config) {
           reason: `Занятых бакетов ${counts.size} > 8; шаг задан справочником, пересчёт запрещён`,
         });
       }
+    } else if (kind === 'boolean') {
+      // Только true/false → «Есть»/«Нет». unknown не попадает в фильтр.
+      for (const r of filled) {
+        const v = r.attrs[attr.code];
+        if (v !== true && v !== false) continue;
+        const lab = displayValue(attr, v);
+        counts.set(lab, (counts.get(lab) || 0) + 1);
+      }
     } else {
       // Мультизначный атрибут даёт товару несколько значений фильтра:
       // «механическое, кнопочное» попадает и в «Механическое», и в «Кнопочное».
+      // Strict enum: значения вне value_aliases не создают filter value.
+      const strict = attr.value_aliases && Object.keys(attr.value_aliases).length > 0;
+      const allowed = strict
+        ? new Set(Object.keys(attr.value_aliases).map(k => displayValue(attr, k)))
+        : null;
       for (const r of filled) {
         const seen = new Set();
         for (const p of valueList(r.attrs[attr.code])) {
           const lab = displayValue(attr, p);
           if (!lab || seen.has(lab)) continue;
+          if (allowed && !allowed.has(lab)) continue;
           seen.add(lab);
           counts.set(lab, (counts.get(lab) || 0) + 1);
         }
@@ -249,6 +267,9 @@ export function assignFilterValues(rec, dict, debugFacets) {
       const maxLo = Math.max(...f.value.map(x => parseFloat(x)));
       const isLast = !!facet.open_last && rangeLo(n, facet) === maxLo;
       out[f.name] = [bucketLabel(n, { ...facet, kind: 'range' }, { isLast })];
+    } else if (facetKind(attr) === 'boolean') {
+      if (v !== true && v !== false) continue;
+      out[f.name] = [displayValue(attr, v)];
     } else {
       const labels = [];
       for (const p of valueList(v)) {

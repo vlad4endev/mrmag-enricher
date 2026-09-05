@@ -90,10 +90,11 @@ function singularProductType(name) {
 
 function snapCooling(v) {
   const t = String(v).toLowerCase().replace(/ё/g, 'е');
-  if (/без\s*no\s*frost|капельн/.test(t)) return 'капельная';
+  if (/без\s*no\s*frost|капельн/.test(t)) return 'Капельная';
   if (/no\s*frost|ноу\s*фрост|full\s*no|авторазмороз|автоматическ/.test(t)) {
-    return 'автоматическая разморозка (No Frost)';
+    return 'No Frost';
   }
+  if (/ручн/.test(t)) return 'Ручная разморозка';
   return specText(v);
 }
 
@@ -159,7 +160,10 @@ function specFromAttr(raw, attr) {
 }
 
 function inferFreezer(rec) {
-  const blob = `${rec.attrs?.freezer_pos || ''} ${rec.attrs?.fridge_type || ''} ${rec.name || ''}`;
+  const raw = rec.provenance?.fridge_type?.raw
+    || rec.provenance?.fridge_type?.evidence?.raw_value
+    || '';
+  const blob = `${rec.attrs?.freezer_pos || ''} ${rec.attrs?.fridge_type || ''} ${raw} ${rec.name || ''}`;
   const got = snapFreezer(blob);
   return ['нижнее', 'верхнее', 'боковое', 'нет морозильника'].includes(got) ? got : null;
 }

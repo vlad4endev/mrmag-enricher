@@ -24,6 +24,9 @@
  *   GET  /api/dictionaries/:id  атрибуты справочника
  *   PUT  /api/dictionaries/:id  сохранить атрибуты справочника
  *   DELETE /api/dictionaries/:id  удалить файл справочника
+ *   GET  /api/dictionaries/:id/audit  проверка схемы (мусор, дубликаты, типы)
+ *   GET|POST /api/dictionaries/:id/filter-preview  превью фасетов из schema
+ *   POST /api/dictionaries/:id/probe  атрибуция на одном товаре
  *   GET  /api/catalog?category=kholodilniki[&limit=N]
  *                             обход раздела: товары с описаниями + автофильтры
  *   POST /api/export          выгрузка заказчика: products + filters + held
@@ -73,6 +76,9 @@ import {
   dictionaryPath, dictDebugInfo, formatDictDebug,
   bootstrapDictionariesDir,
 } from './pipeline/dict.js';
+import {
+  auditDictionary, previewFilters, probeProductAttribution, coerceFacetForType,
+} from './pipeline/schema_audit.js';
 import { publicParserStatus } from './pipeline/search.js';
 import {
   loadSettings, saveSettings, publicSettings, applySettingsPatch,
@@ -367,7 +373,8 @@ async function apiDictionaryPut(req, res, id) {
   const raw = await readBody(req, 2_000_000);
   let body;
   try { body = JSON.parse(raw); } catch { return json(res, 400, { error: 'Тело запроса не JSON' }); }
-  const attrs = Array.isArray(body) ? body : body?.attrs;
+  let attrs = Array.isArray(body) ? body : body?.attrs;
+  if (Array.isArray(attrs)) attrs = attrs.map(a => coerceFacetForType(a));
   try {
     const saved = saveDictionaryAttrs(id, attrs, ROOT);
     json(res, 200, {
@@ -375,6 +382,7 @@ async function apiDictionaryPut(req, res, id) {
       name: categoryName(id, ROOT),
       file: `dictionaries/attributes_${id}.json`,
       attrs: saved,
+      audit: auditDictionary(saved),
     });
   } catch (e) {
     json(res, e.status || 400, { error: e.message });
@@ -392,6 +400,65 @@ function apiDictionaryDelete(res, id) {
 /** Заготовка строки атрибута для кнопки «Добавить» в UI. */
 function apiDictionaryBlankAttr(res) {
   json(res, 200, { attr: blankAttribute({ code: 'new_attr', name: 'Новый атрибут', order: 100 }) });
+}
+
+/** Аудит схемы категории: мусор, дубликаты, пустые ENUM при facet.enabled. */
+function apiDictionaryAudit(res, id) {
+  try {
+    const attrs = readDictionaryAttrs(id, ROOT);
+    const report = auditDictionary(attrs);
+    json(res, 200, {
+      id: String(id),
+      name: categoryName(id, ROOT),
+      file: `dictionaries/attributes_${id}.json`,
+      ...report,
+    });
+  } catch (e) {
+    json(res, e.status || 500, { error: e.message });
+  }
+}
+
+/**
+ * Превью фильтров из schema (+ опциональные products с normalized attrs).
+ * Body: { products?: [{ attrs }] } — без тела только каноны схемы (count=0).
+ */
+async function apiDictionaryFilterPreview(req, res, id) {
+  let products = [];
+  if (req.method === 'POST') {
+    const raw = await readBody(req, 8_000_000);
+    if (raw && String(raw).trim()) {
+      let body;
+      try { body = JSON.parse(raw); } catch { return json(res, 400, { error: 'Тело запроса не JSON' }); }
+      products = Array.isArray(body) ? body : (body?.products || body?.recs || []);
+    }
+  }
+  try {
+    const attrs = readDictionaryAttrs(id, ROOT);
+    json(res, 200, {
+      id: String(id),
+      name: categoryName(id, ROOT),
+      ...previewFilters(attrs, products),
+    });
+  } catch (e) {
+    json(res, e.status || 500, { error: e.message });
+  }
+}
+
+/** Проверка атрибуции на одном товаре { product }. */
+async function apiDictionaryProbe(req, res, id) {
+  const raw = await readBody(req, 2_000_000);
+  let body;
+  try { body = JSON.parse(raw); } catch { return json(res, 400, { error: 'Тело запроса не JSON' }); }
+  const product = body?.product || body;
+  try {
+    const attrs = readDictionaryAttrs(id, ROOT);
+    json(res, 200, {
+      id: String(id),
+      ...probeProductAttribution(attrs, product),
+    });
+  } catch (e) {
+    json(res, e.status || 500, { error: e.message });
+  }
 }
 
 /** Разделы из требований вместе с полями схемы — чтобы интерфейс не хардкодил. */
@@ -1301,6 +1368,14 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'GET'  && u.pathname === '/api/dictionaries') return apiDictionariesList(res);
     if (req.method === 'POST' && u.pathname === '/api/dictionaries') return await apiDictionaryCreate(req, res);
     if (req.method === 'GET'  && u.pathname === '/api/dictionaries/blank-attr') return apiDictionaryBlankAttr(res);
+    const dictAudit = u.pathname.match(/^\/api\/dictionaries\/(\d+)\/audit$/);
+    if (dictAudit && req.method === 'GET') return apiDictionaryAudit(res, dictAudit[1]);
+    const dictPreview = u.pathname.match(/^\/api\/dictionaries\/(\d+)\/filter-preview$/);
+    if (dictPreview && (req.method === 'GET' || req.method === 'POST')) {
+      return await apiDictionaryFilterPreview(req, res, dictPreview[1]);
+    }
+    const dictProbe = u.pathname.match(/^\/api\/dictionaries\/(\d+)\/probe$/);
+    if (dictProbe && req.method === 'POST') return await apiDictionaryProbe(req, res, dictProbe[1]);
     const dictRoute = u.pathname.match(/^\/api\/dictionaries\/(\d+)$/);
     if (dictRoute) {
       const [, id] = dictRoute;

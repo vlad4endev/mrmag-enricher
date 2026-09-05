@@ -809,43 +809,99 @@ input[type=range]::-moz-range-thumb{
 }
 @keyframes stripes{to{transform:translateX(14px)}}
 
-/* Строка состояния прогона — карточка в 2–3 ряда: узкая колонка не даёт
-   уместить hint + таймер + кнопку в одну линию. */
+/* Карточка живого прогона: прогресс + пайплайн шагов текущего товара */
 .runline{
-  display:flex;flex-direction:column;align-items:stretch;gap:8px;
-  margin:0;padding:10px;background:var(--ac-w);border:1px solid var(--ac-b);
-  border-radius:var(--r);font-size:12px;color:var(--ac);font-weight:600;
-  min-width:0;overflow:hidden;
+  display:none;flex-direction:column;gap:10px;margin:0;padding:12px;
+  background:
+    radial-gradient(120% 80% at 0% 0%,color-mix(in srgb,var(--ac) 14%,transparent),transparent 55%),
+    var(--bg2);
+  border:1px solid var(--ac-b);border-radius:var(--r);min-width:0;overflow:hidden;
 }
-.runline .rl-top{
-  display:flex;align-items:center;gap:8px;min-width:0;
+.runline.on{display:flex}
+.runline .rl-top{display:flex;align-items:flex-start;gap:10px;min-width:0}
+.runline .rl-ring{
+  --p:0;flex-shrink:0;width:42px;height:42px;border-radius:50%;
+  background:conic-gradient(var(--ac) calc(var(--p) * 1%),var(--b1) 0);
+  display:grid;place-items:center;position:relative;
 }
-.runline .rl-top .flake{flex-shrink:0}
-.runline .rl-title{flex:1;min-width:0;line-height:1.3}
-.runline .rl-n{font-family:var(--mono);font-variant-numeric:tabular-nums}
-.runline .rl-t{
-  flex-shrink:0;color:var(--t2);font-weight:500;font-family:var(--mono);
-  font-variant-numeric:tabular-nums;font-size:11px;
+.runline .rl-ring::before{
+  content:"";position:absolute;inset:4px;border-radius:50%;background:var(--bg2);
 }
-.runline .rl-hint{
-  color:var(--t2);font-weight:500;font-size:11px;line-height:1.4;
-  margin:0;
+.runline .rl-ring span{
+  position:relative;font-family:var(--mono);font-size:10px;font-weight:700;
+  color:var(--ac);font-variant-numeric:tabular-nums;letter-spacing:-.02em;
 }
+.runline .rl-meta{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px}
+.runline .rl-kicker{
+  font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--ac);
+}
+.runline .rl-title{font-size:13px;font-weight:700;color:var(--t1);letter-spacing:-.02em;line-height:1.25}
+.runline .rl-n{font-family:var(--mono);font-variant-numeric:tabular-nums;color:var(--ac)}
+.runline .rl-sub{
+  font-size:11px;color:var(--t3);font-family:var(--mono);font-variant-numeric:tabular-nums;
+}
+.runline .rl-item{
+  font-size:12px;color:var(--t1);font-weight:550;line-height:1.35;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.runline .rl-item b{font-weight:650;color:var(--t2);margin-right:4px}
+.runline .rl-note{
+  margin:0;padding:8px 10px;border-radius:var(--r2);background:var(--bg3);
+  border:1px solid var(--b1);font-size:11.5px;color:var(--t2);line-height:1.4;
+  min-height:2.6em;
+}
+.runline .rl-note.on{border-color:var(--ac-b);color:var(--t1);background:var(--ac-w)}
+.runline .rl-note.warn{border-color:var(--abd);color:var(--amber);background:var(--abg)}
+.runline .rl-note.err{border-color:var(--rbd);color:var(--red);background:var(--rbg)}
+.runline .rl-note.ok{border-color:var(--gbd);color:var(--green);background:var(--gbg)}
 .runline .rl-stop{
   width:100%;border:1px solid var(--ac-b);background:var(--bg2);color:var(--ac);
-  font:inherit;font-weight:650;padding:7px 10px;border-radius:var(--r2);cursor:pointer;
-  text-align:center;
+  font:inherit;font-size:12px;font-weight:650;padding:8px 10px;border-radius:var(--r2);
+  cursor:pointer;text-align:center;transition:background .12s,border-color .12s;
 }
 .runline .rl-stop:hover{background:var(--bg3);border-color:var(--ac)}
 
-/* Пошаговый лог прогона — живой журнал под прогрессом */
+/* Пайплайн шагов одного товара */
+.pipe{
+  display:grid;grid-template-columns:repeat(4,1fr);gap:4px;margin:0;padding:0;list-style:none;
+}
+.pipe li{
+  position:relative;display:flex;flex-direction:column;align-items:center;gap:5px;
+  padding:8px 4px 6px;border-radius:var(--r2);background:var(--bg3);border:1px solid var(--b1);
+  text-align:center;min-width:0;transition:border-color .15s,background .15s,color .15s;
+}
+.pipe li::before{
+  content:"";width:8px;height:8px;border-radius:50%;background:var(--b2);flex-shrink:0;
+  transition:background .15s,box-shadow .15s,transform .15s;
+}
+.pipe .pipe-l{
+  font-size:10px;font-weight:650;color:var(--t3);letter-spacing:-.01em;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%;
+}
+.pipe li.done{border-color:var(--gbd);background:var(--gbg)}
+.pipe li.done::before{background:var(--green)}
+.pipe li.done .pipe-l{color:var(--green)}
+.pipe li.on{border-color:var(--ac-b);background:var(--ac-w)}
+.pipe li.on::before{
+  background:var(--ac);box-shadow:0 0 0 3px color-mix(in srgb,var(--ac) 22%,transparent);
+  animation:pipePulse 1.4s ease-in-out infinite;
+}
+.pipe li.on .pipe-l{color:var(--ac)}
+.pipe li.fail{border-color:var(--rbd);background:var(--rbg)}
+.pipe li.fail::before{background:var(--red)}
+.pipe li.fail .pipe-l{color:var(--red)}
+.pipe li.skip{border-color:var(--b1);background:var(--bg4)}
+.pipe li.skip::before{background:var(--t3)}
+@keyframes pipePulse{0%,100%{transform:scale(1)}50%{transform:scale(1.15)}}
+
+/* Журнал шагов — лента событий, не сырой терминал */
 .runlog{
   display:none;flex-direction:column;flex-shrink:0;
   border-bottom:1px solid var(--b1);background:var(--bg3);min-height:0;
 }
 .runlog.on{display:flex}
 .runlog-h{
-  display:flex;align-items:center;flex-wrap:wrap;gap:6px 8px;padding:7px 10px;
+  display:flex;align-items:center;flex-wrap:wrap;gap:6px 8px;padding:8px 10px;
   border-bottom:1px solid var(--b1);flex-shrink:0;min-width:0;
 }
 .runlog-t{flex:1 1 auto;min-width:0;font-size:11px;font-weight:650;color:var(--t1);letter-spacing:-.02em}
@@ -858,18 +914,60 @@ input[type=range]::-moz-range-thumb{
 .runlog-copy:hover,.runlog-clr:hover{border-color:var(--ac);color:var(--ac);background:var(--ac-w)}
 .runlog-copy.ok{border-color:var(--gbd);color:var(--green);background:var(--gbg)}
 .runlog-body{
-  overflow-y:auto;padding:6px 8px 8px;margin:0;max-height:200px;
-  font-family:var(--mono);font-size:10.5px;line-height:1.45;color:var(--t2);
-  white-space:pre-wrap;word-break:break-word;min-height:56px;
+  overflow-y:auto;padding:8px;margin:0;max-height:220px;
+  display:flex;flex-direction:column;gap:4px;min-height:64px;
 }
-.runlog-line{display:block;padding:1px 0}
-.runlog-line .rl-ts{color:var(--t3);margin-right:6px}
-.runlog-line.l-ok{color:var(--green)}
-.runlog-line.l-err{color:var(--red)}
-.runlog-line.l-warn{color:var(--amber)}
-.runlog-line.l-skip{color:var(--t3)}
-.runlog-line.l-info{color:var(--t2)}
-.runlog-empty{color:var(--t3);font-style:normal;padding:8px 2px}
+.runlog-empty{color:var(--t3);font-size:11.5px;padding:10px 4px;line-height:1.45}
+.rl-ev{
+  display:grid;grid-template-columns:52px 72px minmax(0,1fr);gap:8px;align-items:start;
+  padding:7px 8px;border-radius:var(--r2);background:var(--bg2);border:1px solid var(--b1);
+}
+.rl-ev .rl-ts{
+  font-family:var(--mono);font-size:10px;color:var(--t3);padding-top:2px;
+  font-variant-numeric:tabular-nums;
+}
+.rl-ev .rl-tag{
+  font-size:9.5px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;
+  padding:3px 6px;border-radius:999px;text-align:center;line-height:1.2;
+  background:var(--bg3);color:var(--t3);border:1px solid var(--b1);white-space:nowrap;
+}
+.rl-ev .rl-msg{font-size:11.5px;color:var(--t1);line-height:1.4;word-break:break-word;min-width:0}
+.rl-ev.l-ok .rl-tag{background:var(--gbg);color:var(--green);border-color:var(--gbd)}
+.rl-ev.l-err .rl-tag{background:var(--rbg);color:var(--red);border-color:var(--rbd)}
+.rl-ev.l-warn .rl-tag{background:var(--abg);color:var(--amber);border-color:var(--abd)}
+.rl-ev.l-skip .rl-tag{background:var(--bg4);color:var(--t3)}
+.rl-ev.l-info .rl-tag{background:var(--ac-w);color:var(--ac);border-color:var(--ac-b)}
+.rl-ev.is-item{
+  background:transparent;border-color:transparent;padding:10px 2px 2px;
+  grid-template-columns:52px minmax(0,1fr);margin-top:2px;
+}
+.rl-ev.is-item .rl-msg{font-weight:650;color:var(--t1);font-size:12px}
+.rl-ev.is-item .rl-tag{display:none}
+
+/* Правая панель: живой пайплайн текущего товара */
+.livepipe{
+  display:flex;flex-direction:column;gap:14px;padding:4px 2px 8px;animation:riseIn .28s ease-out both;
+}
+.livepipe-k{
+  font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--ac);
+}
+.livepipe-h{font-size:16px;font-weight:700;letter-spacing:-.03em;color:var(--t1);line-height:1.3}
+.livepipe .pipe{grid-template-columns:repeat(4,minmax(0,1fr))}
+.livepipe-feed{
+  display:flex;flex-direction:column;gap:6px;margin:0;padding:0;list-style:none;
+}
+.livepipe-feed li{
+  display:grid;grid-template-columns:10px minmax(0,1fr);gap:8px;align-items:start;
+  font-size:12px;color:var(--t2);line-height:1.4;
+}
+.livepipe-feed li::before{
+  content:"";width:8px;height:8px;margin-top:5px;border-radius:50%;background:var(--b2);
+}
+.livepipe-feed li.on{color:var(--t1);font-weight:550}
+.livepipe-feed li.on::before{background:var(--ac);box-shadow:0 0 0 3px color-mix(in srgb,var(--ac) 20%,transparent)}
+.livepipe-feed li.ok::before{background:var(--green)}
+.livepipe-feed li.err::before{background:var(--red)}
+.livepipe-feed li.warn::before{background:var(--amber)}
 
 /* Товар, который обрабатывается прямо сейчас */
 .ri.s-run{border-left-color:var(--ac);background:var(--ac-w);animation:breathe 1.6s ease-in-out infinite}
@@ -914,7 +1012,8 @@ input[type=range]::-moz-range-thumb{
 @media(prefers-reduced-motion:reduce){
   /* Движение убираем, различимость состояний оставляем */
   .flake.spinning,.ri.s-run,.ri-st.run::before,.sk,.foot.done,
-  .step.done .step-n,.sp,.fc,.warnbox,.seobox,.mid-bar.running .mid-bar-f::after{
+  .step.done .step-n,.sp,.fc,.warnbox,.seobox,.mid-bar.running .mid-bar-f::after,
+  .pipe li.on::before{
     animation:none!important
   }
   .ri.s-run{background:var(--ac-w)}
@@ -1070,7 +1169,7 @@ input[type=range]::-moz-range-thumb{
   <!-- СПИСОК ТОВАРОВ: он же индикатор прогресса во время работы -->
   <div class="mid">
     <div class="mid-h">
-      <div class="runline" id="runline" style="display:none"></div>
+      <div class="runline" id="runline" aria-live="polite"></div>
       <div class="filters" id="filters">
         <button class="fbtn on" data-f="all" onclick="setFilter(this)" disabled>Все</button>
         <button class="fbtn" data-f="thin" onclick="setFilter(this)" disabled title="Нет описания и характеристик — такой товар модели обогащать не из чего">Без данных</button>
@@ -1089,12 +1188,12 @@ input[type=range]::-moz-range-thumb{
     <div class="mid-bar"><div class="mid-bar-f" id="midBarF"></div></div>
     <div class="runlog" id="runLog" aria-live="polite">
       <div class="runlog-h">
-        <span class="runlog-t">Лог обогащения</span>
-        <span class="runlog-n" id="runLogN">0</span>
+        <span class="runlog-t">Ход обогащения</span>
+        <span class="runlog-n" id="runLogN">0 шагов</span>
         <button type="button" class="runlog-copy" id="runLogCopy" onclick="copyRunLog()" title="Скопировать весь процесс">Копировать</button>
-        <button type="button" class="runlog-clr" id="runLogClr" onclick="clearRunLog()" title="Очистить лог на экране">✕</button>
+        <button type="button" class="runlog-clr" id="runLogClr" onclick="clearRunLog()" title="Скрыть журнал на экране">✕</button>
       </div>
-      <pre class="runlog-body" id="runLogBody"><span class="runlog-empty">Здесь появятся шаги прогона.</span></pre>
+      <div class="runlog-body" id="runLogBody"><div class="runlog-empty">Здесь появятся шаги: проверка → сеть → модель → готово.</div></div>
     </div>
     <div class="mid-list" id="midList">
       <div class="mid-empty">Здесь появятся товары.<br>Загрузите их в шаге 2.</div>
@@ -2833,29 +2932,42 @@ function dur(ms){
 /**
  * Строка «идёт обработка» над списком. Остаток считается по фактической
  * скорости этого прогона, а не по номинальному лимиту — так честнее.
+ * Пайплайн шагов берётся из живого лога сервера (gate → web → model → done).
  */
 function renderRunline(){
   const el=document.getElementById('runline');
   const bar=document.getElementById('mid-bar-holder')||document.querySelector('.mid-bar');
   if(!running){
-    el.style.display='none';
+    el.classList.remove('on');
+    el.innerHTML='';
     bar?.classList.remove('running');
     document.getElementById('rbFill').style.width='0';
     return;
   }
   const done=runQueue?runQueue.filter(i=>results[i]).length:doneRes().length;
   const total=runQueue?runQueue.length:items.length;
+  const pct=total?Math.round(done/total*100):0;
   const elapsed=Date.now()-runT0;
   const eta=done>0?(elapsed/done)*(total-done):null;
-  el.style.display='flex';
+  const live=liveItemState(runLog);
+  const itemName=live?.title
+    || (runIdx>=0?(items[runIdx]?.name||items[runIdx]?.title||items[runIdx]?.sku||`Товар №${runIdx+1}`):'—');
+  const noteCls=live?.level==='err'?'err':live?.level==='warn'?'warn':live?.level==='ok'?'ok':live?.note?'on':'';
+  el.classList.add('on');
   el.innerHTML=
-    `<div class="rl-top">${flake('spinning')}`
-    +`<span class="rl-title">Обрабатываем <span class="rl-n">${Math.min(done+1,total)} из ${total}</span></span>`
-    +`<span class="rl-t">${dur(elapsed)}${eta!=null?` · ~${dur(eta)}`:''}</span></div>`
-    +`<p class="rl-hint">Вкладку можно закрыть — считает сервер</p>`
-    +`<button type="button" class="rl-stop" onclick="stopJob()">Остановить</button>`;
+    `<div class="rl-top">`
+    +`<div class="rl-ring" style="--p:${pct}" aria-hidden="true"><span>${pct}%</span></div>`
+    +`<div class="rl-meta">`
+    +`<div class="rl-kicker">Огранка</div>`
+    +`<div class="rl-title"><span class="rl-n">${Math.min(done+1,total)}</span> из ${total}</div>`
+    +`<div class="rl-sub">${dur(elapsed)}${eta!=null?` · осталось ~${dur(eta)}`:''}</div>`
+    +`</div></div>`
+    +`<div class="rl-item"><b>Сейчас</b>${esc(String(itemName))}</div>`
+    +pipeHtml(live)
+    +`<p class="rl-note ${noteCls}">${esc(live?.note||'Готовим следующий шаг…')}</p>`
+    +`<button type="button" class="rl-stop" onclick="stopJob()">Остановить после текущего</button>`;
   bar?.classList.add('running');
-  document.getElementById('rbFill').style.width=total?`${Math.round(done/total*100)}%`:'0';
+  document.getElementById('rbFill').style.width=total?`${pct}%`:'0';
 }
 
 function renderList(){

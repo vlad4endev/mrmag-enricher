@@ -45,6 +45,7 @@ class El {
   click() {}
   setAttribute(k, v) { this._attr = this._attr || {}; this._attr[k] = String(v); }
   getAttribute(k) { return this._attr?.[k] ?? null; }
+  removeAttribute(k) { if (this._attr) delete this._attr[k]; }
 }
 
 const html = fs.readFileSync(path.join(ROOT, 'index_final.html'), 'utf-8');
@@ -108,6 +109,7 @@ function fakeJobs(make, { status = 'done', tail = 0, id = 'job-test', seed = nul
         id, status: st, model: job.model, total: results.length, done, indices: job.indices,
         from, results: results.slice(from), products: job.products,
         started_at: 1000, finished_at: 2000,
+        log_from: 0, log_total: 0, log: [],
         usage: {
           prompt_tokens: 0, completion_tokens: 0, cost: 0,
           ok:   results.filter(r => r?.enriched).length,
@@ -140,6 +142,7 @@ export const api={syncSteps,setCnt,setCntFree,applyCnt,applySource,setSource,pic
   loadCategories,catOf,renderModelList,filterModels,renderParser,loadParser,
   applyDates,clearDates,renderDates,passesFilter,queued,onProdInput,apiJson,run,
   stopJob,follow,attachJob,resumeJob,applyJob,finishRun,
+  resetRunLog,applyLog,renderRunLog,copyRunLog,clearRunLog,logLineText,
   loadFile,classifyPayload,normalizeCatalogProduct,catIdFromFilename,catNameFromId,
   productsFromPayload,isFiltersPayload,filtersForExport,
   showPage,setTab,renderSettings,addProvider,removeProvider,addEngine,readSettingsPatch,
@@ -160,6 +163,8 @@ export const st={get items(){return items},set items(v){items=v},
   get jobId(){return jobId},set jobId(v){jobId=v},
   get jobPos(){return jobPos},set jobPos(v){jobPos=v},
   get following(){return following},set following(v){following=v},
+  get runLog(){return runLog},set runLog(v){runLog=v},
+  get logCursor(){return logCursor},set logCursor(v){logCursor=v},
   get dateKey(){return dateKey},
   get srcFilters(){return srcFilters}};
 `;
@@ -242,7 +247,7 @@ t('спор текста с атрибутами виден до прогона'
   ];
   api.setFilter(F('all'));
   api.renderList();
-  assert.strictEqual(F('conf').textContent, 'Ошибки каталога 1');
+  assert.strictEqual(F('conf').textContent, 'Каталог 1');
   api.setFilter(F('conf'));
   assert.deepStrictEqual(api.queued(), [1]);
   assert.match(G('midList').innerHTML, /каталог противоречит себе/, 'причина видна в строке');
@@ -1042,7 +1047,7 @@ t('строка прогресса показывает остаток по фа
   assert.strictEqual(G('runline').style.display, 'flex');
   assert.match(h, /Обрабатываем/);
   assert.match(h, /2 из 3/, 'должен показывать номер текущего товара');
-  assert.match(h, /осталось ~8с/, 'по 4с на товар и 2 осталось → ~8с. Получено: ' + h);
+  assert.match(h, /~8с/, 'по 4с на товар и 2 осталось → ~8с. Получено: ' + h);
   assert.match(h, /flake spinning/, 'снежинка должна вращаться');
 });
 t('заливка кнопки отражает долю выполненного', () => {
@@ -1065,7 +1070,8 @@ console.log('\nТема оформления');
 t('по умолчанию светлая', () => {
   localStorage.removeItem('enricher.theme');
   api.initTheme();
-  assert.strictEqual(document.documentElement.getAttribute('data-theme'), 'light');
+  // Светлая — без data-theme: тёмная включается только явным атрибутом.
+  assert.strictEqual(document.documentElement.getAttribute('data-theme'), null);
   assert.strictEqual(G('themeIcon').textContent, '☾');
 });
 t('переключение сохраняется', () => {
@@ -1078,15 +1084,16 @@ t('переключение сохраняется', () => {
 });
 t('обратно на светлую', () => {
   api.toggleTheme();
-  assert.strictEqual(document.documentElement.getAttribute('data-theme'), 'light');
+  assert.strictEqual(document.documentElement.getAttribute('data-theme'), null);
   assert.strictEqual(localStorage.getItem('enricher.theme'), 'light');
 });
-t('системная тёмная уважается при первом заходе', () => {
+t('системная тёмная не навязывает тему без явного выбора', () => {
   localStorage.removeItem('enricher.theme');
   const real = globalThis.window.matchMedia;
   globalThis.window.matchMedia = () => ({ matches: true });
   try { api.initTheme(); } finally { globalThis.window.matchMedia = real; }
-  assert.strictEqual(document.documentElement.getAttribute('data-theme'), 'dark');
+  // Тёмная только по явному выбору — системная preference не подхватывается.
+  assert.strictEqual(document.documentElement.getAttribute('data-theme'), null);
 });
 
 console.log('\nВыбор модели без справочника цен');
@@ -1320,6 +1327,61 @@ await tAsync('200 с пустым телом не выдаётся за успе
   try { await api.apiJson('/api/categories'); assert.fail('ошибка должна была вылететь'); }
   catch (e) { assert.match(e.message, /не JSON/); }
   finally { globalThis.fetch = realFetch; }
+});
+
+console.log('\nПошаговый лог обогащения');
+t('лог собирается по шагам и копируется текстом', () => {
+  api.resetRunLog();
+  assert.strictEqual(st.runLog.length, 0);
+  assert.ok(!G('runLog').classList.contains('on'), 'пустой лог скрыт, пока нет прогона');
+
+  api.applyLog({
+    log_from: 0, log_total: 3,
+    log: [
+      { t: 1_700_000_000_000, level: 'info', step: 'job', msg: 'Старт прогона: 2 товаров, модель test' },
+      { t: 1_700_000_000_100, level: 'info', step: 'item', pos: 0, msg: '[1/2] Холодильник A' },
+      { t: 1_700_000_000_200, level: 'ok', step: 'done', pos: 0, msg: '✓ Готово · in=10 out=5' },
+    ],
+  });
+  assert.strictEqual(st.runLog.length, 3);
+  assert.strictEqual(st.logCursor, 3);
+  assert.ok(G('runLog').classList.contains('on'));
+  assert.match(G('runLogBody').innerHTML, /Старт прогона/);
+  assert.match(G('runLogBody').innerHTML, /l-ok/);
+  assert.strictEqual(G('runLogN').textContent, '3');
+
+  // Хвост дописывается, не дублирует.
+  api.applyLog({
+    log_from: 3, log_total: 4,
+    log: [{ t: 1_700_000_000_300, level: 'err', step: 'error', pos: 1, msg: '✗ Ошибка: таймаут' }],
+  });
+  assert.strictEqual(st.runLog.length, 4);
+  assert.match(G('runLogBody').innerHTML, /таймаут/);
+  assert.match(api.logLineText(st.runLog[0]), /Старт прогона/);
+});
+
+await tAsync('копирование процесса кладёт весь лог в буфер', async () => {
+  let copied = '';
+  const real = globalThis.navigator.clipboard.writeText;
+  globalThis.navigator.clipboard.writeText = t => { copied = t; return Promise.resolve(); };
+  try {
+    st.allModels = [MODEL]; api.pick(MODEL.id);
+    await api.copyRunLog();
+  } finally {
+    globalThis.navigator.clipboard.writeText = real;
+  }
+  assert.match(copied, /Лог обогащения/);
+  assert.match(copied, /Старт прогона/);
+  assert.match(copied, /таймаут/);
+  assert.match(G('runLogCopy').textContent, /Скопировано|Копировать/);
+});
+
+t('очистка лога на экране не сбрасывает курсор сервера', () => {
+  const before = st.logCursor;
+  api.clearRunLog();
+  assert.strictEqual(st.runLog.length, 0);
+  assert.strictEqual(st.logCursor, before, 'курсор остаётся — иначе придут старые строки снова');
+  assert.strictEqual(G('runLogN').textContent, '0');
 });
 
 

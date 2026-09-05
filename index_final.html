@@ -787,10 +787,11 @@ input[type=range]::-moz-range-thumb{
 .set-prompt-meta{display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:space-between;margin-bottom:8px}
 .set-prompt-meta .set-row{flex-direction:row;align-items:center;gap:8px}
 .set-prompt-meta select{min-width:180px}
-.dict-layout{display:flex;flex-direction:column;gap:12px}
+.dict-layout{display:flex;flex-direction:column;gap:14px}
 .dict-toolbar{display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end}
 .dict-toolbar .set-row{flex:1;min-width:200px}
-.dict-meta{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.dict-meta{display:block;width:100%}
+.dict-meta .sch-stats{margin-top:0}
 .dict-create{display:none;margin-top:12px;padding-top:12px;border-top:1px solid var(--b1)}
 .dict-create.open{display:block}
 .dict-table-wrap{overflow:auto;max-height:min(62vh,640px);border:1px solid var(--b1);border-radius:var(--r)}
@@ -807,33 +808,134 @@ input[type=range]::-moz-range-thumb{
 .dict-table .chk input{width:auto;accent-color:var(--ac)}
 .dict-facet-off{opacity:.55}
 .dict-row-actions{display:flex;gap:4px;justify-content:flex-end}
-.dict-foot{display:flex;flex-wrap:wrap;gap:8px;padding:10px;border-top:1px solid var(--b1);background:var(--bg2)}
-.sch-shell{display:grid;grid-template-columns:1fr minmax(300px,380px);gap:12px;align-items:start}
+.dict-foot{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:12px 14px;border-top:1px solid var(--b1);background:var(--bg2)}
+
+/* ── Конструктор атрибутов: список вместо плотной таблицы ── */
+.sch-shell{display:grid;grid-template-columns:minmax(0,1fr) minmax(320px,400px);gap:14px;align-items:start}
 @media(max-width:1100px){.sch-shell{grid-template-columns:1fr}}
-.sch-badge{display:inline-block;font-size:10px;font-weight:600;padding:2px 6px;border-radius:4px;border:1px solid var(--b1)}
-.sch-ok{background:#e8f5e9;color:#1b5e20;border-color:#a5d6a7}
+
+.sch-stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;width:100%;margin-top:4px}
+@media(max-width:700px){.sch-stats{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.sch-stat{
+  display:flex;flex-direction:column;gap:2px;padding:10px 12px;
+  border:1px solid var(--b1);border-radius:var(--r);background:var(--bg3);
+}
+.sch-stat-v{font-size:18px;font-weight:700;letter-spacing:-.03em;color:var(--t1);line-height:1.1}
+.sch-stat-l{font-size:11px;color:var(--t3);font-weight:550}
+.sch-stat.warn .sch-stat-v{color:var(--amber)}
+.sch-stat.err .sch-stat-v{color:var(--red)}
+.sch-stat.dirty{border-color:var(--abd);background:var(--abg)}
+
+.sch-list-card{padding:0;overflow:hidden;border:1px solid var(--b1);border-radius:var(--r);background:var(--bg2)}
+.sch-list-bar{
+  display:flex;flex-wrap:wrap;gap:8px;align-items:center;
+  padding:10px 12px;border-bottom:1px solid var(--b1);background:var(--bg3);
+}
+.sch-search{
+  flex:1;min-width:160px;height:34px;padding:0 12px 0 34px;border:1px solid var(--b1);
+  border-radius:var(--r2);background:var(--bg2) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%237b8799' stroke-width='2'%3E%3Ccircle cx='11' cy='11' r='7'/%3E%3Cpath d='M20 20l-3-3'/%3E%3C/svg%3E") 10px 50% no-repeat;
+  color:var(--t1);font-size:13px;
+}
+.sch-search:focus{border-color:var(--ac);outline:none;box-shadow:var(--focus)}
+.sch-filters{display:flex;flex-wrap:wrap;gap:4px}
+.sch-filter{
+  height:30px;padding:0 10px;border:1px solid var(--b1);border-radius:999px;
+  background:var(--bg2);color:var(--t2);font-size:12px;font-weight:600;cursor:pointer;
+}
+.sch-filter:hover{border-color:var(--ac-b);color:var(--ac)}
+.sch-filter.on{background:var(--ac-w);border-color:var(--ac-b);color:var(--ac)}
+
+.sch-list{max-height:min(58vh,620px);overflow:auto;padding:6px}
+.sch-empty{padding:28px 16px;text-align:center;color:var(--t3);font-size:13px}
+
+.sch-row{
+  display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px 14px;align-items:center;
+  padding:12px 12px 12px 14px;margin-bottom:4px;border:1px solid transparent;
+  border-radius:var(--r);cursor:pointer;position:relative;background:transparent;
+  transition:background .12s,border-color .12s;
+}
+.sch-row::before{
+  content:'';position:absolute;left:0;top:10px;bottom:10px;width:3px;border-radius:0 2px 2px 0;
+  background:transparent;
+}
+.sch-row:hover{background:var(--bg3);border-color:var(--b1)}
+.sch-row.on{background:var(--ac-w);border-color:var(--ac-b)}
+.sch-row.on::before{background:var(--ac)}
+.sch-row.off{opacity:.62}
+.sch-row.off:hover{opacity:.85}
+
+.sch-row-main{min-width:0;display:flex;flex-direction:column;gap:4px}
+.sch-row-title{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px 8px}
+.sch-row-name{font-size:14px;font-weight:700;letter-spacing:-.02em;color:var(--t1);line-height:1.25}
+.sch-row-unit{font-size:12px;color:var(--t3);font-weight:500}
+.sch-row-meta{display:flex;flex-wrap:wrap;gap:6px 10px;align-items:center;font-size:12px;color:var(--t3)}
+.sch-row-code{
+  font-family:var(--mono);font-size:11.5px;color:var(--ac);background:var(--bg);
+  border:1px solid var(--b1);padding:1px 6px;border-radius:4px;
+}
+.sch-row-side{display:flex;flex-wrap:wrap;gap:6px;justify-content:flex-end;align-items:center}
+.sch-chip{
+  display:inline-flex;align-items:center;gap:4px;height:24px;padding:0 8px;
+  border-radius:999px;border:1px solid var(--b1);background:var(--bg2);
+  font-size:11px;font-weight:650;color:var(--t2);white-space:nowrap;
+}
+.sch-chip.facet{background:var(--ac-w);border-color:var(--ac-b);color:var(--ac)}
+.sch-chip.muted{opacity:.75}
+.sch-chip .n{font-variant-numeric:tabular-nums;font-weight:700;color:var(--t1)}
+
+.sch-badge{display:inline-flex;align-items:center;height:22px;padding:0 8px;border-radius:999px;font-size:10px;font-weight:700;letter-spacing:.02em;border:1px solid var(--b1)}
+.sch-ok{background:var(--ac-w);color:var(--ac);border-color:var(--ac-b)}
 .sch-warn{background:var(--abg);color:var(--amber);border-color:var(--abd)}
-.sch-err{background:#fce8e6;color:#b71c1c;border-color:#f5c6c2}
-.sch-row-on td{background:var(--ac-bg,rgba(0,100,200,.08))!important}
-.sch-drawer{display:none;position:sticky;top:12px;max-height:calc(100vh - 100px);overflow:auto;border:1px solid var(--b1);border-radius:var(--r);background:var(--bg2);padding:12px}
+.sch-err{background:var(--rbg);color:var(--red);border-color:var(--rbd)}
+
+.sch-drawer{
+  display:none;position:sticky;top:12px;max-height:calc(100vh - 100px);overflow:auto;
+  border:1px solid var(--b1);border-radius:var(--r);background:var(--bg2);
+  box-shadow:0 8px 24px rgba(11,18,32,.06);
+}
+:root[data-theme="dark"] .sch-drawer{box-shadow:0 8px 28px rgba(0,0,0,.35)}
 .sch-drawer.open{display:block}
-.sch-drawer-h{font-weight:700;font-size:15px;margin-bottom:10px}
+.sch-drawer-h{
+  position:sticky;top:0;z-index:2;padding:14px 16px 12px;margin:0;
+  font-weight:700;font-size:15px;letter-spacing:-.02em;color:var(--t1);
+  background:linear-gradient(180deg,var(--bg2),var(--bg2) 70%,transparent);
+  border-bottom:1px solid var(--b1);
+}
+.sch-drawer-body{padding:4px 16px 16px}
+.sch-drawer-body .set-row{margin-bottom:10px}
+.sch-drawer-body .set-check{margin:4px 0 10px}
 .sch-block{margin-top:14px;padding-top:12px;border-top:1px solid var(--b1)}
-.sch-block-h{font-weight:600;margin-bottom:6px}
-.sch-canon{margin-bottom:10px;padding:8px;border:1px solid var(--b1);border-radius:var(--r);background:var(--bg)}
+.sch-block-h{font-weight:650;margin-bottom:6px;font-size:13px;color:var(--t1)}
+.sch-canon{margin-bottom:10px;padding:10px;border:1px solid var(--b1);border-radius:var(--r);background:var(--bg3)}
 .sch-canon-h{display:flex;gap:6px;margin-bottom:6px}
-.sch-canon textarea,.sch-drawer textarea{width:100%;font-size:12px;padding:6px;border:1px solid var(--b1);border-radius:6px;background:var(--bg);color:var(--t1);resize:vertical}
+.sch-canon textarea,.sch-drawer textarea,#schImportText{
+  width:100%;font-size:12.5px;padding:8px 10px;border:1px solid var(--b1);border-radius:var(--r2);
+  background:var(--bg);color:var(--t1);resize:vertical;line-height:1.4;
+}
+.sch-drawer input[type="text"],.sch-drawer input[type="number"],.sch-drawer select{
+  width:100%;height:34px;padding:0 10px;border:1px solid var(--b1);border-radius:var(--r2);
+  background:var(--bg);color:var(--t1);font-size:13px;
+}
 .sch-side{display:flex;flex-direction:column;gap:12px}
-.sch-issue-block{margin-bottom:10px;padding:8px;border:1px solid var(--b1);border-radius:var(--r)}
-.sch-issue-h{margin-bottom:4px}
-.sch-issue-block ul{margin:0;padding-left:18px;font-size:12px}
+.sch-issue-block{margin-bottom:10px;padding:10px 12px;border:1px solid var(--b1);border-radius:var(--r);background:var(--bg3)}
+.sch-issue-h{margin-bottom:6px;display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.sch-issue-block ul{margin:0;padding-left:18px;font-size:12.5px;color:var(--t2)}
 .sch-acts{display:inline-flex;gap:4px;margin-left:6px;flex-wrap:wrap}
-.sch-prev-card{border:1px solid var(--b1);border-radius:var(--r);padding:8px;margin-bottom:8px}
-.sch-prev-h{font-weight:600;margin-bottom:6px;font-size:13px}
-.sch-prev-row{display:flex;justify-content:space-between;gap:8px;font-size:12px;padding:2px 0;border-bottom:1px dashed var(--b1)}
-.sch-error{color:#b71c1c}.sch-warn{}.sch-info{color:var(--t3)}
+.sch-prev-card{border:1px solid var(--b1);border-radius:var(--r);padding:10px 12px;margin-bottom:8px;background:var(--bg3)}
+.sch-prev-h{font-weight:650;margin-bottom:8px;font-size:13px;display:flex;justify-content:space-between;gap:8px}
+.sch-prev-row{display:flex;justify-content:space-between;gap:8px;font-size:12.5px;padding:4px 0;border-bottom:1px solid var(--b1)}
+.sch-prev-row:last-child{border-bottom:0}
+.sch-error{color:var(--red)}.sch-info{color:var(--t3)}
+.sch-import-list{display:flex;flex-direction:column;gap:2px;max-height:360px;overflow:auto;border:1px solid var(--b1);border-radius:var(--r);padding:6px;background:var(--bg3)}
+.sch-import-row{display:flex;gap:8px;align-items:flex-start;font-size:12.5px;padding:8px;border-radius:var(--r2)}
+.sch-import-row:hover{background:var(--bg2)}
+.sch-import-row input{margin-top:3px;accent-color:var(--ac)}
+.sch-import-body{flex:1;min-width:0}
+#schImportText{font-family:var(--mono,ui-monospace,monospace)}
 @media(max-width:900px){
-  .dict-table-wrap{max-height:none}
+  .dict-table-wrap,.sch-list{max-height:none}
+  .sch-row{grid-template-columns:1fr}
+  .sch-row-side{justify-content:flex-start}
 }
 @media(max-width:768px){
   .set-body{flex-direction:column;height:auto;overflow:visible}
@@ -1576,32 +1678,35 @@ input[type=range]::-moz-range-thumb{
 
           <div class="sch-shell">
             <div>
-              <div class="set-card" style="padding:0;overflow:hidden">
-                <div class="dict-table-wrap">
-                  <table class="dict-table" id="dictTable">
-                    <thead>
-                      <tr>
-                        <th style="width:3.5rem">#</th>
-                        <th style="width:7rem">key</th>
-                        <th>Название</th>
-                        <th style="width:5.5rem">Тип</th>
-                        <th style="width:3rem" title="Filter enabled">Ф</th>
-                        <th style="width:5rem">Фильтр</th>
-                        <th style="width:4rem">Знач.</th>
-                        <th style="width:4rem" title="coverage_final / товары">Покр.</th>
-                        <th style="width:4rem">Статус</th>
-                        <th style="width:3rem">⚠</th>
-                      </tr>
-                    </thead>
-                    <tbody id="dictBody">
-                      <tr><td colspan="10" class="muted">Выберите категорию…</td></tr>
-                    </tbody>
-                  </table>
+              <div class="sch-list-card">
+                <div class="sch-list-bar">
+                  <input type="search" class="sch-search" id="schSearch" placeholder="Поиск по имени или key…" oninput="onSchemaListFilter()" autocomplete="off">
+                  <div class="sch-filters" role="group" aria-label="Фильтр списка">
+                    <button type="button" class="sch-filter on" data-sch-filter="all" onclick="setSchemaListFilter('all',this)">Все</button>
+                    <button type="button" class="sch-filter" data-sch-filter="facet" onclick="setSchemaListFilter('facet',this)">В фильтрах</button>
+                    <button type="button" class="sch-filter" data-sch-filter="problems" onclick="setSchemaListFilter('problems',this)">Проблемы</button>
+                    <button type="button" class="sch-filter" data-sch-filter="enum" onclick="setSchemaListFilter('enum',this)">ENUM</button>
+                  </div>
+                </div>
+                <div class="sch-list" id="dictBody" role="list">
+                  <div class="sch-empty">Выберите категорию…</div>
                 </div>
                 <div class="dict-foot">
                   <button type="button" class="sbtn ghost" id="dictAddAttr" onclick="addDictAttr()" disabled><i class="ti ti-row-insert-bottom"></i> Добавить атрибут</button>
-                  <span class="hint" style="margin:0">Клик по строке — редактор справа. Schema → canonical → filter; AI не создаёт новые значения.</span>
+                  <span class="hint" style="margin:0" id="schListHint">Клик по строке открывает редактор справа</span>
                 </div>
+              </div>
+              <div class="set-card" style="margin-top:12px">
+                <div class="set-card-h"><b>Импорт списка → атрибуты</b></div>
+                <p class="hint" style="margin-top:0">Вставьте названия характеристик или строки «ключ — значение» из карточки/PDF. ИИ разложит по существующим атрибутам (синонимы/каноны) или предложит новые. Применение только после вашего подтверждения.</p>
+                <textarea id="schImportText" rows="6" placeholder="Тип холодильника&#10;Расположение морозильной камеры — Сверху&#10;Зоны свежести&#10;Общий объём — 370 л&#10;Дисплей — есть"></textarea>
+                <div class="set-actions" style="margin-top:8px">
+                  <button type="button" class="sbtn primary" onclick="runSchemaImport('ai')"><i class="ti ti-sparkles"></i> Разобрать с ИИ</button>
+                  <button type="button" class="sbtn ghost" onclick="runSchemaImport('heuristic')">Без ИИ (эвристика)</button>
+                  <button type="button" class="sbtn ghost" id="schImportApplyBtn" onclick="applySchemaImport()" disabled>Применить выбранные</button>
+                </div>
+                <div id="schImportMeta" class="muted" style="margin-top:6px"></div>
+                <div id="schImportBox" style="margin-top:8px"></div>
               </div>
               <div class="set-card" style="margin-top:12px">
                 <div class="set-card-h"><b>Проверка значений</b></div>
@@ -1614,7 +1719,7 @@ input[type=range]::-moz-range-thumb{
             </div>
             <aside class="sch-drawer" id="schDrawer">
               <div class="sch-drawer-h" id="schDrawerTitle">Атрибут</div>
-              <div class="sch-drawer-body muted">Выберите атрибут в таблице</div>
+              <div class="sch-drawer-body muted">Выберите атрибут в списке</div>
             </aside>
           </div>
           <div class="hint" id="dictHint">filters_{id}.json — generated output из facet.enabled + canonical values / range breaks + normalized product attrs (pipeline/facets.buildFilters).</div>

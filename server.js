@@ -27,6 +27,8 @@
  *   GET  /api/dictionaries/:id/audit  проверка схемы (мусор, дубликаты, типы)
  *   GET|POST /api/dictionaries/:id/filter-preview  превью фасетов из schema
  *   POST /api/dictionaries/:id/probe  атрибуция на одном товаре
+ *   POST /api/dictionaries/:id/import-suggest  AI/эвристика: список → proposals
+ *   POST /api/dictionaries/:id/import-apply    применить proposals к attrs
  *   GET  /api/catalog?category=kholodilniki[&limit=N]
  *                             обход раздела: товары с описаниями + автофильтры
  *   POST /api/export          выгрузка заказчика: products + filters + held
@@ -79,6 +81,10 @@ import {
 import {
   auditDictionary, previewFilters, probeProductAttribution, coerceFacetForType,
 } from './pipeline/schema_audit.js';
+import {
+  parseImportLines, buildImportSuggestPrompt, buildImportUserContent,
+  heuristicSuggest, parseModelSuggestions, applySuggestions,
+} from './pipeline/schema_import.js';
 import { publicParserStatus } from './pipeline/search.js';
 import {
   loadSettings, saveSettings, publicSettings, applySettingsPatch,
@@ -459,6 +465,190 @@ async function apiDictionaryProbe(req, res, id) {
   } catch (e) {
     json(res, e.status || 500, { error: e.message });
   }
+}
+
+/**
+ * Импорт списка характеристик → AI/эвристика раскладывает по атрибутам.
+ * Body: { text, model?, provider?, mode?: 'ai'|'heuristic', attrs? }
+ * attrs — незакоммиченный черновик из UI; иначе файл на диске.
+ */
+async function apiDictionaryImportSuggest(req, res, id) {
+  const raw = await readBody(req, 2_000_000);
+  let body;
+  try { body = JSON.parse(raw); } catch { return json(res, 400, { error: 'Тело запроса не JSON' }); }
+
+  const text = body?.text ?? body?.list ?? '';
+  const items = parseImportLines(text);
+  if (!items.length) return json(res, 400, { error: 'пустой список — вставьте строки характеристик' });
+  if (items.length > 400) return json(res, 400, { error: 'слишком длинный список (макс. 400 строк)' });
+
+  let attrs;
+  try {
+    attrs = Array.isArray(body?.attrs) && body.attrs.length
+      ? body.attrs
+      : readDictionaryAttrs(id, ROOT);
+  } catch (e) {
+    return json(res, e.status || 500, { error: e.message });
+  }
+
+  const mode = body?.mode === 'heuristic' ? 'heuristic' : 'ai';
+  const name = categoryName(id, ROOT);
+
+  if (mode === 'heuristic') {
+    const suggestions = heuristicSuggest(items, attrs).map(s => ({
+      ...s,
+      selected: s.action !== 'skip',
+    }));
+    return json(res, 200, {
+      id: String(id),
+      name,
+      mode: 'heuristic',
+      items,
+      suggestions,
+      usage: { prompt_tokens: 0, completion_tokens: 0, cost: 0 },
+    });
+  }
+
+  const settings = loadSettings(ROOT);
+  const prov = resolveProvider(settings, body?.provider);
+  const ep = providerEndpoint(prov);
+  const apiKey = ep.apiKey || API_KEY;
+  if (!apiKey) {
+    // Без ключа — эвристика, чтобы UI всё равно работал.
+    const suggestions = heuristicSuggest(items, attrs).map(s => ({
+      ...s,
+      selected: s.action !== 'skip',
+      note: (s.note ? s.note + ' · ' : '') + `нет ключа «${prov.name}» — эвристика`,
+    }));
+    return json(res, 200, {
+      id: String(id),
+      name,
+      mode: 'heuristic',
+      fallback: 'no_api_key',
+      items,
+      suggestions,
+      usage: { prompt_tokens: 0, completion_tokens: 0, cost: 0 },
+    });
+  }
+
+  const model = String(body?.model || settings.run?.model || 'deepseek/deepseek-v3.2').trim();
+  const system = buildImportSuggestPrompt(attrs, { categoryName: name, catId: id });
+  const user = buildImportUserContent(items);
+  const chatUrl = ep.chatUrl || `${String(ep.baseUrl || '').replace(/\/$/, '')}/chat/completions`;
+  const timeoutMs = Number(settings.run?.timeout_ms) || 90_000;
+  const maxTokens = Math.min(8000, Number(settings.run?.max_tokens) || 4000);
+
+  let resHttp;
+  let bodyText;
+  try {
+    resHttp = await fetch(chatUrl, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+        ...(ep.headers || {}),
+      },
+      body: JSON.stringify({
+        model,
+        max_tokens: maxTokens,
+        temperature: 0.1,
+        response_format: { type: 'json_object' },
+        usage: { include: true },
+        messages: [
+          { role: 'system', content: system },
+          { role: 'user', content: user },
+        ],
+      }),
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    bodyText = await resHttp.text();
+  } catch (e) {
+    const timed = e.name === 'TimeoutError' || e.cause?.name === 'TimeoutError';
+    return json(res, 502, {
+      error: timed ? `таймаут модели ${timeoutMs}ms` : (e.message || 'сеть'),
+    });
+  }
+
+  let data;
+  try { data = JSON.parse(bodyText); } catch { data = null; }
+  if (!resHttp.ok || data?.error) {
+    const msg = data?.error?.message || `HTTP ${resHttp.status}: ${String(bodyText).slice(0, 160)}`;
+    return json(res, 502, { error: msg });
+  }
+
+  const content = data?.choices?.[0]?.message?.content || '';
+  let suggestions;
+  try {
+    suggestions = parseModelSuggestions(content, items);
+  } catch (e) {
+    return json(res, 502, { error: e.message || 'не разобрали ответ модели', raw: String(content).slice(0, 500) });
+  }
+
+  const usage = data?.usage || {};
+  json(res, 200, {
+    id: String(id),
+    name,
+    mode: 'ai',
+    model,
+    provider: prov.id,
+    items,
+    suggestions,
+    usage: {
+      prompt_tokens: usage.prompt_tokens || 0,
+      completion_tokens: usage.completion_tokens || 0,
+      cost: usage.cost ?? null,
+    },
+  });
+}
+
+/** Применить выбранные proposals к attrs (черновик или файл). Не пишет диск, если dry_run. */
+async function apiDictionaryImportApply(req, res, id) {
+  const raw = await readBody(req, 2_000_000);
+  let body;
+  try { body = JSON.parse(raw); } catch { return json(res, 400, { error: 'Тело запроса не JSON' }); }
+
+  let attrs;
+  try {
+    attrs = Array.isArray(body?.attrs) && body.attrs.length
+      ? body.attrs
+      : readDictionaryAttrs(id, ROOT);
+  } catch (e) {
+    return json(res, e.status || 500, { error: e.message });
+  }
+
+  const suggestions = Array.isArray(body?.suggestions) ? body.suggestions : [];
+  if (!suggestions.length) return json(res, 400, { error: 'нет suggestions' });
+
+  const result = applySuggestions(attrs, suggestions);
+  const save = body?.save === true || body?.persist === true;
+  if (save) {
+    try {
+      const coerced = result.attrs.map(a => coerceFacetForType(a));
+      const saved = saveDictionaryAttrs(id, coerced, ROOT);
+      return json(res, 200, {
+        id: String(id),
+        name: categoryName(id, ROOT),
+        saved: true,
+        applied: result.applied,
+        created: result.created,
+        skipped: result.skipped,
+        attrs: saved,
+        audit: auditDictionary(saved),
+      });
+    } catch (e) {
+      return json(res, e.status || 400, { error: e.message });
+    }
+  }
+
+  json(res, 200, {
+    id: String(id),
+    name: categoryName(id, ROOT),
+    saved: false,
+    applied: result.applied,
+    created: result.created,
+    skipped: result.skipped,
+    attrs: result.attrs.map(a => coerceFacetForType(a)),
+  });
 }
 
 /** Разделы из требований вместе с полями схемы — чтобы интерфейс не хардкодил. */
@@ -1376,6 +1566,14 @@ const server = http.createServer(async (req, res) => {
     }
     const dictProbe = u.pathname.match(/^\/api\/dictionaries\/(\d+)\/probe$/);
     if (dictProbe && req.method === 'POST') return await apiDictionaryProbe(req, res, dictProbe[1]);
+    const dictImportSuggest = u.pathname.match(/^\/api\/dictionaries\/(\d+)\/import-suggest$/);
+    if (dictImportSuggest && req.method === 'POST') {
+      return await apiDictionaryImportSuggest(req, res, dictImportSuggest[1]);
+    }
+    const dictImportApply = u.pathname.match(/^\/api\/dictionaries\/(\d+)\/import-apply$/);
+    if (dictImportApply && req.method === 'POST') {
+      return await apiDictionaryImportApply(req, res, dictImportApply[1]);
+    }
     const dictRoute = u.pathname.match(/^\/api\/dictionaries\/(\d+)$/);
     if (dictRoute) {
       const [, id] = dictRoute;

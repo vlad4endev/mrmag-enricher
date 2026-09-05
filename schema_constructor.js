@@ -8,6 +8,8 @@
   let schemaAudit = null;
   let schemaPreview = null;
   let editCode = null;
+  let listFilter = 'all';
+  let listQuery = '';
 
   function $(id) { return document.getElementById(id); }
 
@@ -33,23 +35,119 @@
     return attr.facet.kind || 'enum';
   }
 
+  function attrStatus(a) {
+    const on = !!a.facet?.enabled;
+    const aud = auditFor(a.code);
+    return aud?.status || (on && (a.type === 'enum' || a.type === 'multi_enum') && !valueCount(a) ? 'WARN' : 'OK');
+  }
+
+  function attrWarnCount(a) {
+    return (auditFor(a.code)?.issues || []).filter(i => i.severity === 'error' || i.severity === 'warn').length;
+  }
+
+  function typeLabel(type) {
+    if (type === 'multi_enum') return 'multi enum';
+    return type || '—';
+  }
+
+  function coverageLabel(a) {
+    const v = a.coverage_final ?? a.coverage_now;
+    if (v == null || v === '') return null;
+    const n = Number(v);
+    if (!Number.isFinite(n)) return String(v);
+    if (n <= 1) return Math.round(n * 100) + '%';
+    return String(n);
+  }
+
   window.refreshSchemaMeta = function refreshSchemaMeta(extra) {
     const el = $('dictMeta');
-    if (!el || !window.dictCurrent) return;
+    if (!el) return;
+    if (!window.dictCurrent) {
+      el.innerHTML = extra ? `<span class="muted">${esc(extra)}</span>` : '';
+      return;
+    }
     const d = window.dictCurrent;
     const attrs = d.attrs || [];
     const facets = attrs.filter(a => a.facet?.enabled).length;
-    const problems = schemaAudit?.problems ?? '—';
+    const problems = schemaAudit?.problems;
+    const problemN = typeof problems === 'number'
+      ? problems
+      : attrs.filter(a => attrStatus(a) !== 'OK').length;
+    const dirty = !!window.dictDirty;
+    const problemClass = problemN > 0 ? (attrs.some(a => attrStatus(a) === 'ERROR') ? 'err' : 'warn') : '';
     el.innerHTML = `
-      <span class="set-badge">ID: ${esc(d.id)}</span>
-      <span class="set-note">${esc(d.name || '')}</span>
-      <span class="muted">Атрибутов: ${attrs.length}</span>
-      <span class="muted">Фильтров: ${facets}</span>
-      <span class="muted">Проблем: ${problems}</span>
-      ${window.dictDirty ? '<span class="set-badge" style="background:var(--abg);border-color:var(--abd);color:var(--amber)">не сохранено</span>' : ''}
-      ${extra ? `<span class="muted">${esc(extra)}</span>` : ''}
+      <div class="sch-stats">
+        <div class="sch-stat">
+          <span class="sch-stat-v">${attrs.length}</span>
+          <span class="sch-stat-l">атрибутов · ${esc(d.id)}</span>
+        </div>
+        <div class="sch-stat">
+          <span class="sch-stat-v">${facets}</span>
+          <span class="sch-stat-l">в фильтрах</span>
+        </div>
+        <div class="sch-stat ${problemClass}">
+          <span class="sch-stat-v">${problemN}</span>
+          <span class="sch-stat-l">проблем</span>
+        </div>
+        <div class="sch-stat ${dirty ? 'dirty' : ''}">
+          <span class="sch-stat-v">${dirty ? '●' : '○'}</span>
+          <span class="sch-stat-l">${dirty ? 'не сохранено' : 'сохранено'}${extra ? ' · ' + esc(extra) : ''}</span>
+        </div>
+      </div>
+      ${d.name ? `<div class="muted" style="margin-top:6px">${esc(d.name)}${d.file ? ' · ' + esc(d.file) : ''}</div>` : ''}
     `;
   };
+
+  window.setSchemaListFilter = function setSchemaListFilter(mode, btn) {
+    listFilter = mode || 'all';
+    document.querySelectorAll('[data-sch-filter]').forEach(b => {
+      b.classList.toggle('on', b.dataset.schFilter === listFilter);
+    });
+    if (btn) btn.classList.add('on');
+    applySchemaListFilter();
+  };
+
+  window.onSchemaListFilter = function onSchemaListFilter() {
+    listQuery = String($('schSearch')?.value || '').trim().toLowerCase();
+    applySchemaListFilter();
+  };
+
+  function applySchemaListFilter() {
+    const body = $('dictBody');
+    if (!body) return;
+    const rows = [...body.querySelectorAll('.sch-row')];
+    let visible = 0;
+    rows.forEach(row => {
+      const q = listQuery;
+      const hay = (row.dataset.hay || '').toLowerCase();
+      const matchQ = !q || hay.includes(q);
+      let matchF = true;
+      if (listFilter === 'facet') matchF = row.dataset.facet === '1';
+      else if (listFilter === 'problems') matchF = row.dataset.status !== 'OK';
+      else if (listFilter === 'enum') matchF = row.dataset.type === 'enum' || row.dataset.type === 'multi_enum';
+      const show = matchQ && matchF;
+      row.hidden = !show;
+      if (show) visible++;
+    });
+    let empty = body.querySelector('.sch-empty-filter');
+    if (!rows.length) return;
+    if (!visible) {
+      if (!empty) {
+        empty = document.createElement('div');
+        empty.className = 'sch-empty sch-empty-filter';
+        empty.textContent = 'Ничего не найдено — сбросьте поиск или фильтр';
+        body.appendChild(empty);
+      }
+    } else if (empty) {
+      empty.remove();
+    }
+    const hint = $('schListHint');
+    if (hint && window.dictCurrent) {
+      hint.textContent = visible === rows.length
+        ? `${rows.length} атрибутов · клик открывает редактор`
+        : `Показано ${visible} из ${rows.length}`;
+    }
+  }
 
   window.runSchemaAudit = async function runSchemaAudit() {
     if (!window.dictCurrent?.id) return;
@@ -179,29 +277,53 @@
     const body = $('dictBody');
     if (!body) return;
     if (!attrs.length) {
-      body.innerHTML = '<tr><td colspan="10" class="muted">Нет атрибутов — добавьте строку</td></tr>';
+      body.innerHTML = '<div class="sch-empty">Нет атрибутов — добавьте строку</div>';
       return;
     }
     const rows = [...attrs].sort((a, b) => (a.order ?? 0) - (b.order ?? 0) || String(a.code).localeCompare(String(b.code)));
     body.innerHTML = rows.map(a => {
       const on = !!a.facet?.enabled;
       const kind = facetKindUi(a);
-      const aud = auditFor(a.code);
-      const st = aud?.status || (on && (a.type === 'enum' || a.type === 'multi_enum') && !valueCount(a) ? 'WARN' : 'OK');
-      const warn = (aud?.issues || []).filter(i => i.severity === 'error' || i.severity === 'warn').length;
-      return `<tr data-code="${esc(a.code)}" class="${on ? '' : 'dict-facet-off'} ${editCode === a.code ? 'sch-row-on' : ''}" onclick="openSchemaEditor('${esc(a.code)}')">
-        <td>${a.order ?? 0}</td>
-        <td><code>${esc(a.code)}</code></td>
-        <td><b>${esc(a.name || '')}</b>${a.unit ? ` <span class="muted">${esc(a.unit)}</span>` : ''}</td>
-        <td>${esc(a.type || '')}</td>
-        <td>${on ? '✓' : '—'}</td>
-        <td>${on ? esc(kind) : 'none'}</td>
-        <td>${valueCount(a)}</td>
-        <td class="muted">${a.coverage_final ?? a.coverage_now ?? '—'}</td>
-        <td>${statusBadge(st)}</td>
-        <td class="muted">${warn || '—'}</td>
-      </tr>`;
+      const st = attrStatus(a);
+      const warn = attrWarnCount(a);
+      const cov = coverageLabel(a);
+      const nVals = valueCount(a);
+      const selected = editCode === a.code;
+      const hay = `${a.code} ${a.name || ''} ${a.unit || ''} ${a.type || ''}`;
+      const typeChip = `<span class="sch-chip muted">${esc(typeLabel(a.type))}${a.cardinality === 'multi' ? ' · multi' : ''}</span>`;
+      const facetChip = on
+        ? `<span class="sch-chip facet">${esc(kind)}${nVals ? ` · <span class="n">${nVals}</span>` : ''}</span>`
+        : `<span class="sch-chip muted">не в фильтрах</span>`;
+      const covChip = cov != null ? `<span class="sch-chip muted" title="покрытие">покр. <span class="n">${esc(cov)}</span></span>` : '';
+      const warnChip = warn ? `<span class="sch-badge sch-${st === 'ERROR' ? 'err' : 'warn'}">${warn}⚠</span>` : statusBadge(st);
+      return `<div class="sch-row ${on ? '' : 'off'} ${selected ? 'on' : ''}"
+        role="listitem" tabindex="0"
+        data-code="${esc(a.code)}"
+        data-hay="${esc(hay)}"
+        data-facet="${on ? '1' : '0'}"
+        data-status="${esc(st)}"
+        data-type="${esc(a.type || '')}"
+        onclick="openSchemaEditor('${esc(a.code)}')"
+        onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openSchemaEditor('${esc(a.code)}')}">
+        <div class="sch-row-main">
+          <div class="sch-row-title">
+            <span class="sch-row-name">${esc(a.name || a.code)}</span>
+            ${a.unit ? `<span class="sch-row-unit">${esc(a.unit)}</span>` : ''}
+          </div>
+          <div class="sch-row-meta">
+            <span class="sch-row-code">${esc(a.code)}</span>
+            <span>#${a.order ?? 0}</span>
+          </div>
+        </div>
+        <div class="sch-row-side">
+          ${typeChip}
+          ${facetChip}
+          ${covChip}
+          ${warnChip}
+        </div>
+      </div>`;
     }).join('');
+    applySchemaListFilter();
   };
 
   // Override legacy table renderer used by loadDictionary / saveDictionary
@@ -215,11 +337,24 @@
     if (typeof _origRender === 'function') _origRender(attrs);
   };
 
+  // Keep meta consistent when legacy dictStatus is called
+  const _origDictStatus = window.dictStatus;
+  window.dictStatus = function (msg, ok) {
+    if ($('schConstructor') && window.dictCurrent) {
+      refreshSchemaMeta(ok === false ? (msg || 'ошибка') : (msg || ''));
+      return;
+    }
+    if (typeof _origDictStatus === 'function') _origDictStatus(msg, ok);
+  };
+
   window.openSchemaEditor = function openSchemaEditor(code) {
     const attr = (dictCurrent?.attrs || []).find(a => a.code === code);
     const panel = $('schDrawer');
     if (!attr || !panel) return;
     editCode = code;
+    document.querySelectorAll('#dictBody .sch-row').forEach(row => {
+      row.classList.toggle('on', row.dataset.code === code);
+    });
     panel.classList.add('open');
     $('schDrawerTitle').textContent = attr.name || code;
     const facet = attr.facet || {};
@@ -483,4 +618,133 @@
       return _status(msg, ok);
     };
   }
+
+  let importSuggestions = [];
+
+  function actionLabel(a) {
+    return ({
+      value: 'значение ENUM',
+      synonym_name: 'синоним имени',
+      blacklist: 'не путать с',
+      new_attr: 'новый атрибут',
+      skip: 'пропуск',
+    })[a] || a;
+  }
+
+  function renderImportBox() {
+    const box = $('schImportBox');
+    const btn = $('schImportApplyBtn');
+    if (!box) return;
+    if (!importSuggestions.length) {
+      box.innerHTML = '';
+      if (btn) btn.disabled = true;
+      return;
+    }
+    if (btn) btn.disabled = false;
+    box.innerHTML = `<div class="sch-import-list">${importSuggestions.map((s, idx) => {
+      const prop = s.proposed
+        ? `<div class="muted">+ ${esc(s.proposed.code || '')} · ${esc(s.proposed.name || '')} · ${esc(s.proposed.type || '')}</div>`
+        : '';
+      const target = s.attr_code
+        ? `<code>${esc(s.attr_code)}</code>${s.canon ? ` → <b>${esc(s.canon)}</b>` : ''}`
+        : '';
+      return `<label class="sch-import-row">
+        <input type="checkbox" data-imp-idx="${idx}" ${s.selected !== false && s.action !== 'skip' ? 'checked' : ''}>
+        <span class="sch-import-body">
+          <span class="sch-badge ${s.action === 'skip' ? 'sch-warn' : (s.action === 'new_attr' ? 'sch-ok' : 'sch-ok')}">${esc(actionLabel(s.action))}</span>
+          <b>${esc(s.raw)}</b>
+          <div class="muted">${target} ${esc(s.note || '')} · ${Math.round((s.confidence || 0) * 100)}% · ${esc(s.source || '')}</div>
+          ${prop}
+        </span>
+      </label>`;
+    }).join('')}</div>
+    <div class="set-actions" style="margin-top:8px">
+      <button type="button" class="sbtn ghost" onclick="schemaImportSelectAll(true)">Выбрать все</button>
+      <button type="button" class="sbtn ghost" onclick="schemaImportSelectAll(false)">Снять все</button>
+      <button type="button" class="sbtn ghost" onclick="schemaImportSelectAction('new_attr')">Только новые атрибуты</button>
+      <button type="button" class="sbtn ghost" onclick="schemaImportSelectAction('value')">Только значения</button>
+    </div>`;
+    box.querySelectorAll('[data-imp-idx]').forEach(cb => {
+      cb.addEventListener('change', () => {
+        const i = Number(cb.dataset.impIdx);
+        if (importSuggestions[i]) importSuggestions[i].selected = cb.checked;
+      });
+    });
+  }
+
+  window.schemaImportSelectAll = function (on) {
+    importSuggestions.forEach(s => { s.selected = !!on && s.action !== 'skip'; });
+    renderImportBox();
+  };
+
+  window.schemaImportSelectAction = function (action) {
+    importSuggestions.forEach(s => { s.selected = s.action === action; });
+    renderImportBox();
+  };
+
+  window.runSchemaImport = async function runSchemaImport(mode) {
+    if (!dictCurrent?.id) return;
+    const text = $('schImportText')?.value || '';
+    const meta = $('schImportMeta');
+    if (meta) meta.textContent = mode === 'ai' ? 'запрос к модели…' : 'эвристика…';
+    try {
+      const data = await apiJson('/api/dictionaries/' + encodeURIComponent(dictCurrent.id) + '/import-suggest', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          text,
+          mode: mode === 'heuristic' ? 'heuristic' : 'ai',
+          model: (typeof getV === 'function' ? getV('setModelName') : '') || undefined,
+          attrs: dictCurrent.attrs,
+        }),
+      });
+      importSuggestions = (data.suggestions || []).map(s => ({
+        ...s,
+        selected: s.selected !== false && s.action !== 'skip',
+      }));
+      renderImportBox();
+      const nNew = importSuggestions.filter(s => s.action === 'new_attr').length;
+      const nVal = importSuggestions.filter(s => s.action === 'value').length;
+      if (meta) {
+        meta.textContent = `${data.mode || mode}: ${importSuggestions.length} строк`
+          + (nNew ? `, новых атрибутов ${nNew}` : '')
+          + (nVal ? `, значений ${nVal}` : '')
+          + (data.fallback ? ` (${data.fallback})` : '');
+      }
+    } catch (e) {
+      if (meta) meta.textContent = e.message || 'ошибка импорта';
+      importSuggestions = [];
+      renderImportBox();
+    }
+  };
+
+  window.applySchemaImport = async function applySchemaImport() {
+    if (!dictCurrent?.id || !importSuggestions.length) return;
+    const selected = importSuggestions.filter(s => s.selected && s.action !== 'skip');
+    if (!selected.length) {
+      refreshSchemaMeta('ничего не выбрано');
+      return;
+    }
+    if (!confirm(`Применить ${selected.length} предложений к черновику справочника? Файл сохранится отдельно кнопкой «Сохранить».`)) return;
+    const meta = $('schImportMeta');
+    try {
+      const data = await apiJson('/api/dictionaries/' + encodeURIComponent(dictCurrent.id) + '/import-apply', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          attrs: dictCurrent.attrs,
+          suggestions: importSuggestions,
+          save: false,
+        }),
+      });
+      dictCurrent.attrs = data.attrs || dictCurrent.attrs;
+      dictDirty = true;
+      renderSchemaTable(dictCurrent.attrs);
+      refreshSchemaMeta(`применено ${data.applied}, создано ${data.created}, пропуск ${data.skipped} — сохраните файл`);
+      if (meta) meta.textContent = `черновик обновлён · +${data.created} атрибутов`;
+      runSchemaAudit().catch(() => {});
+    } catch (e) {
+      if (meta) meta.textContent = e.message || 'не удалось применить';
+    }
+  };
 })();

@@ -3,18 +3,17 @@
  * Без зашитых FRIDGE_/WASHER_ списков.
  */
 
-import path from 'path';
-import { fileURLToPath } from 'url';
-import { hasDictionary, loadDictionary, loadCategories } from './dict.js';
+import {
+  hasDictionary, loadDictionary, loadCategories, loadConfig,
+  PROJECT_ROOT, resolveDictRoot,
+} from './dict.js';
 import { extractPairs } from './parse.js';
 import { matchKey } from './match.js';
 import { normalizeValue } from './types.js';
 import { attrLabel } from './types.js';
-import { loadConfig } from './dict.js';
 import { parseDimensions } from './dimensions.js';
 
-/** Корень проекта, а не process.cwd(): иначе при старте из другой папки уходит _generic. */
-const PROJECT_ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
+export { PROJECT_ROOT, resolveDictRoot };
 
 /** Стабильные ключи specs (совместимы с эталоном v2 / промптом). */
 const CODE_TO_SPEC = {
@@ -78,7 +77,7 @@ export const CRAWL_SLUGS = {
   stiralnye_mashiny: 467,
 };
 
-export function resolveCatId(key, root = '.') {
+export function resolveCatId(key, root) {
   if (key == null || key === '') return null;
   if (typeof key === 'object' && key.id != null) return String(key.id);
   const k = String(key).trim();
@@ -119,7 +118,7 @@ function specDest(attr) {
 
 export { specDest, CODE_TO_SPEC };
 
-export function schemaFromDictionary(dict, { slug = null, name = null } = {}) {
+export function schemaFromDictionary(dict, { slug = null, name = null, root } = {}) {
   const fields = [
     ['тип_товара', 'str'],
     ['бренд', 'str'],
@@ -146,7 +145,7 @@ export function schemaFromDictionary(dict, { slug = null, name = null } = {}) {
 
   const catName = name || (() => {
     try {
-      return loadCategories('.').find(c => Number(c.id) === Number(dict.catId))?.name;
+      return loadCategories(root).find(c => Number(c.id) === Number(dict.catId))?.name;
     } catch { return null; }
   })();
 
@@ -172,19 +171,20 @@ export function schemaFromDictionary(dict, { slug = null, name = null } = {}) {
   };
 }
 
-export function tryLoadDictSchema(key, root = PROJECT_ROOT) {
-  let catId = resolveCatId(key, root);
-  if (catId && !hasDictionary(catId, root) && DICT_FALLBACK[catId]) {
+export function tryLoadDictSchema(key, root) {
+  const resolved = resolveDictRoot(root);
+  let catId = resolveCatId(key, resolved);
+  if (catId && !hasDictionary(catId, resolved) && DICT_FALLBACK[catId]) {
     catId = String(DICT_FALLBACK[catId]);
   }
-  if (!catId || !hasDictionary(catId, root)) return null;
-  const dict = loadDictionary(catId, root);
+  if (!catId || !hasDictionary(catId, resolved)) return null;
+  const dict = loadDictionary(catId, resolved);
   const slug = Object.entries(CRAWL_SLUGS).find(([, id]) => String(id) === catId)?.[0] || null;
   let name = null;
   try {
-    name = loadCategories(root).find(c => String(c.id) === catId)?.name;
+    name = loadCategories(resolved).find(c => String(c.id) === catId)?.name;
   } catch { /* */ }
-  return schemaFromDictionary(dict, { slug, name });
+  return schemaFromDictionary(dict, { slug, name, root: resolved });
 }
 
 const SKIP_CAT_HINT = new Set(['', 'all', 'без раздела', 'bez_razdela', 'все разделы']);
@@ -216,16 +216,17 @@ function categoryHints(products, category) {
  * Ожидаемый cat_id справочника, даже если файл сейчас недоступен.
  * Нужен, чтобы apiExport не уходил в gold при «467» без attributes_467.json.
  */
-export function expectedDictCatId(products, category, root = '.') {
+export function expectedDictCatId(products, category, root) {
+  const resolved = resolveDictRoot(root);
   for (const hint of categoryHints(products, category)) {
     if (hint == null) continue;
     const s = String(hint).trim();
     if (!s || SKIP_CAT_HINT.has(s.toLowerCase())) continue;
-    const byId = resolveCatId(s, root);
+    const byId = resolveCatId(s, resolved);
     if (byId) {
       const fb = DICT_FALLBACK[byId] != null ? String(DICT_FALLBACK[byId]) : null;
       const target = fb || String(byId);
-      if (KNOWN_DICT_IDS.has(String(byId)) || KNOWN_DICT_IDS.has(target) || hasDictionary(target, root)) {
+      if (KNOWN_DICT_IDS.has(String(byId)) || KNOWN_DICT_IDS.has(target) || hasDictionary(target, resolved)) {
         return target;
       }
     }
@@ -237,24 +238,25 @@ export function expectedDictCatId(products, category, root = '.') {
   return null;
 }
 
-export function dictForProducts(products, category, root = '.') {
+export function dictForProducts(products, category, root) {
+  const resolved = resolveDictRoot(root);
   for (const hint of categoryHints(products, category)) {
     if (hint == null) continue;
     const s = String(hint).trim();
     if (!s || SKIP_CAT_HINT.has(s.toLowerCase())) continue;
-    const loaded = tryLoadDictSchema(s, root);
+    const loaded = tryLoadDictSchema(s, resolved);
     if (loaded?.dict) return loaded.dict;
     const n = s.toLowerCase().replace(/ё/g, 'е');
     if (/стиральн/.test(n)) {
-      const d = tryLoadDictSchema(467, root);
+      const d = tryLoadDictSchema(467, resolved);
       if (d?.dict) return d.dict;
     }
     if (/холодильник/.test(n)) {
-      const d = tryLoadDictSchema(523, root);
+      const d = tryLoadDictSchema(523, resolved);
       if (d?.dict) return d.dict;
     }
     if (/вытяжк|воздухоочистител/.test(n)) {
-      const d = tryLoadDictSchema(929, root);
+      const d = tryLoadDictSchema(929, resolved);
       if (d?.dict) return d.dict;
     }
   }

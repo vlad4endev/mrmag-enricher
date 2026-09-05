@@ -2,7 +2,21 @@
 
 import fs from 'fs';
 import path from 'path';
+import { fileURLToPath } from 'url';
 import { normKey } from './text.js';
+
+/**
+ * Корень репозитория (рядом с pipeline/), а не process.cwd().
+ * Иначе при старте из другой папки / в Docker без cwd=/app enrichment
+ * не видит dictionaries/, хотя export с явным ROOT их находит.
+ */
+export const PROJECT_ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
+
+/** Явный root или PROJECT_ROOT. Пустая строка / null / undefined → PROJECT_ROOT. */
+export function resolveDictRoot(root) {
+  if (root === undefined || root === null || root === '') return PROJECT_ROOT;
+  return root;
+}
 
 export function catIdFromFile(file) {
   const m = String(file).match(/(\d+)(?:\.[^.]+)?$/);
@@ -15,29 +29,132 @@ export function catIdFromFile(file) {
  * правки из интерфейса переживали пересборку образа. Локально — config.json
  * в корне проекта.
  */
-export function configPath(root = '.') {
+export function configPath(root) {
   if (process.env.SETTINGS_PATH) return process.env.SETTINGS_PATH;
-  return path.join(root, 'config.json');
+  return path.join(resolveDictRoot(root), 'config.json');
 }
 
-export function loadConfig(root = '.') {
+export function loadConfig(root) {
   return JSON.parse(fs.readFileSync(configPath(root), 'utf-8'));
 }
 
+/**
+ * Каталог справочников.
+ * DICTIONARIES_DIR — явный путь (в Docker: /data/dictionaries).
+ * Если задан SETTINGS_PATH под /data/, по умолчанию тоже /data/dictionaries —
+ * /app в образе только для чтения (USER node), mkdir туда даёт EACCES.
+ */
+export function dictionariesDir(root) {
+  if (process.env.DICTIONARIES_DIR) return process.env.DICTIONARIES_DIR;
+  const settings = process.env.SETTINGS_PATH;
+  if (settings && (settings === '/data/config.json' || settings.startsWith('/data/'))) {
+    return '/data/dictionaries';
+  }
+  return path.join(resolveDictRoot(root), 'dictionaries');
+}
+
+/** Встроенные справочники из образа/репозитория (только чтение в Docker). */
+export function bundledDictionariesDir(root) {
+  return path.join(resolveDictRoot(root), 'dictionaries');
+}
+
+/**
+ * Первый запуск в контейнере: каталог на томе + копия attributes_*.json
+ * из образа, если файла ещё нет (правки с UI на томе не затираем).
+ */
+export function bootstrapDictionariesDir(root) {
+  const dest = dictionariesDir(root);
+  const bundled = bundledDictionariesDir(root);
+  try {
+    fs.mkdirSync(dest, { recursive: true });
+  } catch (e) {
+    const err = new Error(
+      `не удалось создать каталог справочников «${dest}»: ${e.message}. `
+      + 'В Docker задайте DICTIONARIES_DIR=/data/dictionaries (том /data).',
+    );
+    err.cause = e;
+    err.status = 500;
+    throw err;
+  }
+  if (path.resolve(dest) === path.resolve(bundled) || !fs.existsSync(bundled)) {
+    return dest;
+  }
+  for (const name of fs.readdirSync(bundled)) {
+    if (!/^(attributes|benchmarks)_\d+\.json$/i.test(name)) continue;
+    const to = path.join(dest, name);
+    if (fs.existsSync(to)) continue;
+    fs.copyFileSync(path.join(bundled, name), to);
+  }
+  return dest;
+}
+
 /** Путь к справочнику категории. Новая категория = один файл здесь. */
-export function dictionaryPath(catId, root = '.') {
-  return path.join(root, 'dictionaries', `attributes_${catId}.json`);
+export function dictionaryPath(catId, root) {
+  return path.join(dictionariesDir(root), `attributes_${catId}.json`);
 }
 
-export function benchmarksPath(catId, root = '.') {
-  return path.join(root, 'dictionaries', `benchmarks_${catId}.json`);
+/** Путь для UI: относительный к репо или dictionaries/attributes_{id}.json на томе. */
+export function dictionaryPublicPath(catId, root) {
+  const file = dictionaryPath(catId, root);
+  const rel = path.relative(resolveDictRoot(root), file);
+  if (rel && !rel.startsWith('..') && !path.isAbsolute(rel)) return rel;
+  return path.join('dictionaries', `attributes_${catId}.json`);
 }
 
-export function hasDictionary(catId, root = '.') {
+export function benchmarksPath(catId, root) {
+  return path.join(dictionariesDir(root), `benchmarks_${catId}.json`);
+}
+
+export function hasDictionary(catId, root) {
   return fs.existsSync(dictionaryPath(catId, root));
 }
 
-export function categoryName(catId, root = '.') {
+/** Диагностика расхождения enrichment/export по пути к справочнику. */
+export function dictDebugInfo(catId, root) {
+  const dictRoot = resolveDictRoot(root);
+  const dir = dictionariesDir(root);
+  const expectedPath = dictionaryPath(catId, root);
+  let exists = false;
+  let readable = false;
+  try {
+    exists = fs.existsSync(expectedPath);
+    if (exists) {
+      fs.accessSync(expectedPath, fs.constants.R_OK);
+      readable = true;
+    }
+  } catch {
+    readable = false;
+  }
+  return {
+    productId: null,
+    category: catId != null ? String(catId) : null,
+    cwd: process.cwd(),
+    dictRoot,
+    dictionariesDir: dir,
+    expectedPath,
+    exists,
+    readable,
+    PROJECT_ROOT,
+    DICTIONARIES_DIR: process.env.DICTIONARIES_DIR || null,
+  };
+}
+
+export function formatDictDebug(info) {
+  const lines = [
+    '[dict-debug]',
+    `productId=${info.productId ?? ''}`,
+    `category=${info.category ?? ''}`,
+    `cwd=${info.cwd}`,
+    `dictRoot=${info.dictRoot}`,
+    `dictionariesDir=${info.dictionariesDir}`,
+    `expectedPath=${info.expectedPath}`,
+    `exists=${info.exists}`,
+    `readable=${info.readable}`,
+  ];
+  return lines.join('\n');
+}
+
+export function categoryName(catId, root) {
   try {
     const hit = loadCategories(root).find(c => String(c.id) === String(catId));
     return hit?.name || `Категория ${catId}`;
@@ -97,8 +214,8 @@ export function seedDictionaryAttrs() {
 }
 
 /** Все attributes_{id}.json в dictionaries/ — для вкладки «Справочник». */
-export function listDictionaries(root = '.') {
-  const dir = path.join(root, 'dictionaries');
+export function listDictionaries(root) {
+  const dir = dictionariesDir(root);
   if (!fs.existsSync(dir)) return [];
   return fs.readdirSync(dir)
     .map(f => f.match(/^attributes_(\d+)\.json$/i)?.[1])
@@ -112,7 +229,7 @@ export function listDictionaries(root = '.') {
       return {
         id: String(id),
         name: categoryName(id, root),
-        file: path.relative(root, file),
+        file: dictionaryPublicPath(id, root),
         attrs: list.length,
         facets: list.filter(a => a?.facet?.enabled).length,
         annotation: list.filter(a => a?.show_in_annotation).length,
@@ -124,7 +241,7 @@ export function listDictionaries(root = '.') {
  * Создать attributes_{id}.json.
  * copyFrom — клон другого справочника; иначе seed (бренд) или переданный attrs.
  */
-export function createDictionary(catId, { copyFrom = null, attrs = null } = {}, root = '.') {
+export function createDictionary(catId, { copyFrom = null, attrs = null } = {}, root) {
   if (!/^\d+$/.test(String(catId))) {
     throw Object.assign(new Error('id справочника — только цифры'), { status: 400 });
   }
@@ -146,12 +263,12 @@ export function createDictionary(catId, { copyFrom = null, attrs = null } = {}, 
   return {
     id: String(catId),
     name: categoryName(catId, root),
-    file: path.relative(root, dictionaryPath(catId, root)),
+    file: dictionaryPublicPath(catId, root),
     attrs: saved,
   };
 }
 
-export function deleteDictionary(catId, root = '.') {
+export function deleteDictionary(catId, root) {
   if (!/^\d+$/.test(String(catId))) {
     throw Object.assign(new Error('id справочника — только цифры'), { status: 400 });
   }
@@ -164,7 +281,7 @@ export function deleteDictionary(catId, root = '.') {
 }
 
 /** Сырой массив атрибутов без индекса — для UI и сохранения. */
-export function readDictionaryAttrs(catId, root = '.') {
+export function readDictionaryAttrs(catId, root) {
   const file = dictionaryPath(catId, root);
   if (!fs.existsSync(file)) throw Object.assign(new Error(`нет справочника attributes_${catId}.json`), { status: 404 });
   const attrs = JSON.parse(fs.readFileSync(file, 'utf-8'));
@@ -175,7 +292,7 @@ export function readDictionaryAttrs(catId, root = '.') {
 }
 
 /** Проверка и запись attributes_{id}.json. */
-export function saveDictionaryAttrs(catId, attrs, root = '.') {
+export function saveDictionaryAttrs(catId, attrs, root) {
   if (!/^\d+$/.test(String(catId))) {
     throw Object.assign(new Error('id справочника — только цифры'), { status: 400 });
   }
@@ -202,15 +319,25 @@ export function saveDictionaryAttrs(catId, attrs, root = '.') {
   indexDictionary(attrs, String(catId));
   const file = dictionaryPath(catId, root);
   const dir = path.dirname(file);
-  if (dir && dir !== '.') fs.mkdirSync(dir, { recursive: true });
-  const tmp = `${file}.${process.pid}.tmp`;
-  fs.writeFileSync(tmp, JSON.stringify(attrs, null, 2) + '\n', 'utf-8');
-  fs.renameSync(tmp, file);
+  try {
+    if (dir && dir !== '.') fs.mkdirSync(dir, { recursive: true });
+    const tmp = `${file}.${process.pid}.tmp`;
+    fs.writeFileSync(tmp, JSON.stringify(attrs, null, 2) + '\n', 'utf-8');
+    fs.renameSync(tmp, file);
+  } catch (e) {
+    if (e && (e.code === 'EACCES' || e.code === 'EPERM' || e.code === 'EROFS')) {
+      throw Object.assign(new Error(
+        `нет прав писать справочник в «${file}» (${e.code}). `
+        + 'В Docker справочники должны быть на томе: DICTIONARIES_DIR=/data/dictionaries.',
+      ), { status: 500, cause: e });
+    }
+    throw e;
+  }
   return readDictionaryAttrs(catId, root);
 }
 
 /** Блок сравнений для web_info. Нет файла — null (модель пишет web_info: null). */
-export function loadBenchmarks(catId, root = '.') {
+export function loadBenchmarks(catId, root) {
   const file = benchmarksPath(catId, root);
   if (!fs.existsSync(file)) return null;
   try {
@@ -221,7 +348,7 @@ export function loadBenchmarks(catId, root = '.') {
   }
 }
 
-export function loadDictionary(catId, root = '.') {
+export function loadDictionary(catId, root) {
   const file = dictionaryPath(catId, root);
   if (!fs.existsSync(file)) {
     throw new Error(`нет справочника ${file} — третья категория добавляется только этим файлом`);
@@ -275,8 +402,8 @@ export function writeJson(file, data, indent = 2) {
 }
 
 /** Категории на выходе — только {id, name}[], как в исходном categories.json. */
-export function loadCategories(root = '.') {
-  const p = path.join(root, 'categories.json');
+export function loadCategories(root) {
+  const p = path.join(resolveDictRoot(root), 'categories.json');
   return JSON.parse(fs.readFileSync(p, 'utf-8'));
 }
 

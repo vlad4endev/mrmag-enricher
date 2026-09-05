@@ -70,7 +70,8 @@ import { createJobStore } from './jobs.js';
 import {
   loadConfig, listDictionaries, readDictionaryAttrs, saveDictionaryAttrs,
   createDictionary, deleteDictionary, blankAttribute, categoryName,
-  dictionaryPath,
+  dictionaryPath, dictDebugInfo, formatDictDebug,
+  bootstrapDictionariesDir,
 } from './pipeline/dict.js';
 import { publicParserStatus } from './pipeline/search.js';
 import {
@@ -98,6 +99,7 @@ const ALLOWED_HOSTS = (process.env.ALLOWED_HOSTS || 'mrmag.ru,adn-avto.ru')
   .split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
 
 bootstrapSettingsFile(ROOT);
+bootstrapDictionariesDir(ROOT);
 {
   const boot = loadSettings(ROOT);
   const def = resolveProvider(boot);
@@ -779,6 +781,11 @@ async function enrichOne(product, { model, category, provider, onNote = () => {}
     schema = schemaForProduct(product, category, ROOT);
   } catch (e) {
     if (e?.code === 'DICT_UNAVAILABLE') {
+      const dbgInfo = e.dict_debug || dictDebugInfo(e.resolved_category, ROOT);
+      dbgInfo.productId = productMeta.id || productMeta.sku;
+      const debugText = formatDictDebug(dbgInfo);
+      note(debugText, { step: 'schema', level: 'warn' });
+      console.warn(debugText);
       note(`needs_review: ${e.message}`, { step: 'schema', level: 'warn' });
       const dbg = modelNotCalledDebug(product, e.message);
       return {
@@ -794,13 +801,15 @@ async function enrichOne(product, { model, category, provider, onNote = () => {}
           status: 'needs_review',
           validation_issues: [{ field: 'schema', reason: e.message }],
           resolved_category: e.resolved_category,
+          dict_debug: dbgInfo,
+          dict_debug_text: debugText,
           ...detailTrace(dbg, { enriched: null }),
         },
       };
     }
     throw e;
   }
-  note(`Схема «${schema.slug}» · провайдер «${prov.name}»`, { step: 'schema' });
+  note(`Схема «${schema.slug}» · провайдер «${prov.name}» · dict=${schema.fromDictionary ? `attributes_${schema.id}.json` : 'builtin'}`, { step: 'schema' });
 
   const skip = reason => {
     const dbg = modelNotCalledDebug(product, reason);
@@ -901,6 +910,7 @@ async function enrichOne(product, { model, category, provider, onNote = () => {}
   try {
     const { enriched, iT, oT, cost, costSource, attempts, debug, needs_review, validation_issues, raw_response } = await enrichProduct(filled, {
       model, apiKey, schema,
+      root: ROOT,
       limiter: limiterFor(`${prov.id}:${model}`),
       pricing: pricingOf(entry),
       chatUrl: ep.chatUrl,

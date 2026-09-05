@@ -24,7 +24,7 @@ import { nameKeyTokens } from './pipeline/identity.js';
 import { tryLoadDictSchema, extractFactsFromDictionary, loadConfigSafe, CRAWL_SLUGS, specDest, expectedDictCatId } from './pipeline/schema.js';
 import { matchKey } from './pipeline/match.js';
 import { normalizeValue } from './pipeline/types.js';
-import { loadBenchmarks } from './pipeline/dict.js';
+import { loadBenchmarks, dictDebugInfo, formatDictDebug, resolveDictRoot } from './pipeline/dict.js';
 import {
   validateModelResponse, validationFeedbackLine, MODEL_KEYS, buildDescriptionHtml,
   matchLiteral,
@@ -805,13 +805,16 @@ export function schemaFor(key, root) {
     || GENERIC_SCHEMA;
 }
 
-export function dictUnavailableError(catId) {
+export function dictUnavailableError(catId, root, extra = {}) {
+  const dbg = { ...dictDebugInfo(catId, root), ...extra };
   const err = new Error(
     `категория ${catId} определена, но справочник attributes_${catId}.json недоступен`,
   );
   err.code = 'DICT_UNAVAILABLE';
   err.needs_review = true;
   err.resolved_category = String(catId);
+  err.dict_debug = dbg;
+  err.dict_debug_text = formatDictDebug(dbg);
   return err;
 }
 
@@ -821,7 +824,7 @@ function schemaFromProductName(name, root) {
   const load = (id) => {
     const s = tryLoadDictSchema(id, root);
     if (s) return s;
-    throw dictUnavailableError(id);
+    throw dictUnavailableError(id, root);
   };
   if (/стиральн/.test(n)) return load(467);
   if (/холодильник/.test(n)) return load(523);
@@ -837,13 +840,18 @@ export function schemaForProduct(product, category, root) {
   if (category && typeof category === 'object' && (category.fromDictionary || category.specKeys)) {
     return category;
   }
+  const resolved = resolveDictRoot(root);
   const catKey = category || product?.category || product?.category_id;
-  const hinted = schemaFor(catKey, root);
+  const hinted = schemaFor(catKey, resolved);
   if (hinted.slug !== '_generic') return hinted;
-  const fromName = schemaFromProductName(product?.name, root);
+  const fromName = schemaFromProductName(product?.name, resolved);
   if (fromName) return fromName;
-  const expected = expectedDictCatId([product].filter(Boolean), catKey, root);
-  if (expected) throw dictUnavailableError(expected);
+  const expected = expectedDictCatId([product].filter(Boolean), catKey, resolved);
+  if (expected) {
+    throw dictUnavailableError(expected, resolved, {
+      productId: product?.id != null ? String(product.id) : (product?.sku != null ? String(product.sku) : null),
+    });
+  }
   return hinted;
 }
 
@@ -1715,6 +1723,8 @@ export async function enrichProduct(product, opts) {
           error: reason,
           validation_issues: [{ field: 'schema', reason }],
           resolved_category: e.resolved_category,
+          dict_debug: e.dict_debug || null,
+          dict_debug_text: e.dict_debug_text || null,
         },
       };
     }
@@ -1722,7 +1732,7 @@ export async function enrichProduct(product, opts) {
   }
   const src = sourceText(product);
   const { facts } = productFacts(product, schema);
-  const benchmarks = schema.id != null ? loadBenchmarks(schema.id) : null;
+  const benchmarks = schema.id != null ? loadBenchmarks(schema.id, opts.root) : null;
   const baseUser = buildUserContent(product, facts, { benchmarks });
   const attemptsCap = Math.min(2, Math.max(1, maxRetries));
   let tokenBudget = maxTokens;

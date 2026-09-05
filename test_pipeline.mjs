@@ -914,20 +914,52 @@ console.log('golden tests passed');
   try {
     assert.throws(
       () => schemaForProduct({ name: 'Стиральная машина X', category: '467' }, '467', tmpRoot),
-      (e) => e?.code === 'DICT_UNAVAILABLE' && e.resolved_category === '467',
+      (e) => e?.code === 'DICT_UNAVAILABLE'
+        && e.resolved_category === '467'
+        && e.dict_debug?.exists === false
+        && String(e.dict_debug?.expectedPath || '').includes('attributes_467.json'),
     );
     const miss = await enrichProduct(
       { name: 'Стиральная машина X', category: '467', description: 'Загрузка 6 кг отжим 1000' },
-      { apiKey: 'x', model: 'x', root: tmpRoot },
+      { apiKey: 'x', model: 'x', root: tmpRoot, limiter: { wait: async () => {} } },
     );
     assert.equal(miss.enriched, null);
     assert.equal(miss.needs_review, true);
     assert.ok(miss.validation_issues?.some(i => i.kind === 'dict_unavailable'));
+    assert.equal(miss.debug?.model_called, false);
+    assert.match(String(miss.debug?.raw_response || ''), /MODEL_NOT_CALLED/);
     assert.notEqual(miss.debug?.schema?.slug, '_generic');
     const unknown = schemaForProduct({ name: 'Носки хлопковые' }, 'без раздела', tmpRoot);
     assert.equal(unknown.slug, '_generic', 'unknown category may still use _generic');
   } finally {
     fs.rmSync(tmpRoot, { recursive: true, force: true });
+  }
+
+  // Enrichment и export — один resolver/root для attributes_467.json
+  {
+    const { dictionaryPath, hasDictionary, PROJECT_ROOT: dictRoot } = await import('./pipeline/dict.js');
+    const { tryLoadDictSchema, PROJECT_ROOT: schemaRoot } = await import('./pipeline/schema.js');
+    assert.equal(dictRoot, schemaRoot, 'единый PROJECT_ROOT');
+    assert.ok(hasDictionary(467), 'attributes_467.json must exist for known category');
+    const enrichSchema = schemaForProduct(atlant, '467');
+    const exportDict = dictForProducts([atlant], '467');
+    assert.equal(enrichSchema.id, 467);
+    assert.equal(enrichSchema.fromDictionary, true);
+    assert.equal(exportDict?.catId, '467');
+    assert.equal(
+      dictionaryPath(467),
+      dictionaryPath(467, dictRoot),
+      'enrichment default path == export PROJECT_ROOT path',
+    );
+    assert.ok(tryLoadDictSchema(467)?.fromDictionary);
+    // Explicit wrong root still fails loud for known category
+    const empty = fs.mkdtempSync(path.join(os.tmpdir(), 'dict-empty-'));
+    try {
+      assert.equal(dictForProducts([atlant], '467', empty), null);
+      assert.throws(() => schemaForProduct(atlant, '467', empty), (e) => e?.code === 'DICT_UNAVAILABLE');
+    } finally {
+      fs.rmSync(empty, { recursive: true, force: true });
+    }
   }
 
   console.log('ok P0 export path / facets / material / width / claims / dedup / dict-fail');

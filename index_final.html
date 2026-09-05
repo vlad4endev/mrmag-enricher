@@ -3587,7 +3587,11 @@ function renderDetail(){
     return;
   }
   if(!r.enriched){
-    setP('detail',conf+`<div class="errbox">${esc(r.error||'Ошибка')}</div>`
+    const issues=Array.isArray(r.validation_issues)&&r.validation_issues.length
+      ? r.validation_issues.map(i=>`${i.field}: ${i.reason}`).join('; ')
+      : '';
+    setP('detail',conf+`<div class="errbox">${esc(r.error||(r.needs_review?'На проверку — карточка не собрана': 'Ошибка'))}</div>`
+      +(issues?`<div class="warnbox"><div class="wt">Валидация</div><div class="wi">${esc(issues)}</div></div>`:'')
       +`<div class="hint">Повторный запуск обработает товар заново.</div>`);
     return;
   }
@@ -3600,7 +3604,11 @@ function renderDetail(){
   // описана не магазином, а найденной страницей того же артикула.
   const from=r.source?`<div class="hint">Исходного текста в карточке не было — описание добрано из сети: `
     +`<a href="${esc(r.source)}" target="_blank" rel="noopener noreferrer">${esc(hostOf(r.source))}</a></div>`:'';
-  setP('detail',from+(curTab==='json'?`<div class="jv">${hl(r.enriched)}</div>`:renderVis(r.enriched)));
+  const review=r.needs_review
+    ? `<div class="warnbox"><div class="wt">⚑ На проверку — не попадёт в выгрузку v2</div>`
+      +`<div class="wi">${esc((r.validation_issues||[]).map(i=>`${i.field}: ${i.reason}`).join('; ')||'валидация не прошла')}</div></div>`
+    : '';
+  setP('detail',conf+review+from+(curTab==='json'?`<div class="jv">${hl(r.enriched)}</div>`:renderVis(r.enriched)));
 }
 
 function showActions(){

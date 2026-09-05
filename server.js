@@ -927,8 +927,10 @@ async function enrichOne(product, { model, category, provider, onNote = () => {}
 
     if (needs_review) {
       note(`needs_review: ${(validation_issues || []).map(i => i.field).join(', ')}`, { step: 'validate', level: 'warn' });
+      // enriched оставляем: статус «на проверку», карточка видна; выгрузка v2 режет needs_review.
+      const preview = enriched ?? debug?.enriched_result ?? null;
       return {
-        enriched: null,
+        enriched: preview,
         needs_review: true,
         validation_issues: validation_issues || [],
         schema: schema.slug,
@@ -948,8 +950,7 @@ async function enrichOne(product, { model, category, provider, onNote = () => {}
             ...debug,
             raw_response: raw_response ?? debug?.raw_response ?? null,
           }, {
-            // В лог — результат после normalize, даже если валидация отклонила.
-            enriched: debug?.enriched_result ?? null,
+            enriched: preview,
           }),
         },
       };

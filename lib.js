@@ -1949,9 +1949,10 @@ export async function enrichProduct(product, opts) {
         onNote(`повтор с указанием ошибок валидации`);
         continue;
       }
+      // Карточка есть — в выгрузку не пойдёт (needs_review), но UI/лог её видят.
       modelStatus = 'needs_review';
       return pack({
-        enriched: null,
+        enriched,
         needs_review: true,
         validation_issues: issues,
         raw_response: content,

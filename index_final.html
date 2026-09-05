@@ -1457,11 +1457,12 @@ input[type=range]::-moz-range-thumb{
           <div class="set-card">
             <div class="set-row"><label for="setMismatch">Расхождения модели с текстом</label>
               <select id="setMismatch">
-                <option value="flag">flag — оставить и пометить</option>
-                <option value="strict">strict — обнулить спорное поле</option>
+                <option value="prefer_source">prefer_source — факт источника без пометки</option>
+                <option value="flag">flag — факт источника + пометка</option>
+                <option value="strict">strict — вне интервала обнулить</option>
               </select>
             </div>
-            <div class="hint">flag пишет значение модели и факт из текста. strict оставляет только факт источника.</div>
+            <div class="hint">Точный факт из текста/атрибутов всегда перекрывает модель. prefer_source не шумит warnings; flag оставляет аудит.</div>
           </div>
           <div class="set-card">
             <div class="set-row"><label for="setMinChars">Минимум символов в описании</label><input type="number" id="setMinChars" min="0" max="10000"></div>
@@ -1498,11 +1499,14 @@ input[type=range]::-moz-range-thumb{
               </div>
               <div class="set-actions">
                 <button type="button" class="sbtn ghost" onclick="toggleDictCreate()"><i class="ti ti-plus"></i> Создать</button>
+                <button type="button" class="sbtn ghost" onclick="dictImportPick()"><i class="ti ti-upload"></i> Импорт</button>
+                <button type="button" class="sbtn ghost" id="dictExport" onclick="exportDictionaryUi()" disabled><i class="ti ti-download"></i> Экспорт</button>
                 <button type="button" class="sbtn ghost" onclick="loadDictList()"><i class="ti ti-refresh"></i> Обновить</button>
                 <button type="button" class="sbtn danger" id="dictDelete" onclick="deleteDictionaryUi()" disabled>Удалить</button>
                 <button type="button" class="sbtn primary" id="dictSave" onclick="saveDictionary()" disabled>Сохранить</button>
               </div>
             </div>
+            <input type="file" id="dictImportFile" accept=".json,application/json" hidden>
             <div class="dict-create" id="dictCreateBox">
               <div class="set-grid">
                 <div class="set-row">
@@ -1518,9 +1522,10 @@ input[type=range]::-moz-range-thumb{
               </div>
               <div class="set-actions" style="margin-top:10px">
                 <button type="button" class="sbtn primary" onclick="createDictionaryUi()">Создать файл справочника</button>
+                <button type="button" class="sbtn ghost" onclick="dictImportPick()">Импорт из JSON…</button>
                 <button type="button" class="sbtn ghost" onclick="toggleDictCreate(false)">Отмена</button>
               </div>
-              <div class="hint" style="margin-top:8px">ID — числовой код раздела магазина. «Пусто» создаёт справочник с одной характеристикой «Бренд»; либо клонируйте уже настроенный раздел.</div>
+              <div class="hint" style="margin-top:8px">ID — числовой код раздела. Импорт принимает массив атрибутов или <code>{"id":929,"attrs":[...]}</code>; имя файла <code>attributes_929.json</code> подставит ID само.</div>
             </div>
             <div class="dict-meta" id="dictMeta"></div>
           </div>
@@ -1846,9 +1851,11 @@ function setDictButtons({save, del, add}={}){
   const s=document.getElementById('dictSave');
   const d=document.getElementById('dictDelete');
   const a=document.getElementById('dictAddAttr');
+  const exp=document.getElementById('dictExport');
   if(s && save!=null) s.disabled=!save;
   if(d && del!=null) d.disabled=!del;
   if(a && add!=null) a.disabled=!add;
+  if(exp) exp.disabled=!dictCurrent;
 }
 
 function fillDictCopySelect(){
@@ -2108,6 +2115,120 @@ async function createDictionaryUi(){
   }catch(e){
     dictStatus(e.message||'не удалось создать', false);
   }
+}
+
+/** Разбор JSON справочника: массив или {id, attrs}. ID — из тела или имени attributes_N.json. */
+function parseDictImportFile(text, fileName){
+  let data;
+  try{ data=JSON.parse(text); }
+  catch{ throw new Error('файл не JSON'); }
+  let attrs=null;
+  let id=null;
+  if(Array.isArray(data)) attrs=data;
+  else if(data && typeof data==='object'){
+    if(Array.isArray(data.attrs)) attrs=data.attrs;
+    else if(Array.isArray(data.attributes)) attrs=data.attributes;
+    id=data.id??data.catId??data.cat_id??null;
+  }
+  if(!Array.isArray(attrs) || !attrs.length){
+    throw new Error('ожидался непустой массив атрибутов или объект {attrs:[...]}');
+  }
+  for(const a of attrs){
+    if(!a || typeof a!=='object' || Array.isArray(a)) throw new Error('каждый атрибут — объект');
+    if(!a.code || typeof a.code!=='string') throw new Error('у атрибута нет code');
+    if(!a.name || typeof a.name!=='string') throw new Error(`у «${a.code}» нет name`);
+  }
+  const codes=new Set();
+  for(const a of attrs){
+    if(codes.has(a.code)) throw new Error(`дублируется code «${a.code}»`);
+    codes.add(a.code);
+  }
+  const fromName=String(fileName||'').match(/attributes[_\-]?(\d+)/i);
+  if(id==null && fromName) id=fromName[1];
+  if(id!=null) id=String(id).trim();
+  if(id!=null && !/^\d+$/.test(id)) throw new Error('id в файле — только цифры');
+  return {attrs, id};
+}
+
+function dictImportPick(){
+  const input=document.getElementById('dictImportFile');
+  if(!input) return;
+  input.value='';
+  input.onchange=async ()=>{
+    const file=input.files?.[0];
+    input.onchange=null;
+    if(!file) return;
+    try{
+      const text=await file.text();
+      await importDictionaryUi(text, file.name);
+    }catch(e){
+      dictStatus(e.message||'не удалось прочитать файл', false);
+    }
+  };
+  input.click();
+}
+
+async function importDictionaryUi(text, fileName){
+  let parsed;
+  try{ parsed=parseDictImportFile(text, fileName); }
+  catch(e){
+    dictStatus(e.message||'битый файл', false);
+    return;
+  }
+  let id=parsed.id;
+  if(!id){
+    const typed=String(getV('dictNewId')||dictCurrent?.id||'').trim();
+    if(/^\d+$/.test(typed)) id=typed;
+    else{
+      const ask=prompt('ID раздела для импорта (цифры):', dictCurrent?.id||'');
+      id=String(ask||'').trim();
+    }
+  }
+  if(!/^\d+$/.test(id)){
+    dictStatus('нужен числовой ID раздела (в файле, в поле «Создать» или текущем разделе)', false);
+    toggleDictCreate(true);
+    return;
+  }
+  const exists=dictList.some(d=>d.id===id);
+  if(exists && !confirm(`Справочник ${id} уже есть. Заменить содержимым файла «${fileName}»?`)) return;
+  if(!exists && dictDirty && dictCurrent?.id!==id
+    && !confirm('Есть несохранённые правки. Импортировать в другой раздел?')) return;
+  if(exists && dictDirty && dictCurrent?.id===id
+    && !confirm('Несохранённые правки будут потеряны. Продолжить импорт?')) return;
+
+  try{
+    const saved=await apiJson('/api/dictionaries/'+encodeURIComponent(id),{
+      method:'PUT',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({attrs:parsed.attrs}),
+    });
+    dictDirty=false;
+    dictCurrent=saved;
+    toggleDictCreate(false);
+    await loadDictList();
+    dictStatus(exists
+      ? `импортировано ${parsed.attrs.length} атрибутов (замена)`
+      : `импортировано ${parsed.attrs.length} атрибутов (новый файл)`);
+    setDictButtons({save:true, del:true, add:true});
+  }catch(e){
+    dictStatus(e.message||'не удалось импортировать', false);
+  }
+}
+
+function exportDictionaryUi(){
+  if(!dictCurrent?.attrs?.length){
+    dictStatus('нечего экспортировать', false);
+    return;
+  }
+  const id=dictCurrent.id;
+  const blob=new Blob([JSON.stringify(dictCurrent.attrs, null, 2)+'\n'], {type:'application/json'});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a');
+  a.href=url;
+  a.download=`attributes_${id}.json`;
+  a.click();
+  URL.revokeObjectURL(url);
+  dictStatus('скачан attributes_'+id+'.json');
 }
 
 async function deleteDictionaryUi(){

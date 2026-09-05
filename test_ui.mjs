@@ -1170,6 +1170,13 @@ await tAsync('без справочника интерфейс работает 
   assert.strictEqual(api.catOf(st.items[0]).id, null, 'без id раздела файл назовётся по all');
   assert.strictEqual(api.catOf(st.items[0]).name, 'Холодильники', 'название берётся у товара');
 });
+await tAsync('category id «467» сопоставляется со Стиральными машинами', async () => {
+  st.categories = CATS.categories;
+  const cat = api.catOf({ sku: '11391', name: 'Стиральная машина ATLANT', category: '467' });
+  assert.strictEqual(Number(cat.id), 467);
+  assert.match(cat.name, /Стиральные машины/i);
+  assert.notStrictEqual(cat.slug, 'bez_razdela');
+});
 globalThis.fetch = () => Promise.reject(new Error('сеть в тесте отключена'));
 
 console.log('\nПрогон считает сервер, а не вкладка');

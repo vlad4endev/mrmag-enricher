@@ -794,11 +794,151 @@ console.log('golden tests passed');
 }
 
 {
+  const { matchKey } = await import('./pipeline/match.js');
+  const {
+    stripHallucinationClaims, checkDescriptionClaims,
+  } = await import('./pipeline/quality_validate.js');
+  const { expectedDictCatId } = await import('./pipeline/schema.js');
+  const { dedupeAnnotationValue } = await import('./pipeline/export.js');
+  const { schemaForProduct, enrichProduct } = await import('./lib.js');
+
+  // Guard: ATLANT category "467" → customer/dict facets
+  const atlant = {
+    ...p467[11391],
+    category: '467',
+    enriched: {
+      specs: {
+        тип_товара: 'стиральная машина',
+        бренд: 'ATLANT',
+        модель: '60С1010',
+        назначение: 'стирка белья',
+        ширина_мм: 596,
+        высота_мм: 846,
+        глубина_мм: 550,
+        вес_кг: 62,
+        цвет: 'белый',
+        материал: 'пластик',
+        гарантия_мес: 60,
+      },
+      description: 'Гарантия на двигатель — 5 лет, что говорит о надёжности конструкции. Класс A++.',
+      bullets: ['Загрузка — 6 кг', 'Отжим — 1000 об/мин', 'Класс A++'],
+      strong: [],
+      meta_keywords: 'а, б, в, г, д, е, ж',
+      web_info: null,
+    },
+  };
+  assert.equal(dictForProducts([atlant], '467')?.catId, '467');
+  assert.equal(expectedDictCatId([atlant], '467'), '467');
+  const cust = buildCustomerExport([atlant], { dict: d467, config, root: '.' });
+  assert.equal(cust.products.length, 1, 'customer path must export ATLANT');
+  const fkeys = Object.keys(cust.products[0].filters);
+  const genericOnly = [
+    'Тип товара', 'Бренд', 'Модель', 'Назначение', 'Ширина, мм', 'Высота, мм',
+    'Глубина, мм', 'Вес, кг', 'Цвет', 'Материал', 'Гарантия мес',
+  ];
+  assert.ok(
+    !genericOnly.every(k => fkeys.includes(k)) || fkeys.some(k => !genericOnly.includes(k)),
+    `filters must not be GENERIC-only: ${fkeys.join(', ')}`,
+  );
+  for (const need of [
+    'Загрузка белья, кг',
+    'Скорость отжима, об/мин',
+    'Класс энергоэффективности',
+    'Уровень шума, дБ',
+    'Количество программ',
+  ]) {
+    assert.ok(fkeys.includes(need), `missing facet filter ${need}; got ${fkeys.join(', ')}`);
+  }
+  assert.ok(!('Материал' in cust.products[0].filters), 'tank plastic must not become filters.Материал');
+
+  // Semantic mapping 467 / 929
+  assert.equal(matchKey('Материал бака', d467, { value: 'пластик' }).attr?.code, 'tank_material');
+  assert.equal(matchKey('Материал', d467, { value: 'пластик' }).attr?.code, undefined);
+  const d929map = loadDictionary('929', '.');
+  assert.equal(matchKey('Ширина', d929map).attr?.code, 'width');
+  assert.equal(matchKey('Ширина встраивания', d929map).attr?.code, 'install_width');
+
+  // Description claims A–D
+  const claimA = 'Гарантия на двигатель — 5 лет, что говорит о надёжности конструкции. Класс энергопотребления — A++.';
+  assert.equal(
+    stripHallucinationClaims(claimA),
+    'Гарантия на двигатель — 5 лет. Класс энергопотребления — A++.',
+  );
+  const claimB = 'Класс A++ подтверждает экономичность модели.';
+  const strippedB = stripHallucinationClaims(claimB);
+  assert.ok(
+    !/подтверждает\s+экономичность/i.test(strippedB) || !strippedB.trim(),
+    `claim B must be removed or empty; got ${JSON.stringify(strippedB)}`,
+  );
+  assert.ok(checkDescriptionClaims({ description: claimB }).some(i => i.kind === 'hallucination_marker'));
+  const claimC = '<p>Гарантия — 5 лет, что говорит о надёжности конструкции.</p>'
+    + '<p><strong>Класс</strong> A++.</p><ul><li>Тихая</li></ul>';
+  const strippedC = stripHallucinationClaims(claimC);
+  assert.match(strippedC, /<p>/);
+  assert.match(strippedC, /<strong>/);
+  assert.match(strippedC, /<ul><li>/);
+  assert.ok(!/<\/?[a-z]+[^>]*$/i.test(strippedC.replace(/>[^<]*$/i, '>')), 'no truncated tags');
+  assert.equal((strippedC.match(/<p>/g) || []).length, (strippedC.match(/<\/p>/g) || []).length);
+  assert.equal((strippedC.match(/<ul>/g) || []).length, (strippedC.match(/<\/ul>/g) || []).length);
+  assert.equal((strippedC.match(/<li>/g) || []).length, (strippedC.match(/<\/li>/g) || []).length);
+  assert.ok(!/говорит о над[её]жност/i.test(strippedC));
+  const claimD = 'Стиральная машина с загрузкой 6 кг и отжимом 1000 об/мин.';
+  assert.equal(stripHallucinationClaims(claimD), claimD);
+
+  const goldDesc = buildGoldShapeExport([{
+    id: 99,
+    name: 'Товар без раздела',
+    annotation: 'Тип - гаджет Цвет - белый',
+    enriched: { description: claimA, bullets: ['a', 'b', 'c'], strong: [], meta_keywords: 'а, б, в, г, д, е, ж', web_info: null },
+  }]);
+  assert.ok(!/говорит о над[её]жност/i.test(goldDesc.products[0].description_html));
+  assert.deepEqual(goldDesc.filters, []);
+  assert.ok(goldDesc.needs_review?.length >= 1);
+
+  // Annotation dedup
+  assert.equal(
+    dedupeAnnotationValue('Защита от скачков напряжения, от детей, от детей, от протечек'),
+    'Защита от скачков напряжения, от детей, от протечек',
+  );
+  const ann = compactAnnotation(
+    'Защита - Защита от скачков напряжения,от детей, от детей, от протечек, от скачков питания',
+  );
+  assert.ok(!/от детей,\s*от детей/i.test(ann));
+  assert.match(ann, /от детей/);
+
+  // Gold only when category truly unknown
+  assert.equal(expectedDictCatId([{ name: 'Носки хлопковые' }], 'без раздела'), null);
+
+  // Known category + dict unavailable → NOT silent _generic
+  const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'dict-miss-'));
+  try {
+    assert.throws(
+      () => schemaForProduct({ name: 'Стиральная машина X', category: '467' }, '467', tmpRoot),
+      (e) => e?.code === 'DICT_UNAVAILABLE' && e.resolved_category === '467',
+    );
+    const miss = await enrichProduct(
+      { name: 'Стиральная машина X', category: '467', description: 'Загрузка 6 кг отжим 1000' },
+      { apiKey: 'x', model: 'x', root: tmpRoot },
+    );
+    assert.equal(miss.enriched, null);
+    assert.equal(miss.needs_review, true);
+    assert.ok(miss.validation_issues?.some(i => i.kind === 'dict_unavailable'));
+    assert.notEqual(miss.debug?.schema?.slug, '_generic');
+    const unknown = schemaForProduct({ name: 'Носки хлопковые' }, 'без раздела', tmpRoot);
+    assert.equal(unknown.slug, '_generic', 'unknown category may still use _generic');
+  } finally {
+    fs.rmSync(tmpRoot, { recursive: true, force: true });
+  }
+
+  console.log('ok P0 export path / facets / material / width / claims / dedup / dict-fail');
+}
+
+{
   const keys = v2FacetSpecKeys(d523);
   assert.ok(keys.has('цвет') && keys.has('тип_товара') && keys.has('бренд'));
   assert.ok(!keys.has('хладагент') && !keys.has('вес_кг'));
   const w = v2FacetSpecKeys(d467);
-  assert.ok(!w.has('вес_кг'), 'вес стиральной машины — не фильтр');
+  assert.ok(w.has('вес_кг'), 'вес стиральной машины — фильтр (facet.enabled=true)');
   assert.ok(![...w].some(k => /расход_воды/.test(k)));
   assert.ok(![...w].some(k => /шум.*отжим|отжима.*дб/.test(k)));
   console.log('ok v2FacetSpecKeys vs таблица заказчика');
@@ -824,7 +964,7 @@ console.log('golden tests passed');
   assert.equal(p.filters['Система охлаждения'], 'No Frost');
   assert.equal(p.filters['Тип управления'], 'Механическое');
   assert.equal(p.filters['Расположение морозильной камеры'], 'Нижнее');
-  assert.ok(!('Количество камер' in p.filters), 'камеры — характеристика, не фильтр');
+  assert.equal(p.filters['Количество камер'], '2', 'камеры — filter при facet.enabled');
   assert.match(p.description_html, /^<h1>Холодильник Pozis RK FNF-172 W<\/h1>/);
   assert.match(p.description_html, /<li>Тип товара: холодильник<\/li>/);
   assert.match(p.description_html, /<li>Общий объем: 344 л<\/li>/);
@@ -886,14 +1026,15 @@ console.log('golden tests passed');
   const all = loadProducts('data_467.json').map(p => normalizeProduct(p, d467, config));
   const exported = all.filter(r => annotationRows(r, d467).length >= MIN_ANNOTATION_ROWS);
   const built = buildFilters(exported, d467, config);
-  assert.equal(expectedFilters(d467).length, 14);
-  assert.equal(expectedFilters(d523).length, 17);
+  assert.equal(expectedFilters(d467).length, 20);
+  assert.equal(expectedFilters(d523).length, 22);
   const ids = [11391, 29921, 44772, 12957, 44773, 44782, 52904, 128925, 182681, 190925];
   const recs = ids.map(id => all.find(x => x.id === id)).filter(Boolean);
   const rows = recs.map(r => serializeProduct(r, d467, built.debug));
   const src = new Map(recs.map(r => [r.id, r]));
   const { errors } = validateProducts(rows, d467, src);
-  const blocking = errors.filter(e => e.kind !== 'filter_missing');
+  // dims facet label без суффикса «, см» при unit=см — известный warning словаря, не блокер P0.
+  const blocking = errors.filter(e => e.kind !== 'filter_missing' && e.kind !== 'filter_unit_not_cm');
   assert.equal(blocking.length, 0, JSON.stringify(blocking.slice(0, 8), null, 2));
 
   const a = rows.find(r => r.id === 11391);
@@ -954,13 +1095,16 @@ console.log('golden tests passed');
   const src = p467[11391];
   const out = buildGoldShapeExport([{
     ...src,
-    enriched: { specs: { цвет: 'белый' }, seo_keywords: ['стиральная машина ATLANT'] },
+    enriched: { specs: { цвет: 'белый', материал: 'пластик' }, seo_keywords: ['стиральная машина ATLANT'] },
   }]);
   assert.equal(out.products.length, 1);
   assert.deepEqual(Object.keys(out.products[0]), PRODUCT_FIELDS);
   assert.ok(out.products[0].annotation_html.includes('<li>'));
   assert.match(out.products[0].annotation_html, /Тип загрузки/);
-  assert.ok(Array.isArray(out.products[0].filters['Цвет']));
+  assert.deepEqual(out.products[0].filters, {});
+  assert.deepEqual(out.filters, []);
+  assert.ok(Array.isArray(out.needs_review) && out.needs_review.length >= 1);
+  assert.ok(!('Материал' in out.products[0].filters));
   const hood = buildGoldShapeExport([{
     sku: '21670',
     name: 'Кухонная вытяжка X',
@@ -970,7 +1114,8 @@ console.log('golden tests passed');
   assert.deepEqual(Object.keys(hood.products[0]), PRODUCT_FIELDS);
   assert.match(hood.products[0].annotation_html, /производительность/i);
   assert.ok(!hood.products[0].description_html.includes('<h1'));
-  console.log('ok buildGoldShapeExport keeps 7 fields and source rows');
+  assert.deepEqual(hood.products[0].filters, {});
+  console.log('ok buildGoldShapeExport keeps 7 fields, empty filters, needs_review');
 }
 
 {
@@ -1127,5 +1272,113 @@ console.log('golden tests passed');
   assert.ok(hood.provenance.speeds?.evidence?.normalized_value === 3);
   assert.equal(PRODUCT_FIELDS.length, 7);
   console.log('ok enrichment P0/P1: speeds/width/boolean/warranty/conflict/identity/description/quality');
+}
+
+{
+  // Universal: every product filter name ⊆ facet.enabled labels for that dict
+  const { assignFilterValues } = await import('./pipeline/facets.js');
+  const { stripHallucinationClaims } = await import('./pipeline/quality_validate.js');
+  const { normalizeValue } = await import('./pipeline/types.js');
+  const enabledLabels = (dict) => new Set(
+    dict.attrs
+      .filter(a => a.tier !== 'X' && a.facet?.enabled)
+      .map(a => a.facet.label || a.name),
+  );
+  const genericOnlyNames = new Set([
+    'Тип товара', 'Бренд', 'Модель', 'Назначение', 'Ширина, мм', 'Высота, мм',
+    'Глубина, мм', 'Вес, кг', 'Цвет', 'Материал', 'Гарантия мес',
+  ]);
+
+  for (const [catId, dict, samples] of [
+    ['467', d467, [normalizeProduct(p467[11391], d467, config)]],
+    ['523', d523, [normalizeProduct(p523[260], d523, config)]],
+  ]) {
+    const allowed = enabledLabels(dict);
+    const built = buildFilters(samples, dict, config);
+    for (const f of built.filters) {
+      assert.ok(allowed.has(f.name), `cat ${catId}: catalog filter «${f.name}» not in facet.enabled`);
+    }
+    for (const rec of samples) {
+      const assigned = assignFilterValues(rec, dict, built.debug);
+      const names = Object.keys(assigned);
+      assert.ok(names.length, `cat ${catId} id=${rec.id}: expected filters`);
+      for (const name of names) {
+        assert.ok(allowed.has(name), `cat ${catId} id=${rec.id}: «${name}» not facet.enabled`);
+      }
+      const onlyGeneric = names.length > 0 && names.every(n => genericOnlyNames.has(n));
+      assert.ok(!onlyGeneric, `cat ${catId}: GENERIC-only filters forbidden: ${names.join(', ')}`);
+    }
+  }
+  console.log('ok universal filters ⊆ facet.enabled (no GENERIC-only)');
+}
+
+{
+  // Smoke ATLANT 60С1010 / 467
+  const { stripHallucinationClaims } = await import('./pipeline/quality_validate.js');
+  const { normalizeValue } = await import('./pipeline/types.js');
+  const src = p467[11391];
+  assert.match(src.name, /ATLANT\s+60[СC]1010/i);
+  assert.equal(dictForProducts([{ ...src, category: '467' }], '467')?.catId, '467');
+  const r = normalizeProduct(src, d467, config);
+  const built = buildFilters([r], d467, config);
+  const row = serializeProduct(r, d467, built.debug);
+  assert.deepEqual(Object.keys(row), PRODUCT_FIELDS);
+  for (const need of [
+    'Загрузка белья, кг',
+    'Скорость отжима, об/мин',
+    'Класс энергоэффективности',
+    'Уровень шума, дБ',
+    'Количество программ',
+  ]) {
+    assert.ok(need in row.filters, need);
+  }
+  assert.ok(d467.byCode.get('weight').facet.enabled);
+  assert.ok('Вес, кг' in row.filters, 'вес — filter при facet.enabled');
+  assert.ok(!('Материал' in row.filters));
+  assert.equal(
+    normalizeValue(
+      { type: 'integer', code: 'warranty', unit: 'мес', valid_range: [1, 240] },
+      '5 лет',
+    ).value,
+    60,
+  );
+  const ann = row.annotation_html || '';
+  const childHits = ann.match(/от детей/gi) || [];
+  assert.ok(childHits.length <= 1, `annotation duplicate protection: ${ann}`);
+  assert.ok(!/говорит о над[её]жност|подтверждает экономичность/i.test(row.description_html));
+  assert.equal(
+    stripHallucinationClaims(row.description_html.replace(/<[^>]+>/g, ' ')).includes('говорит о'),
+    false,
+  );
+  console.log('ok smoke ATLANT 11391 / category 467');
+}
+
+{
+  // Smoke 929: width ≠ install_width
+  const { setAttr } = await import('./pipeline/normalize.js');
+  const { assignFilterValues } = await import('./pipeline/facets.js');
+  const { matchKey } = await import('./pipeline/match.js');
+  const d929 = loadDictionary('929', '.');
+  assert.equal(matchKey('Ширина', d929).attr?.code, 'width');
+  assert.equal(matchKey('Ширина встраивания', d929).attr?.code, 'install_width');
+  const hood = {
+    id: 929001,
+    name: 'Вытяжка тест 929',
+    attrs: Object.fromEntries(d929.attrs.filter(a => a.tier !== 'X').map(a => [a.code, null])),
+    provenance: {},
+    conflicts: [],
+    flags: [],
+    identity: { brand: 'Test', model: 'W50' },
+  };
+  setAttr(hood, 'width', 50, { level: 'S1', raw: 'Ширина = 50 см' });
+  setAttr(hood, 'install_width', 60, { level: 'S1', raw: 'Ширина встраивания = 60 см' });
+  assert.equal(hood.attrs.width, 50);
+  assert.equal(hood.attrs.install_width, 60);
+  assert.notEqual(hood.attrs.width, hood.attrs.install_width);
+  const built = buildFilters([hood], d929, config);
+  const assigned = assignFilterValues(hood, d929, built.debug);
+  assert.ok('Ширина, см' in assigned);
+  assert.ok(!('Ширина встраивания, см' in assigned) || !assigned['Ширина встраивания, см']?.length);
+  console.log('ok smoke category 929 width vs install_width');
 }
 

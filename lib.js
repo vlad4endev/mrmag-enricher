@@ -21,7 +21,7 @@
  */
 
 import { nameKeyTokens } from './pipeline/identity.js';
-import { tryLoadDictSchema, extractFactsFromDictionary, loadConfigSafe, CRAWL_SLUGS, specDest } from './pipeline/schema.js';
+import { tryLoadDictSchema, extractFactsFromDictionary, loadConfigSafe, CRAWL_SLUGS, specDest, expectedDictCatId } from './pipeline/schema.js';
 import { matchKey } from './pipeline/match.js';
 import { normalizeValue } from './pipeline/types.js';
 import { loadBenchmarks } from './pipeline/dict.js';
@@ -780,14 +780,14 @@ export const GENERIC_SCHEMA = defineSchema({
 });
 
 /** Схема по slug, id категории, названию или объекту схемы. */
-export function schemaFor(key) {
+export function schemaFor(key, root) {
   if (key && typeof key === 'object') {
     if (key.fromDictionary || key.specKeys) return key;
-    return schemaFor(key.id ?? key.slug ?? key.name ?? key.category ?? key.category_id);
+    return schemaFor(key.id ?? key.slug ?? key.name ?? key.category ?? key.category_id, root);
   }
   if (key == null || key === '') return GENERIC_SCHEMA;
   // Категории со справочником — только из dictionaries/attributes_{id}.json.
-  const fromDict = tryLoadDictSchema(key);
+  const fromDict = tryLoadDictSchema(key, root);
   if (fromDict) return fromDict;
 
   const k = String(key).trim();
@@ -805,25 +805,46 @@ export function schemaFor(key) {
     || GENERIC_SCHEMA;
 }
 
+export function dictUnavailableError(catId) {
+  const err = new Error(
+    `категория ${catId} определена, но справочник attributes_${catId}.json недоступен`,
+  );
+  err.code = 'DICT_UNAVAILABLE';
+  err.needs_review = true;
+  err.resolved_category = String(catId);
+  return err;
+}
+
 /** По имени: «Холодильник Pozis…» не должен уезжать в универсальные 16 полей. */
-function schemaFromProductName(name) {
+function schemaFromProductName(name, root) {
   const n = String(name || '').toLowerCase().replace(/ё/g, 'е');
-  if (/стиральн/.test(n)) return tryLoadDictSchema(467);
-  if (/холодильник/.test(n)) return tryLoadDictSchema(523);
+  const load = (id) => {
+    const s = tryLoadDictSchema(id, root);
+    if (s) return s;
+    throw dictUnavailableError(id);
+  };
+  if (/стиральн/.test(n)) return load(467);
+  if (/холодильник/.test(n)) return load(523);
+  if (/вытяжк|воздухоочистител/.test(n)) return load(929);
   return null;
 }
 
 /**
  * Схема для прогона: явная категория, поле товара, иначе тип из названия.
- * Иначе карточка холодильника получает шаблон «мощность / напряжение / назначение».
+ * Известная категория без attributes_{id}.json — ошибка, не тихий _generic.
  */
-export function schemaForProduct(product, category) {
+export function schemaForProduct(product, category, root) {
   if (category && typeof category === 'object' && (category.fromDictionary || category.specKeys)) {
     return category;
   }
-  const hinted = schemaFor(category || product?.category || product?.category_id);
+  const catKey = category || product?.category || product?.category_id;
+  const hinted = schemaFor(catKey, root);
   if (hinted.slug !== '_generic') return hinted;
-  return schemaFromProductName(product?.name) || hinted;
+  const fromName = schemaFromProductName(product?.name, root);
+  if (fromName) return fromName;
+  const expected = expectedDictCatId([product].filter(Boolean), catKey, root);
+  if (expected) throw dictUnavailableError(expected);
+  return hinted;
 }
 
 // ── ПРОМПТ ───────────────────────────────────────────────────
@@ -1661,7 +1682,38 @@ export async function enrichProduct(product, opts) {
     systemPrompt = '',
   } = opts;
 
-  const schema = schemaForProduct(product, schemaOpt);
+  let schema;
+  try {
+    schema = schemaForProduct(product, schemaOpt, opts.root);
+  } catch (e) {
+    if (e?.code === 'DICT_UNAVAILABLE') {
+      return {
+        enriched: null,
+        needs_review: true,
+        validation_issues: [{
+          field: 'schema',
+          reason: e.message,
+          kind: 'dict_unavailable',
+          action: 'needs_review',
+        }],
+        raw_response: '',
+        iT: 0,
+        oT: 0,
+        cost: null,
+        costSource: 'нет данных',
+        attempts: 0,
+        debug: {
+          source_text: sourceText(product),
+          system_prompt: null,
+          user_content: null,
+          raw_response: '',
+          validation_issues: [{ field: 'schema', reason: e.message }],
+          resolved_category: e.resolved_category,
+        },
+      };
+    }
+    throw e;
+  }
   const src = sourceText(product);
   const { facts } = productFacts(product, schema);
   const benchmarks = schema.id != null ? loadBenchmarks(schema.id) : null;

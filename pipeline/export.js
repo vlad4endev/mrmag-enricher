@@ -8,7 +8,7 @@ import { webInfoFrom } from './reviews.js';
 import { normalizeProduct, ingestPairs } from './normalize.js';
 import { specDest } from './schema.js';
 import { buildDescriptionHtml } from './model_validate.js';
-import { finalizeRecord, checkFilterConsistency } from './quality_validate.js';
+import { finalizeRecord, checkFilterConsistency, stripHallucinationClaims, checkDescriptionClaims } from './quality_validate.js';
 
 function esc(s) {
   return String(s)
@@ -37,10 +37,25 @@ export function compactAnnotation(html) {
   if (!chunks.length) return '';
   const lis = chunks.map((line) => {
     const m = String(line).match(/^(.+?)\s*[-–—:]\s*(.+)$/);
-    if (m) return `<li>${esc(m[1].trim())}: ${esc(m[2].trim())}</li>`;
-    return `<li>${esc(line)}</li>`;
+    if (m) return `<li>${esc(m[1].trim())}: ${esc(dedupeAnnotationValue(m[2].trim()))}</li>`;
+    return `<li>${esc(dedupeAnnotationValue(line))}</li>`;
   });
   return `<ul>${lis.join('')}</ul>`;
+}
+
+/** Повторы через запятую («от детей, от детей») → одно вхождение. */
+export function dedupeAnnotationValue(raw) {
+  const parts = String(raw || '').split(/\s*,\s*/).map(s => s.trim()).filter(Boolean);
+  if (parts.length <= 1) return String(raw || '').trim();
+  const seen = new Set();
+  const out = [];
+  for (const p of parts) {
+    const k = p.toLowerCase().replace(/ё/g, 'е');
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push(p);
+  }
+  return out.join(', ');
 }
 
 /* ---------------- meta_keywords ---------------- */
@@ -198,10 +213,15 @@ export function serializeProduct(rec, dict, debugFacets, opts = {}) {
   const meta = enr && typeof enr.meta_keywords === 'string' && enr.meta_keywords.trim()
     ? enr.meta_keywords.trim()
     : metaKeywords(rec, dict, opts);
-  const descHtml = enr?.description
+  const descSrc = enr?.description != null
+    ? stripHallucinationClaims(enr.description)
+    : null;
+  const descHtml = descSrc
     ? compactHtml(buildDescriptionHtml({
-      description: enr.description,
-      bullets: enr.bullets,
+      description: descSrc,
+      bullets: Array.isArray(enr.bullets)
+        ? enr.bullets.map(b => (typeof b === 'string' ? stripHallucinationClaims(b) : b))
+        : enr?.bullets,
       strong: enr.strong,
     }))
     : compactHtml(renderDescription(rec, dict, opts));
@@ -367,17 +387,6 @@ function specsToAnnotation(specs) {
   return lis.length ? `<ul>${lis.join('')}</ul>` : '';
 }
 
-function filtersFromSpecs(specs) {
-  const out = {};
-  if (!specs || typeof specs !== 'object') return out;
-  for (const [k, v] of Object.entries(specs)) {
-    const label = humanizeSpecKey(k);
-    const list = specValue(v);
-    if (label && list.length) out[label] = list;
-  }
-  return out;
-}
-
 function stripH1(html) {
   return String(html || '').replace(/<h1\b[^>]*>[\s\S]*?<\/h1>/gi, '').trim();
 }
@@ -390,13 +399,24 @@ function keywordsFrom(p) {
 
 /**
  * Семь полей эталона без справочника. Аннотация — все строки источника
- * (или specs). description_html — из ответа модели.
+ * (или specs). description_html — из ответа модели. filters всегда [].
  */
 export function serializeLooseProduct(p) {
   const src = toPipelineProduct(p);
   const annotation = compactAnnotation(src.annotation)
     || specsToAnnotation(p?.enriched?.specs);
-  const enr = p?.enriched;
+  const enr = p?.enriched ? { ...p.enriched } : null;
+  if (enr) {
+    if (typeof enr.description === 'string') enr.description = stripHallucinationClaims(enr.description);
+    if (typeof enr.short_description === 'string') {
+      enr.short_description = stripHallucinationClaims(enr.short_description);
+    }
+    if (Array.isArray(enr.bullets)) {
+      enr.bullets = enr.bullets.map(b =>
+        (typeof b === 'string' ? stripHallucinationClaims(b) : b)).filter(b => b && String(b).trim());
+    }
+  }
+  const descIssues = checkDescriptionClaims(enr || { description: src.description });
   const desc = enr?.description
     ? compactHtml(buildDescriptionHtml({
       description: enr.description,
@@ -406,7 +426,7 @@ export function serializeLooseProduct(p) {
     : compactHtml(stripH1(
       enr?.seo_description
       || enr?.short_description
-      || src.description
+      || stripHallucinationClaims(src.description)
       || '',
     ));
   const web = enr && 'web_info' in enr
@@ -418,26 +438,28 @@ export function serializeLooseProduct(p) {
     meta_keywords: keywordsFrom(p),
     description_html: desc,
     annotation_html: annotation,
-    filters: filtersFromSpecs(p?.enriched?.specs),
+    filters: {},
     web_info: web,
+    _gold_needs_review: true,
+    _gold_issues: descIssues,
   };
 }
 
-/** «2 файла» без attributes_{id}: та же оболочка, что у эталона. */
+/** «2 файла» без attributes_{id}: оболочка эталона, filters пустые, needs_review. */
 export function buildGoldShapeExport(products) {
   const rows = (products || []).map(serializeLooseProduct)
     .filter(p => p.annotation_html || p.description_html);
-  const catalog = new Map();
-  for (const p of rows) {
-    for (const [name, vals] of Object.entries(p.filters || {})) {
-      const set = catalog.get(name) || new Set();
-      for (const v of vals) set.add(v);
-      catalog.set(name, set);
-    }
-  }
+  const review = rows.map(p => ({
+    id: p.id,
+    name: p.name,
+    reason: 'gold_export_no_category_dict',
+    validation_issues: p._gold_issues || [],
+  }));
+  const productsOut = rows.map(({ _gold_needs_review, _gold_issues, ...rest }) => rest);
   return {
-    products: rows,
-    filters: [...catalog].map(([name, set]) => ({ name, value: [...set] })),
+    products: productsOut,
+    filters: [],
     held: [],
+    needs_review: review,
   };
 }

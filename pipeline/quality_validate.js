@@ -13,7 +13,47 @@ import { annotationRows, verifyDescription } from './generate.js';
 import { SOURCE_RANK } from './normalize.js';
 
 const NEGATIVE_RE = /^(?:нет|отсутствует|не\s+поддерживается|не\s+предусмотрено|не\s+имеется)$/i;
-const HALLUCINATION_RE = /(?:идеальн|лучш(?:ий|ая|ее)|№\s*1|premium|премиум|для\s+кухн[ие]\s+\d+\s*м|площад[ьи]\s+\d+|снижает\s+уровень\s+шума|обеспечивает\s+высокую)/i;
+export const HALLUCINATION_RE = new RegExp(
+  String.raw`(?:идеальн|лучш(?:ий|ая|ее)|№\s*1|premium|премиум|для\s+кухн[ие]\s+\d+\s*м|площад[ьи]\s+\d+|снижает\s+уровень\s+шума|обеспечивает\s+высокую|говорит\s+о\s+над[её]жност|подтверждает(?:ют)?\s+(?:над[её]жност|экономичност)|экономичность\s+модели)`,
+  'i',
+);
+
+/**
+ * Механическое удаление маркетинговых клауз/предложений.
+ * Без rewrite: только известные claim-фразы и отсев предложений по HALLUCINATION_RE.
+ * HTML: правки только в текстовых узлах — теги не режем.
+ */
+function stripClaimsPlain(text, { trimEnd = true } = {}) {
+  let s = String(text || '');
+  if (!s.trim()) return s;
+  s = s.replace(/,?\s*что\s+говорит\s+о\s+над[её]жност[иь](?:\s+конструкции)?\.?/gi, '.');
+  s = s.replace(/,?\s*что\s+подтверждает\s+над[её]жност[иь][^.!?\n]*/gi, '');
+  s = s.replace(/,?\s*(?:и\s+)?подтверждает(?:ют)?\s+экономичность(?:\s+модели)?\.?/gi, '');
+  s = s.replace(/\.\s*\./g, '.');
+  const chunks = s.split(/([.!?…]+\s*)/);
+  let out = '';
+  for (let i = 0; i < chunks.length; i += 2) {
+    const body = chunks[i] || '';
+    const sep = chunks[i + 1] || '';
+    if (!body.trim()) {
+      out += body + sep;
+      continue;
+    }
+    if (HALLUCINATION_RE.test(body)) continue;
+    out += body + sep;
+  }
+  out = out.replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').replace(/ {2,}/g, ' ');
+  return trimEnd ? out.trim() : out;
+}
+
+export function stripHallucinationClaims(text) {
+  const s = String(text || '');
+  if (!s.trim()) return s;
+  if (/<[a-z][\s\S]*>/i.test(s)) {
+    return s.replace(/(^|>)([^<]*)/g, (_, edge, frag) => edge + stripClaimsPlain(frag, { trimEnd: false }));
+  }
+  return stripClaimsPlain(s);
+}
 
 const SOURCE_BUCKET = {
   manufacturer: 'manufacturer',
@@ -333,6 +373,19 @@ export function finalizeRecord(rec, dict, { enriched = null, assigned = null } =
   }
 
   buildConfirmedAttributes(rec, dict, assigned);
+
+  if (enriched && typeof enriched === 'object') {
+    if (typeof enriched.description === 'string') {
+      enriched.description = stripHallucinationClaims(enriched.description);
+    }
+    if (typeof enriched.short_description === 'string') {
+      enriched.short_description = stripHallucinationClaims(enriched.short_description);
+    }
+    if (Array.isArray(enriched.bullets)) {
+      enriched.bullets = enriched.bullets.map(b =>
+        (typeof b === 'string' ? stripHallucinationClaims(b) : b)).filter(b => b && String(b).trim());
+    }
+  }
 
   const quality = qualityScore(rec, dict, issues);
   rec.quality = quality;

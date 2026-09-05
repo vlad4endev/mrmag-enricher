@@ -4454,6 +4454,8 @@ function catOf(p){
   const same=(x,slug)=>{
     if(!x) return false;
     if(idHint!=null && String(x.id)===String(idHint)) return true;
+    // category часто приходит id строкой («467»), а не именем раздела
+    if(name && String(x.id)===String(name)) return true;
     if(x.name===name||slug===name) return true;
     return Boolean(name && x.name && name.endsWith(x.name));
   };

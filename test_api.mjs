@@ -416,12 +416,13 @@ try {
     assert.strictEqual(d.products[0].id, 11391);
     assert.ok(d.products[0].annotation_html);
   });
-  await t('раздел без справочника не ломает выгрузку', async () => {
+  await t('раздел без справочника — gold с пустыми filters и needs_review', async () => {
     const r = await postExport({
-      category: 929,
+      category: 99999,
       products: [{
-        sku: '1', name: 'Вытяжка X',
-        enriched: { specs: { цвет: 'белый' }, short_description: 'Коротко', seo_keywords: [] },
+        sku: '1', name: 'Гаджет без раздела',
+        annotation: 'Тип - гаджет Цвет - белый',
+        enriched: { specs: { цвет: 'белый' }, short_description: 'Коротко про гаджет без лишнего.', seo_keywords: [] },
       }],
     });
     assert.strictEqual(r.status, 200);
@@ -430,8 +431,50 @@ try {
     assert.deepStrictEqual(Object.keys(d.products[0]), [
       'id', 'name', 'meta_keywords', 'description_html', 'annotation_html', 'filters', 'web_info',
     ]);
-    assert.match(d.products[0].annotation_html, /цвет: белый/i);
-    assert.ok(Array.isArray(d.products[0].filters['Цвет']));
+    assert.deepStrictEqual(d.products[0].filters, {});
+    assert.deepStrictEqual(d.filters, []);
+    assert.ok(Array.isArray(d.needs_review) && d.needs_review.length >= 1);
+  });
+  await t('ATLANT category 467 — customer facets, не GENERIC', async () => {
+    const src = JSON.parse(fs.readFileSync(path.join(ROOT, 'data_467.json'), 'utf8'))
+      .find(p => p.id === 11391);
+    const r = await postExport({
+      category: '467',
+      products: [{ ...src, sku: String(src.id), category: '467' }],
+    });
+    assert.strictEqual(r.status, 200);
+    const d = await r.json();
+    const keys = Object.keys(d.products[0].filters);
+    assert.ok(keys.includes('Загрузка белья, кг'), keys.join(', '));
+    assert.ok(keys.includes('Скорость отжима, об/мин'), keys.join(', '));
+    assert.ok(keys.includes('Вес, кг'), 'weight facet.enabled → filter');
+    assert.ok(!keys.includes('Материал'), 'Материал бака не должен стать filters.Материал');
+  });
+  await t('export-v2 category 467 — тот же customer path, не silent gold', async () => {
+    const src = JSON.parse(fs.readFileSync(path.join(ROOT, 'data_467.json'), 'utf8'))
+      .find(p => p.id === 11391);
+    const r = await postV2({
+      category: '467',
+      products: [{ ...src, sku: String(src.id), category: '467' }],
+    });
+    assert.strictEqual(r.status, 200);
+    const d = await r.json();
+    const keys = Object.keys(d.products[0].filters);
+    assert.ok(keys.includes('Загрузка белья, кг'), keys.join(', '));
+    assert.ok(!keys.includes('Материал'));
+    assert.ok(!Array.isArray(d.needs_review) || d.needs_review.length === 0);
+  });
+  await t('export-v2 неизвестная категория без dict — buildV2, не 422', async () => {
+    const r = await postV2({
+      category: 99999,
+      products: [{
+        sku: '1', name: 'Гаджет без раздела',
+        enriched: { specs: { цвет: 'белый', объем_л: 10 }, short_description: 'Коротко.', seo_keywords: [] },
+      }],
+    });
+    assert.strictEqual(r.status, 200);
+    const d = await r.json();
+    assert.ok(d.products.length);
   });
 
   console.log('\nВалидация обогащения');

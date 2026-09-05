@@ -64,11 +64,12 @@ import {
 import { CATEGORIES, findCategory, crawlCategory, loadFeed, buildFilters, ensureSource, WEB_LOOKUP } from './catalog.js';
 import { buildV2 } from './export_v2.js';
 import { buildCustomerExport, buildGoldShapeExport } from './pipeline/export.js';
-import { dictForProducts } from './pipeline/schema.js';
+import { dictForProducts, expectedDictCatId } from './pipeline/schema.js';
 import { createJobStore } from './jobs.js';
 import {
   loadConfig, listDictionaries, readDictionaryAttrs, saveDictionaryAttrs,
   createDictionary, deleteDictionary, blankAttribute, categoryName,
+  dictionaryPath,
 } from './pipeline/dict.js';
 import { publicParserStatus } from './pipeline/search.js';
 import {
@@ -618,17 +619,29 @@ async function apiQuality(req, res) {
   // не ответа модели, — значит видно до прогона и без единого запроса к ней.
   json(res, 200, {
     quality: products.map(p => {
-      const schema = schemaForProduct(p || {}, category);
-      return { ...isEnrichable(p || {}, schema), conflicts: productFacts(p || {}, schema).conflicts };
+      try {
+        const schema = schemaForProduct(p || {}, category);
+        return { ...isEnrichable(p || {}, schema), conflicts: productFacts(p || {}, schema).conflicts };
+      } catch (e) {
+        if (e?.code === 'DICT_UNAVAILABLE') {
+          return {
+            ok: false,
+            reason: e.message,
+            needs_review: true,
+            conflicts: [],
+            resolved_category: e.resolved_category,
+          };
+        }
+        throw e;
+      }
     }),
   });
 }
 
 /**
  * Выгрузка v2: POST { products, category } → { products, filters, held }.
- * Раздел со справочником идёт через тот же слой атрибутов, что /api/export.
- * Без справочника остаётся старый buildV2 — иначе универсальные 16 полей
- * не из чего нормализовать.
+ * Те же правила, что /api/export: dict → customer; known cat без dict → 422;
+ * неизвестная категория → buildV2 без silent-gold по известному разделу.
  */
 async function apiExportV2(req, res) {
   const raw = await readBody(req, BULK_BODY_LIMIT);
@@ -643,6 +656,7 @@ async function apiExportV2(req, res) {
     ?? products.find(p => p.category)?.category
     ?? products.find(p => p.category_id)?.category_id;
   const dict = dictForProducts(products, catKey, ROOT);
+  const expectedId = expectedDictCatId(products, catKey, ROOT);
   if (dict) {
     let config;
     try { config = loadConfig(ROOT); }
@@ -653,6 +667,13 @@ async function apiExportV2(req, res) {
     }
     return json(res, 200, out);
   }
+  if (expectedId) {
+    return json(res, 422, {
+      error: `категория ${expectedId} определена, но справочник attributes_${expectedId}.json недоступен`,
+      needs_review: true,
+      resolved_category: expectedId,
+    });
+  }
   const out = buildV2(products, {});
   if (!out.products.length) return json(res, 400, { error: 'Нет обогащённых товаров — в v2 нечего выгружать' });
   json(res, 200, out);
@@ -660,7 +681,8 @@ async function apiExportV2(req, res) {
 
 /**
  * Выгрузка заказчика: POST { products, category } → { products, filters, held }.
- * Справочник есть — слой атрибутов. Нет — семь полей из источника, не buildV2.
+ * Справочник резолвится — только buildCustomerExport. Gold — лишь когда
+ * категория реально неизвестна; filters тогда пустые + needs_review.
  */
 async function apiExport(req, res) {
   const raw = await readBody(req, BULK_BODY_LIMIT);
@@ -675,22 +697,46 @@ async function apiExport(req, res) {
     ?? products.find(p => p.category)?.category
     ?? products.find(p => p.category_id)?.category_id;
   const dict = dictForProducts(products, catKey, ROOT);
-  if (!dict) {
-    // Не buildV2: пять полей без annotation_html — это «опять старая выгрузка».
-    const out = buildGoldShapeExport(products);
+  const expectedId = expectedDictCatId(products, catKey, ROOT);
+  const sample = products[0] || {};
+  const logExport = (exportPath) => {
+    const id = sample.id ?? sample.sku ?? null;
+    const dictFile = dict
+      ? path.relative(ROOT, dictionaryPath(dict.catId, ROOT))
+      : (expectedId ? `attributes_${expectedId}.json (missing)` : null);
+    console.log(
+      `[export] id=${id} category=${catKey ?? ''} resolved=${expectedId ?? ''} `
+      + `dict=${dictFile ?? '—'} path=${exportPath}`,
+    );
+  };
+
+  if (dict) {
+    logExport('customer');
+    let config;
+    try { config = loadConfig(ROOT); }
+    catch { return json(res, 500, { error: 'не прочитался config.json' }); }
+    const out = buildCustomerExport(products, { dict, config, root: ROOT });
     if (!out.products.length) {
-      return json(res, 400, { error: 'Нет товаров для выгрузки' });
+      return json(res, 400, { error: 'нет товаров с полными характеристиками', held: out.held });
     }
     return json(res, 200, out);
   }
-  let config;
-  try { config = loadConfig(ROOT); }
-  catch { return json(res, 500, { error: 'не прочитался config.json' }); }
-  const out = buildCustomerExport(products, { dict, config, root: ROOT });
-  if (!out.products.length) {
-    return json(res, 400, { error: 'нет товаров с полными характеристиками', held: out.held });
+
+  if (expectedId) {
+    logExport('error');
+    return json(res, 422, {
+      error: `категория ${expectedId} определена, но справочник attributes_${expectedId}.json недоступен`,
+      needs_review: true,
+      resolved_category: expectedId,
+    });
   }
-  json(res, 200, out);
+
+  logExport('gold');
+  const out = buildGoldShapeExport(products);
+  if (!out.products.length) {
+    return json(res, 400, { error: 'Нет товаров для выгрузки' });
+  }
+  return json(res, 200, out);
 }
 
 /**
@@ -701,7 +747,6 @@ async function apiExport(req, res) {
 async function enrichOne(product, { model, category, provider, onNote = () => {} } = {}) {
   // Категория определяет схему полей и промпт. Явное поле важнее, иначе берём
   // category самого товара — её проставляет и фид, и обход раздела.
-  const schema = schemaForProduct(product, category);
   const settings = loadSettings(ROOT);
   const prov = resolveProvider(settings, provider);
   const ep = providerEndpoint(prov);
@@ -713,6 +758,33 @@ async function enrichOne(product, { model, category, provider, onNote = () => {}
     id: product?.id != null ? String(product.id) : null,
     category: product?.category || category || null,
   };
+
+  let schema;
+  try {
+    schema = schemaForProduct(product, category, ROOT);
+  } catch (e) {
+    if (e?.code === 'DICT_UNAVAILABLE') {
+      note(`needs_review: ${e.message}`, { step: 'schema', level: 'warn' });
+      return {
+        enriched: null,
+        needs_review: true,
+        validation_issues: [{ field: 'schema', reason: e.message, kind: 'dict_unavailable' }],
+        usage: { prompt_tokens: 0, completion_tokens: 0, cost: 0 },
+        detail: {
+          product: productMeta,
+          schema: '_unavailable',
+          provider: prov.id,
+          model,
+          status: 'needs_review',
+          validation_issues: [{ field: 'schema', reason: e.message }],
+          resolved_category: e.resolved_category,
+          enriched: null,
+        },
+      };
+    }
+    throw e;
+  }
+  note(`Схема «${schema.slug}» · провайдер «${prov.name}»`, { step: 'schema' });
 
   const skip = reason => ({
     enriched: null,
@@ -728,8 +800,6 @@ async function enrichOne(product, { model, category, provider, onNote = () => {}
       steps: [],
     },
   });
-
-  note(`Схема «${schema.slug}» · провайдер «${prov.name}»`, { step: 'schema' });
 
   // Дешёвый вердикт без сети: своего текста нет и в названии не за что
   // зацепиться (нет ни артикула, ни бренда/модели) — искать нечего.

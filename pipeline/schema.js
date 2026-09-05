@@ -189,17 +189,54 @@ export function tryLoadDictSchema(key, root = PROJECT_ROOT) {
 
 const SKIP_CAT_HINT = new Set(['', 'all', 'без раздела', 'bez_razdela', 'все разделы']);
 
+/** Известные справочники: отсутствие файла при таком id — ошибка, не gold. */
+const KNOWN_DICT_IDS = new Set([
+  '467', '523', '929',
+  ...Object.keys(DICT_FALLBACK).map(String),
+  ...Object.values(DICT_FALLBACK).map(String),
+]);
+
 /**
  * Справочник для выгрузки: id, slug, путь «…/Стиральные машины», имя товара.
  * Иначе UI шлёт «без раздела» / «all» и /api/export падает, хотя в пачке
  * стиральные машины со справочником 467.
  */
-export function dictForProducts(products, category, root = '.') {
+/** Подсказки категории из выгрузки / товара (без «без раздела»). */
+function categoryHints(products, category) {
   const hints = [category];
   for (const p of products || []) {
     hints.push(p.category_id, p.category, p.name);
   }
-  for (const hint of hints) {
+  return hints;
+}
+
+/**
+ * Ожидаемый cat_id справочника, даже если файл сейчас недоступен.
+ * Нужен, чтобы apiExport не уходил в gold при «467» без attributes_467.json.
+ */
+export function expectedDictCatId(products, category, root = '.') {
+  for (const hint of categoryHints(products, category)) {
+    if (hint == null) continue;
+    const s = String(hint).trim();
+    if (!s || SKIP_CAT_HINT.has(s.toLowerCase())) continue;
+    const byId = resolveCatId(s, root);
+    if (byId) {
+      const fb = DICT_FALLBACK[byId] != null ? String(DICT_FALLBACK[byId]) : null;
+      const target = fb || String(byId);
+      if (KNOWN_DICT_IDS.has(String(byId)) || KNOWN_DICT_IDS.has(target) || hasDictionary(target, root)) {
+        return target;
+      }
+    }
+    const n = s.toLowerCase().replace(/ё/g, 'е');
+    if (/стиральн/.test(n)) return '467';
+    if (/холодильник/.test(n)) return '523';
+    if (/вытяжк|воздухоочистител/.test(n)) return '929';
+  }
+  return null;
+}
+
+export function dictForProducts(products, category, root = '.') {
+  for (const hint of categoryHints(products, category)) {
     if (hint == null) continue;
     const s = String(hint).trim();
     if (!s || SKIP_CAT_HINT.has(s.toLowerCase())) continue;

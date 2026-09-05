@@ -4069,6 +4069,7 @@ async function loadLogsDetail(pos){
       x.schema?`схема ${x.schema}`:null,
       x.provider||null,
       x.model||null,
+      x.model_status||null,
       x.source_url?`источник ${x.source_url}`:null,
       x.usage?`in=${x.usage.prompt_tokens??0} out=${x.usage.completion_tokens??0}`:null,
       typeof x.usage?.cost==='number'?`$${x.usage.cost.toFixed(5)}`:null,

@@ -60,6 +60,7 @@ import {
   RateLimiter, enrichProduct, rpmFor, schemaFor, schemaForProduct, SCHEMAS, netError,
   RUB_PER_USD, RUB_RATE_DATE, isEnrichable, productFacts,
   buildSystemPrompt, defaultSystemPromptTemplate, PROMPT_PLACEHOLDERS,
+  modelNotCalledDebug,
 } from './lib.js';
 import { CATEGORIES, findCategory, crawlCategory, loadFeed, buildFilters, ensureSource, WEB_LOOKUP } from './catalog.js';
 import { buildV2 } from './export_v2.js';
@@ -759,12 +760,27 @@ async function enrichOne(product, { model, category, provider, onNote = () => {}
     category: product?.category || category || null,
   };
 
+  /** Поля раздела «Логи» из debug enrichProduct / modelNotCalledDebug. */
+  const detailTrace = (debug, extra = {}) => ({
+    source_text: debug?.source_text ?? null,
+    system_prompt: debug?.system_prompt ?? null,
+    user_content: debug?.user_content ?? null,
+    raw_response: debug?.raw_response ?? null,
+    enriched: extra.enriched !== undefined
+      ? extra.enriched
+      : (debug?.enriched_result ?? null),
+    model_status: debug?.model_status ?? null,
+    model_called: debug?.model_called ?? null,
+    ...(debug?.error ? { error: debug.error } : {}),
+  });
+
   let schema;
   try {
     schema = schemaForProduct(product, category, ROOT);
   } catch (e) {
     if (e?.code === 'DICT_UNAVAILABLE') {
       note(`needs_review: ${e.message}`, { step: 'schema', level: 'warn' });
+      const dbg = modelNotCalledDebug(product, e.message);
       return {
         enriched: null,
         needs_review: true,
@@ -778,7 +794,7 @@ async function enrichOne(product, { model, category, provider, onNote = () => {}
           status: 'needs_review',
           validation_issues: [{ field: 'schema', reason: e.message }],
           resolved_category: e.resolved_category,
-          enriched: null,
+          ...detailTrace(dbg, { enriched: null }),
         },
       };
     }
@@ -786,20 +802,24 @@ async function enrichOne(product, { model, category, provider, onNote = () => {}
   }
   note(`Схема «${schema.slug}» · провайдер «${prov.name}»`, { step: 'schema' });
 
-  const skip = reason => ({
-    enriched: null,
-    skipped:  reason,
-    usage:    { prompt_tokens: 0, completion_tokens: 0, cost: 0 },
-    detail: {
-      product: productMeta,
-      schema: schema.slug,
-      provider: prov.id,
-      model,
-      status: 'skip',
-      skipped: reason,
-      steps: [],
-    },
-  });
+  const skip = reason => {
+    const dbg = modelNotCalledDebug(product, reason);
+    return {
+      enriched: null,
+      skipped:  reason,
+      usage:    { prompt_tokens: 0, completion_tokens: 0, cost: 0 },
+      detail: {
+        product: productMeta,
+        schema: schema.slug,
+        provider: prov.id,
+        model,
+        status: 'skip',
+        skipped: reason,
+        steps: [],
+        ...detailTrace(dbg, { enriched: null }),
+      },
+    };
+  };
 
   // Дешёвый вердикт без сети: своего текста нет и в названии не за что
   // зацепиться (нет ни артикула, ни бренда/модели) — искать нечего.
@@ -817,6 +837,7 @@ async function enrichOne(product, { model, category, provider, onNote = () => {}
   if (!apiKey) {
     const e = new Error(`нет ключа у провайдера «${prov.name}»`);
     e.status = 400;
+    const dbg = modelNotCalledDebug(product, e.message);
     e.detail = {
       product: productMeta,
       schema: schema.slug,
@@ -824,6 +845,7 @@ async function enrichOne(product, { model, category, provider, onNote = () => {}
       model,
       status: 'error',
       error: e.message,
+      ...detailTrace(dbg, { enriched: null }),
     };
     throw e;
   }
@@ -839,6 +861,16 @@ async function enrichOne(product, { model, category, provider, onNote = () => {}
     if (!entry && list.some(m => m.provider === prov.id)) {
       const e = new Error(`Модель «${model}» не найдена у провайдера «${prov.name}»`);
       e.status = 400;
+      const dbg = modelNotCalledDebug(product, e.message);
+      e.detail = {
+        product: productMeta,
+        schema: schema.slug,
+        provider: prov.id,
+        model,
+        status: 'error',
+        error: e.message,
+        ...detailTrace(dbg, { enriched: null }),
+      };
       throw e;
     }
   } catch (e) {
@@ -902,11 +934,13 @@ async function enrichOne(product, { model, category, provider, onNote = () => {}
           validation_issues: validation_issues || [],
           ...(sourceUrl ? { source_url: sourceUrl } : {}),
           usage: { prompt_tokens: iT, completion_tokens: oT, cost, cost_source: costSource, attempts },
-          source_text: debug?.source_text ?? null,
-          system_prompt: debug?.system_prompt ?? null,
-          user_content: debug?.user_content ?? null,
-          raw_response: raw_response ?? debug?.raw_response ?? null,
-          enriched: null,
+          ...detailTrace({
+            ...debug,
+            raw_response: raw_response ?? debug?.raw_response ?? null,
+          }, {
+            // В лог — результат после normalize, даже если валидация отклонила.
+            enriched: debug?.enriched_result ?? null,
+          }),
         },
       };
     }
@@ -925,29 +959,24 @@ async function enrichOne(product, { model, category, provider, onNote = () => {}
         status: 'ok',
         ...(sourceUrl ? { source_url: sourceUrl } : {}),
         usage: { prompt_tokens: iT, completion_tokens: oT, cost, cost_source: costSource, attempts },
-        source_text: debug?.source_text ?? null,
-        system_prompt: debug?.system_prompt ?? null,
-        user_content: debug?.user_content ?? null,
-        raw_response: debug?.raw_response ?? null,
-        enriched,
+        ...detailTrace(debug, { enriched }),
       },
     };
   } catch (e) {
+    const dbg = e.debug || modelNotCalledDebug(filled || product, e.message);
     e.detail = {
       product: productMeta,
       schema: schema.slug,
       provider: prov.id,
       model,
       status: 'error',
-      error: e.message,
       ...(sourceUrl ? { source_url: sourceUrl } : {}),
       usage: e.usage
         ? { prompt_tokens: e.usage.iT ?? 0, completion_tokens: e.usage.oT ?? 0, cost: e.usage.cost ?? 0 }
         : null,
-      source_text: e.debug?.source_text ?? null,
-      system_prompt: e.debug?.system_prompt ?? null,
-      user_content: e.debug?.user_content ?? null,
-      raw_response: e.debug?.raw_response ?? null,
+      ...detailTrace(dbg, { enriched: dbg.enriched_result ?? null }),
+      model_status: dbg.model_status || (dbg.model_called ? 'MODEL_ERROR' : 'MODEL_NOT_CALLED'),
+      error: e.message,
     };
     throw e;
   }

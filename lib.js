@@ -1687,27 +1687,33 @@ export async function enrichProduct(product, opts) {
     schema = schemaForProduct(product, schemaOpt, opts.root);
   } catch (e) {
     if (e?.code === 'DICT_UNAVAILABLE') {
+      const reason = e.message;
+      const marker = `MODEL_NOT_CALLED: ${reason}`;
       return {
         enriched: null,
         needs_review: true,
         validation_issues: [{
           field: 'schema',
-          reason: e.message,
+          reason,
           kind: 'dict_unavailable',
           action: 'needs_review',
         }],
-        raw_response: '',
+        raw_response: marker,
         iT: 0,
         oT: 0,
         cost: null,
         costSource: 'нет данных',
         attempts: 0,
         debug: {
-          source_text: sourceText(product),
-          system_prompt: null,
-          user_content: null,
-          raw_response: '',
-          validation_issues: [{ field: 'schema', reason: e.message }],
+          source_text: sourceText(product) || marker,
+          system_prompt: marker,
+          user_content: marker,
+          raw_response: marker,
+          enriched_result: null,
+          model_status: 'MODEL_NOT_CALLED',
+          model_called: false,
+          error: reason,
+          validation_issues: [{ field: 'schema', reason }],
           resolved_category: e.resolved_category,
         },
       };
@@ -1718,28 +1724,51 @@ export async function enrichProduct(product, opts) {
   const { facts } = productFacts(product, schema);
   const benchmarks = schema.id != null ? loadBenchmarks(schema.id) : null;
   const baseUser = buildUserContent(product, facts, { benchmarks });
-  const systemContent = buildSystemPrompt(schema, systemPrompt);
   const attemptsCap = Math.min(2, Math.max(1, maxRetries));
   let tokenBudget = maxTokens;
   let lastErr;
-  let lastRaw = '';
   let lastIssues = [];
   let feedback = '';
+  // Фактический payload последнего model call — не реконструкция из финального товара.
+  let sentSystem = null;
+  let sentUser = null;
+  let lastRaw = '';
+  let lastEnriched = null;
+  let modelCalled = false;
+  let modelStatus = 'MODEL_NOT_CALLED';
 
   let iT = 0, oT = 0, cost = 0, costSource = 'нет данных';
   const usage = () => ({ iT, oT, cost: costSource === 'нет данных' ? null : cost });
+  const safeErr = (e) => {
+    const msg = String(e?.message || e || 'unknown error').slice(0, 500);
+    return msg.replace(/Bearer\s+\S+/gi, 'Bearer ***').replace(/sk-[a-zA-Z0-9_-]+/g, 'sk-***');
+  };
   const debugOf = (extra = {}) => ({
     source_text: src,
-    system_prompt: systemContent,
-    user_content: feedback
-      ? JSON.stringify({ ...JSON.parse(baseUser), validation_feedback: feedback })
-      : baseUser,
+    system_prompt: sentSystem ?? (modelCalled ? null : `MODEL_NOT_CALLED: запрос к модели не отправлялся`),
+    user_content: sentUser ?? (modelCalled ? null : `MODEL_NOT_CALLED: запрос к модели не отправлялся`),
     raw_response: lastRaw,
+    enriched_result: lastEnriched,
+    model_status: modelStatus,
+    model_called: modelCalled,
     validation_issues: lastIssues,
     ...extra,
   });
-  const fail = e => { e.usage = usage(); e.debug = debugOf(); throw e; };
-  const pack = (result) => ({ ...result, debug: debugOf({ attempts: result.attempts }) });
+  const fail = (e, status = 'MODEL_ERROR') => {
+    modelStatus = status;
+    const err = e instanceof Error ? e : new Error(String(e));
+    if (!lastRaw) lastRaw = `${status}: ${safeErr(err)}`;
+    else if (status === 'MODEL_ERROR' && !String(lastRaw).startsWith('MODEL_ERROR')) {
+      // сырой ответ провайдера уже есть — статус/причина отдельно в error
+    }
+    err.usage = usage();
+    err.debug = debugOf({ error: safeErr(err) });
+    throw err;
+  };
+  const pack = (result) => ({
+    ...result,
+    debug: debugOf({ attempts: result.attempts, error: result.error || null }),
+  });
 
   const userPayload = () => {
     if (!feedback) return baseUser;
@@ -1766,6 +1795,13 @@ export async function enrichProduct(product, opts) {
     const userContent = userPayload();
     onNote(`запрос к модели${attempt > 1 ? ` · попытка ${attempt}/${attemptsCap}` : ''}…`);
 
+    // Собираем тело заранее и логируем ИМЕННО его messages — то, что уйдёт в fetch.
+    const requestBody = buildRequestBody(model, userContent, tokenBudget, schema, systemPrompt);
+    sentSystem = requestBody.messages?.[0]?.content ?? null;
+    sentUser = requestBody.messages?.[1]?.content ?? null;
+    modelCalled = true;
+    modelStatus = 'ok';
+
     let res, data, bodyText;
     try {
       res = await fetch(chatUrl, {
@@ -1777,7 +1813,7 @@ export async function enrichProduct(product, opts) {
           'X-Title':        title,
           ...extraHeaders,
         },
-        body:   JSON.stringify(buildRequestBody(model, userContent, tokenBudget, schema, systemPrompt)),
+        body:   JSON.stringify(requestBody),
         signal: AbortSignal.timeout(timeoutMs),
       });
       bodyText = await res.text();
@@ -1787,6 +1823,8 @@ export async function enrichProduct(product, opts) {
       try { host = new URL(chatUrl).host; } catch { /* */ }
       const timed = e.name === 'TimeoutError' || e.cause?.name === 'TimeoutError';
       lastErr = new Error(timed ? `таймаут ${timeoutMs}ms (${host})` : `${host}: ${netError(e)}`);
+      lastRaw = `MODEL_ERROR: ${safeErr(lastErr)}`;
+      modelStatus = 'MODEL_ERROR';
       if (attempt < attemptsCap) { onNote(`сеть, retry ${attempt}`); await sleep(attempt * 3000); continue; }
       fail(lastErr);
     }
@@ -1797,6 +1835,8 @@ export async function enrichProduct(product, opts) {
       const code = data?.error?.code ?? res.status;
       const msg  = data?.error?.message || `HTTP ${res.status}: ${bodyText.slice(0, 120)}`;
       lastErr = new Error(msg);
+      lastRaw = `MODEL_ERROR: ${safeErr(lastErr)}`;
+      modelStatus = 'MODEL_ERROR';
       if (attempt < attemptsCap && RETRYABLE.has(Number(code))) {
         const wait = retryAfterMs(res) ?? attempt * 4000;
         onNote(`${code}, retry ${attempt}, ${wait}ms`);
@@ -1809,8 +1849,10 @@ export async function enrichProduct(product, opts) {
     const choice = data?.choices?.[0];
     if (!choice) {
       lastErr = new Error('Нет choices в ответе');
+      lastRaw = 'MODEL_EMPTY_RESPONSE';
+      modelStatus = 'MODEL_EMPTY_RESPONSE';
       if (attempt < attemptsCap) { onNote(`пустой ответ, retry ${attempt}`); await sleep(attempt * 5000); continue; }
-      fail(lastErr);
+      fail(lastErr, 'MODEL_EMPTY_RESPONSE');
     }
 
     const inTok  = data.usage?.prompt_tokens     ?? 0;
@@ -1826,7 +1868,14 @@ export async function enrichProduct(product, opts) {
     }
 
     const content = choice.message?.content ?? '';
-    lastRaw = content;
+    if (!String(content).trim()) {
+      lastRaw = 'MODEL_EMPTY_RESPONSE';
+      modelStatus = 'MODEL_EMPTY_RESPONSE';
+      lastErr = new Error('MODEL_EMPTY_RESPONSE');
+      if (attempt < attemptsCap) { onNote(`пустой content, retry ${attempt}`); await sleep(attempt * 5000); continue; }
+      fail(lastErr, 'MODEL_EMPTY_RESPONSE');
+    }
+    lastRaw = content; // сырой ответ ДО parse/normalize
 
     let parsedBody = null;
     if (choice.finish_reason === 'length') {
@@ -1853,6 +1902,7 @@ export async function enrichProduct(product, opts) {
     let enriched;
     try {
       enriched = normalizeResponse(parsedBody, src, schema, product.attributes, mismatchPolicy);
+      lastEnriched = enriched;
     } catch (err) {
       lastErr = err;
       if (attempt < attemptsCap) { onNote(`normalize err, retry ${attempt}`); await sleep(2000); continue; }
@@ -1889,6 +1939,7 @@ export async function enrichProduct(product, opts) {
         onNote(`повтор с указанием ошибок валидации`);
         continue;
       }
+      modelStatus = 'needs_review';
       return pack({
         enriched: null,
         needs_review: true,
@@ -1900,8 +1951,25 @@ export async function enrichProduct(product, opts) {
       });
     }
 
+    modelStatus = 'ok';
     return pack({ enriched, ...usage(), costSource, attempts: attempt });
   }
 
   fail(lastErr || new Error('Не удалось обогатить'));
+}
+
+/** Детали для раздела «Логи», когда модель не вызывалась (gate/skip/нет ключа). */
+export function modelNotCalledDebug(product, reason) {
+  const marker = `MODEL_NOT_CALLED: ${reason}`;
+  const src = product ? sourceText(product) : '';
+  return {
+    source_text: src || marker,
+    system_prompt: marker,
+    user_content: marker,
+    raw_response: marker,
+    enriched_result: null,
+    model_status: 'MODEL_NOT_CALLED',
+    model_called: false,
+    error: reason,
+  };
 }

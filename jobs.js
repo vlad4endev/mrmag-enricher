@@ -126,6 +126,9 @@ export function createJobStore({
     if (!Array.isArray(job.details)) job.details = new Array(job.total).fill(null);
     const steps = (job.log || []).filter(e => e.pos === k);
     job.details[k] = truncateDetail({ ...(detail || {}), steps, pos: k });
+    // Сразу на диск: иначе restart между debounce и flush теряет trace при уже
+    // записанном results[k] (повторно товар не обогащается).
+    save(job, true);
   }
 
   function detailSummary(d, k) {
@@ -142,11 +145,13 @@ export function createJobStore({
       needs_review: Boolean(d.needs_review || d.status === 'needs_review'),
       validation_issues: d.validation_issues || null,
       source_url: d.source_url || null,
+      model_status: d.model_status || null,
+      model_called: d.model_called ?? null,
       has_source: Boolean(d.source_text),
       has_system: Boolean(d.system_prompt),
       has_user: Boolean(d.user_content),
       has_response: Boolean(d.raw_response),
-      has_enriched: Boolean(d.enriched),
+      has_enriched: Boolean(d.enriched || d.enriched_text),
       usage: d.usage || null,
     };
   }

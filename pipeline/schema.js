@@ -300,7 +300,12 @@ export function extractFactsFromDictionary(text, dict, config) {
     if (!norm.ok) continue;
     let val = norm.value;
     if (typeof val === 'number' && mul !== 1) val = Math.round(val * mul * 1000) / 1000;
-    if (Array.isArray(val)) val = val[0];
+    // multi (климатический класс N, SN, ST, T) — не режем до первого токена.
+    if (Array.isArray(val)) {
+      val = attr.cardinality === 'multi'
+        ? val.map(x => String(x ?? '').trim()).filter(Boolean).join(', ')
+        : val[0];
+    }
     if (disputed.has(key)) continue;
     if (out[key] == null) {
       out[key] = val;

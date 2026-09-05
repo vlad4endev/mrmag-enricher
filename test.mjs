@@ -551,6 +551,37 @@ t('тип_управления: массив модели → строка, не
   });
   assert.strictEqual(scrubbed.specs.тип_управления, 'Механическое');
 });
+t('Centek CT-1742: Тип конструкции → Side-by-Side, климат полный, NO FROST из «Да»', () => {
+  const data = JSON.parse(fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), 'data_523.json'), 'utf8'));
+  const p = (Array.isArray(data) ? data : []).find(x => String(x.name || '').includes('CT-1742'));
+  assert.ok(p, 'Centek CT-1742 в data_523.json');
+  const f = extractFacts(`${p.annotation}\n${p.description}`, 'kholodilniki');
+  assert.strictEqual(f.тип_холодильника, 'Side-by-Side');
+  assert.match(String(f.климатический_класс), /N.*SN.*ST.*T/i);
+  assert.ok(!/^N$/i.test(String(f.климатический_класс)));
+  assert.match(String(f.система_охлаждения), /автоматическ.*No Frost/i);
+  // Старая карточка с обрезанными значениями
+  const scrubbed = sanitizeEnrichedResult({
+    specs: {
+      тип_холодильника: 'Конструкции -',
+      климатический_класс: 'N',
+      система_охлаждения: 'No Frost',
+      размораживание_холодильной_камеры: 'No Frost',
+    },
+    source_facts: {
+      климатический_класс: 'N, SN, ST, T',
+      система_охлаждения: 'Автоматическая разморозка (No Frost)',
+    },
+    warnings: [
+      { field: 'тип_холодильника', model: 'Конструкции -', source: null, note: 'x' },
+      { field: 'климатический_класс', model: 'N', source: 'N, SN, ST, T', note: 'x' },
+    ],
+  });
+  assert.strictEqual(scrubbed.specs.тип_холодильника, null);
+  assert.strictEqual(scrubbed.specs.климатический_класс, 'N, SN, ST, T');
+  assert.match(String(scrubbed.specs.система_охлаждения), /автоматическ.*No Frost/i);
+  assert.ok(!(scrubbed.warnings || []).some(w => w.field === 'тип_холодильника' || w.field === 'климатический_класс'));
+});
 t('DON R-299: LED освещение - да → светодиодное, не габариты', () => {
   const data = JSON.parse(fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), 'data_523.json'), 'utf8'));
   const p = (Array.isArray(data) ? data : []).find(x => String(x.id) === '191263');

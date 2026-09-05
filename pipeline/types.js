@@ -230,6 +230,13 @@ function impliedEnumFromKey(attr, keyText) {
   const key = String(keyText || '').trim();
   if (!key) return null;
   if (valueFold(key) === valueFold(attr.name)) return null;
+  // «Система NO FROST — Да» → значение в ключе, а не голое «да».
+  if (/no\s*frost|ноу\s*фрост/i.test(key)) {
+    if (attr.code === 'cooling') return 'автоматическая разморозка (No Frost)';
+    if (attr.code === 'defrost_fridge' || attr.code === 'defrost_freezer') {
+      return 'автоматическое (No Frost)';
+    }
+  }
   // \w без флага u не матчит кириллицу — иначе «освещен\w*» не съедает «ие».
   const word = '[а-яёa-z]*';
   const stripped = key

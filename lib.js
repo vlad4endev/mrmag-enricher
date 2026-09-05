@@ -1347,6 +1347,17 @@ export function sanitizeEnrichedResult(data) {
       const d = plainDefrost(specs[k]);
       if (d) specs[k] = d;
     }
+    // Обрезок от «Тип конструкции»: «Конструкции -» / «конструкции - C …»
+    if (typeof specs.тип_холодильника === 'string') {
+      const t = specs.тип_холодильника.trim();
+      if (/^конструкци/i.test(t) || /^тип\s+конструкци/i.test(t)) {
+        if (/side\s*-?\s*by\s*-?\s*side/i.test(t) || /распашн/i.test(t)) {
+          specs.тип_холодильника = 'Side-by-Side';
+        } else {
+          specs.тип_холодильника = null;
+        }
+      }
+    }
   }
   if (facts) {
     const c = plainNoFrost(facts.система_охлаждения);
@@ -1355,6 +1366,30 @@ export function sanitizeEnrichedResult(data) {
       const d = plainDefrost(facts[k]);
       if (d) facts[k] = d;
     }
+    if (typeof facts.тип_холодильника === 'string' && /^конструкци/i.test(facts.тип_холодильника.trim())) {
+      const t = facts.тип_холодильника;
+      facts.тип_холодильника = (/side\s*-?\s*by\s*-?\s*side/i.test(t) || /распашн/i.test(t))
+        ? 'Side-by-Side'
+        : null;
+    }
+  }
+  // Климат: в specs одно «N», в facts полный «N, SN, ST, T» — берём полный, warning снимаем.
+  if (specs && facts && typeof facts.климатический_класс === 'string') {
+    const full = facts.климатический_класс.trim();
+    const short = specs.климатический_класс != null ? String(specs.климатический_класс).trim() : '';
+    if (full.includes(',') && short && full !== short
+      && full.split(/\s*,\s*/).some(p => p.toUpperCase() === short.toUpperCase())) {
+      specs.климатический_класс = full;
+      if (Array.isArray(d.warnings)) {
+        d.warnings = d.warnings.filter(w => w?.field !== 'климатический_класс');
+      }
+    }
+  }
+  if (Array.isArray(d.warnings)) {
+    d.warnings = d.warnings.filter(w => {
+      if (w?.field === 'тип_холодильника' && /^конструкци/i.test(String(w.model || ''))) return false;
+      return true;
+    });
   }
   return d;
 }

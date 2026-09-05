@@ -7,6 +7,8 @@ import { annotationText, annotationCase } from './types.js';
 import { webInfoFrom } from './reviews.js';
 import { normalizeProduct, ingestPairs } from './normalize.js';
 import { specDest } from './schema.js';
+import { buildDescriptionHtml } from './model_validate.js';
+import { finalizeRecord, checkFilterConsistency } from './quality_validate.js';
 
 function esc(s) {
   return String(s)
@@ -178,23 +180,50 @@ function reviewSource(rec) {
 /**
  * Одна запись products_{id}.json — ровно семь полей в порядке эталона:
  * id, name, meta_keywords, description_html, annotation_html, filters, web_info.
- * name переносится побайтово. web_info всегда на месте: отзыв или пустая строка.
+ * name переносится побайтово. description_html — из ответа модели.
  */
 export function serializeProduct(rec, dict, debugFacets, opts = {}) {
+  const enr = opts.enriched || null;
+  // Сначала снять неподтверждённые «нет», затем считать filters.
+  if (!opts.skipFinalize) {
+    finalizeRecord(rec, dict, { enriched: enr, assigned: null });
+  }
   const assigned = assignFilterValues(rec, dict, debugFacets);
+  if (!opts.skipFinalize && assigned) {
+    const filterIssues = checkFilterConsistency(rec, dict, assigned);
+    if (filterIssues.length) {
+      rec.validation_issues = [...(rec.validation_issues || []), ...filterIssues];
+    }
+  }
+  const meta = enr && typeof enr.meta_keywords === 'string' && enr.meta_keywords.trim()
+    ? enr.meta_keywords.trim()
+    : metaKeywords(rec, dict, opts);
+  const descHtml = enr?.description
+    ? compactHtml(buildDescriptionHtml({
+      description: enr.description,
+      bullets: enr.bullets,
+      strong: enr.strong,
+    }))
+    : compactHtml(renderDescription(rec, dict, opts));
+  const web = enr && 'web_info' in enr
+    ? (enr.web_info == null ? '' : String(enr.web_info))
+    : webInfoFrom(reviewSource(rec));
   return {
     id: rec.id,
     name: rec.name,
-    meta_keywords: metaKeywords(rec, dict, opts),
-    description_html: compactHtml(renderDescription(rec, dict, opts)),
+    meta_keywords: meta,
+    description_html: descHtml,
     annotation_html: renderAnnotation(rec, dict),
     filters: asFilterArrays(assigned),
-    web_info: webInfoFrom(reviewSource(rec)),
+    web_info: web,
   };
 }
 
 export function serializeProducts(recs, dict, debugFacets, opts = {}) {
-  return (recs || []).map((r) => serializeProduct(r, dict, debugFacets, opts));
+  return (recs || []).map((r) => serializeProduct(r, dict, debugFacets, {
+    ...opts,
+    enriched: r._enriched || opts.enriched,
+  }));
 }
 
 export function serializeFilters(built) {
@@ -246,32 +275,69 @@ export function applyEnrichedSpecs(rec, specs, dict, config) {
 }
 
 /**
- * Семь полей заказчика + фасеты. Неполные карточки (< 8 строк) — в held,
- * не в products: пустой annotation_html у клиента считается дефектом.
+ * Семь полей заказчика + фасеты. Неполные карточки (< 8 строк) — в held.
+ * needs_review в products не попадает — уходит в отчёт.
  */
 export function buildCustomerExport(products, { dict, config, root = '.' } = {}) {
   if (!dict) throw new Error('нет справочника категории');
   if (!config) throw new Error('нет config');
-  const recs = (products || []).map((p) => {
+  const review = [];
+  const recs = [];
+  for (const p of products || []) {
+    if (p?.needs_review) {
+      review.push({
+        id: p.id ?? p.sku,
+        name: p.name,
+        reason: 'needs_review',
+        validation_issues: p.validation_issues || [],
+        raw_response: p.raw_response || null,
+      });
+      continue;
+    }
     const src = toPipelineProduct(p);
     const rec = normalizeProduct(src, dict, config);
-    rec.web_info = src.web_info;
+    rec.web_info = p.enriched?.web_info ?? src.web_info;
     rec.name = p.name;
+    rec._enriched = p.enriched || null;
     applyEnrichedSpecs(rec, p.enriched?.specs, dict, config);
-    return rec;
-  });
+    recs.push(rec);
+  }
   const held = recs.filter(r => annotationRows(r, dict).length < MIN_ANNOTATION_ROWS);
   const heldIds = new Set(held.map(r => r.id));
   const exported = recs.filter(r => !heldIds.has(r.id));
+  // Сначала очистить неподтверждённые «нет», потом строить фасеты.
+  for (const rec of exported) {
+    finalizeRecord(rec, dict, { enriched: rec._enriched, assigned: null });
+  }
   const built = buildFilters(exported, dict, config);
+  for (const rec of exported) {
+    const assigned = assignFilterValues(rec, dict, built.debug);
+    const filterIssues = checkFilterConsistency(rec, dict, assigned);
+    if (filterIssues.length) {
+      rec.validation_issues = [...(rec.validation_issues || []), ...filterIssues];
+    }
+  }
   return {
-    products: serializeProducts(exported, dict, built.debug, { root }),
+    products: serializeProducts(exported, dict, built.debug, { root, skipFinalize: true }),
     filters: built.filters,
     held: held.map(r => ({
       id: r.id,
       name: r.name,
       rows: annotationRows(r, dict).length,
       reason: `характеристик ${annotationRows(r, dict).length} < ${MIN_ANNOTATION_ROWS}`,
+    })),
+    needs_review: review,
+    quality: exported.map(r => ({
+      id: r.id,
+      score: r.quality?.score,
+      confirmed: r.quality?.confirmed,
+      unknown: r.quality?.unknown,
+      conflicts: r.quality?.conflicts ?? (r.conflicts || []).length,
+      invalid: r.quality?.invalid,
+      hallucinations: r.quality?.hallucinations,
+      sources: r.quality?.sources,
+      issues: (r.validation_issues || []).length,
+      needs_review: Boolean(r.needs_review),
     })),
   };
 }
@@ -317,25 +383,35 @@ function stripH1(html) {
 }
 
 function keywordsFrom(p) {
-  const raw = p?.enriched?.seo_keywords ?? p?.meta_keywords ?? '';
+  const raw = p?.enriched?.meta_keywords ?? p?.enriched?.seo_keywords ?? p?.meta_keywords ?? '';
   if (Array.isArray(raw)) return raw.map(s => String(s).trim()).filter(Boolean).slice(0, 9).join(', ');
   return String(raw || '').trim();
 }
 
 /**
  * Семь полей эталона без справочника. Аннотация — все строки источника
- * (или specs), не старый 5-польный v2. Бакетов нет: их задаёт словарь.
+ * (или specs). description_html — из ответа модели.
  */
 export function serializeLooseProduct(p) {
   const src = toPipelineProduct(p);
   const annotation = compactAnnotation(src.annotation)
     || specsToAnnotation(p?.enriched?.specs);
-  const desc = compactHtml(stripH1(
-    p?.enriched?.seo_description
-    || p?.enriched?.short_description
-    || src.description
-    || '',
-  ));
+  const enr = p?.enriched;
+  const desc = enr?.description
+    ? compactHtml(buildDescriptionHtml({
+      description: enr.description,
+      bullets: enr.bullets,
+      strong: enr.strong,
+    }))
+    : compactHtml(stripH1(
+      enr?.seo_description
+      || enr?.short_description
+      || src.description
+      || '',
+    ));
+  const web = enr && 'web_info' in enr
+    ? (enr.web_info == null ? '' : String(enr.web_info))
+    : webInfoFrom(reviewSource({ ...src, ...p }));
   return {
     id: src.id,
     name: p?.name ?? src.name,
@@ -343,7 +419,7 @@ export function serializeLooseProduct(p) {
     description_html: desc,
     annotation_html: annotation,
     filters: filtersFromSpecs(p?.enriched?.specs),
-    web_info: webInfoFrom(reviewSource({ ...src, ...p })),
+    web_info: web,
   };
 }
 

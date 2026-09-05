@@ -7,6 +7,41 @@ import { parseDimensions, reconcileDimensions } from './dimensions.js';
 import { parseIdentity } from './identity.js';
 import { isPackingKey, normKey } from './text.js';
 
+/** Приоритет источников: исходный JSON важнее веб-страницы похожего товара. */
+export const SOURCE_RANK = Object.freeze({
+  manufacturer: 50,
+  official_product_page: 45,
+  S0: 40,
+  source_json: 35,
+  S1: 35,
+  S2: 20,
+  trusted_retailer: 15,
+  major_retailer: 15,
+  S3: 10,
+  retailer: 10,
+  distributor: 8,
+  model: 5,
+  review: 3,
+  other: 0,
+});
+
+function sourceRank(level) {
+  if (level == null) return 0;
+  return SOURCE_RANK[level] ?? SOURCE_RANK.other;
+}
+
+function valuesEqual(a, b) {
+  if (a === b) return true;
+  if (a == null || b == null) return false;
+  if (Array.isArray(a) || Array.isArray(b)) {
+    return JSON.stringify(a) === JSON.stringify(b);
+  }
+  if (typeof a === 'number' && typeof b === 'number') {
+    return Math.abs(a - b) < 1e-9;
+  }
+  return String(a) === String(b);
+}
+
 function emptyState(dict) {
   const attrs = {};
   for (const a of dict.attrs) {
@@ -16,12 +51,111 @@ function emptyState(dict) {
   return attrs;
 }
 
-function setAttr(rec, code, value, prov) {
-  if (value == null || rec.attrs[code] != null) return false;
+/**
+ * Запись атрибута с учётом приоритета источников.
+ * При конфликте — логируем; при равном приоритете значение снимаем (unknown)
+ * и ставим needs_review, а не оставляем «первое попавшееся» как факт.
+ */
+export function setAttr(rec, code, value, prov) {
+  if (value == null) return false;
   if (!(code in rec.attrs)) return false; // tier X — нет слота
-  rec.attrs[code] = value;
-  rec.provenance[code] = prov;
-  return true;
+  const existing = rec.attrs[code];
+  if (existing == null) {
+    rec.attrs[code] = value;
+    rec.provenance[code] = attachEvidence(code, value, prov);
+    return true;
+  }
+  if (valuesEqual(existing, value)) {
+    // Тот же факт из другого источника — усиливаем evidence, не конфликт.
+    const old = rec.provenance[code] || {};
+    if (sourceRank(prov?.level) > sourceRank(old.level)) {
+      rec.provenance[code] = attachEvidence(code, value, { ...prov, previous_source: old.level });
+    }
+    return false;
+  }
+
+  const oldProv = rec.provenance[code] || {};
+  const oldRank = sourceRank(oldProv.level);
+  const newRank = sourceRank(prov?.level);
+  if (!Array.isArray(rec.conflicts)) rec.conflicts = [];
+
+  if (newRank > oldRank) {
+    rec.conflicts.push({
+      attribute: code,
+      values: [
+        { value: existing, source: oldProv.level || 'unknown', raw: oldProv.raw || null },
+        { value, source: prov?.level || 'unknown', raw: prov?.raw || null },
+      ],
+      selected_value: value,
+      reason: `priority ${prov?.level} > ${oldProv.level}`,
+      kept: 'incoming',
+      needs_review: false,
+    });
+    rec.attrs[code] = value;
+    rec.provenance[code] = attachEvidence(code, value, { ...prov, conflict: true, previous: existing });
+    return true;
+  }
+
+  if (newRank < oldRank) {
+    rec.conflicts.push({
+      attribute: code,
+      values: [
+        { value: existing, source: oldProv.level || 'unknown', raw: oldProv.raw || null },
+        { value, source: prov?.level || 'unknown', raw: prov?.raw || null },
+      ],
+      selected_value: existing,
+      reason: `priority ${oldProv.level} > ${prov?.level}`,
+      kept: 'existing',
+      needs_review: false,
+    });
+    return false;
+  }
+
+  // Равный приоритет — однозначного выбора нет: оставляем первое
+  // (порядок ingest = annotation → description → web), помечаем needs_review.
+  // Не обнуляем молча: иначе валидный S2 из того же текста теряется из‑за
+  // соседней кривой строки («Установка = на стиральную машину…»).
+  rec.conflicts.push({
+    attribute: code,
+    values: [
+      { value: existing, source: oldProv.level || 'unknown', raw: oldProv.raw || null },
+      { value, source: prov?.level || 'unknown', raw: prov?.raw || null },
+    ],
+    selected_value: existing,
+    reason: 'equal_priority_keep_first',
+    kept: 'existing',
+    needs_review: true,
+  });
+  if (!Array.isArray(rec.flags)) rec.flags = [];
+  if (!rec.flags.includes('conflict_unresolved')) rec.flags.push('conflict_unresolved');
+  rec.needs_review = true;
+  return false;
+}
+
+/** Внутренний ConfirmedAttribute в provenance (не в клиентский JSON). */
+function attachEvidence(code, value, prov) {
+  const raw = prov?.raw ?? null;
+  return {
+    ...prov,
+    evidence: {
+      attribute: code,
+      raw_value: raw,
+      normalized_value: value,
+      filter_value: null,
+      source: prov?.level || 'other',
+      evidence: raw,
+      confidence: evidenceConfidence(prov),
+    },
+  };
+}
+
+function evidenceConfidence(prov) {
+  const rank = sourceRank(prov?.level);
+  if (rank >= 45) return 1;
+  if (rank >= 30) return 0.9;
+  if (rank >= 15) return 0.7;
+  if (rank >= 5) return 0.5;
+  return 0.3;
 }
 
 function applyDims(rec, dims, prov, dict) {
@@ -131,6 +265,7 @@ export function normalizeProduct(product, dict, config) {
     mapped: new Set(),
     flags: [],
     moderation: [],
+    conflicts: [],
     stats: { packed_dims: 0, dims_parsed: 0, dims_unknown: 0, blacklisted: 0, units: 0, tier_x: 0 },
     format: 'EMPTY',
     dump: false,

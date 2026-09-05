@@ -132,13 +132,15 @@ export function createJobStore({
     if (!d) return { pos: k, status: 'pending' };
     return {
       pos: k,
-      status: d.status || (d.error ? 'error' : d.skipped ? 'skip' : d.enriched ? 'ok' : 'pending'),
+      status: d.status || (d.error ? 'error' : d.skipped ? 'skip' : d.needs_review || d.status === 'needs_review' ? 'needs_review' : d.enriched ? 'ok' : 'pending'),
       product: d.product || null,
       schema: d.schema || null,
       model: d.model || null,
       provider: d.provider || null,
       error: d.error || null,
       skipped: d.skipped || null,
+      needs_review: Boolean(d.needs_review || d.status === 'needs_review'),
+      validation_issues: d.validation_issues || null,
       source_url: d.source_url || null,
       has_source: Boolean(d.source_text),
       has_system: Boolean(d.system_prompt),
@@ -326,13 +328,26 @@ export function createJobStore({
         job.results[k] = {
           enriched: d.enriched ?? null,
           ...(d.skipped ? { skipped: d.skipped } : {}),
+          ...(d.needs_review ? { needs_review: true, validation_issues: d.validation_issues || [] } : {}),
           ...(d.source_url ? { source: d.source_url } : {}),
           iT:   d.usage?.prompt_tokens ?? 0,
           oT:   d.usage?.completion_tokens ?? 0,
-          cost: typeof d.usage?.cost === 'number' ? d.usage.cost : 0,
+          cost: typeof d.usage?.cost === 'number' ? d.usage.cost : null,
         };
         if (d.skipped) {
           pushLog(job, { level: 'skip', step: 'skip', pos: k, msg: `⊘ Пропуск: ${d.skipped}` });
+        } else if (d.needs_review) {
+          const issues = (d.validation_issues || []).map(i => `${i.field}: ${i.reason}`).join('; ');
+          const iT = d.usage?.prompt_tokens ?? 0;
+          const oT = d.usage?.completion_tokens ?? 0;
+          const cost = typeof d.usage?.cost === 'number' ? d.usage.cost : null;
+          pushLog(job, {
+            level: 'warn', step: 'needs_review', pos: k,
+            msg: `⚠ needs_review · ${issues || 'валидация'}`
+              + ` · in=${iT} out=${oT}`
+              + (cost != null ? ` · $${cost.toFixed(5)}` : '')
+              + (d.usage?.attempts ? ` · попыток ${d.usage.attempts}` : ''),
+          });
         } else {
           const iT = d.usage?.prompt_tokens ?? 0;
           const oT = d.usage?.completion_tokens ?? 0;
@@ -348,17 +363,21 @@ export function createJobStore({
         }
         storeDetail(job, k, d.detail || {
           product: { name: job.products[k]?.name || null, sku: job.products[k]?.sku != null ? String(job.products[k].sku) : null },
-          status: d.skipped ? 'skip' : 'ok',
+          status: d.skipped ? 'skip' : d.needs_review ? 'needs_review' : 'ok',
           skipped: d.skipped || null,
+          needs_review: d.needs_review || false,
+          validation_issues: d.validation_issues || null,
           enriched: d.enriched ?? null,
           usage: d.usage || null,
+          raw_response: d.detail?.raw_response ?? null,
         });
       } catch (e) {
         // Провал одного товара не отменяет прогон — ровно как в браузере.
         // Неудачные попытки оплачены, поэтому usage сохраняем и на ошибке.
         job.results[k] = {
           enriched: null, error: e.message,
-          iT: e.usage?.iT ?? 0, oT: e.usage?.oT ?? 0, cost: e.usage?.cost ?? 0,
+          iT: e.usage?.iT ?? 0, oT: e.usage?.oT ?? 0,
+          cost: typeof e.usage?.cost === 'number' ? e.usage.cost : null,
         };
         pushLog(job, { level: 'err', step: 'error', pos: k, msg: `✗ Ошибка: ${e.message}` });
         storeDetail(job, k, e.detail || {

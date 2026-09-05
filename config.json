@@ -10,7 +10,7 @@
   "model": {
     "name": "",
     "prompt_version": "dict-v1",
-    "max_retries": 3,
+    "max_retries": 2,
     "timeout_ms": 60000,
     "max_tokens": 3200
   },

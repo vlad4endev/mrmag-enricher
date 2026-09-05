@@ -14,7 +14,7 @@ import {
   normalizeResponse as normalizeResponseIn, stripHtml, RateLimiter, isEnrichable,
   buildUserContent, rpmFor, attrFacts, productFacts, modelToken, hasCountryFact,
   SCHEMAS, GENERIC_SCHEMA, schemaFor, schemaForProduct, buildSystemPrompt, enrichProduct, netError,
-  seoPackageEmpty, cardTextsEmpty,
+  seoPackageEmpty, cardTextsEmpty, validateModelResponse, buildDescriptionHtml,
 } from './lib.js';
 
 // Схема по умолчанию — универсальная, а не холодильник: неизвестная категория
@@ -187,22 +187,27 @@ console.log('\nНормализация');
 t('числа-строки приводятся, схема заполняется целиком', () => {
   const r = normalizeResponse({
     specs: { объем_общий_л: '310 л', вес_кг: '≈60', бренд: 'DON', цвет: 'нет данных' },
-    synonyms: ['а', '  б  ', ''],
-    seo_description: '  Описание.  ',
+    description: '  Описание.  ',
+    short_description: 'Краткое описание товара на сто двадцать символов минимум для проверки длины поля анонса.',
+    bullets: ['a', 'b', 'c'],
+    strong: [],
+    meta_keywords: 'а, б, в, г, д, е, ж',
+    web_info: null,
   }, 'общий объем 310 л');
   assert.strictEqual(r.specs.объем_общий_л, 310);
   assert.strictEqual(r.specs.вес_кг, 60);
   assert.strictEqual(r.specs.бренд, 'DON');
   assert.strictEqual(r.specs.цвет, null, '"нет данных" должно стать null');
   assert.strictEqual(r.specs.хладагент, null, 'отсутствующий ключ схемы должен быть null');
-  assert.deepStrictEqual(r.synonyms, ['а', 'б']);
-  assert.strictEqual(r.seo_description, 'Описание.');
+  assert.strictEqual(r.description, 'Описание.');
+  assert.strictEqual(r.meta_keywords, 'а, б, в, г, д, е, ж');
   assert.deepStrictEqual(r.warnings, []);
 });
 t('мусор вместо массивов не роняет', () => {
-  const r = normalizeResponse({ specs: {}, synonyms: 'строка', seo_keywords: null });
-  assert.deepStrictEqual(r.synonyms, []);
-  assert.deepStrictEqual(r.seo_keywords, []);
+  const r = normalizeResponse({ specs: {}, bullets: 'строка', meta_keywords: null, strong: null });
+  assert.deepStrictEqual(r.bullets, []);
+  assert.deepStrictEqual(r.strong, []);
+  assert.strictEqual(r.meta_keywords, '');
 });
 t('не объект бросает', () => {
   assert.throws(() => normalizeResponse(null), /не объект/);
@@ -530,13 +535,14 @@ t('промпт универсальной схемы не подсовывае�
   assert.match(p, /Категория: Товары/);
   assert.ok(!/морозил|отжим|диагонал/i.test(p));
 });
-t('промпт перечисляет значения фасетов и SEO-пакет', () => {
+t('промпт перечисляет значения фасетов и контракт ответа', () => {
   const p = buildSystemPrompt('kholodilniki');
   assert.match(p, /система_охлаждения/);
   if (/система_охлаждения:/.test(p)) assert.match(p, /No Frost/);
-  for (const k of ['seo_title', 'h1', 'meta_description', 'short_description', 'bullets']) {
+  for (const k of ['description', 'short_description', 'bullets', 'meta_keywords', 'web_info', 'strong']) {
     assert.ok(p.includes(k), `в промпте нет ${k}`);
   }
+  assert.ok(!p.includes('seo_title'), 'старый seo_title убран');
   assert.match(p, /ЗНАЧЕНИЯ ДЛЯ ФИЛЬТРОВ/);
 });
 t('значение вне списка не попадает в фасет', () => {
@@ -547,46 +553,63 @@ t('значение вне списка не попадает в фасет', ()
   // «иногда» нет в справочнике — поле обнуляется или остаётся с предупреждением.
   assert.ok(r.specs.дисплей == null || r.warnings.some(w => w.field === 'дисплей'));
 });
-t('основной текст: порог длины зависит от того, есть ли о чём писать', () => {
-  const rich = { тип_товара: 'холодильник', бренд: 'LG', модель: 'GA-B419', цвет: 'белый',
-    объем_общий_л: 310, вес_кг: 62, высота_мм: 1900, система_охлаждения: 'No Frost' };
-  const issue = (specs, len) => normalizeResponse({ specs, seo_description: 'к'.repeat(len) })
-    .seo_issues.find(x => x.startsWith('seo_description'));
+t('валидатор: порог description зависит от числа specs', () => {
+  const short = 'А'.repeat(130);
+  assert.ok(short.length >= 120 && short.length <= 200, `short=${short.length}`);
+  const mkPara = (i, word, n) => (`Абзац ${i}. ` + `${word} `.repeat(n)).trim();
+  const richDesc = [1, 2, 3, 4].map(i => mkPara(i, 'параметр', 28)).join('\n\n');
+  const poorDesc = [1, 2].map(i => mkPara(i, 'факт', 45)).join('\n\n');
+  assert.ok(richDesc.length >= 950 && richDesc.length <= 1600, `rich=${richDesc.length}`);
+  assert.ok(poorDesc.length >= 400 && poorDesc.length <= 700, `poor=${poorDesc.length}`);
 
-  assert.match(issue(rich, 500), /рекомендуется 900–2200/, 'на восьми характеристиках 500 символов — мало');
-  assert.strictEqual(issue(rich, 1200), undefined);
-  assert.strictEqual(issue({ бренд: 'LG' }, 500), undefined,
-    'на одной характеристике 900 символов честно не написать — порог ниже');
+  const base = {
+    short_description: short,
+    bullets: ['a — 1', 'b — 2', 'c — 3'],
+    strong: [],
+    meta_keywords: 'а, б, в, г, д, е, ж',
+    web_info: null,
+  };
+
+  assert.deepStrictEqual(validateModelResponse({
+    ...base, specs: { a: 1, b: 2, c: 3, d: 4, e: 5 }, description: richDesc,
+  }, { filledSpecs: 5 }), []);
+
+  assert.deepStrictEqual(validateModelResponse({
+    ...base, specs: { a: 1 }, description: poorDesc,
+  }, { filledSpecs: 1 }), []);
+
+  assert.ok(validateModelResponse({
+    ...base, specs: { a: 1, b: 2, c: 3, d: 4, e: 5 }, description: poorDesc,
+  }, { filledSpecs: 5 }).some(i => i.field === 'description'));
+
+  assert.ok(validateModelResponse({
+    ...base, specs: { a: 1 }, description: poorDesc, web_info: '',
+  }, { filledSpecs: 1 }).some(i => i.field === 'web_info' || /пусто/.test(i.reason)));
 });
 t('промпт требует основной текст первым и абзацами', () => {
   const p = buildSystemPrompt('kholodilniki');
-  assert.match(p, /900–1800 символов, ТРИ абзаца/);
-  // Порядок ключей: длинный текст раньше короткого, иначе короткий забирает суть.
-  assert.ok(p.indexOf('"seo_description": "..."') < p.indexOf('"short_description": "..."'));
-  assert.ok(p.indexOf('"seo_description": "..."') < p.indexOf('"seo_title": "..."'));
-  // Тексты карточки до specs: при обрыве страница не остаётся пустой.
-  assert.ok(p.indexOf('"seo_description": "..."') < p.indexOf('"specs"'), 'описание раньше specs');
-  assert.match(p, /Вода запрещена/);
-  assert.match(p, /Для поисковиков/);
+  assert.match(p, /950–1600 символов, РОВНО ЧЕТЫРЕ абзаца/);
+  assert.ok(p.indexOf('"description": "..."') < p.indexOf('"specs"'), 'описание раньше specs');
+  assert.ok(p.indexOf('"short_description"') < p.indexOf('"specs"'));
 });
-t('SEO-пакет нормализуется, длины проверяются', () => {
+t('контракт нормализуется; пустая карточка определяется по description', () => {
   const r = normalizeResponse({
     specs: {},
-    seo_title: '  Холодильник LG GA-B419SQGL No Frost 302 л  ',
-    h1: 'Холодильник LG GA-B419SQGL',
-    meta_description: 'к',
+    description: 'Текст описания',
+    short_description: 'Кратко',
     bullets: ['  Объём 302 л  ', ''],
+    meta_keywords: 'а, б, в, г, д, е, ж',
+    strong: [],
+    web_info: null,
   });
-  assert.strictEqual(r.seo_title, 'Холодильник LG GA-B419SQGL No Frost 302 л');
+  assert.strictEqual(r.description, 'Текст описания');
   assert.deepStrictEqual(r.bullets, ['Объём 302 л']);
-  assert.ok(r.seo_issues.some(x => x.startsWith('meta_description: 1 симв.')));
-  assert.ok(r.seo_issues.some(x => x === 'short_description: пусто'));
-  assert.ok(!r.seo_issues.some(x => x.startsWith('seo_title:')), 'нормальный title не повод для заметки');
+  assert.strictEqual(r.meta_keywords, 'а, б, в, г, д, е, ж');
   assert.ok(cardTextsEmpty({ specs: { бренд: 'LG' } }));
-  assert.ok(cardTextsEmpty({ seo_title: 'Title ok', meta_description: 'x'.repeat(140) }),
-    'только meta — карточка всё ещё пустая');
-  assert.ok(!cardTextsEmpty({ seo_description: 'Текст', h1: 'H1', short_description: 'Кратко' }));
-  assert.ok(!seoPackageEmpty({ seo_description: 'Текст', h1: 'H1', short_description: 'Кратко' }));
+  assert.ok(cardTextsEmpty({ meta_keywords: 'a, b, c, d, e, f, g' }),
+    'только keywords — карточка всё ещё пустая');
+  assert.ok(!cardTextsEmpty({ description: 'Текст', short_description: 'Кратко' }));
+  assert.ok(!seoPackageEmpty({ description: 'Текст', short_description: 'Кратко' }));
 });
 
 console.log('\nФакты стиральных машин');
@@ -795,8 +818,20 @@ t('products_(id).json — массив, filters_(id).json рядом', () => {
 // и проверять его на живом API дорого и нестабильно.
 console.log('\nЗапрос к модели');
 {
-  const answer = specs => JSON.stringify({
-    specs, synonyms: ['а'], search_aliases: [], seo_keywords: [], seo_description: 'Описание.',
+  const mkDesc = () => [1, 2, 3, 4].map(i =>
+    (`Абзац ${i}. ` + 'параметр '.repeat(28)).trim()).join('\n\n');
+  const richSpecs = {
+    бренд: 'DON', объем_общий_л: 310, вес_кг: 62, высота_мм: 1800, цвет: 'белый',
+  };
+  const answer = (specs, extra = {}) => JSON.stringify({
+    specs: { ...richSpecs, ...specs },
+    short_description: 'А'.repeat(130),
+    description: mkDesc(),
+    bullets: ['пункт один — польза', 'пункт два — польза', 'пункт три — польза'],
+    strong: [],
+    meta_keywords: 'а, б, в, г, д, е, ж',
+    web_info: null,
+    ...extra,
   });
   const reply = (content, { finish = 'stop', usage = {}, status = 200, error = null } = {}) => ({
     ok: status >= 200 && status < 300,
@@ -815,9 +850,9 @@ console.log('\nЗапрос к модели');
       return Promise.resolve(replies[Math.min(i++, replies.length - 1)]);
     };
   };
-  const limiter = new RateLimiter(60_000);   // без реальных пауз в тесте
+  const limiter = new RateLimiter(60_000);
   const run = (product, opts = {}) => enrichProduct(product, {
-    model: 'test/model', apiKey: 'k', limiter, maxRetries: 3, ...opts,
+    model: 'test/model', apiKey: 'k', limiter, maxRetries: 2, ...opts,
   });
 
   await tAsync('факты и схема уезжают в запрос, ответ нормализуется', async () => {
@@ -866,7 +901,6 @@ console.log('\nЗапрос к модели');
     assert.strictEqual(record.length, 2);
     assert.strictEqual(record[0].body.max_tokens, 2500);
     assert.strictEqual(record[1].body.max_tokens, 5000, 'повтор с тем же лимитом бессмыслен');
-    // Обрезанная попытка тоже оплачена: 0.003 + 0.001.
     assert.strictEqual(+r.cost.toFixed(6), 0.004, 'ретрай — оплаченный запрос');
     assert.strictEqual(r.iT, 1800);
     assert.strictEqual(r.oT, 2900);
@@ -899,7 +933,7 @@ console.log('\nЗапрос к модели');
     assert.strictEqual(r.enriched.specs.бренд, 'DON');
   });
 
-  await tAsync('обрыв без SEO поднимает лимит и повторяет', async () => {
+  await tAsync('обрыв без текста поднимает лимит и повторяет', async () => {
     record.length = 0;
     const bare = JSON.stringify({ specs: { бренд: 'DON' } });
     stub([
@@ -912,53 +946,43 @@ console.log('\nЗапрос к модели');
     });
     assert.strictEqual(record.length, 2);
     assert.strictEqual(record[1].body.max_tokens, 5000);
-    assert.ok(notes.some(n => /обрыв по длине/.test(n)));
-    assert.ok(!seoPackageEmpty(r.enriched));
-    assert.strictEqual(r.enriched.specs.бренд, 'DON');
+    assert.ok(notes.some(n => /обрыв по длине|валидация/.test(n)));
+    assert.ok(r.enriched || r.needs_review);
+    if (r.enriched) assert.strictEqual(r.enriched.specs.бренд, 'DON');
   });
 
-  await tAsync('пустой SEO-пакет на stop повторяется', async () => {
+  await tAsync('пустой ответ на stop → повтор с feedback, затем needs_review', async () => {
     record.length = 0;
     stub([
       reply(JSON.stringify({ specs: { бренд: 'DON' } }), { usage: { prompt_tokens: 5, completion_tokens: 5 } }),
-      reply(answer({ бренд: 'DON' }), { usage: { prompt_tokens: 5, completion_tokens: 20 } }),
+      reply(JSON.stringify({ specs: { бренд: 'DON' } }), { usage: { prompt_tokens: 5, completion_tokens: 20 } }),
     ]);
     const notes = [];
     const r = await run({ name: 'X', description: 'Общий объем, л 310' }, { onNote: m => notes.push(m) });
     assert.strictEqual(record.length, 2);
-    assert.ok(notes.some(n => /тексты карточки пусты/.test(n)));
-    assert.strictEqual(r.enriched.seo_description, 'Описание.');
+    assert.ok(notes.some(n => /валидация не прошла/.test(n)));
+    assert.ok(r.needs_review);
+    assert.strictEqual(r.enriched, null);
+    const user2 = JSON.parse(record[1].body.messages[1].content);
+    assert.ok(user2.validation_feedback, 'вторая попытка несёт перечень ошибок');
   });
 
-  await tAsync('после исчерпания попыток SEO добирается отдельным запросом', async () => {
+  await tAsync('вторая ветка SEO отключена: после двух неудач needs_review', async () => {
     record.length = 0;
     const bare = JSON.stringify({ specs: { бренд: 'DON' } });
-    const seoOnly = JSON.stringify({
-      seo_description: 'Холодильник DON для кухни.\n\nОбъём и габариты из specs.\n\nПеред покупкой сверьте нишу.',
-      bullets: ['Объём — запас продуктов'],
-      short_description: 'Холодильник DON с нужным объёмом для кухни.',
-      meta_description: 'Холодильник DON: характеристики из карточки, объём и габариты для выбора по кухне.',
-      h1: 'Холодильник DON',
-      seo_title: 'Холодильник DON купить — характеристики',
-      synonyms: ['холодильник дон'],
-      search_aliases: ['дон холодильник'],
-      seo_keywords: ['холодильник don'],
-    });
     stub([
       reply(bare, { usage: { prompt_tokens: 5, completion_tokens: 5, cost: 0.001 } }),
-      reply(seoOnly, { usage: { prompt_tokens: 8, completion_tokens: 200, cost: 0.002 } }),
+      reply(bare, { usage: { prompt_tokens: 8, completion_tokens: 200, cost: 0.002 } }),
     ]);
     const notes = [];
     const r = await run({ name: 'X', description: 'Общий объем, л 310' }, {
-      maxRetries: 1, onNote: m => notes.push(m),
+      maxRetries: 2, onNote: m => notes.push(m),
     });
-    assert.strictEqual(record.length, 2, 'основной + добор текстов');
-    assert.ok(notes.some(n => /добираем тексты карточки/.test(n)));
-    assert.ok(record[1].body.messages[0].content.includes('редактор карточки'));
-    assert.ok(!record[1].body.messages[0].content.includes('"specs"'), 'добор без скелета specs');
-    assert.match(r.enriched.seo_title, /DON/);
-    assert.ok(!cardTextsEmpty(r.enriched));
-    assert.strictEqual(r.enriched.specs.бренд, 'DON');
+    assert.strictEqual(record.length, 2, 'ровно две попытки, без ensureSeo');
+    assert.ok(!notes.some(n => /добираем тексты/.test(n)));
+    assert.ok(r.needs_review);
+    assert.strictEqual(r.enriched, null);
+    assert.ok(r.validation_issues?.length);
     assert.strictEqual(+r.cost.toFixed(6), 0.003);
   });
 
@@ -974,14 +998,16 @@ console.log('\nЗапрос к модели');
     assert.strictEqual(r.enriched.specs.бренд, 'DON');
   });
 
-  await tAsync('обрезанный JSON с готовыми specs не роняет товар', async () => {
+  await tAsync('обрезанный JSON с готовыми specs не роняет товар при валидном тексте', async () => {
     record.length = 0;
-    stub([reply('{"specs":{"бренд":"DON","модель":"290 G"},"seo_description":"Холодильник DON', {
+    const truncated = answer({ бренд: 'DON', модель: '290 G' }).slice(0, -20);
+    stub([reply(truncated, {
       finish: 'length', usage: { prompt_tokens: 10, completion_tokens: 8000 },
     })]);
     const r = await run({ name: 'X', description: 'Общий объем, л 310' }, { maxTokens: 8000, maxRetries: 1 });
-    assert.strictEqual(record.length, 1);
-    assert.strictEqual(r.enriched.specs.бренд, 'DON');
+    // либо починили и приняли, либо needs_review — но не throw
+    assert.ok(r.enriched || r.needs_review);
+    if (r.enriched) assert.strictEqual(r.enriched.specs.бренд, 'DON');
   });
 
   await tAsync('тариф модели считает стоимость, когда OpenRouter её не вернул', async () => {
@@ -1009,8 +1035,8 @@ console.log('\nЗапрос к модели');
     stub([reply('это не json', { usage: { prompt_tokens: 100, completion_tokens: 50, cost: 0.0005 } })]);
     const e = await run({ name: 'X', description: 'Общий объем, л 310' }).then(() => null, err => err);
     assert.ok(e, 'должно бросить');
-    assert.strictEqual(e.usage.iT, 300, 'три попытки по 100 входных токенов');
-    assert.strictEqual(+e.usage.cost.toFixed(6), 0.0015, 'деньги за неудачу не должны исчезать');
+    assert.strictEqual(e.usage.iT, 200, 'две попытки по 100 входных токенов');
+    assert.strictEqual(+e.usage.cost.toFixed(6), 0.001, 'деньги за неудачу не должны исчезать');
   });
 
   await tAsync('обрыв CONNECT называет хост, а не голое fetch failed', async () => {

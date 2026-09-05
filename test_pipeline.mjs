@@ -986,7 +986,146 @@ console.log('golden tests passed');
 {
   assert.equal(dictForProducts([{ name: 'Стиральная машина ATLANT' }], 'без раздела').catId, '467');
   assert.equal(dictForProducts([{ name: 'Холодильник Pozis' }], 'all').catId, '523');
-  assert.equal(dictForProducts([{ name: 'Вытяжка Lex' }], 929), null);
-  console.log('ok dictForProducts resolves washer/fridge, skips hoods');
+  assert.equal(dictForProducts([{ name: 'Вытяжка Lex' }], 929)?.catId, '929');
+  assert.equal(dictForProducts([{ name: 'Вытяжка Lex' }], 'без раздела')?.catId, '929');
+  console.log('ok dictForProducts resolves washer/fridge/hoods');
+}
+
+{
+  const { facetKind, assignFilterValues, buildFilters, bucketLabel } = await import('./pipeline/facets.js');
+  const { normalizeValue } = await import('./pipeline/types.js');
+  const { setAttr } = await import('./pipeline/normalize.js');
+  const {
+    finalizeRecord, stripUnconfirmedNegatives, checkDescriptionClaims, buildConfirmedAttributes,
+  } = await import('./pipeline/quality_validate.js');
+  const { identityMatches, variantConflicts, modelVariantMarkers } = await import('./pipeline/identity.js');
+  const { matchKey } = await import('./pipeline/match.js');
+  const d929 = loadDictionary('929', '.');
+
+  // TEST 1: speeds 2 → annotation exact, filters exact (not 2-2.2)
+  const speeds = d929.byCode.get('speeds');
+  assert.equal(speeds.type, 'integer');
+  assert.equal(facetKind(speeds), 'enum');
+
+  // TEST 2 + 8: width vs install_width
+  assert.ok(d929.byCode.has('install_width'));
+  assert.ok(!d929.byCode.get('width').synonyms?.some(x => /встраиван/i.test(x)));
+  const mWidth = matchKey('Ширина', d929, { value: '50 см', fuzzyMin: 0.9 });
+  const mInst = matchKey('Ширина встраивания', d929, { value: '60 см', fuzzyMin: 0.9 });
+  assert.equal(mWidth.attr?.code, 'width');
+  assert.equal(mInst.attr?.code, 'install_width');
+
+  const hood = {
+    id: 1,
+    name: 'Вытяжка Elikor Интегра-60',
+    attrs: Object.fromEntries(d929.attrs.filter(a => a.tier !== 'X').map(a => [a.code, null])),
+    provenance: {},
+    conflicts: [],
+    flags: [],
+    identity: { brand: 'Elikor', model: 'Интегра-60' },
+  };
+  setAttr(hood, 'speeds', 2, { level: 'S1', raw: 'Количество скоростей = 2' });
+  setAttr(hood, 'width', 50, { level: 'S1', raw: 'Ширина = 50 см' });
+  setAttr(hood, 'install_width', 60, { level: 'S1', raw: 'Ширина встраивания = 60 см' });
+  assert.equal(hood.attrs.speeds, 2);
+  assert.equal(hood.attrs.width, 50);
+  assert.equal(hood.attrs.install_width, 60);
+  assert.equal(bucketLabel(50, d929.byCode.get('width').facet), '50-55');
+
+  const built = buildFilters([hood], d929, config);
+  const assigned = assignFilterValues(hood, d929, built.debug);
+  assert.deepEqual(assigned['Количество скоростей'], ['2']);
+  assert.deepEqual(assigned['Ширина, см'], ['50-55']);
+  assert.ok(!('Ширина встраивания, см' in assigned) || !assigned['Ширина встраивания, см'],
+    'install_width facet disabled — не в публичных filters');
+
+  // TEST 5: conflict S1 vs S3 keeps S1; equal S1 vs S1 → unresolved
+  setAttr(hood, 'speeds', 3, { level: 'S3', raw: 'Количество скоростей = 3' });
+  assert.equal(hood.attrs.speeds, 2, 'S1 не перетирается S3');
+  const eq = {
+    id: 2,
+    attrs: Object.fromEntries(d929.attrs.filter(a => a.tier !== 'X').map(a => [a.code, null])),
+    provenance: {},
+    conflicts: [],
+    flags: [],
+  };
+  setAttr(eq, 'speeds', 2, { level: 'S1', raw: 'скорости = 2' });
+  setAttr(eq, 'speeds', 3, { level: 'S1', raw: 'скорости = 3' });
+  assert.equal(eq.attrs.speeds, 2, 'равный приоритет → оставляем первое');
+  assert.equal(eq.needs_review, true);
+  assert.ok(eq.conflicts.some(c => c.needs_review && c.reason === 'equal_priority_keep_first'));
+
+  setAttr(hood, 'speeds', 3, { level: 'manufacturer', raw: 'скорости: 3' });
+  assert.equal(hood.attrs.speeds, 3, 'manufacturer побеждает S1');
+
+  // TEST 3: boolean unknown
+  const no = normalizeValue({ type: 'boolean', code: 'child_lock' }, 'нет');
+  assert.equal(no.value, false);
+  assert.equal(normalizeValue({ type: 'boolean', code: 'x' }, 'доступно опционально').ok, false);
+  assert.equal(normalizeValue({ type: 'boolean', code: 'x' }, '0').ok, false);
+
+  // TEST 4: warranty 5 лет → 60
+  const war = normalizeValue(
+    { type: 'integer', code: 'warranty', unit: 'мес', valid_range: [1, 240] },
+    '5 лет',
+  );
+  assert.equal(war.value, 60);
+  assert.equal(normalizeValue(
+    { type: 'integer', code: 'warranty', unit: 'мес', valid_range: [1, 240] },
+    '2 года',
+  ).value, 24);
+  assert.equal(normalizeValue(
+    { type: 'integer', code: 'warranty', unit: 'мес', valid_range: [1, 240] },
+    '12 месяцев',
+  ).value, 12);
+
+  const washer = normalizeProduct(p467[11391], d467, config);
+  washer.attrs.child_lock = false;
+  washer.provenance.child_lock = { level: 'model', raw: 'inferred' };
+  assert.ok(stripUnconfirmedNegatives(washer, d467).some(s => s.code === 'child_lock'));
+  assert.equal(washer.attrs.child_lock, null);
+  washer.attrs.display = false;
+  washer.provenance.display = { level: 'S1', raw: 'Дисплей = нет' };
+  assert.equal(stripUnconfirmedNegatives(washer, d467).length, 0);
+
+  // TEST 6: Integra variants — no cross-contamination via identity
+  assert.equal(modelVariantMarkers('Интегра-60').sizes[0], '60');
+  assert.equal(modelVariantMarkers('Интегра Glass 50').glass, true);
+  assert.equal(
+    identityMatches('Elikor Интегра-60 400 м3/ч 2 скорости', { brand: 'Elikor', model: 'Интегра-60' }, d929),
+    true,
+  );
+  assert.equal(
+    identityMatches('Elikor Интегра-50 350 м3/ч', { brand: 'Elikor', model: 'Интегра-60' }, d929),
+    false,
+  );
+  assert.equal(
+    identityMatches('Elikor Интегра Glass 60 нерж', { brand: 'Elikor', model: 'Интегра-60' }, d929),
+    false,
+  );
+  assert.equal(
+    identityMatches('Elikor Интегра Glass 60', { brand: 'Elikor', model: 'Интегра Glass 60' }, d929),
+    true,
+  );
+  assert.ok(variantConflicts('Elikor Интегра Glass 60', 'Интегра-60'));
+
+  // TEST 7: description number not in attrs → validation error
+  const descIssues = checkDescriptionClaims(
+    { description: 'Производительность 999 м³/ч подходит для кухни 40 м².' },
+    hood,
+    d929,
+  );
+  assert.ok(descIssues.some(i => i.kind === 'number_not_in_attrs' || i.kind === 'hallucination_marker'));
+
+  const fin = finalizeRecord(hood, d929, {
+    assigned: assignFilterValues(hood, d929, buildFilters([hood], d929, config).debug),
+    enriched: { description: 'Вытяжка Elikor Интегра-60. Ширина 50 см.' },
+  });
+  assert.ok(fin.quality.sources);
+  assert.ok(Array.isArray(hood.confirmed));
+  assert.ok(hood.confirmed.some(c => c.attribute === 'width' && c.normalized_value === 50));
+  assert.ok(hood.provenance.speeds?.evidence?.normalized_value === 3);
+  assert.equal(PRODUCT_FIELDS.length, 7);
+  console.log('ok enrichment P0/P1: speeds/width/boolean/warranty/conflict/identity/description/quality');
 }
 

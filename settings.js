@@ -312,7 +312,7 @@ function normalizeModel(raw = {}) {
     prompt_version: str(raw.prompt_version, 'dict-v1').slice(0, 40),
     // Пустая строка — встроенный шаблон из lib.js. Иначе текст с {{плейсхолдерами}}.
     system_prompt: String(raw.system_prompt ?? '').slice(0, 80_000),
-    max_retries: num(raw.max_retries, 3, { min: 1, max: 8 }),
+    max_retries: num(raw.max_retries, 2, { min: 1, max: 2 }),
     timeout_ms: num(raw.timeout_ms, 60_000, { min: 5000, max: 300_000 }),
     max_tokens: num(raw.max_tokens, 3200, { min: 256, max: 16_000 }),
   };

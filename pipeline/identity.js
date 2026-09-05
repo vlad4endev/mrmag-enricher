@@ -71,11 +71,13 @@ export function parseIdentity(name, dict) {
     const m = src.match(/([A-ZА-Я]{2,}[A-ZА-Я0-9\-/.]*)\s+([A-ZА-Я0-9][A-ZА-Я0-9\-/.]{2,})/);
     if (m) model = m[2];
   }
+  const markers = modelVariantMarkers(model);
   return {
     brand: brand?.canon ?? null,
     model: model || null,
     article,
     name: src,
+    variant: markers,
   };
 }
 
@@ -105,19 +107,77 @@ function brandOnPage(text, brand, dict) {
 }
 
 /**
+ * Маркеры варианта модели: Glass / размер 50|60.
+ * Integra-50 ≠ Integra-60 ≠ Integra Glass 50.
+ */
+export function modelVariantMarkers(model) {
+  const m = String(model || '').trim();
+  if (!m) return { glass: false, sizes: [], base: '' };
+  const glass = /\bglass\b|стекл/i.test(m);
+  const sizes = [...m.matchAll(/(?:^|[\s\-_/])(\d{2,3})(?=$|[\s\-_/,(])/g)].map(x => x[1]);
+  const base = m
+    .replace(/\bglass\b/ig, ' ')
+    .replace(/стекл\w*/ig, ' ')
+    .replace(/(?:^|[\s\-_/])\d{2,3}(?=$|[\s\-_/,(])/g, ' ')
+    .replace(/[\s\-_/]+/g, ' ')
+    .trim();
+  return { glass, sizes: [...new Set(sizes)], base };
+}
+
+/**
+ * Конфликт варианта на странице: другая ширина линейки или Glass ↔ без Glass.
+ * Не отвергает страницу, где рядом есть и наша, и чужая модель — только если
+ * чужой вариант есть, а нашего размера/маркера нет.
+ */
+export function variantConflicts(text, model) {
+  const want = modelVariantMarkers(model);
+  if (!want.base) return false;
+  const t = String(text || '');
+  const baseRe = escapeRe(want.base).replace(/\s+/g, '[\\s\\-_]*');
+  const glassNear = new RegExp(
+    `(?:${baseRe})[\\s\\-_]*(?:glass|стекл)|(?:glass|стекл)[\\s\\-_]*(?:${baseRe})`,
+    'i',
+  );
+  const pageHasGlassNear = glassNear.test(t);
+  if (want.glass && !pageHasGlassNear && !/\bglass\b|стекл/i.test(t)) return true;
+  if (!want.glass && pageHasGlassNear) return true;
+
+  for (const size of want.sizes) {
+    const ours = new RegExp(
+      `(?:${baseRe})[\\s\\-_]*${size}\\b|\\b${size}[\\s\\-_]*(?:${baseRe})|(?:${baseRe})-${size}\\b`,
+      'i',
+    );
+    if (ours.test(t)) continue;
+    const anyOther = ['40', '45', '50', '55', '60', '70', '80', '90']
+      .filter(s => s !== size)
+      .some(other => new RegExp(
+        `(?:${baseRe})[\\s\\-_]*${other}\\b|(?:${baseRe})-${other}\\b`,
+        'i',
+      ).test(t));
+    if (anyOther) return true;
+  }
+  return false;
+}
+
+/**
  * Правило 12: внешний источник принимается только при полном совпадении
  * бренда и модели одновременно. Синонимы бренда («Индезит» = Indesit)
  * берутся из справочника, если он передан.
  *
  * Модели в названии нет — сверяем опознавательные слова имени: иначе карточки
  * вроде «DON R 290» без артикула-токена оставались пустыми навсегда.
+ *
+ * Integra-50 / Integra-60 / Integra Glass — разные SKU: чужой вариант
+ * отбрасывается через variantConflicts.
  */
 export function identityMatches(text, identity, dict) {
   const model = String(identity?.model || '').trim();
   const brand = String(identity?.brand || '').trim();
   if (model) {
     if (!containsTokenSequence(text, model)) return false;
-    return brandOnPage(text, brand, dict);
+    if (!brandOnPage(text, brand, dict)) return false;
+    if (variantConflicts(text, model)) return false;
+    return true;
   }
   const keys = nameKeyTokens(identity?.name, brand);
   if (!keys.length) return false;

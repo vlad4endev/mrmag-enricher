@@ -131,7 +131,6 @@
     "synonyms": [
       "Ширина",
       "Ширина, см",
-      "Ширина встраивания",
       "Ширина (см)"
     ],
     "blacklist": [
@@ -151,6 +150,48 @@
       ],
       "bound_rule": "left_closed",
       "open_last": false
+    }
+  },
+  {
+    "code": "install_width",
+    "name": "Ширина встраивания",
+    "description": "Ширина ниши/шкафа для встраивания, не габарит прибора",
+    "type": "number",
+    "unit": "см",
+    "cardinality": "single",
+    "order": 31,
+    "show_in_annotation": true,
+    "highlight": false,
+    "inferable": false,
+    "tier": "B",
+    "decision_reason": "Отдельно от ширины прибора",
+    "coverage_now": 0,
+    "coverage_final": 70,
+    "valid_range": [
+      30,
+      120
+    ],
+    "synonyms": [
+      "Ширина встраивания",
+      "Ширина шкафа",
+      "Ширина ниши",
+      "Ширина для встраивания",
+      "Размер ниши (ширина)"
+    ],
+    "blacklist": [
+      "Ширина",
+      "Ширина, см",
+      "Ширина (см)",
+      "Ширина упаковки"
+    ],
+    "facet": {
+      "enabled": false,
+      "label": "Ширина встраивания, см",
+      "kind": "range",
+      "step": 5,
+      "bound_rule": "left_closed",
+      "open_last": false,
+      "disabled_reason": "Редкий фасет; точное значение только в annotation"
     }
   },
   {
@@ -412,7 +453,7 @@
     "code": "speeds",
     "name": "Количество скоростей",
     "description": "Число скоростей вентилятора",
-    "type": "number",
+    "type": "integer",
     "unit": null,
     "cardinality": "single",
     "order": 80,
@@ -435,17 +476,7 @@
     "facet": {
       "enabled": true,
       "label": "Количество скоростей",
-      "kind": "range",
-      "breaks": [
-        2,
-        2.2,
-        2.4,
-        2.6,
-        2.8,
-        3
-      ],
-      "bound_rule": "left_closed",
-      "open_last": false
+      "kind": "enum"
     }
   },
   {
@@ -735,8 +766,7 @@
     ],
     "synonyms": [
       "Глубина",
-      "Глубина, см",
-      "Глубина встраивания"
+      "Глубина, см"
     ],
     "blacklist": [
       "Глубина упаковки"
@@ -752,6 +782,45 @@
       ],
       "bound_rule": "left_closed",
       "open_last": false
+    }
+  },
+  {
+    "code": "install_depth",
+    "name": "Глубина встраивания",
+    "description": "Глубина ниши для встраивания, не габарит прибора",
+    "type": "number",
+    "unit": "см",
+    "cardinality": "single",
+    "order": 141,
+    "show_in_annotation": true,
+    "highlight": false,
+    "inferable": false,
+    "tier": "B",
+    "decision_reason": "Отдельно от глубины прибора",
+    "coverage_now": 0,
+    "coverage_final": 60,
+    "valid_range": [
+      15,
+      80
+    ],
+    "synonyms": [
+      "Глубина встраивания",
+      "Глубина ниши",
+      "Глубина для встраивания"
+    ],
+    "blacklist": [
+      "Глубина",
+      "Глубина, см",
+      "Глубина упаковки"
+    ],
+    "facet": {
+      "enabled": false,
+      "label": "Глубина встраивания, см",
+      "kind": "range",
+      "step": 5,
+      "bound_rule": "left_closed",
+      "open_last": false,
+      "disabled_reason": "Редкий фасет; точное значение только в annotation"
     }
   },
   {

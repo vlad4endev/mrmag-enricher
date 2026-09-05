@@ -227,6 +227,11 @@ function writeOutputs({ recs, dict, config, catId, cov, covAfter, formats, unmap
     provenance: r.provenance,
     identity: r.identity,
     source_url: r.external?.url ?? null,
+    conflicts: r.conflicts || [],
+    confirmed: r.confirmed || [],
+    quality: r.quality || null,
+    validation_issues: r.validation_issues || [],
+    needs_review: Boolean(r.needs_review),
   }));
   writeJson(path.join(OUT, `provenance_${catId}.json`), provenance);
 

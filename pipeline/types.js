@@ -1,7 +1,11 @@
 /** Нормализаторы по type из справочника. Допустимые значения — тоже из него. */
 
-const BOOL_TRUE = new Set(['да', 'yes', 'true', 'есть', 'имеется', 'включено', '+', '1', 'on']);
-const BOOL_FALSE = new Set(['нет', 'no', 'false', 'отсутствует', 'выключено', '0', 'off', 'без']);
+const BOOL_TRUE = new Set(['да', 'yes', 'true', 'есть', 'имеется', 'включено', 'поддерживается', 'присутствует', '+', 'on']);
+/** «Нет» только при явном отрицании. «0» и «без» слишком двусмысленны → unknown. */
+const BOOL_FALSE = new Set([
+  'нет', 'no', 'false', 'отсутствует', 'выключено', 'off',
+  'не поддерживается', 'не предусмотрено', 'не имеется',
+]);
 
 const CLASS_CYR = { а: 'A', б: 'B', в: 'B', г: 'G', д: 'D', е: 'E', с: 'C' };
 
@@ -29,7 +33,10 @@ function unitIn(text) {
   if (/(?<![а-яёa-z])(?:кг|килограмм)/.test(s)) return 'кг';
   if (/(?<![а-яёa-z])(?:г|грамм)(?![а-яёa-z])/.test(s)) return 'г';
   if (/(?<![а-яёa-z])(?:мл)(?![а-яёa-z])/.test(s)) return 'мл';
-  if (/(?<![а-яёa-z])(?:л|литр)/.test(s)) return 'л';
+  // Годы/месяцы раньше «л»: иначе «5 лет» читается как литры.
+  if (/(?<![а-яёa-z])(?:мес(?:яц(?:а|ев)?)?)\.?(?![а-яёa-z])/.test(s)) return 'мес';
+  if (/(?<![а-яёa-z])(?:год(?:а|ов)?|лет)\.?(?![а-яёa-z])/.test(s)) return 'лет';
+  if (/(?<![а-яёa-z])(?:л|литр)(?![а-яёa-z])/.test(s)) return 'л';
   if (/(?<![а-яёa-z])(?:дба|дб)/.test(s)) return 'дБ';
   if (/об\s*\/?\s*мин/.test(s)) return 'об/мин';
   return null;
@@ -44,6 +51,13 @@ function convert(n, from, to) {
   if (t === 'кг' && UNIT_TO_KG[f] != null) return n * UNIT_TO_KG[f];
   if (t === 'л' && UNIT_TO_L[f] != null) return n * UNIT_TO_L[f];
   if (t === 'мм' && f === 'см') return n * 10;
+  // Гарантия: «5 лет» → 60 мес.
+  if ((t === 'мес' || t === 'месяц' || t === 'месяцев') && /^(?:год|года|лет)$/.test(f)) {
+    return n * 12;
+  }
+  if ((t === 'год' || t === 'лет') && /^(?:мес|месяц|месяцев)$/.test(f)) {
+    return n / 12;
+  }
   return n;
 }
 
@@ -351,9 +365,11 @@ export function normalizeValue(attr, raw, { keyText = '' } = {}) {
     }
     if (typ === 'boolean') {
       const k = v.trim().toLowerCase().replace(/ё/g, 'е');
-      if (BOOL_TRUE.has(k) || /^\+/.test(k)) return { ok: true, value: true };
-      if (BOOL_FALSE.has(k)) return { ok: true, value: false };
-      if (v.trim() && !/^-?\d/.test(v) && !/нет|отсутств/i.test(v)) return { ok: true, value: true };
+      if (BOOL_TRUE.has(k) || k === '1' || /^\+$/.test(k)) return { ok: true, value: true };
+      if (BOOL_FALSE.has(k) || /не\s+поддержива|не\s+предусмотр|не\s+имеется/i.test(k)) {
+        return { ok: true, value: false };
+      }
+      // Отсутствие явного да/нет — unknown, не «нет» и не догадка «да».
       return { ok: false, value: null, reason: 'not_boolean', raw: v };
     }
     if (typ === 'class_scale') {

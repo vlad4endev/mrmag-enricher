@@ -6,12 +6,26 @@ import { formatAttrValue, unifyEnumValues } from './types.js';
 const DOMINANT_SHARE = 95;
 
 /**
+ * Счётные величины без единицы (скорости, камеры, программы): перечень
+ * точных значений, а не бакеты «2-2.2».
+ */
+function isDiscreteCount(attr) {
+  if (attr.unit) return false;
+  const r = attr.valid_range;
+  if (!Array.isArray(r) || r.length < 2) return false;
+  const lo = Number(r[0]);
+  const hi = Number(r[1]);
+  if (!Number.isFinite(lo) || !Number.isFinite(hi)) return false;
+  return hi - lo <= 20 && lo >= 0 && Number.isInteger(lo) && Number.isInteger(hi);
+}
+
+/**
  * Вид фильтра следует из типа атрибута, а не из разброса данных.
  * Счётная величина — перечень: «2, 3, 4 скорости», а не «2-2.2» и «2.8-3».
  */
 export function facetKind(attr) {
   const kind = attr.facet?.kind;
-  if (kind === 'range' && attr.type === 'integer') return 'enum';
+  if (kind === 'range' && (attr.type === 'integer' || isDiscreteCount(attr))) return 'enum';
   return kind;
 }
 

@@ -166,29 +166,25 @@ function saveTXT(results, filename, schema, cat) {
       }
     }
 
-    // SEO-пакет для страницы товара. Длина рядом со значением: title и meta
-    // режутся поисковиком, и проверять их глазами по символам — лишняя работа.
-    const seo = [
-      ['Title',             'seo_title'],
-      ['H1',                'h1'],
-      ['Meta description',  'meta_description'],
-      ['Краткое описание',  'short_description'],
-      ['Описание',          'seo_description'],
+    // Тексты карточки по текущему контракту.
+    const texts = [
+      ['Краткое описание', 'short_description'],
+      ['Описание',         d.description ? 'description' : 'seo_description'],
     ].filter(([, k]) => d[k]);
-    if (seo.length) {
-      lines.push('', 'SEO:');
-      for (const [title, k] of seo) lines.push(`  ${title} (${d[k].length}): ${d[k]}`);
+    if (texts.length) {
+      lines.push('', 'КАРТОЧКА:');
+      for (const [title, k] of texts) lines.push(`  ${title} (${d[k].length}): ${d[k]}`);
     }
-    if (d.seo_issues?.length) {
-      lines.push('', 'ЗАМЕТКИ ПО SEO:');
-      for (const x of d.seo_issues) lines.push(`  · ${x}`);
+    if (d.meta_keywords) {
+      lines.push('', 'КЛЮЧЕВЫЕ ФРАЗЫ:', `  ${d.meta_keywords}`);
+    }
+    if (d.web_info) {
+      lines.push('', 'СРАВНЕНИЕ С РЫНКОМ:', `  ${d.web_info}`);
     }
 
     for (const [title, key] of [
       ['ПРЕИМУЩЕСТВА', 'bullets'],
-      ['СИНОНИМЫ', 'synonyms'],
-      ['ПСЕВДОНИМЫ ПОИСКА', 'search_aliases'],
-      ['SEO КЛЮЧИ', 'seo_keywords'],
+      ['АКЦЕНТЫ', 'strong'],
     ]) {
       lines.push('', `${title}:`);
       const arr = d[key] || [];

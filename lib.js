@@ -24,6 +24,10 @@ import { nameKeyTokens } from './pipeline/identity.js';
 import { tryLoadDictSchema, extractFactsFromDictionary, loadConfigSafe, CRAWL_SLUGS, specDest } from './pipeline/schema.js';
 import { matchKey } from './pipeline/match.js';
 import { normalizeValue } from './pipeline/types.js';
+import { loadBenchmarks } from './pipeline/dict.js';
+import {
+  validateModelResponse, validationFeedbackLine, MODEL_KEYS, buildDescriptionHtml,
+} from './pipeline/model_validate.js';
 
 // ── КУРС ─────────────────────────────────────────────────────
 // Обновляйте вместе с датой — она печатается в отчётах и выводится в UI.
@@ -198,12 +202,40 @@ function extractDims(text) {
 // ── ОБЩИЕ ПРИЗНАКИ ───────────────────────────────────────────
 const RE_KG = /(?<![а-яёa-z])(?:кг|килограмм[а-яё]*)(?![а-яё])/i;
 const RE_DB = /(?<![а-яёa-z])(?:дб|дба|децибел[а-яё]*)(?![а-яё])/i;
+/** Единица гарантии обязательна: без неё «5» из «5 лет на двигатель» уезжает в месяцы. */
+const RE_WARRANTY_UNIT = /(?:мес(?:яц(?:а|ев)?)?|год(?:а|ов)?|лет)/i;
+/** Гарантия на узел, а не на изделие — в facts не кладём. */
+const RE_WARRANTY_PART = /(?:на|для)\s+(?:двигател|компрессор|мотор|насос|электронн|плат|барабан|тен)/i;
 
 // Класс энергоэффективности. Строгий вариант требует «энерг» рядом — иначе
 // «климатический класс SN» и «класс - N, ST» уедут в энергоэффективность.
 const RE_ECLASS = new RegExp(`энерг${C}*(?:\\s+${C}+)?[^0-9A-Za-zА-Яа-яё]{0,8}([A-GА-Е]\\+{0,3})(?![A-Za-zА-Яа-яё])`, 'i');
 const RE_ECLASS_LOOSE = /класс[^0-9A-Za-zА-Яа-яё]{0,6}([A-GА-Е]\+{0,3})(?![A-Za-zА-Яа-яё])/i;
 const CYR2LAT = { А: 'A', Б: 'B', В: 'B', Г: 'G', Д: 'D', Е: 'E', С: 'C' };
+
+/**
+ * Гарантия изделия в месяцах. «5 лет на двигатель» — не факт: это узел и годы.
+ * Без единицы рядом число не берём.
+ */
+function extractWarrantyMonths(text) {
+  const re = new RegExp(
+    `(гаранти${C}*)(${GAP})${NUM}\\s*((?:мес(?:яц(?:а|ев)?)?|год(?:а|ов)?|лет)\\.?)` +
+    `([^0-9\\n.;]{0,40})`,
+    'i',
+  );
+  const m = String(text || '').match(re);
+  if (!m) return null;
+  const n = numOf(m[3]);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  const unit = m[4].toLowerCase();
+  const after = m[5] || '';
+  if (RE_WARRANTY_PART.test(after)) return null;
+  let months;
+  if (/год|лет/.test(unit)) months = Math.round(n * 12);
+  else months = Math.round(n);
+  if (months < 1 || months > 240) return null;
+  return months;
+}
 
 /**
  * Габариты и класс энергоэффективности есть у любой категории.
@@ -241,6 +273,10 @@ function commonFacts(t, schema) {
     const c = e[1].toUpperCase();
     f.класс_энергоэффективности = (CYR2LAT[c[0]] || c[0]) + c.slice(1);
   }
+
+  const warranty = extractWarrantyMonths(t);
+  if (warranty != null && ok('гарантия_мес', warranty)) f.гарантия_мес = warranty;
+
   return f;
 }
 
@@ -302,7 +338,7 @@ const LABEL = {
   количество_петель:          [`количеств${C}*\\s+петел${C}*`, null],
   количество_программ:        [`количеств${C}*\\s+программ`, null],
   количество_режимов:         [`количеств${C}*\\s+(?:режим|скорост)${C}*`, null],
-  гарантия_мес:               [`гаранти${C}*`, null],
+  гарантия_мес:               [`гаранти${C}*`, RE_WARRANTY_UNIT],
   давление_бар:               [`давлени${C}*`, RE_BAR],
   производительность_л_мин:   [`производительност${C}*`, RE_L],
   кпд_процент:                [`кпд`, null],
@@ -822,6 +858,7 @@ export const PROMPT_PLACEHOLDERS = [
   { key: '{{enums}}', note: 'допустимые значения фасетов' },
   { key: '{{color_facets}}', note: 'палитра цвета' },
   { key: '{{spec_keys}}', note: 'скелет specs в JSON-ответе' },
+  { key: '{{highlight_keys}}', note: 'атрибуты с highlight: true' },
 ];
 
 /**
@@ -829,7 +866,7 @@ export const PROMPT_PLACEHOLDERS = [
  * означает «использовать этот». Правка в UI сохраняется в config.json.
  */
 export function defaultSystemPromptTemplate() {
-  return `Ты — контент-редактор карточек товаров интернет-магазина и SEO-специалист.
+  return `Ты — контент-редактор карточек товаров интернет-магазина.
 Категория: {{category_name}}. Предмет: {{subject}}.
 {{hints}}Тебе передан ОДИН товар. Верни ОДИН JSON-объект — без markdown, без пояснений
 до и после. Язык всех текстов — русский.
@@ -842,18 +879,31 @@ export function defaultSystemPromptTemplate() {
 - "размеры_мм" в facts — три габарита по возрастанию без привязки к осям. Если
   ширина/высота/глубина в facts не заданы, распредели тройку по осям сам.
 - Всё остальное бери только из переданных полей товара.
+- benchmarks — ориентиры для сравнения. Нужны для web_info. Если блока нет или
+  сопоставимых характеристик меньше двух — web_info: null.
 
 2. ЧЕГО НЕЛЬЗЯ ДЕЛАТЬ
 - Не выдумывай характеристики, которых нет в данных. Нет данных → null.
 - Пустая строка, "нет данных", "не указано", "—", 0 вместо неизвестного числа —
   запрещены. Только null.
+- Отсутствие информации ≠ отсутствие свойства. Если в данных нет Wi-Fi / защиты
+  от детей / какой-то функции — пиши null, а НЕ "нет", "не поддерживается",
+  "отсутствует", "не предусмотрено". "Нет" допустимо ТОЛЬКО если источник явно
+  говорит «нет» / «не поддерживается» / false.
 - Не переноси в specs значения из соседних товаров, рекламных блоков и фильтров
   раздела. Диапазон вида "от 40,5 до 50" — это корзина фильтра, а не размер.
+- Не подменяй точное значение диапазоном фильтра: "50 см" остаётся 50, а не
+  "50-55". Бакеты фильтров собирает система отдельно.
+- Не путай похожие модели и модификации (Integra-50 ≠ Integra-60 ≠ Integra Glass).
 - Не пиши в тексты цену, скидку, наличие, сроки доставки и гарантию, если её нет
   в данных: это меняется чаще, чем карточка.
 - Не используй превосходные степени и оценки без подтверждения фактом: "лучший",
   "№1", "premium", "идеальный". Не упоминай конкурентов и другие магазины.
+- Не домысливай площадь помещения, «эффективность», причинно-следственные связи
+  и маркетинговые выгоды, которых нет в specs: "400 м³/ч" ≠ "для кухни 20 м²".
 - Не копируй description дословно — переписывай своими словами.
+- HTML-теги нигде не допускаются.
+- Ранее сгенерированный текст карточки не является источником фактов.
 
 3. ЧИСЛА И ЕДИНИЦЫ
 - Числовые поля — только число, без единицы внутри значения.
@@ -882,65 +932,36 @@ export function defaultSystemPromptTemplate() {
   ("графитовый металлик") сведи к базовому ("серый").
 - Значения без служебного мусора: без "шт.", "прибл.", "*", сносок и HTML.
 
-6. ТЕКСТЫ КАРТОЧКИ И ДЛЯ ПОИСКОВИКОВ
-Главный текст карточки — seo_description (описание на странице товара). Пиши
-его ПЕРВЫМ и подробно; краткое и H1 выжимай из него. Title и meta_description —
-отдельно: они уходят в <title>/meta и на витрине покупателю не показываются.
+6. ТЕКСТЫ КАРТОЧКИ
+Пиши тексты СРАЗУ после открытия объекта — до specs: иначе при обрыве страница
+останется без описаний.
+- description — основной текст, 950–1600 символов, РОВНО ЧЕТЫРЕ абзаца через
+  пустую строку (\\n\\n):
+    1) что это за товар: тип, бренд, модель, назначение из данных;
+    2) характеристики цифрами ТОЛЬКО из specs — без домыслов «что это даёт»;
+    3) функции и удобства, которые есть в specs;
+    4) что учесть перед покупкой строго по данным specs.
+  Если характеристик в данных меньше пяти — 400–700 символов, РОВНО ДВА абзаца,
+  без домыслов. Ключевые параметры для акцента: {{highlight_keys}}.
+- bullets — 3–5 пунктов, каждый до 90 символов: только факт из specs
+  («параметр — значение»), без выдуманной «пользы покупателю».
+- short_description — одно предложение, 120–200 символов, для анонса карточки.
+- strong — 0–3 фрагмента, каждый ДОСЛОВНО встречается в description (для <strong>).
+  Можно [].
+- meta_keywords — 7–9 фраз через запятую: категорийные, брендовые и с параметром
+  из подтверждённых specs. Без городов, цен и несуществующих характеристик.
+- web_info — 300–700 символов сравнения с benchmarks, либо null. Пустая строка
+  запрещена. null, если benchmarks нет или сравнимых характеристик меньше двух.
 
-Карточка (видит покупатель):
-- seo_description — основной текст карточки, 900–1800 символов, ТРИ абзаца,
-  разделённые пустой строкой, у каждого своя работа:
-    1) что это за товар и для какой задачи: тип, бренд, модель, класс товара,
-       кому и в каких условиях он подходит;
-    2) характеристики ЦИФРАМИ и что каждая даёт на практике — габариты, объём
-       или загрузка, мощность, классы, уровень шума, расход: то, что есть
-       в specs. Не список через запятую, а связный текст;
-    3) что учесть перед покупкой: место установки и размеры, тип подключения
-       и управления, комплектация, уход. Только то, что следует из данных.
-  По всему тексту — не меньше пяти конкретных значений из specs. Каждое
-  предложение несёт факт или прямое следствие из факта.
-  Вода запрещена: "отличное решение", "порадует вас", "широкий функционал",
-  "на любой вкус", "современный дизайн" без деталей — вырезай такие фразы.
-  Если характеристик в данных меньше пяти, напиши 400–700 символов и НЕ добирай
-  длину домыслами: короткий честный текст лучше длинного выдуманного.
-- bullets — 3–6 пунктов, каждый до 90 символов, формат "параметр — что это даёт
-  покупателю". Каждый пункт опирается на конкретное значение из specs.
-- short_description — выжимка первого абзаца: одно предложение до 200 символов
-  для плитки каталога — что это и главное преимущество.
-- h1 — заголовок страницы, до 70 символов, человеческий, не дублирует seo_title
-  дословно.
-
-Для поисковиков (в карточку не выводятся):
-- meta_description — 150–160 символов, 1–2 предложения: тип, бренд, модель и
-  2–3 конкретных факта. Без призывов вида "жми", "успей".
-- seo_title — тег <title>, 45–60 символов: тип + бренд + модель + один главный
-  параметр. Допустим один коммерческий маркер ("купить"), не больше. Без CAPS,
-  без эмодзи, без перечисления через запятую пяти ключей.
-
-7. ПОИСК
-- synonyms — 4–6 других названий того же товара, как его называют в жизни.
-- search_aliases — 6–10 реальных поисковых запросов: с моделью и без пробелов
-  в ней, транслитерация бренда ("хайер"), частые опечатки, разговорные названия.
-- seo_keywords — 6–10 фраз: категорийные, брендовые и низкочастотные с
-  параметром ("стиральная машина 6 кг"). «Узкая» — только если глубина
-  до 40 см; ширина 60 см узкой не делает. Без городов, цен и повторов
-  одной и той же фразы в разных падежах.
-
-8. СХЕМА ОТВЕТА (ровно эти ключи, ничего не добавляй и не удаляй)
-"..." ниже — только типы полей, не готовый ответ. Тексты карточки
-(seo_description, short_description, h1, bullets) заполнить обязательно.
-Title и meta — тоже, но они для поисковика. Пиши тексты карточки СРАЗУ после
-открытия объекта — до specs: иначе при обрыве страница останется без описаний.
+7. СХЕМА ОТВЕТА (ровно эти ключи, ничего не добавляй и не удаляй)
+"..." ниже — только типы полей, не готовый ответ.
 {
-  "seo_description": "...",
-  "bullets": [],
   "short_description": "...",
-  "h1": "...",
-  "meta_description": "...",
-  "seo_title": "...",
-  "synonyms": [],
-  "search_aliases": [],
-  "seo_keywords": [],
+  "description": "...",
+  "bullets": [],
+  "strong": [],
+  "meta_keywords": "...",
+  "web_info": null,
   "specs": {
 {{spec_keys}}
   }
@@ -952,6 +973,13 @@ export function promptVarsForSchema(schemaKey) {
   const s = schemaFor(schemaKey);
   const enumLines = Object.entries(s.enums || {})
     .map(([k, vals]) => `- ${k}: ${(vals || []).map(v => `"${v}"`).join(' | ')}`);
+  const highlightKeys = (s.dict?.attrs || [])
+    .filter(a => a.highlight && a.tier !== 'X')
+    .map(a => {
+      const dest = specDest(a);
+      return typeof dest === 'object' ? dest.key : dest;
+    })
+    .filter(Boolean);
   return {
     category_name: s.name,
     subject: s.subject,
@@ -962,6 +990,9 @@ export function promptVarsForSchema(schemaKey) {
     unit_notes: (s.unitNotes || []).map(x => `- ${x}`).join('\n'),
     enums: enumLines.length ? enumLines.join('\n') : '- (в этой категории таких полей нет)',
     color_facets: COLOR_FACETS,
+    highlight_keys: highlightKeys.length
+      ? highlightKeys.join(', ')
+      : (s.specKeys || []).slice(0, 8).join(', '),
     spec_keys: (s.specKeys || [])
       .map(k => `    "${k}": ${(s.numericKeys || []).includes(k) ? 'null' : '"..."'}`)
       .join(',\n'),
@@ -1009,6 +1040,7 @@ export function extractFacts(text, schemaKey) {
       }
     }
     for (const key of s.specKeys || []) {
+      if (key === 'гарантия_мес') continue; // только extractWarrantyMonths
       if (f[key] != null || !LABEL[key]) continue;
       const [lab, unit] = LABEL[key];
       const h = labeled(plain, lab);
@@ -1021,6 +1053,7 @@ export function extractFacts(text, schemaKey) {
   const f = commonFacts(t, s);
 
   for (const [key, label, unit] of s.labels) {
+    if (key === 'гарантия_мес') continue;
     const h = labeled(t, label);
     if (!h || !inRange(key, h.value, s.ranges)) continue;
     if (unit && !unit.test(h.tail) && !unit.test(h.gap) && !unit.test(h.head)) continue;
@@ -1285,47 +1318,21 @@ function snapEnum(value, allowed) {
   return hit ?? null;
 }
 
-// Длины текстовых полей. Две роли:
-//   карточка  — h1, short_description, seo_description (то, что видит покупатель);
-//   поисковик — seo_title, meta_description (в карточку не выводим).
-// Выход за границы — заметка в seo_issues, не обнуление. Отдельно от warnings:
-// там расхождения с источником, здесь — повод причесать текст.
-const SEO_LIMITS = {
-  seo_title:         [30, 60],
-  h1:                [10, 70],
-  meta_description:  [120, 170],
-  short_description: [40, 200],
-  seo_description:   [900, 2200],
-};
-const SEO_TEXT_KEYS = Object.keys(SEO_LIMITS);
-/** Тексты страницы товара — без них карточка пустая. */
-export const CARD_TEXT_KEYS = ['h1', 'short_description', 'seo_description'];
-/** Только для <title> / meta — в превью карточки не показываем. */
-export const SEARCH_META_KEYS = ['seo_title', 'meta_description'];
+// Контракт ответа модели. Старые seo_title/h1/… — лишний ключ = ошибка схемы.
+export { MODEL_KEYS, validateModelResponse, validationFeedbackLine, buildDescriptionHtml };
 
-// Длинному тексту нужен материал: на товаре с двумя характеристиками 900
-// символов честно не написать. Требовать их — значит требовать домыслов,
-// поэтому порог основного текста зависит от того, сколько полей заполнено.
-const RICH_SPECS = 5;
-const seoFloor = (key, filled) =>
-  (key === 'seo_description' && filled < RICH_SPECS ? 400 : SEO_LIMITS[key][0]);
+/** @deprecated совместимость со старыми тестами/UI. */
+export const CARD_TEXT_KEYS = ['short_description', 'description'];
+export const SEARCH_META_KEYS = [];
 
-function textBlank(v) {
-  const s = String(v ?? '').trim();
-  return !s || s === '...';
-}
-
-/**
- * Нет текстов карточки (H1 / краткое / описание) — модель не дописала страницу.
- * Пустые title/meta сами по себе не повод считать карточку пустой: они для
- * поисковика и в витрину не выводятся.
- */
+/** @deprecated карточные тексты проверяет validateModelResponse. */
 export function cardTextsEmpty(data) {
   if (!data || typeof data !== 'object') return true;
-  return CARD_TEXT_KEYS.every(k => textBlank(data[k]));
+  return !String(data.description || '').trim()
+    && !String(data.short_description || '').trim();
 }
 
-/** @deprecated используй cardTextsEmpty — имя оставлено для старых вызовов. */
+/** @deprecated */
 export function seoPackageEmpty(data) {
   return cardTextsEmpty(data);
 }
@@ -1346,8 +1353,6 @@ export function normalizeResponse(data, sourceText = '', schemaKey, attributes =
     }
     const s = v == null ? null : String(v).trim();
     const clean = s && !/^(нет данных|не указано|-|—|n\/?a)$/i.test(s) ? s : null;
-    // Поле со списком значений — фасет фильтра. Чужое значение туда пускать
-    // нельзя: один «фронтальный тип» ломает всю группу фильтра.
     if (clean && schema.enums[k]) {
       const snapped = snapEnum(clean, schema.enums[k]);
       if (!snapped) enumIssues.push({ field: k, model: clean, source: null, note: `значение вне списка (${schema.enums[k].join(' | ')})` });
@@ -1357,13 +1362,9 @@ export function normalizeResponse(data, sourceText = '', schemaKey, attributes =
     }
   }
 
-  // Источника два: проза и атрибуты магазина. productFacts сводит их вместе и
-  // молчит там, где они спорят друг с другом.
   const { facts, bounds, conflicts } = productFacts({ description: sourceText, attributes }, schema);
   const warnings = crossCheck(specs, facts, bounds, policy).concat(enumIssues);
 
-  // Пропуск модели — не повод терять факт: если поле null, а в тексте значение
-  // разобрано однозначно, подставляем его и перечисляем, что подставили.
   const filled_from_text = [];
   for (const k of schema.specKeys) {
     if (specs[k] != null || facts[k] == null) continue;
@@ -1373,50 +1374,53 @@ export function normalizeResponse(data, sourceText = '', schemaKey, attributes =
 
   const arr = v => (Array.isArray(v) ? v.map(x => String(x).trim()).filter(Boolean) : []);
   const str = v => {
+    if (v == null) return null;
     if (typeof v !== 'string') return '';
     const s = v.trim();
-    // Скелет промпта использует "..." как тип поля — в карточку это не значение.
     return s === '...' ? '' : s;
   };
 
-  const seo = {};
-  const seo_issues = [];
-  const filledSpecs = Object.values(specs).filter(v => v != null).length;
-  for (const k of SEO_TEXT_KEYS) {
-    seo[k] = str(data[k]);
-    const min = seoFloor(k, filledSpecs), max = SEO_LIMITS[k][1];
-    const len = seo[k].length;
-    if (!len) { seo_issues.push(`${k}: пусто`); continue; }
-    if (len < min || len > max) seo_issues.push(`${k}: ${len} симв., рекомендуется ${min}–${max}`);
-  }
+  // Обратная совместимость: старые ответы с seo_description / seo_keywords.
+  const description = str(data.description) ?? str(data.seo_description) ?? '';
+  const meta_keywords = (() => {
+    if (typeof data.meta_keywords === 'string') return str(data.meta_keywords) || '';
+    if (Array.isArray(data.seo_keywords)) return data.seo_keywords.map(x => String(x).trim()).filter(Boolean).join(', ');
+    return '';
+  })();
+
+  let web_info = data.web_info;
+  if (web_info === '') web_info = ''; // валидатор поймает
+  else if (web_info == null) web_info = null;
+  else web_info = str(web_info);
 
   return {
     specs,
-    ...seo,
-    bullets:         arr(data.bullets),
-    synonyms:        arr(data.synonyms),
-    search_aliases:  arr(data.search_aliases),
-    seo_keywords:    arr(data.seo_keywords),
-    source_facts:    facts,
+    short_description: str(data.short_description) || '',
+    description,
+    bullets: arr(data.bullets),
+    strong: arr(data.strong),
+    meta_keywords,
+    web_info,
+    source_facts: facts,
     source_conflicts: conflicts,
     filled_from_text,
     warnings,
-    seo_issues,
   };
 }
 
 // ── ТЕЛО ЗАПРОСА ─────────────────────────────────────────────
-export function buildUserContent(product, facts = null) {
+export function buildUserContent(product, facts = null, { benchmarks = null } = {}) {
   return JSON.stringify({
     facts:       facts && Object.keys(facts).length ? facts : undefined,
     name:        product.name,
     sku:         product.sku,
-    brand:       product.brand || undefined,   // бренд по классификации магазина
+    brand:       product.brand || undefined,
     category:    product.category,
     description: stripHtml(product.description),
     annotation:  stripHtml(product.annotation),
     attributes:  product.attributes || [],
     price:       product.price,
+    benchmarks:  benchmarks || undefined,
   });
 }
 
@@ -1531,89 +1535,15 @@ function buildRequestBody(model, product, maxTokens = 3200, schemaKey, systemPro
 }
 
 /**
- * Узкий промпт на тексты карточки (+ meta для поисковика): когда основной
- * ответ принёс specs, но страница пустая — отдельный запрос надёжнее полного.
+ * @deprecated вторая ветка генерации отключена — ответ модели идёт в выгрузку напрямую.
  */
 export function buildSeoOnlyPrompt() {
-  return `Ты — редактор карточки интернет-магазина. Specs уже готовы — не меняй их.
-Верни ОДИН JSON-объект без markdown и без пояснений. Язык — русский.
-
-Карточка (покупатель видит на странице) — заполнить обязательно:
-- seo_description — 900–1800 символов, ТРИ абзаца через пустую строку:
-  1) что за товар, бренд, модель, кому подходит;
-  2) характеристики цифрами из specs и что они дают на практике;
-  3) что учесть перед покупкой по данным specs.
-  Если в specs меньше пяти значений — 400–700 символов, без домыслов.
-- bullets — 3–6 пунктов до 90 символов: «параметр — польза покупателю».
-- short_description — одно предложение до 200 символов для плитки каталога.
-- h1 — до 70 символов, человеческий, не копия seo_title.
-
-Для поисковиков (в карточку не выводятся):
-- meta_description — 150–160 символов, 1–2 предложения с 2–3 фактами из specs.
-- seo_title — 45–60 символов: тип + бренд + модель + один параметр. Допустим один
-  «купить». Без CAPS и эмодзи.
-
-Также:
-- synonyms — 4–6 бытовых названий.
-- search_aliases — 6–10 реальных запросов (с моделью и без, опечатки, транслит).
-- seo_keywords — 6–10 фраз без городов и цен.
-
-Схема:
-{
-  "seo_description": "...",
-  "bullets": [],
-  "short_description": "...",
-  "h1": "...",
-  "meta_description": "...",
-  "seo_title": "...",
-  "synonyms": [],
-  "search_aliases": [],
-  "seo_keywords": []
-}`;
+  return '';
 }
 
-function buildSeoOnlyUser(product, specs) {
-  return JSON.stringify({
-    name:        product.name,
-    sku:         product.sku,
-    brand:       product.brand || undefined,
-    category:    product.category,
-    description: stripHtml(product.description),
-    annotation:  stripHtml(product.annotation),
-    specs,
-  });
-}
-
-/** Накладывает SEO из доборного ответа на уже нормализованную карточку. */
-export function mergeSeoPackage(enriched, seoRaw, sourceText = '', schemaKey, attributes = [], policy = MISMATCH_POLICY) {
-  if (!enriched || !seoRaw || typeof seoRaw !== 'object') return enriched;
-  return normalizeResponse({
-    specs: enriched.specs,
-    seo_description: seoRaw.seo_description,
-    short_description: seoRaw.short_description,
-    meta_description: seoRaw.meta_description,
-    h1: seoRaw.h1,
-    seo_title: seoRaw.seo_title,
-    bullets: seoRaw.bullets,
-    synonyms: seoRaw.synonyms,
-    search_aliases: seoRaw.search_aliases,
-    seo_keywords: seoRaw.seo_keywords,
-  }, sourceText, schemaKey, attributes, policy);
-}
-
-function buildSeoRequestBody(model, userContent, maxTokens = 2500) {
-  return {
-    model,
-    max_tokens: maxTokens,
-    temperature: 0.2,
-    response_format: { type: 'json_object' },
-    usage: { include: true },
-    ...thinkingOff(model),
-    messages: [
-      { role: 'system', content: buildSeoOnlyPrompt() },
-      { role: 'user', content: userContent },
-    ],
-  };
+/** @deprecated */
+export function mergeSeoPackage(enriched) {
+  return enriched;
 }
 
 // ── RATE LIMITER ─────────────────────────────────────────────
@@ -1710,16 +1640,15 @@ function retryAfterMs(res) {
 }
 
 /**
- * Один товар → обогащённая запись. Ретраит только то, что имеет смысл повторять.
- * Токены и стоимость суммируются по всем попыткам: ретрай — это оплаченный
- * запрос, и отчёт, показывающий только последнюю попытку, занижает расход.
- * Возвращает { enriched, iT, oT, cost, costSource, attempts }. При провале
- * бросает ошибку с полем .usage — потраченное на неудачные попытки.
+ * Один товар → обогащённая запись.
+ * Максимум 2 попытки: 1) исходный промпт, 2) промпт + перечень непройденных
+ * проверок. После второй неудачи — needs_review (не done, не в выгрузку).
+ * Токены и стоимость суммируются. Сеть/HTTP ретраятся в пределах тех же двух.
  */
 export async function enrichProduct(product, opts) {
   const {
     model, apiKey, limiter, pricing = null, schema: schemaOpt = null,
-    maxRetries = 3, maxTokens = 3200, timeoutMs = 60_000,
+    maxRetries = 2, maxTokens = 3200, timeoutMs = 60_000,
     onNote = () => {}, referer = 'https://mrmag.ru', title = 'Ogran',
     chatUrl = 'https://openrouter.ai/api/v1/chat/completions',
     headers: extraHeaders = {},
@@ -1727,36 +1656,58 @@ export async function enrichProduct(product, opts) {
     systemPrompt = '',
   } = opts;
 
-  // Схему берём из опции, иначе из категории самого товара. Молчаливого
-  // «по умолчанию холодильник» здесь быть не должно: телевизор получил бы
-  // в промпте объём морозильной камеры.
   const schema = schemaForProduct(product, schemaOpt);
   const src = sourceText(product);
   const { facts } = productFacts(product, schema);
-  const userContent = buildUserContent(product, facts);
+  const benchmarks = schema.id != null ? loadBenchmarks(schema.id) : null;
+  const baseUser = buildUserContent(product, facts, { benchmarks });
   const systemContent = buildSystemPrompt(schema, systemPrompt);
+  const attemptsCap = Math.min(2, Math.max(1, maxRetries));
   let tokenBudget = maxTokens;
   let lastErr;
   let lastRaw = '';
+  let lastIssues = [];
+  let feedback = '';
 
   let iT = 0, oT = 0, cost = 0, costSource = 'нет данных';
   const usage = () => ({ iT, oT, cost: costSource === 'нет данных' ? null : cost });
-  // Ошибку отдаём вместе с тем, что уже потрачено, — иначе расход теряется.
-  // debug — для раздела «Логи»: что ушло в модель и что пришло.
   const debugOf = (extra = {}) => ({
     source_text: src,
     system_prompt: systemContent,
-    user_content: userContent,
+    user_content: feedback
+      ? JSON.stringify({ ...JSON.parse(baseUser), validation_feedback: feedback })
+      : baseUser,
     raw_response: lastRaw,
+    validation_issues: lastIssues,
     ...extra,
   });
   const fail = e => { e.usage = usage(); e.debug = debugOf(); throw e; };
   const pack = (result) => ({ ...result, debug: debugOf({ attempts: result.attempts }) });
 
-  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+  const userPayload = () => {
+    if (!feedback) return baseUser;
+    try {
+      const obj = JSON.parse(baseUser);
+      obj.validation_feedback = feedback;
+      return JSON.stringify(obj);
+    } catch {
+      return baseUser + '\n\n' + feedback;
+    }
+  };
+
+  const logValidationFail = (issues, attempt, raw) => {
+    lastIssues = issues;
+    lastRaw = raw;
+    const list = issues.map(i => `${i.field}: ${i.reason}`).join('; ');
+    onNote(`валидация не прошла · попытка ${attempt}/${attemptsCap}: ${list}`, { level: 'warn', step: 'validate' });
+    onNote(`сырой ответ модели (попытка ${attempt}):\n${raw}`, { level: 'warn', step: 'validate' });
+  };
+
+  for (let attempt = 1; attempt <= attemptsCap; attempt++) {
     await limiter.wait(ms => onNote(`rate limit ${ms}ms`));
 
-    onNote(`запрос к модели${attempt > 1 ? ` · попытка ${attempt}/${maxRetries}` : ''}…`);
+    const userContent = userPayload();
+    onNote(`запрос к модели${attempt > 1 ? ` · попытка ${attempt}/${attemptsCap}` : ''}…`);
 
     let res, data, bodyText;
     try {
@@ -1772,20 +1723,14 @@ export async function enrichProduct(product, opts) {
         body:   JSON.stringify(buildRequestBody(model, userContent, tokenBudget, schema, systemPrompt)),
         signal: AbortSignal.timeout(timeoutMs),
       });
-      // Шлюз может ответить HTML — читаем текстом, чтобы res.json() не съел ошибку.
-      // Читаем здесь же: таймаут прерывает и чтение тела, а снаружи try такой
-      // сбой уходит мимо ретрая голым «The operation was aborted due to timeout».
       bodyText = await res.text();
       lastRaw = bodyText;
     } catch (e) {
-      // Таймаут и сетевой сбой — имеет смысл повторить. Хост в тексте, иначе
-      // «fetch failed (Request was cancelled.)» не говорит, кого оборвали:
-      // OpenRouter через SOCKS или DeepSeek, которого туда тащить не надо.
       let host = chatUrl;
-      try { host = new URL(chatUrl).host; } catch { /* оставляем как есть */ }
+      try { host = new URL(chatUrl).host; } catch { /* */ }
       const timed = e.name === 'TimeoutError' || e.cause?.name === 'TimeoutError';
       lastErr = new Error(timed ? `таймаут ${timeoutMs}ms (${host})` : `${host}: ${netError(e)}`);
-      if (attempt < maxRetries) { onNote(`сеть, retry ${attempt}`); await sleep(attempt * 3000); continue; }
+      if (attempt < attemptsCap) { onNote(`сеть, retry ${attempt}`); await sleep(attempt * 3000); continue; }
       fail(lastErr);
     }
 
@@ -1795,7 +1740,7 @@ export async function enrichProduct(product, opts) {
       const code = data?.error?.code ?? res.status;
       const msg  = data?.error?.message || `HTTP ${res.status}: ${bodyText.slice(0, 120)}`;
       lastErr = new Error(msg);
-      if (attempt < maxRetries && RETRYABLE.has(Number(code))) {
+      if (attempt < attemptsCap && RETRYABLE.has(Number(code))) {
         const wait = retryAfterMs(res) ?? attempt * 4000;
         onNote(`${code}, retry ${attempt}, ${wait}ms`);
         await sleep(wait);
@@ -1807,7 +1752,7 @@ export async function enrichProduct(product, opts) {
     const choice = data?.choices?.[0];
     if (!choice) {
       lastErr = new Error('Нет choices в ответе');
-      if (attempt < maxRetries) { onNote(`пустой ответ, retry ${attempt}`); await sleep(attempt * 5000); continue; }
+      if (attempt < attemptsCap) { onNote(`пустой ответ, retry ${attempt}`); await sleep(attempt * 5000); continue; }
       fail(lastErr);
     }
 
@@ -1818,140 +1763,88 @@ export async function enrichProduct(product, opts) {
     if (typeof data.usage?.cost === 'number') {
       cost += data.usage.cost;
       costSource = /openrouter\.ai/i.test(chatUrl) ? 'openrouter' : 'провайдер';
-    } else if (pricing) {
+    } else if (pricing && (pricing.prompt || pricing.completion)) {
       cost += inTok * pricing.prompt + outTok * pricing.completion;
       if (costSource === 'нет данных') costSource = 'тариф модели';
     }
 
     const content = choice.message?.content ?? '';
     lastRaw = content;
-    const accept = (data) => {
-      const enriched = normalizeResponse(data, src, schema, product.attributes, mismatchPolicy);
-      return { enriched, ...usage(), costSource, attempts: attempt };
-    };
-    const bumpForLength = () => {
-      if (attempt >= maxRetries || tokenBudget >= MAX_COMPLETION_TOKENS) return false;
-      tokenBudget = Math.min(MAX_COMPLETION_TOKENS, tokenBudget * 2);
-      onNote(`обрыв по длине, max_tokens→${tokenBudget}`);
-      return true;
-    };
 
-    // Обрыв по длине — детерминированная ошибка: повтор с тем же лимитом бессмыслен.
-    // Но JSON мог успеть закрыться на лимите, или specs уже написаны, а хвост
-    // SEO обрезан: это не повод выкидывать товар — если SEO хоть частично есть.
-    // А вот закрытый JSON без единого SEO-текста — это ещё не карточка: бюджет
-    // ушёл в specs/thinking, поднимаем лимит и повторяем.
+    let parsedBody = null;
     if (choice.finish_reason === 'length') {
-      let parsed = null;
-      try { parsed = parseResponse(content); } catch { /* не закрылся */ }
-      if (!parsed) parsed = repairTruncatedJson(content);
-      if (parsed) {
-        try {
-          const result = accept(parsed);
-          if (cardTextsEmpty(result.enriched) && bumpForLength()) continue;
-          return pack(await ensureSeo(result));
-        } catch { /* починка дала мусор */ }
+      try { parsedBody = parseResponse(content); } catch { /* */ }
+      if (!parsedBody) parsedBody = repairTruncatedJson(content);
+      if (!parsedBody) {
+        if (attempt < attemptsCap && tokenBudget < MAX_COMPLETION_TOKENS) {
+          tokenBudget = Math.min(MAX_COMPLETION_TOKENS, tokenBudget * 2);
+          onNote(`обрыв по длине, max_tokens→${tokenBudget}`);
+          continue;
+        }
+        fail(new Error(`Ответ обрезан на max_tokens=${tokenBudget}`));
       }
-      if (bumpForLength()) continue;
-      fail(new Error(`Ответ обрезан на max_tokens=${tokenBudget}`));
+    } else {
+      try {
+        parsedBody = parseResponse(content);
+      } catch (err) {
+        lastErr = err;
+        if (attempt < attemptsCap) { onNote(`parse err, retry ${attempt}`); await sleep(2000); continue; }
+        fail(err);
+      }
     }
 
     let enriched;
     try {
-      enriched = normalizeResponse(parseResponse(content), src, schema, product.attributes, mismatchPolicy);
+      enriched = normalizeResponse(parsedBody, src, schema, product.attributes, mismatchPolicy);
     } catch (err) {
       lastErr = err;
-      if (attempt < maxRetries) { onNote(`parse err, retry ${attempt}`); await sleep(2000); continue; }
+      if (attempt < attemptsCap) { onNote(`normalize err, retry ${attempt}`); await sleep(2000); continue; }
       fail(err);
     }
 
-    // finish_reason=stop, но тексты карточки пусты — модель вернула скелет.
-    // Повтор полного ответа; если попытки кончились — доберём узким запросом.
-    if (cardTextsEmpty(enriched) && attempt < maxRetries) {
-      onNote(`тексты карточки пусты, retry ${attempt}`);
-      await sleep(2000);
-      continue;
+    const filledSpecs = Object.values(enriched.specs || {}).filter(v => v != null).length;
+    const issues = validateModelResponse({
+      specs: enriched.specs,
+      short_description: enriched.short_description,
+      description: enriched.description,
+      bullets: enriched.bullets,
+      strong: enriched.strong,
+      meta_keywords: enriched.meta_keywords,
+      web_info: enriched.web_info,
+    }, {
+      filledSpecs,
+      requireSpecFill: Boolean(src && src.length >= MIN_SOURCE_CHARS),
+    });
+
+    if (issues.length) {
+      // Обрыв по длине + пустые тексты: сначала поднять бюджет, а не жечь попытку feedback.
+      if (choice.finish_reason === 'length'
+        && attempt < attemptsCap
+        && tokenBudget < MAX_COMPLETION_TOKENS
+        && cardTextsEmpty(enriched)) {
+        tokenBudget = Math.min(MAX_COMPLETION_TOKENS, tokenBudget * 2);
+        onNote(`обрыв по длине, max_tokens→${tokenBudget}`);
+        continue;
+      }
+      logValidationFail(issues, attempt, content);
+      if (attempt < attemptsCap) {
+        feedback = validationFeedbackLine(issues);
+        onNote(`повтор с указанием ошибок валидации`);
+        continue;
+      }
+      return pack({
+        enriched: null,
+        needs_review: true,
+        validation_issues: issues,
+        raw_response: content,
+        ...usage(),
+        costSource,
+        attempts: attempt,
+      });
     }
 
-    return pack(await ensureSeo({ enriched, ...usage(), costSource, attempts: attempt }));
+    return pack({ enriched, ...usage(), costSource, attempts: attempt });
   }
 
   fail(lastErr || new Error('Не удалось обогатить'));
-
-  /**
-   * Если после основного ответа карточка всё ещё без описаний — один узкий
-   * запрос на тексты страницы. Specs уже есть, их не трогаем.
-   */
-  async function ensureSeo(result) {
-    if (!result?.enriched || !cardTextsEmpty(result.enriched)) return result;
-
-    onNote('добираем тексты карточки отдельным запросом');
-    await limiter.wait(ms => onNote(`rate limit ${ms}ms`));
-
-    const seoBudget = Math.min(2500, Math.max(1200, tokenBudget));
-    let res, bodyText;
-    try {
-      res = await fetch(chatUrl, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          'Content-Type': 'application/json',
-          'HTTP-Referer': referer,
-          'X-Title': title,
-          ...extraHeaders,
-        },
-        body: JSON.stringify(buildSeoRequestBody(
-          model,
-          buildSeoOnlyUser(product, result.enriched.specs),
-          seoBudget,
-        )),
-        signal: AbortSignal.timeout(timeoutMs),
-      });
-      bodyText = await res.text();
-    } catch (e) {
-      onNote(`добор текстов: сеть — ${netError(e)}`);
-      return result;
-    }
-
-    let data;
-    try { data = JSON.parse(bodyText); } catch { data = null; }
-    if (!res.ok || data?.error) {
-      onNote(`добор текстов: ${data?.error?.message || `HTTP ${res.status}`}`);
-      return result;
-    }
-
-    const inTok = data.usage?.prompt_tokens ?? 0;
-    const outTok = data.usage?.completion_tokens ?? 0;
-    iT += inTok;
-    oT += outTok;
-    if (typeof data.usage?.cost === 'number') {
-      cost += data.usage.cost;
-      costSource = /openrouter\.ai/i.test(chatUrl) ? 'openrouter' : 'провайдер';
-    } else if (pricing) {
-      cost += inTok * pricing.prompt + outTok * pricing.completion;
-      if (costSource === 'нет данных') costSource = 'тариф модели';
-    }
-
-    const raw = data?.choices?.[0]?.message?.content ?? '';
-    let seoRaw = null;
-    try { seoRaw = parseResponse(raw); } catch {
-      seoRaw = repairTruncatedJson(raw);
-    }
-    if (!seoRaw) {
-      onNote('добор текстов: не разобрали ответ');
-      return { ...result, ...usage(), costSource };
-    }
-
-    const enriched = mergeSeoPackage(
-      result.enriched, seoRaw, src, schema, product.attributes, mismatchPolicy,
-    );
-    if (cardTextsEmpty(enriched)) onNote('добор текстов: карточка всё ещё пустая');
-    else onNote('добор текстов: готово');
-    return {
-      enriched,
-      ...usage(),
-      costSource,
-      attempts: result.attempts,
-    };
-  }
 }

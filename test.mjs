@@ -564,6 +564,8 @@ t('промпт требует основной текст первым и аб�
   // Порядок ключей: длинный текст раньше короткого, иначе короткий забирает суть.
   assert.ok(p.indexOf('"seo_description": "..."') < p.indexOf('"short_description": "..."'));
   assert.ok(p.indexOf('"seo_description": "..."') < p.indexOf('"seo_title": "..."'));
+  // SEO до specs: при обрыве тексты не остаются пустыми.
+  assert.ok(p.indexOf('"seo_description": "..."') < p.indexOf('"specs"'), 'SEO раньше specs');
   assert.match(p, /Вода запрещена/);
   assert.match(p, /Нельзя вернуть их пустыми/);
 });
@@ -924,6 +926,38 @@ console.log('\nЗапрос к модели');
     assert.strictEqual(record.length, 2);
     assert.ok(notes.some(n => /SEO пусто/.test(n)));
     assert.strictEqual(r.enriched.seo_description, 'Описание.');
+  });
+
+  await tAsync('после исчерпания попыток SEO добирается отдельным запросом', async () => {
+    record.length = 0;
+    const bare = JSON.stringify({ specs: { бренд: 'DON' } });
+    const seoOnly = JSON.stringify({
+      seo_description: 'Холодильник DON для кухни.\n\nОбъём и габариты из specs.\n\nПеред покупкой сверьте нишу.',
+      bullets: ['Объём — запас продуктов'],
+      short_description: 'Холодильник DON с нужным объёмом для кухни.',
+      meta_description: 'Холодильник DON: характеристики из карточки, объём и габариты для выбора по кухне.',
+      h1: 'Холодильник DON',
+      seo_title: 'Холодильник DON купить — характеристики',
+      synonyms: ['холодильник дон'],
+      search_aliases: ['дон холодильник'],
+      seo_keywords: ['холодильник don'],
+    });
+    stub([
+      reply(bare, { usage: { prompt_tokens: 5, completion_tokens: 5, cost: 0.001 } }),
+      reply(seoOnly, { usage: { prompt_tokens: 8, completion_tokens: 200, cost: 0.002 } }),
+    ]);
+    const notes = [];
+    const r = await run({ name: 'X', description: 'Общий объем, л 310' }, {
+      maxRetries: 1, onNote: m => notes.push(m),
+    });
+    assert.strictEqual(record.length, 2, 'основной + добор SEO');
+    assert.ok(notes.some(n => /добираем SEO/.test(n)));
+    assert.ok(record[1].body.messages[0].content.includes('SEO-редактор'));
+    assert.ok(!record[1].body.messages[0].content.includes('"specs"'), 'добор без скелета specs');
+    assert.match(r.enriched.seo_title, /DON/);
+    assert.ok(!seoPackageEmpty(r.enriched));
+    assert.strictEqual(r.enriched.specs.бренд, 'DON');
+    assert.strictEqual(+r.cost.toFixed(6), 0.003);
   });
 
   await tAsync('ретрай обрыва идёт до потолка настроек, не до 8000', async () => {

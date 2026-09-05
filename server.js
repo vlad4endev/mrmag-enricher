@@ -28,7 +28,7 @@
  *   POST /api/enrich          обогащение одного товара {model, product, category?}
  *   POST /api/jobs            фоновый прогон {model, products[], indices?, category?}
  *   GET  /api/jobs            список прогонов: что идёт сейчас и что уже прошло
- *   GET  /api/jobs/:id[?from=N&products=1]
+ *   GET  /api/jobs/:id[?from=N&products=1&logFrom=N&details=1&detailPos=N]
  *                             состояние прогона; from — сколько результатов уже
  *                             у клиента, отдаётся только хвост
  *   POST /api/jobs/:id/stop   остановить прогон после текущего товара
@@ -629,11 +629,26 @@ async function enrichOne(product, { model, category, provider, onNote = () => {}
   const ep = providerEndpoint(prov);
   const apiKey = ep.apiKey || API_KEY;
   const note = (msg, meta) => { try { onNote(msg, meta); } catch { /* лог клиента не роняет прогон */ } };
+  const productMeta = {
+    name: product?.name || product?.title || null,
+    sku: product?.sku != null ? String(product.sku) : null,
+    id: product?.id != null ? String(product.id) : null,
+    category: product?.category || category || null,
+  };
 
   const skip = reason => ({
     enriched: null,
     skipped:  reason,
     usage:    { prompt_tokens: 0, completion_tokens: 0, cost: 0 },
+    detail: {
+      product: productMeta,
+      schema: schema.slug,
+      provider: prov.id,
+      model,
+      status: 'skip',
+      skipped: reason,
+      steps: [],
+    },
   });
 
   note(`Схема «${schema.slug}» · провайдер «${prov.name}»`, { step: 'schema' });
@@ -654,6 +669,14 @@ async function enrichOne(product, { model, category, provider, onNote = () => {}
   if (!apiKey) {
     const e = new Error(`нет ключа у провайдера «${prov.name}»`);
     e.status = 400;
+    e.detail = {
+      product: productMeta,
+      schema: schema.slug,
+      provider: prov.id,
+      model,
+      status: 'error',
+      error: e.message,
+    };
     throw e;
   }
 
@@ -690,33 +713,67 @@ async function enrichOne(product, { model, category, provider, onNote = () => {}
     return skip(found.gate.reason);
   }
   const filled = found.product;
-  const sourceUrl = found.source ?? null;
+  let sourceUrl = found.source ?? null;
   if (sourceUrl) note(`Исходный текст готов (сеть: ${sourceUrl})`, { step: 'web' });
   else note(`Исходный текст готов, отправляем в модель`, { step: 'model' });
 
   note(`Отправляем в модель ${model}`, { step: 'model' });
-  const { enriched, iT, oT, cost, costSource, attempts } = await enrichProduct(filled, {
-    model, apiKey, schema,
-    limiter: limiterFor(`${prov.id}:${model}`),
-    pricing: pricingOf(entry),
-    chatUrl: ep.chatUrl,
-    headers: ep.headers,
-    mismatchPolicy: process.env.MISMATCH_POLICY || settings.conditions.mismatch_policy,
-    maxRetries: settings.model.max_retries,
-    timeoutMs: settings.model.timeout_ms,
-    maxTokens: settings.model.max_tokens,
-    systemPrompt: settings.model.system_prompt || '',
-    referer: ep.headers['HTTP-Referer'] || 'https://mrmag.ru',
-    title: ep.headers['X-Title'] || 'Ogran',
-    onNote: msg => note(msg, { step: /retry|rate limit|обрыв|parse/i.test(msg) ? 'retry' : 'model', level: /retry|обрыв|parse/i.test(msg) ? 'warn' : 'info' }),
-  });
-  return {
-    enriched,
-    schema: schema.slug,
-    provider: prov.id,
-    ...(sourceUrl ? { source_url: sourceUrl } : {}),
-    usage: { prompt_tokens: iT, completion_tokens: oT, cost, cost_source: costSource, attempts },
-  };
+  try {
+    const { enriched, iT, oT, cost, costSource, attempts, debug } = await enrichProduct(filled, {
+      model, apiKey, schema,
+      limiter: limiterFor(`${prov.id}:${model}`),
+      pricing: pricingOf(entry),
+      chatUrl: ep.chatUrl,
+      headers: ep.headers,
+      mismatchPolicy: process.env.MISMATCH_POLICY || settings.conditions.mismatch_policy,
+      maxRetries: settings.model.max_retries,
+      timeoutMs: settings.model.timeout_ms,
+      maxTokens: settings.model.max_tokens,
+      systemPrompt: settings.model.system_prompt || '',
+      referer: ep.headers['HTTP-Referer'] || 'https://mrmag.ru',
+      title: ep.headers['X-Title'] || 'Ogran',
+      onNote: msg => note(msg, { step: /retry|rate limit|обрыв|parse|SEO/i.test(msg) ? 'retry' : 'model', level: /retry|обрыв|parse/i.test(msg) ? 'warn' : 'info' }),
+    });
+    return {
+      enriched,
+      schema: schema.slug,
+      provider: prov.id,
+      ...(sourceUrl ? { source_url: sourceUrl } : {}),
+      usage: { prompt_tokens: iT, completion_tokens: oT, cost, cost_source: costSource, attempts },
+      detail: {
+        product: productMeta,
+        schema: schema.slug,
+        provider: prov.id,
+        model,
+        status: 'ok',
+        ...(sourceUrl ? { source_url: sourceUrl } : {}),
+        usage: { prompt_tokens: iT, completion_tokens: oT, cost, cost_source: costSource, attempts },
+        source_text: debug?.source_text ?? null,
+        system_prompt: debug?.system_prompt ?? null,
+        user_content: debug?.user_content ?? null,
+        raw_response: debug?.raw_response ?? null,
+        enriched,
+      },
+    };
+  } catch (e) {
+    e.detail = {
+      product: productMeta,
+      schema: schema.slug,
+      provider: prov.id,
+      model,
+      status: 'error',
+      error: e.message,
+      ...(sourceUrl ? { source_url: sourceUrl } : {}),
+      usage: e.usage
+        ? { prompt_tokens: e.usage.iT ?? 0, completion_tokens: e.usage.oT ?? 0, cost: e.usage.cost ?? 0 }
+        : null,
+      source_text: e.debug?.source_text ?? null,
+      system_prompt: e.debug?.system_prompt ?? null,
+      user_content: e.debug?.user_content ?? null,
+      raw_response: e.debug?.raw_response ?? null,
+    };
+    throw e;
+  }
 }
 
 async function apiEnrich(req, res) {
@@ -767,10 +824,13 @@ async function apiJobCreate(req, res) {
 function apiJobState(res, id, u) {
   const job = store.get(id);
   if (!job) return json(res, 404, { error: 'Прогон не найден — возможно, он уже удалён' });
+  const detailPos = u.searchParams.get('detailPos');
   json(res, 200, store.state(job, {
-    from:     u.searchParams.get('from'),
-    logFrom:  u.searchParams.get('logFrom'),
-    products: u.searchParams.get('products') === '1',
+    from:      u.searchParams.get('from'),
+    logFrom:   u.searchParams.get('logFrom'),
+    products:  u.searchParams.get('products') === '1',
+    details:   u.searchParams.get('details') === '1',
+    detailPos: detailPos != null && detailPos !== '' ? detailPos : null,
   }));
 }
 

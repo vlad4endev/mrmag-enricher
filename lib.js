@@ -802,6 +802,10 @@ export function schemaForProduct(product, category) {
  * и всё содержательное выкладывает в первое подходящее: когда short_description
  * стоял перед seo_description, основной текст выходил его пересказом на два
  * предложения. Сначала длинный текст, потом выжимки из него.
+ *
+ * SEO-блок стоит ПЕРЕД specs: иначе при обрыве по max_tokens закрытый JSON
+ * уходит только с характеристиками, а seo_* остаются пустыми. Specs потом
+ * добираются из facts/attributes в normalizeResponse.
  */
 
 // Базовые цвета — фасет, а не описание. «Графитовый металлик» превращает
@@ -923,10 +927,9 @@ export function defaultSystemPromptTemplate() {
 "..." ниже — только типы полей, не готовый ответ: каждое текстовое SEO-поле
 (seo_description, short_description, meta_description, h1, seo_title) обязательно
 заполнить по правилам раздела 6. Нельзя вернуть их пустыми строками.
+Пиши SEO-тексты СРАЗУ после открытия объекта — до specs: иначе при обрыве
+карточка останется без описаний.
 {
-  "specs": {
-{{spec_keys}}
-  },
   "seo_description": "...",
   "bullets": [],
   "short_description": "...",
@@ -935,7 +938,10 @@ export function defaultSystemPromptTemplate() {
   "seo_title": "...",
   "synonyms": [],
   "search_aliases": [],
-  "seo_keywords": []
+  "seo_keywords": [],
+  "specs": {
+{{spec_keys}}
+  }
 }`;
 }
 
@@ -1511,6 +1517,88 @@ function buildRequestBody(model, product, maxTokens = 3200, schemaKey, systemPro
   };
 }
 
+/**
+ * Узкий промпт только на SEO: когда основной ответ принёс specs, но тексты
+ * страницы пустые — отдельный запрос дешевле и надёжнее, чем третий полный.
+ */
+export function buildSeoOnlyPrompt() {
+  return `Ты — SEO-редактор карточки интернет-магазина. Specs уже готовы — не меняй их.
+Верни ОДИН JSON-объект без markdown и без пояснений. Язык — русский.
+
+Обязательные ключи (все текстовые поля заполнить, пустые строки запрещены):
+- seo_description — 900–1800 символов, ТРИ абзаца через пустую строку:
+  1) что за товар, бренд, модель, кому подходит;
+  2) характеристики цифрами из specs и что они дают на практике;
+  3) что учесть перед покупкой по данным specs.
+  Если в specs меньше пяти значений — 400–700 символов, без домыслов.
+- bullets — 3–6 пунктов до 90 символов: «параметр — польза покупателю».
+- short_description — одно предложение до 200 символов для плитки каталога.
+- meta_description — 150–160 символов, 1–2 предложения с 2–3 фактами из specs.
+- h1 — до 70 символов, человеческий, не копия seo_title.
+- seo_title — 45–60 символов: тип + бренд + модель + один параметр. Допустим один
+  «купить». Без CAPS и эмодзи.
+- synonyms — 4–6 бытовых названий.
+- search_aliases — 6–10 реальных запросов (с моделью и без, опечатки, транслит).
+- seo_keywords — 6–10 фраз без городов и цен.
+
+Схема:
+{
+  "seo_description": "...",
+  "bullets": [],
+  "short_description": "...",
+  "meta_description": "...",
+  "h1": "...",
+  "seo_title": "...",
+  "synonyms": [],
+  "search_aliases": [],
+  "seo_keywords": []
+}`;
+}
+
+function buildSeoOnlyUser(product, specs) {
+  return JSON.stringify({
+    name:        product.name,
+    sku:         product.sku,
+    brand:       product.brand || undefined,
+    category:    product.category,
+    description: stripHtml(product.description),
+    annotation:  stripHtml(product.annotation),
+    specs,
+  });
+}
+
+/** Накладывает SEO из доборного ответа на уже нормализованную карточку. */
+export function mergeSeoPackage(enriched, seoRaw, sourceText = '', schemaKey, attributes = [], policy = MISMATCH_POLICY) {
+  if (!enriched || !seoRaw || typeof seoRaw !== 'object') return enriched;
+  return normalizeResponse({
+    specs: enriched.specs,
+    seo_description: seoRaw.seo_description,
+    short_description: seoRaw.short_description,
+    meta_description: seoRaw.meta_description,
+    h1: seoRaw.h1,
+    seo_title: seoRaw.seo_title,
+    bullets: seoRaw.bullets,
+    synonyms: seoRaw.synonyms,
+    search_aliases: seoRaw.search_aliases,
+    seo_keywords: seoRaw.seo_keywords,
+  }, sourceText, schemaKey, attributes, policy);
+}
+
+function buildSeoRequestBody(model, userContent, maxTokens = 2500) {
+  return {
+    model,
+    max_tokens: maxTokens,
+    temperature: 0.2,
+    response_format: { type: 'json_object' },
+    usage: { include: true },
+    ...thinkingOff(model),
+    messages: [
+      { role: 'system', content: buildSeoOnlyPrompt() },
+      { role: 'user', content: userContent },
+    ],
+  };
+}
+
 // ── RATE LIMITER ─────────────────────────────────────────────
 // Проверено прогоном: обе ветки рабочие, окно срабатывает как основная.
 export const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -1629,13 +1717,24 @@ export async function enrichProduct(product, opts) {
   const src = sourceText(product);
   const { facts } = productFacts(product, schema);
   const userContent = buildUserContent(product, facts);
+  const systemContent = buildSystemPrompt(schema, systemPrompt);
   let tokenBudget = maxTokens;
   let lastErr;
+  let lastRaw = '';
 
   let iT = 0, oT = 0, cost = 0, costSource = 'нет данных';
   const usage = () => ({ iT, oT, cost: costSource === 'нет данных' ? null : cost });
   // Ошибку отдаём вместе с тем, что уже потрачено, — иначе расход теряется.
-  const fail = e => { e.usage = usage(); throw e; };
+  // debug — для раздела «Логи»: что ушло в модель и что пришло.
+  const debugOf = (extra = {}) => ({
+    source_text: src,
+    system_prompt: systemContent,
+    user_content: userContent,
+    raw_response: lastRaw,
+    ...extra,
+  });
+  const fail = e => { e.usage = usage(); e.debug = debugOf(); throw e; };
+  const pack = (result) => ({ ...result, debug: debugOf({ attempts: result.attempts }) });
 
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     await limiter.wait(ms => onNote(`rate limit ${ms}ms`));
@@ -1660,6 +1759,7 @@ export async function enrichProduct(product, opts) {
       // Читаем здесь же: таймаут прерывает и чтение тела, а снаружи try такой
       // сбой уходит мимо ретрая голым «The operation was aborted due to timeout».
       bodyText = await res.text();
+      lastRaw = bodyText;
     } catch (e) {
       // Таймаут и сетевой сбой — имеет смысл повторить. Хост в тексте, иначе
       // «fetch failed (Request was cancelled.)» не говорит, кого оборвали:
@@ -1707,6 +1807,7 @@ export async function enrichProduct(product, opts) {
     }
 
     const content = choice.message?.content ?? '';
+    lastRaw = content;
     const accept = (data) => {
       const enriched = normalizeResponse(data, src, schema, product.attributes, mismatchPolicy);
       return { enriched, ...usage(), costSource, attempts: attempt };
@@ -1731,7 +1832,7 @@ export async function enrichProduct(product, opts) {
         try {
           const result = accept(parsed);
           if (seoPackageEmpty(result.enriched) && bumpForLength()) continue;
-          return result;
+          return pack(await ensureSeo(result));
         } catch { /* починка дала мусор */ }
       }
       if (bumpForLength()) continue;
@@ -1748,15 +1849,92 @@ export async function enrichProduct(product, opts) {
     }
 
     // finish_reason=stop, но SEO-пакет пуст — модель вернула скелет. Повтор
-    // часто помогает; если нет — отдаём как есть (заметки seo_issues покажут).
+    // полного ответа; если попытки кончились — доберём SEO узким запросом.
     if (seoPackageEmpty(enriched) && attempt < maxRetries) {
       onNote(`SEO пусто, retry ${attempt}`);
       await sleep(2000);
       continue;
     }
 
-    return { enriched, ...usage(), costSource, attempts: attempt };
+    return pack(await ensureSeo({ enriched, ...usage(), costSource, attempts: attempt }));
   }
 
   fail(lastErr || new Error('Не удалось обогатить'));
+
+  /**
+   * Если после основного ответа SEO всё ещё пуст — один узкий запрос только
+   * на тексты страницы. Specs уже есть, их не трогаем.
+   */
+  async function ensureSeo(result) {
+    if (!result?.enriched || !seoPackageEmpty(result.enriched)) return result;
+
+    onNote('добираем SEO отдельным запросом');
+    await limiter.wait(ms => onNote(`rate limit ${ms}ms`));
+
+    const seoBudget = Math.min(2500, Math.max(1200, tokenBudget));
+    let res, bodyText;
+    try {
+      res = await fetch(chatUrl, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+          'HTTP-Referer': referer,
+          'X-Title': title,
+          ...extraHeaders,
+        },
+        body: JSON.stringify(buildSeoRequestBody(
+          model,
+          buildSeoOnlyUser(product, result.enriched.specs),
+          seoBudget,
+        )),
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+      bodyText = await res.text();
+    } catch (e) {
+      onNote(`SEO добор: сеть — ${netError(e)}`);
+      return result;
+    }
+
+    let data;
+    try { data = JSON.parse(bodyText); } catch { data = null; }
+    if (!res.ok || data?.error) {
+      onNote(`SEO добор: ${data?.error?.message || `HTTP ${res.status}`}`);
+      return result;
+    }
+
+    const inTok = data.usage?.prompt_tokens ?? 0;
+    const outTok = data.usage?.completion_tokens ?? 0;
+    iT += inTok;
+    oT += outTok;
+    if (typeof data.usage?.cost === 'number') {
+      cost += data.usage.cost;
+      costSource = /openrouter\.ai/i.test(chatUrl) ? 'openrouter' : 'провайдер';
+    } else if (pricing) {
+      cost += inTok * pricing.prompt + outTok * pricing.completion;
+      if (costSource === 'нет данных') costSource = 'тариф модели';
+    }
+
+    const raw = data?.choices?.[0]?.message?.content ?? '';
+    let seoRaw = null;
+    try { seoRaw = parseResponse(raw); } catch {
+      seoRaw = repairTruncatedJson(raw);
+    }
+    if (!seoRaw) {
+      onNote('SEO добор: не разобрали ответ');
+      return { ...result, ...usage(), costSource };
+    }
+
+    const enriched = mergeSeoPackage(
+      result.enriched, seoRaw, src, schema, product.attributes, mismatchPolicy,
+    );
+    if (seoPackageEmpty(enriched)) onNote('SEO добор: тексты всё ещё пустые');
+    else onNote('SEO добор: готово');
+    return {
+      enriched,
+      ...usage(),
+      costSource,
+      attempts: result.attempts,
+    };
+  }
 }

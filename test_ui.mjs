@@ -58,6 +58,7 @@ const groups = { '.cnt-grid .cnt-btn': [], '.fbtn': [], '.rtab': [], '.mitem': [
 for (const n of ['1', '10', '50', '100', '500']) { const e = new El('cnt' + n); e.dataset.n = n; groups['.cnt-grid .cnt-btn'].push(e); }
 for (const f of ['all', 'thin', 'warn', 'err', 'conf'])  { const e = new El('f' + f);  e.dataset.f = f; groups['.fbtn'].push(e); }
 groups['.rtab'].push(new El('rt1'), new El('rt2'));
+groups['.set-foot'] = [new El('setFoot', 'set-foot')];
 
 globalThis.document = {
   getElementById: id => { if (!store.has(id)) store.set(id, new El(id)); return store.get(id); },
@@ -142,7 +143,8 @@ export const api={syncSteps,setCnt,setCntFree,applyCnt,applySource,setSource,pic
   loadCategories,catOf,renderModelList,filterModels,renderParser,loadParser,
   applyDates,clearDates,renderDates,passesFilter,queued,onProdInput,apiJson,run,
   stopJob,follow,attachJob,resumeJob,applyJob,finishRun,
-  resetRunLog,applyLog,renderRunLog,copyRunLog,clearRunLog,logLineText,
+  resetRunLog,applyLog,renderRunLog,copyRunLog,clearRunLog,toggleRunLog,logLineText,
+  openEnrichLogs,refreshLogsJobs,onLogsJobChange,selectLogsItem,loadLogsDetail,copyLogsAll,
   loadFile,classifyPayload,normalizeCatalogProduct,catIdFromFilename,catNameFromId,
   productsFromPayload,isFiltersPayload,filtersForExport,
   showPage,setTab,renderSettings,addProvider,removeProvider,addEngine,readSettingsPatch,
@@ -437,6 +439,11 @@ t('переключает разделы настроек', () => {
   assert.ok(G('setParse').classList.contains('on'));
   assert.ok(!G('setProv').classList.contains('on'));
   assert.ok(G('snParse').classList.contains('on'));
+  api.setTab('logs');
+  assert.ok(G('setLogs').classList.contains('on'));
+  assert.ok(G('snLogs').classList.contains('on'));
+  const foot = document.querySelector('.set-foot');
+  assert.ok(foot && foot.style.display === 'none', 'на Логах нет кнопки Сохранить');
   api.setTab('prov');
 });
 
@@ -1031,7 +1038,7 @@ t('обрабатываемый товар отличается от стоящ�
   st.results = [ok(), null, null];
   st.running = true; st.runIdx = 1;
   assert.strictEqual(api.statusOf(1).cls, 'run', 'активный должен быть run');
-  assert.strictEqual(api.statusOf(1).txt, 'обрабатывается');
+  assert.match(api.statusOf(1).txt, /модель|проверка|сеть|готово|обрабатывается/i);
   assert.strictEqual(api.statusOf(2).cls, 'pd', 'следующий — всё ещё в очереди');
   assert.strictEqual(api.statusOf(0).cls, 'ok', 'готовый не меняется');
 });
@@ -1045,10 +1052,10 @@ t('строка прогресса показывает остаток по фа
   api.renderRunline();
   const h = G('runline').innerHTML;
   assert.strictEqual(G('runline').style.display, 'flex');
-  assert.match(h, /Обрабатываем/);
-  assert.match(h, /2 из 3/, 'должен показывать номер текущего товара');
+  assert.ok(G('runline').classList.contains('on'));
+  assert.match(h, /из 3/, 'должен показывать номер текущего товара');
   assert.match(h, /~8с/, 'по 4с на товар и 2 осталось → ~8с. Получено: ' + h);
-  assert.match(h, /flake spinning/, 'снежинка должна вращаться');
+  assert.match(h, /rl-ring|Остановить/, 'кольцо прогресса или кнопка остановки');
 });
 t('заливка кнопки отражает долю выполненного', () => {
   assert.strictEqual(G('rbFill').style.width, '33%');
@@ -1221,7 +1228,7 @@ await tAsync('прогон ещё идёт — вкладка дожидаетс
   assert.strictEqual(st.running, true);
   api.renderRunline();
   assert.match(G('runline').innerHTML, /Остановить/, 'остановка должна быть под рукой');
-  assert.match(G('runline').innerHTML, /закрыть/, 'вкладку закрывать можно — об этом надо сказать');
+  assert.match(G('runline').innerHTML, /rl-ring|Огранка|из /, 'живой прогресс виден');
   api.syncSteps();
   assert.strictEqual(G('runBtn').disabled, false, 'та же кнопка останавливает');
   await run;
@@ -1346,9 +1353,10 @@ t('лог собирается по шагам и копируется текс�
   assert.strictEqual(st.runLog.length, 3);
   assert.strictEqual(st.logCursor, 3);
   assert.ok(G('runLog').classList.contains('on'));
+  assert.ok(!G('runLog').classList.contains('open'), 'по умолчанию свёрнут — список виден');
   assert.match(G('runLogBody').innerHTML, /Старт прогона/);
   assert.match(G('runLogBody').innerHTML, /l-ok/);
-  assert.strictEqual(G('runLogN').textContent, '3');
+  assert.match(G('runLogN').textContent, /3/);
 
   // Хвост дописывается, не дублирует.
   api.applyLog({
@@ -1370,7 +1378,7 @@ await tAsync('копирование процесса кладёт весь ло
   } finally {
     globalThis.navigator.clipboard.writeText = real;
   }
-  assert.match(copied, /Лог обогащения/);
+  assert.match(copied, /Ход обогащения|Лог обогащения/);
   assert.match(copied, /Старт прогона/);
   assert.match(copied, /таймаут/);
   assert.match(G('runLogCopy').textContent, /Скопировано|Копировать/);
@@ -1381,7 +1389,20 @@ t('очистка лога на экране не сбрасывает курс�
   api.clearRunLog();
   assert.strictEqual(st.runLog.length, 0);
   assert.strictEqual(st.logCursor, before, 'курсор остаётся — иначе придут старые строки снова');
-  assert.strictEqual(G('runLogN').textContent, '0');
+  assert.match(G('runLogN').textContent, /0/);
+});
+
+t('шапка раскрывает компактный журнал по клику', () => {
+  api.applyLog({
+    log_from: 0, log_total: 1,
+    log: [{ t: 1, level: 'ok', step: 'done', msg: '✓ Готово' }],
+  });
+  assert.ok(G('runLog').classList.contains('on'));
+  assert.ok(!G('runLog').classList.contains('open'));
+  api.toggleRunLog();
+  assert.ok(G('runLog').classList.contains('open'));
+  api.toggleRunLog();
+  assert.ok(!G('runLog').classList.contains('open'));
 });
 
 

@@ -777,6 +777,8 @@ input[type=range]::-moz-range-thumb{
 .dict-toolbar{display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end}
 .dict-toolbar .set-row{flex:1;min-width:200px}
 .dict-meta{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.dict-create{display:none;margin-top:12px;padding-top:12px;border-top:1px solid var(--b1)}
+.dict-create.open{display:block}
 .dict-table-wrap{overflow:auto;max-height:min(62vh,640px);border:1px solid var(--b1);border-radius:var(--r)}
 .dict-table{width:100%;border-collapse:collapse;font-size:12.5px}
 .dict-table th,.dict-table td{padding:8px 10px;text-align:left;border-bottom:1px solid var(--b1);vertical-align:top}
@@ -790,6 +792,8 @@ input[type=range]::-moz-range-thumb{
 .dict-table .chk{display:flex;align-items:center;justify-content:center}
 .dict-table .chk input{width:auto;accent-color:var(--ac)}
 .dict-facet-off{opacity:.55}
+.dict-row-actions{display:flex;gap:4px;justify-content:flex-end}
+.dict-foot{display:flex;flex-wrap:wrap;gap:8px;padding:10px;border-top:1px solid var(--b1);background:var(--bg2)}
 @media(max-width:900px){
   .dict-table-wrap{max-height:none}
 }
@@ -1484,7 +1488,7 @@ input[type=range]::-moz-range-thumb{
 
       <section class="set-panel" id="setDict">
         <div class="set-h">Справочник атрибутов</div>
-        <p class="set-lead">Файлы <code>dictionaries/attributes_{id}.json</code> задают характеристики раздела, состав фильтров витрины и строки аннотации. Без справочника выгрузка не бакетирует фасеты. Правки пишутся в файл отдельно от остальных настроек.</p>
+        <p class="set-lead">Файлы <code>dictionaries/attributes_{id}.json</code> задают характеристики раздела, состав фильтров витрины и строки аннотации. Здесь можно создать справочник, править атрибуты и сохранить на диск.</p>
         <div class="dict-layout">
           <div class="set-card">
             <div class="dict-toolbar">
@@ -1493,9 +1497,30 @@ input[type=range]::-moz-range-thumb{
                 <select id="dictCat" onchange="onDictCatChange()"></select>
               </div>
               <div class="set-actions">
+                <button type="button" class="sbtn ghost" onclick="toggleDictCreate()"><i class="ti ti-plus"></i> Создать</button>
                 <button type="button" class="sbtn ghost" onclick="loadDictList()"><i class="ti ti-refresh"></i> Обновить</button>
-                <button type="button" class="sbtn primary" id="dictSave" onclick="saveDictionary()" disabled>Сохранить справочник</button>
+                <button type="button" class="sbtn danger" id="dictDelete" onclick="deleteDictionaryUi()" disabled>Удалить</button>
+                <button type="button" class="sbtn primary" id="dictSave" onclick="saveDictionary()" disabled>Сохранить</button>
               </div>
+            </div>
+            <div class="dict-create" id="dictCreateBox">
+              <div class="set-grid">
+                <div class="set-row">
+                  <label for="dictNewId">ID раздела (из categories.json)</label>
+                  <input type="number" id="dictNewId" min="1" step="1" placeholder="например 929">
+                </div>
+                <div class="set-row">
+                  <label for="dictCopyFrom">Скопировать атрибуты из</label>
+                  <select id="dictCopyFrom">
+                    <option value="">пусто — только Бренд</option>
+                  </select>
+                </div>
+              </div>
+              <div class="set-actions" style="margin-top:10px">
+                <button type="button" class="sbtn primary" onclick="createDictionaryUi()">Создать файл справочника</button>
+                <button type="button" class="sbtn ghost" onclick="toggleDictCreate(false)">Отмена</button>
+              </div>
+              <div class="hint" style="margin-top:8px">ID — числовой код раздела магазина. «Пусто» создаёт справочник с одной характеристикой «Бренд»; либо клонируйте уже настроенный раздел.</div>
             </div>
             <div class="dict-meta" id="dictMeta"></div>
           </div>
@@ -1505,22 +1530,27 @@ input[type=range]::-moz-range-thumb{
                 <thead>
                   <tr>
                     <th style="width:4rem">Порядок</th>
-                    <th>Код / имя</th>
-                    <th style="width:6rem">Тип</th>
+                    <th style="width:8rem">Код</th>
+                    <th>Имя</th>
+                    <th style="width:6.5rem">Тип</th>
                     <th style="width:3.5rem" title="В аннотации">Анн.</th>
                     <th style="width:3.5rem" title="Фильтр витрины">Фасет</th>
                     <th>Подпись фильтра</th>
                     <th style="width:7rem">Вид</th>
                     <th style="width:5rem">Шаг</th>
+                    <th style="width:3rem"></th>
                   </tr>
                 </thead>
                 <tbody id="dictBody">
-                  <tr><td colspan="8" class="muted">Выберите раздел…</td></tr>
+                  <tr><td colspan="10" class="muted">Выберите раздел или создайте справочник…</td></tr>
                 </tbody>
               </table>
             </div>
+            <div class="dict-foot">
+              <button type="button" class="sbtn ghost" id="dictAddAttr" onclick="addDictAttr()" disabled><i class="ti ti-row-insert-bottom"></i> Добавить атрибут</button>
+            </div>
           </div>
-          <div class="hint" id="dictHint">Включите «Фасет», чтобы характеристика попала в <code>filters_{id}.json</code>. Для range укажите шаг или оставьте breaks в JSON файла.</div>
+          <div class="hint" id="dictHint">Код — латиница/цифры/подчёркивание (уникален в файле). «Фасет» включает характеристику в <code>filters_{id}.json</code>.</div>
         </div>
       </section>
 
@@ -1812,6 +1842,35 @@ function dictStatus(msg, ok){
   `;
 }
 
+function setDictButtons({save, del, add}={}){
+  const s=document.getElementById('dictSave');
+  const d=document.getElementById('dictDelete');
+  const a=document.getElementById('dictAddAttr');
+  if(s && save!=null) s.disabled=!save;
+  if(d && del!=null) d.disabled=!del;
+  if(a && add!=null) a.disabled=!add;
+}
+
+function fillDictCopySelect(){
+  const sel=document.getElementById('dictCopyFrom');
+  if(!sel) return;
+  const keep=sel.value;
+  sel.innerHTML='<option value="">пусто — только Бренд</option>'+
+    dictList.map(d=>`<option value="${esc(d.id)}">${esc(d.id)} — ${esc(d.name)}</option>`).join('');
+  if([...sel.options].some(o=>o.value===keep)) sel.value=keep;
+}
+
+function toggleDictCreate(force){
+  const box=document.getElementById('dictCreateBox');
+  if(!box) return;
+  const open=force===false?false:force===true?true:!box.classList.contains('open');
+  box.classList.toggle('open', open);
+  if(open){
+    fillDictCopySelect();
+    document.getElementById('dictNewId')?.focus();
+  }
+}
+
 async function loadDictList(){
   const sel=document.getElementById('dictCat');
   if(!sel) return;
@@ -1823,14 +1882,18 @@ async function loadDictList(){
     dictList=[];
     dictStatus(e.message||'не удалось загрузить список', false);
     sel.innerHTML='<option value="">нет справочников</option>';
+    setDictButtons({save:false, del:false, add:false});
+    fillDictCopySelect();
     return;
   }
+  fillDictCopySelect();
   if(!dictList.length){
-    sel.innerHTML='<option value="">нет файлов attributes_*.json</option>';
+    sel.innerHTML='<option value="">нет файлов — нажмите «Создать»</option>';
     dictCurrent=null;
     renderDictTable([]);
-    dictStatus('Положите dictionaries/attributes_{id}.json');
-    document.getElementById('dictSave').disabled=true;
+    dictStatus('Создайте справочник для нужного ID раздела');
+    setDictButtons({save:false, del:false, add:false});
+    toggleDictCreate(true);
     return;
   }
   sel.innerHTML=dictList.map(d=>
@@ -1856,35 +1919,74 @@ async function loadDictionary(id){
     dictDirty=false;
     renderDictTable(dictCurrent.attrs||[]);
     dictStatus('');
-    document.getElementById('dictSave').disabled=false;
+    setDictButtons({save:true, del:true, add:true});
   }catch(e){
     dictCurrent=null;
     renderDictTable([]);
     dictStatus(e.message||'ошибка загрузки', false);
-    document.getElementById('dictSave').disabled=true;
+    setDictButtons({save:false, del:false, add:false});
   }
+}
+
+function uniqueDictCode(base){
+  const used=new Set((dictCurrent?.attrs||[]).map(a=>a.code));
+  let code=base||'new_attr';
+  if(!used.has(code)) return code;
+  let n=2;
+  while(used.has(code+'_'+n)) n++;
+  return code+'_'+n;
+}
+
+function blankDictAttrLocal(order){
+  const code=uniqueDictCode('new_attr');
+  return {
+    code,
+    name:'Новый атрибут',
+    description:'',
+    type:'enum',
+    unit:null,
+    cardinality:'single',
+    order:order??(((dictCurrent?.attrs||[]).reduce((m,a)=>Math.max(m,a.order||0),0))+10),
+    show_in_annotation:true,
+    highlight:false,
+    inferable:true,
+    tier:'B',
+    decision_reason:'',
+    coverage_now:0,
+    coverage_final:0,
+    valid_range:null,
+    synonyms:['Новый атрибут'],
+    blacklist:[],
+    value_aliases:{},
+    facet:{enabled:false, label:'Новый атрибут', kind:'enum'},
+  };
 }
 
 function renderDictTable(attrs){
   const body=document.getElementById('dictBody');
   if(!body) return;
   if(!attrs.length){
-    body.innerHTML='<tr><td colspan="8" class="muted">Пусто</td></tr>';
+    body.innerHTML='<tr><td colspan="10" class="muted">Нет атрибутов — добавьте строку</td></tr>';
     return;
   }
   const rows=[...attrs].sort((a,b)=>(a.order??0)-(b.order??0)||String(a.code).localeCompare(String(b.code)));
-  body.innerHTML=rows.map((a,i)=>{
+  body.innerHTML=rows.map(a=>{
     const facet=a.facet||{};
     const on=!!facet.enabled;
     const kind=facet.kind||'enum';
     const step=facet.step!=null?facet.step:'';
     const breaks=Array.isArray(facet.breaks)?facet.breaks.join(', '):'';
     const stepTitle=breaks?`breaks: ${breaks}`:'шаг бакета';
-    return `<tr data-i="${i}" class="${on?'':'dict-facet-off'}">
+    return `<tr data-code="${esc(a.code)}" class="${on?'':'dict-facet-off'}">
       <td><input type="number" data-f="order" value="${a.order??0}" step="1"></td>
-      <td><code>${esc(a.code)}</code><div>${esc(a.name||'')}</div>
-        <div class="muted">${esc(a.unit||'—')} · ${esc(a.tier||'')} · ${esc(a.cardinality||'single')}</div></td>
-      <td class="muted">${esc(a.type||'')}</td>
+      <td><input type="text" data-f="code" value="${esc(a.code)}" spellcheck="false"></td>
+      <td><input type="text" data-f="name" value="${esc(a.name||'')}"></td>
+      <td><select data-f="type">
+        <option value="enum" ${a.type==='enum'?'selected':''}>enum</option>
+        <option value="number" ${a.type==='number'?'selected':''}>number</option>
+        <option value="boolean" ${a.type==='boolean'?'selected':''}>boolean</option>
+        <option value="string" ${a.type==='string'?'selected':''}>string</option>
+      </select></td>
       <td class="chk"><input type="checkbox" data-f="ann" ${a.show_in_annotation?'checked':''} title="show_in_annotation"></td>
       <td class="chk"><input type="checkbox" data-f="facet" ${on?'checked':''} title="facet.enabled"></td>
       <td><input type="text" data-f="label" value="${esc(facet.label||a.name||'')}" ${on?'':'disabled'}></td>
@@ -1893,23 +1995,65 @@ function renderDictTable(attrs){
         <option value="range" ${kind==='range'?'selected':''}>range</option>
       </select></td>
       <td><input type="number" data-f="step" value="${esc(step)}" step="any" min="0" title="${esc(stepTitle)}" ${on&&kind==='range'&&!breaks?'':'disabled'} placeholder="${breaks?'breaks':''}"></td>
+      <td class="dict-row-actions"><button type="button" class="sbtn danger" data-f="del" title="Удалить атрибут" style="padding:4px 8px">×</button></td>
     </tr>`;
   }).join('');
   body.querySelectorAll('input,select').forEach(el=>{
     el.addEventListener('change', onDictFieldEdit);
-    el.addEventListener('input', ()=>{ dictDirty=true; dictStatus(''); });
+    if(el.dataset.f!=='del') el.addEventListener('input', ()=>{ dictDirty=true; dictStatus(''); });
+  });
+  body.querySelectorAll('button[data-f="del"]').forEach(el=>{
+    el.addEventListener('click', onDictFieldEdit);
   });
 }
 
+function findDictAttr(code){
+  return (dictCurrent?.attrs||[]).find(a=>a.code===code);
+}
+
 function onDictFieldEdit(ev){
-  const tr=ev.target.closest('tr[data-i]');
+  const tr=ev.target.closest('tr[data-code]');
   if(!tr||!dictCurrent) return;
-  const i=Number(tr.dataset.i);
-  const sorted=[...dictCurrent.attrs].sort((a,b)=>(a.order??0)-(b.order??0)||String(a.code).localeCompare(String(b.code)));
-  const attr=sorted[i];
+  const oldCode=tr.dataset.code;
+  const attr=findDictAttr(oldCode);
   if(!attr) return;
   const f=ev.target.dataset.f;
+  if(f==='del'){
+    if((dictCurrent.attrs||[]).length<=1){
+      dictStatus('в справочнике должен остаться хотя бы один атрибут', false);
+      return;
+    }
+    if(!confirm(`Удалить атрибут «${attr.code}»?`)) return;
+    dictCurrent.attrs=dictCurrent.attrs.filter(a=>a!==attr);
+    dictDirty=true;
+    renderDictTable(dictCurrent.attrs);
+    dictStatus('');
+    setDictButtons({save:true, del:true, add:true});
+    return;
+  }
   if(f==='order') attr.order=Number(ev.target.value)||0;
+  if(f==='code'){
+    const next=String(ev.target.value||'').trim();
+    if(!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(next)){
+      dictStatus('код: латиница, цифры, _ ; начинать с буквы/_', false);
+      ev.target.value=attr.code;
+      return;
+    }
+    if(dictCurrent.attrs.some(a=>a!==attr && a.code===next)){
+      dictStatus(`код «${next}» уже занят`, false);
+      ev.target.value=attr.code;
+      return;
+    }
+    attr.code=next;
+    tr.dataset.code=next;
+  }
+  if(f==='name'){
+    attr.name=ev.target.value;
+    if(Array.isArray(attr.synonyms) && attr.synonyms[0]) attr.synonyms[0]=attr.name;
+    else attr.synonyms=[attr.name];
+    if(attr.facet && !attr.facet.label) attr.facet.label=attr.name;
+  }
+  if(f==='type') attr.type=ev.target.value;
   if(f==='ann') attr.show_in_annotation=ev.target.checked;
   if(f==='facet'){
     attr.facet=attr.facet||{};
@@ -1926,10 +2070,58 @@ function onDictFieldEdit(ev){
     else delete attr.facet.step;
   }
   dictDirty=true;
-  // Перерисовать строку disabled-состояний без потери фокуса на order/label
-  if(f==='facet'||f==='kind') renderDictTable(dictCurrent.attrs);
+  if(f==='facet'||f==='kind'||f==='order') renderDictTable(dictCurrent.attrs);
   else dictStatus('');
-  document.getElementById('dictSave').disabled=false;
+  setDictButtons({save:true, del:true, add:true});
+}
+
+function addDictAttr(){
+  if(!dictCurrent) return;
+  dictCurrent.attrs=dictCurrent.attrs||[];
+  dictCurrent.attrs.push(blankDictAttrLocal());
+  dictDirty=true;
+  renderDictTable(dictCurrent.attrs);
+  dictStatus('добавлена строка — сохраните файл');
+  setDictButtons({save:true, del:true, add:true});
+}
+
+async function createDictionaryUi(){
+  const id=String(getV('dictNewId')||'').trim();
+  if(!/^\d+$/.test(id)){
+    dictStatus('укажите числовой ID раздела', false);
+    return;
+  }
+  if(dictDirty && !confirm('Есть несохранённые правки текущего справочника. Создать новый?')) return;
+  const copyFrom=getV('dictCopyFrom')||'';
+  try{
+    const created=await apiJson('/api/dictionaries',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({id, copyFrom:copyFrom||undefined}),
+    });
+    dictDirty=false;
+    dictCurrent=created;
+    toggleDictCreate(false);
+    await loadDictList();
+    dictStatus('создан');
+    setDictButtons({save:true, del:true, add:true});
+  }catch(e){
+    dictStatus(e.message||'не удалось создать', false);
+  }
+}
+
+async function deleteDictionaryUi(){
+  if(!dictCurrent) return;
+  if(!confirm(`Удалить файл ${dictCurrent.file||('attributes_'+dictCurrent.id+'.json')}? Это нельзя отменить.`)) return;
+  try{
+    await apiJson('/api/dictionaries/'+encodeURIComponent(dictCurrent.id),{method:'DELETE'});
+    dictCurrent=null;
+    dictDirty=false;
+    await loadDictList();
+    dictStatus('файл удалён');
+  }catch(e){
+    dictStatus(e.message||'не удалось удалить', false);
+  }
 }
 
 async function saveDictionary(){
@@ -1946,11 +2138,19 @@ async function saveDictionary(){
     dictDirty=false;
     renderDictTable(dictCurrent.attrs||[]);
     dictStatus('сохранено');
-    // обновить подписи в селекте
     const hit=dictList.find(d=>d.id===dictCurrent.id);
     if(hit){
       hit.attrs=(dictCurrent.attrs||[]).length;
       hit.facets=(dictCurrent.attrs||[]).filter(a=>a.facet?.enabled).length;
+      hit.name=dictCurrent.name||hit.name;
+    }else{
+      dictList.push({
+        id:dictCurrent.id,
+        name:dictCurrent.name,
+        file:dictCurrent.file,
+        attrs:(dictCurrent.attrs||[]).length,
+        facets:(dictCurrent.attrs||[]).filter(a=>a.facet?.enabled).length,
+      });
     }
     const sel=document.getElementById('dictCat');
     if(sel){
@@ -1960,8 +2160,11 @@ async function saveDictionary(){
       ).join('');
       sel.value=v;
     }
+    fillDictCopySelect();
+    setDictButtons({save:true, del:true, add:true});
   }catch(e){
     dictStatus(e.message||'не удалось сохранить', false);
+    setDictButtons({save:true, del:true, add:true});
   }finally{
     btn.disabled=false;
   }

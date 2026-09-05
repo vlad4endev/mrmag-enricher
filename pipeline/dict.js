@@ -37,13 +37,69 @@ export function hasDictionary(catId, root = '.') {
   return fs.existsSync(dictionaryPath(catId, root));
 }
 
+export function categoryName(catId, root = '.') {
+  try {
+    const hit = loadCategories(root).find(c => String(c.id) === String(catId));
+    return hit?.name || `Категория ${catId}`;
+  } catch {
+    return `Категория ${catId}`;
+  }
+}
+
+/** Заготовка атрибута для UI «добавить строку» / пустой справочник. */
+export function blankAttribute(partial = {}) {
+  const name = partial.name || 'Новый атрибут';
+  const code = partial.code || 'new_attr';
+  const facetIn = partial.facet && typeof partial.facet === 'object' ? partial.facet : {};
+  return {
+    code,
+    name,
+    description: partial.description || '',
+    type: partial.type || 'enum',
+    unit: partial.unit ?? null,
+    cardinality: partial.cardinality || 'single',
+    order: partial.order ?? 10,
+    show_in_annotation: partial.show_in_annotation !== false,
+    highlight: !!partial.highlight,
+    inferable: partial.inferable !== false,
+    tier: partial.tier || 'B',
+    decision_reason: partial.decision_reason || '',
+    coverage_now: 0,
+    coverage_final: 0,
+    valid_range: partial.valid_range ?? null,
+    synonyms: Array.isArray(partial.synonyms) ? partial.synonyms : [name],
+    blacklist: Array.isArray(partial.blacklist) ? partial.blacklist : [],
+    value_aliases: partial.value_aliases && typeof partial.value_aliases === 'object'
+      ? partial.value_aliases
+      : {},
+    facet: {
+      enabled: false,
+      label: name,
+      kind: 'enum',
+      ...facetIn,
+    },
+  };
+}
+
+/** Минимальный старт: бренд как фасет — без него выгрузка фильтров почти бесполезна. */
+export function seedDictionaryAttrs() {
+  return [
+    blankAttribute({
+      code: 'brand',
+      name: 'Бренд',
+      order: 0,
+      tier: 'A',
+      highlight: true,
+      synonyms: ['Бренд', 'Производитель', 'Марка', 'Торговая марка'],
+      facet: { enabled: true, label: 'Бренд', kind: 'enum' },
+    }),
+  ];
+}
+
 /** Все attributes_{id}.json в dictionaries/ — для вкладки «Справочник». */
 export function listDictionaries(root = '.') {
   const dir = path.join(root, 'dictionaries');
   if (!fs.existsSync(dir)) return [];
-  let cats = [];
-  try { cats = loadCategories(root); } catch { /* без имён */ }
-  const byId = new Map(cats.map(c => [String(c.id), c.name]));
   return fs.readdirSync(dir)
     .map(f => f.match(/^attributes_(\d+)\.json$/i)?.[1])
     .filter(Boolean)
@@ -55,13 +111,56 @@ export function listDictionaries(root = '.') {
       const list = Array.isArray(attrs) ? attrs : [];
       return {
         id: String(id),
-        name: byId.get(String(id)) || `Категория ${id}`,
+        name: categoryName(id, root),
         file: path.relative(root, file),
         attrs: list.length,
         facets: list.filter(a => a?.facet?.enabled).length,
         annotation: list.filter(a => a?.show_in_annotation).length,
       };
     });
+}
+
+/**
+ * Создать attributes_{id}.json.
+ * copyFrom — клон другого справочника; иначе seed (бренд) или переданный attrs.
+ */
+export function createDictionary(catId, { copyFrom = null, attrs = null } = {}, root = '.') {
+  if (!/^\d+$/.test(String(catId))) {
+    throw Object.assign(new Error('id справочника — только цифры'), { status: 400 });
+  }
+  if (hasDictionary(catId, root)) {
+    throw Object.assign(new Error(`справочник attributes_${catId}.json уже есть`), { status: 409 });
+  }
+  let list;
+  if (Array.isArray(attrs) && attrs.length) {
+    list = attrs;
+  } else if (copyFrom != null && String(copyFrom) !== '') {
+    if (!hasDictionary(copyFrom, root)) {
+      throw Object.assign(new Error(`нечего копировать: нет attributes_${copyFrom}.json`), { status: 404 });
+    }
+    list = readDictionaryAttrs(copyFrom, root).map(a => structuredClone(a));
+  } else {
+    list = seedDictionaryAttrs();
+  }
+  const saved = saveDictionaryAttrs(catId, list, root);
+  return {
+    id: String(catId),
+    name: categoryName(catId, root),
+    file: path.relative(root, dictionaryPath(catId, root)),
+    attrs: saved,
+  };
+}
+
+export function deleteDictionary(catId, root = '.') {
+  if (!/^\d+$/.test(String(catId))) {
+    throw Object.assign(new Error('id справочника — только цифры'), { status: 400 });
+  }
+  const file = dictionaryPath(catId, root);
+  if (!fs.existsSync(file)) {
+    throw Object.assign(new Error(`нет справочника attributes_${catId}.json`), { status: 404 });
+  }
+  fs.unlinkSync(file);
+  return { ok: true, id: String(catId) };
 }
 
 /** Сырой массив атрибутов без индекса — для UI и сохранения. */

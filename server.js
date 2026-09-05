@@ -19,9 +19,11 @@
  *   GET  /api/parser          статус и настройки поиска пустых карточек
  *   GET  /api/product?url=... прокси к каталогу, только по разрешённым хостам
  *   GET  /api/categories      разделы из требований и схемы полей
- *   GET  /api/dictionaries    список справочников attributes_{id}.json
+ *   GET  /api/dictionaries      список справочников attributes_{id}.json
+ *   POST /api/dictionaries      создать { id, copyFrom? }
  *   GET  /api/dictionaries/:id  атрибуты справочника
  *   PUT  /api/dictionaries/:id  сохранить атрибуты справочника
+ *   DELETE /api/dictionaries/:id  удалить файл справочника
  *   GET  /api/catalog?category=kholodilniki[&limit=N]
  *                             обход раздела: товары с описаниями + автофильтры
  *   POST /api/export          выгрузка заказчика: products + filters + held
@@ -66,6 +68,7 @@ import { dictForProducts } from './pipeline/schema.js';
 import { createJobStore } from './jobs.js';
 import {
   loadConfig, listDictionaries, readDictionaryAttrs, saveDictionaryAttrs,
+  createDictionary, deleteDictionary, blankAttribute, categoryName,
 } from './pipeline/dict.js';
 import { publicParserStatus } from './pipeline/search.js';
 import {
@@ -325,14 +328,30 @@ function apiDictionariesList(res) {
   }
 }
 
+async function apiDictionaryCreate(req, res) {
+  const raw = await readBody(req, 64_000);
+  let body;
+  try { body = JSON.parse(raw); } catch { return json(res, 400, { error: 'Тело запроса не JSON' }); }
+  const id = body?.id ?? body?.catId;
+  if (id == null || id === '') return json(res, 400, { error: 'укажите id раздела' });
+  try {
+    const created = createDictionary(id, {
+      copyFrom: body.copyFrom ?? body.copy_from ?? null,
+      attrs: Array.isArray(body.attrs) ? body.attrs : null,
+    }, ROOT);
+    json(res, 201, created);
+  } catch (e) {
+    json(res, e.status || 400, { error: e.message });
+  }
+}
+
 function apiDictionaryGet(res, id) {
   try {
     const attrs = readDictionaryAttrs(id, ROOT);
-    const meta = listDictionaries(ROOT).find(d => d.id === String(id));
     json(res, 200, {
       id: String(id),
-      name: meta?.name || `Категория ${id}`,
-      file: meta?.file || `dictionaries/attributes_${id}.json`,
+      name: categoryName(id, ROOT),
+      file: `dictionaries/attributes_${id}.json`,
       attrs,
     });
   } catch (e) {
@@ -347,16 +366,28 @@ async function apiDictionaryPut(req, res, id) {
   const attrs = Array.isArray(body) ? body : body?.attrs;
   try {
     const saved = saveDictionaryAttrs(id, attrs, ROOT);
-    const meta = listDictionaries(ROOT).find(d => d.id === String(id));
     json(res, 200, {
       id: String(id),
-      name: meta?.name || `Категория ${id}`,
-      file: meta?.file || `dictionaries/attributes_${id}.json`,
+      name: categoryName(id, ROOT),
+      file: `dictionaries/attributes_${id}.json`,
       attrs: saved,
     });
   } catch (e) {
     json(res, e.status || 400, { error: e.message });
   }
+}
+
+function apiDictionaryDelete(res, id) {
+  try {
+    json(res, 200, deleteDictionary(id, ROOT));
+  } catch (e) {
+    json(res, e.status || 400, { error: e.message });
+  }
+}
+
+/** Заготовка строки атрибута для кнопки «Добавить» в UI. */
+function apiDictionaryBlankAttr(res) {
+  json(res, 200, { attr: blankAttribute({ code: 'new_attr', name: 'Новый атрибут', order: 100 }) });
 }
 
 /** Разделы из требований вместе с полями схемы — чтобы интерфейс не хардкодил. */
@@ -1158,11 +1189,14 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'POST' && u.pathname === '/api/prompt/preview') return await apiPromptPreview(req, res);
     if (req.method === 'GET'  && u.pathname === '/api/categories') return apiCategories(res);
     if (req.method === 'GET'  && u.pathname === '/api/dictionaries') return apiDictionariesList(res);
+    if (req.method === 'POST' && u.pathname === '/api/dictionaries') return await apiDictionaryCreate(req, res);
+    if (req.method === 'GET'  && u.pathname === '/api/dictionaries/blank-attr') return apiDictionaryBlankAttr(res);
     const dictRoute = u.pathname.match(/^\/api\/dictionaries\/(\d+)$/);
     if (dictRoute) {
       const [, id] = dictRoute;
       if (req.method === 'GET') return apiDictionaryGet(res, id);
       if (req.method === 'PUT') return await apiDictionaryPut(req, res, id);
+      if (req.method === 'DELETE') return apiDictionaryDelete(res, id);
     }
     if (req.method === 'POST' && u.pathname === '/api/filters')    return apiFilters(req, res);
     if (req.method === 'POST' && u.pathname === '/api/quality')    return apiQuality(req, res);

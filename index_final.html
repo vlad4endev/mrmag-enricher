@@ -3965,6 +3965,7 @@ function logsStatusLabel(s){
   if(s==='ok') return ['ok','готово'];
   if(s==='error'||s==='err') return ['err','ошибка'];
   if(s==='skip') return ['skip','пропуск'];
+  if(s==='needs_review') return ['wa','на проверку'];
   if(s==='running') return ['run','в работе'];
   return ['','ожидание'];
 }
@@ -4085,6 +4086,9 @@ async function loadLogsDetail(pos){
       +`<div class="hint" style="margin:0">${esc(meta||'—')}</div>`
       +(x.error?`<div class="hint" style="color:var(--red);margin:0">${esc(x.error)}</div>`:'')
       +(x.skipped?`<div class="hint" style="margin:0">Пропуск: ${esc(x.skipped)}</div>`:'')
+      +(Array.isArray(x.validation_issues)&&x.validation_issues.length
+        ?`<div class="hint" style="color:var(--warn, #b45309);margin:0">Валидация: ${esc(x.validation_issues.map(i=>`${i.field}: ${i.reason}`).join('; '))}</div>`
+        :'')
       +`<div class="set-actions" style="margin-top:8px"><button type="button" class="sbtn" onclick="copyLogsAll()">Скопировать всё</button></div></div>`
       +`<div class="set-card logs-block"><div class="logs-block-h"><b>Шаги обработки</b></div>${stepsHtml}</div>`
       +logsBlock('1. Исходный текст для модели', x.source_text, 'logsSrc')

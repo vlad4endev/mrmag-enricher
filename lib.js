@@ -27,6 +27,7 @@ import { normalizeValue } from './pipeline/types.js';
 import { loadBenchmarks } from './pipeline/dict.js';
 import {
   validateModelResponse, validationFeedbackLine, MODEL_KEYS, buildDescriptionHtml,
+  matchLiteral,
 } from './pipeline/model_validate.js';
 
 // ── КУРС ─────────────────────────────────────────────────────
@@ -1388,6 +1389,10 @@ export function normalizeResponse(data, sourceText = '', schemaKey, attributes =
     return '';
   })();
 
+  // Регистр strong подтягиваем к description: иначе валидатор/HTML теряют
+  // «гарантия…» при «Гарантия…» в тексте.
+  const strong = arr(data.strong).map(s => matchLiteral(description, s) ?? s);
+
   let web_info = data.web_info;
   if (web_info === '') web_info = ''; // валидатор поймает
   else if (web_info == null) web_info = null;
@@ -1398,7 +1403,7 @@ export function normalizeResponse(data, sourceText = '', schemaKey, attributes =
     short_description: str(data.short_description) || '',
     description,
     bullets: arr(data.bullets),
-    strong: arr(data.strong),
+    strong,
     meta_keywords,
     web_info,
     source_facts: facts,

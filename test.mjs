@@ -585,6 +585,21 @@ t('валидатор: порог description зависит от числа spe
   assert.ok(validateModelResponse({
     ...base, specs: { a: 1 }, description: poorDesc, web_info: '',
   }, { filledSpecs: 1 }).some(i => i.field === 'web_info' || /пусто/.test(i.reason)));
+
+  // Регистр strong: «гарантия» в массиве vs «Гарантия» в description — не needs_review.
+  const caseDesc = [
+    mkPara(1, 'стиральная', 30),
+    mkPara(2, 'параметр', 30),
+    mkPara(3, 'функция', 30),
+    mkPara(4, 'покупка', 20) + ' Гарантия на двигатель составляет 5 лет.',
+  ].join('\n\n');
+  assert.ok(caseDesc.length >= 950 && caseDesc.length <= 1600, `caseDesc=${caseDesc.length}`);
+  assert.deepStrictEqual(validateModelResponse({
+    ...base,
+    specs: { a: 1, b: 2, c: 3, d: 4, e: 5 },
+    description: caseDesc,
+    strong: ['гарантия на двигатель составляет 5 лет'],
+  }, { filledSpecs: 5 }), []);
 });
 t('промпт требует основной текст первым и абзацами', () => {
   const p = buildSystemPrompt('kholodilniki');

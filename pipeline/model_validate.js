@@ -47,6 +47,21 @@ function phraseCount(s) {
 }
 
 /**
+ * Дословное вхождение без учёта регистра (кириллица: «Гарантия» ↔ «гарантия»).
+ * Возвращает срез из haystack с исходным регистром — так <strong> потом совпадёт.
+ */
+export function matchLiteral(haystack, needle) {
+  const h = String(haystack || '');
+  const n = String(needle || '');
+  if (!n) return '';
+  const hi = h.toLocaleLowerCase('ru');
+  const ni = n.toLocaleLowerCase('ru');
+  const at = hi.indexOf(ni);
+  if (at < 0) return null;
+  return h.slice(at, at + n.length);
+}
+
+/**
  * @param {object} data — сырой/нормализованный ответ модели
  * @param {{ filledSpecs?: number, requireSpecFill?: boolean }} opts
  * @returns {{ field: string, reason: string }[]}
@@ -139,7 +154,9 @@ export function validateModelResponse(data, opts = {}) {
       const body = typeof desc === 'string' ? desc : '';
       data.strong.forEach((s, i) => {
         if (typeof s !== 'string') add(`strong[${i}]`, 'не строка');
-        else if (s && !body.includes(s)) add(`strong[${i}]`, 'не встречается в description дословно');
+        else if (s && matchLiteral(body, s) == null) {
+          add(`strong[${i}]`, 'не встречается в description дословно');
+        }
       });
     }
   }
@@ -181,8 +198,9 @@ export function buildDescriptionHtml({ description, bullets, strong } = {}) {
   const wrapStrong = (text) => {
     let out = String(text || '');
     for (const m of marks) {
-      if (!out.includes(m)) continue;
-      out = out.split(m).join(`<strong>${m}</strong>`);
+      const hit = matchLiteral(out, m);
+      if (hit == null) continue;
+      out = out.split(hit).join(`<strong>${hit}</strong>`);
     }
     return out;
   };

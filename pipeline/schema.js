@@ -3,6 +3,8 @@
  * Без зашитых FRIDGE_/WASHER_ списков.
  */
 
+import path from 'path';
+import { fileURLToPath } from 'url';
 import { hasDictionary, loadDictionary, loadCategories } from './dict.js';
 import { extractPairs } from './parse.js';
 import { matchKey } from './match.js';
@@ -10,6 +12,9 @@ import { normalizeValue } from './types.js';
 import { attrLabel } from './types.js';
 import { loadConfig } from './dict.js';
 import { parseDimensions } from './dimensions.js';
+
+/** Корень проекта, а не process.cwd(): иначе при старте из другой папки уходит _generic. */
+const PROJECT_ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 /** Стабильные ключи specs (совместимы с эталоном v2 / промптом). */
 const CODE_TO_SPEC = {
@@ -47,6 +52,22 @@ const CODE_TO_SPEC = {
   compressor_type: 'тип_компрессора',
   motor_type: 'тип_двигателя',
   country: 'страна_производства',
+  product_type: 'тип_товара',
+  construction: 'конструкция',
+  airflow: 'производительность_м3_ч',
+  body_material: 'материал_корпуса',
+  speeds: 'количество_скоростей',
+  work_modes: 'режимы_работы',
+  lighting: 'тип_освещения',
+  filter: 'фильтр',
+  noise: 'уровень_шума_дб',
+  duct_diameter: 'диаметр_патрубка_мм',
+  power: 'потребляемая_мощность_вт',
+};
+
+/** Разделы без своего файла → существующий справочник. */
+const DICT_FALLBACK = {
+  528: 929, // «Вытяжки и Воздухоочистители» → справочник встраиваемых
 };
 
 /** Slug обхода магазина → cat_id. URL не содержат имён характеристик. */
@@ -149,8 +170,11 @@ export function schemaFromDictionary(dict, { slug = null, name = null } = {}) {
   };
 }
 
-export function tryLoadDictSchema(key, root = '.') {
-  const catId = resolveCatId(key, root);
+export function tryLoadDictSchema(key, root = PROJECT_ROOT) {
+  let catId = resolveCatId(key, root);
+  if (catId && !hasDictionary(catId, root) && DICT_FALLBACK[catId]) {
+    catId = String(DICT_FALLBACK[catId]);
+  }
   if (!catId || !hasDictionary(catId, root)) return null;
   const dict = loadDictionary(catId, root);
   const slug = Object.entries(CRAWL_SLUGS).find(([, id]) => String(id) === catId)?.[0] || null;
@@ -186,6 +210,10 @@ export function dictForProducts(products, category, root = '.') {
     }
     if (/холодильник/.test(n)) {
       const d = tryLoadDictSchema(523, root);
+      if (d?.dict) return d.dict;
+    }
+    if (/вытяжк|воздухоочистител/.test(n)) {
+      const d = tryLoadDictSchema(929, root);
       if (d?.dict) return d.dict;
     }
   }

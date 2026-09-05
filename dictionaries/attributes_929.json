@@ -1,0 +1,955 @@
+[
+  {
+    "code": "product_type",
+    "name": "Тип товара",
+    "description": "Вытяжка или воздухоочиститель",
+    "type": "enum",
+    "unit": null,
+    "cardinality": "single",
+    "order": 10,
+    "show_in_annotation": true,
+    "highlight": true,
+    "inferable": true,
+    "tier": "A",
+    "decision_reason": "Ось каталога эталона",
+    "coverage_now": 0,
+    "coverage_final": 99,
+    "valid_range": null,
+    "synonyms": [
+      "Тип товара"
+    ],
+    "blacklist": [
+      "Тип",
+      "Тип вытяжки",
+      "Тип конструкции",
+      "Тип управления",
+      "Тип освещения",
+      "Тип лампы",
+      "Тип монтажа",
+      "Тип установки",
+      "Тип встраивания в шкаф",
+      "Тип жирового фильтра"
+    ],
+    "value_aliases": {
+      "Вытяжка": [
+        "Вытяжка",
+        "вытяжка",
+        "кухонная вытяжка"
+      ],
+      "Воздухоочиститель": [
+        "Воздухоочиститель",
+        "воздухоочиститель"
+      ]
+    },
+    "facet": {
+      "enabled": true,
+      "label": "Тип товара",
+      "kind": "enum"
+    }
+  },
+  {
+    "code": "construction",
+    "name": "Конструкция",
+    "description": "Форм-фактор корпуса",
+    "type": "enum",
+    "unit": null,
+    "cardinality": "single",
+    "order": 20,
+    "show_in_annotation": true,
+    "highlight": true,
+    "inferable": true,
+    "tier": "A",
+    "decision_reason": "Ось каталога эталона",
+    "coverage_now": 0,
+    "coverage_final": 90,
+    "valid_range": null,
+    "synonyms": [
+      "Конструкция",
+      "Тип конструкции",
+      "Тип вытяжки",
+      "Тип встраивания в шкаф",
+      "Установка",
+      "Тип установки",
+      "Тип монтажа",
+      "Вид установки",
+      "Монтаж"
+    ],
+    "blacklist": [],
+    "value_aliases": {
+      "Встраиваемая": [
+        "Встраиваемая",
+        "встраиваемая",
+        "встраиваемые",
+        "Встраиваемые",
+        "встраиваемая в шкаф",
+        "в шкаф"
+      ],
+      "Каминная": [
+        "Каминная",
+        "каминная",
+        "Т-образная",
+        "настенный"
+      ],
+      "Полновстраиваемая": [
+        "Полновстраиваемая",
+        "полновстраиваемая",
+        "скрытая"
+      ],
+      "Телескопическая": [
+        "Телескопическая",
+        "телескопическая",
+        "выдвижная",
+        "встраиваемая телескопическая",
+        "телескопическая (встраиваемая)"
+      ]
+    },
+    "facet": {
+      "enabled": true,
+      "label": "Конструкция",
+      "kind": "enum"
+    }
+  },
+  {
+    "code": "width",
+    "name": "Ширина",
+    "description": "Ширина прибора",
+    "type": "number",
+    "unit": "см",
+    "cardinality": "single",
+    "order": 30,
+    "show_in_annotation": true,
+    "highlight": true,
+    "inferable": false,
+    "tier": "A",
+    "decision_reason": "Габарит эталона",
+    "coverage_now": 0,
+    "coverage_final": 90,
+    "valid_range": [
+      30,
+      120
+    ],
+    "synonyms": [
+      "Ширина",
+      "Ширина, см",
+      "Ширина встраивания",
+      "Ширина (см)"
+    ],
+    "blacklist": [
+      "Ширина упаковки",
+      "Ширина товарной упаковки"
+    ],
+    "facet": {
+      "enabled": true,
+      "label": "Ширина, см",
+      "kind": "range",
+      "breaks": [
+        50,
+        55,
+        60,
+        65,
+        70
+      ],
+      "bound_rule": "left_closed",
+      "open_last": false
+    }
+  },
+  {
+    "code": "airflow",
+    "name": "Максимальная производительность",
+    "description": "Производительность отвода воздуха",
+    "type": "number",
+    "unit": "м³/ч",
+    "cardinality": "single",
+    "order": 40,
+    "show_in_annotation": true,
+    "highlight": true,
+    "inferable": false,
+    "tier": "A",
+    "decision_reason": "Ось эталона",
+    "coverage_now": 0,
+    "coverage_final": 90,
+    "valid_range": [
+      100,
+      2000
+    ],
+    "synonyms": [
+      "Максимальная производительность",
+      "Производительность",
+      "Производительность, м³/ч",
+      "Производительность, м3/ч",
+      "Воздушный поток",
+      "Мощность всасывания"
+    ],
+    "blacklist": [
+      "Производительность (1/2/3 режим)"
+    ],
+    "facet": {
+      "enabled": true,
+      "label": "Производительность, м³/ч",
+      "kind": "range",
+      "breaks": [
+        400,
+        600,
+        800,
+        1000
+      ],
+      "bound_rule": "left_closed",
+      "open_last": true
+    }
+  },
+  {
+    "code": "color",
+    "name": "Цвет",
+    "description": "Цвет корпуса",
+    "type": "enum",
+    "unit": null,
+    "cardinality": "single",
+    "order": 50,
+    "show_in_annotation": true,
+    "highlight": true,
+    "inferable": true,
+    "tier": "A",
+    "decision_reason": "Ось эталона",
+    "coverage_now": 0,
+    "coverage_final": 90,
+    "valid_range": null,
+    "synonyms": [
+      "Цвет",
+      "Цвет корпуса",
+      "Основной цвет",
+      "Палитра",
+      "Отделка",
+      "Цвет отделки"
+    ],
+    "blacklist": [
+      "Цвет заявленный производителем",
+      "Цвет обрамления / окантовки"
+    ],
+    "value_aliases": {
+      "Бежевый": [
+        "Бежевые",
+        "бежевый",
+        "бежевое стекло",
+        "крем"
+      ],
+      "Белый": [
+        "Белый+стекло",
+        "Белые",
+        "Белые",
+        "белое стекло"
+      ],
+      "Кремовый": [
+        "Топленое молоко",
+        "топленое молоко",
+        "крем/крем"
+      ],
+      "Нержавеющая сталь": [
+        "Нержавейка",
+        "нержавейка",
+        "Сталь/черное стекло",
+        "Черный плюс нержавеющая сталь",
+        "Белый плюс нержавеющая сталь",
+        "из нержавеющей стали"
+      ],
+      "Серебристый": [
+        "Серебристый",
+        "серебристый",
+        "Серебристые",
+        "серебро"
+      ],
+      "Серый": [
+        "Серый",
+        "серый",
+        "серый/черный"
+      ],
+      "Черный": [
+        "Корпус: черный",
+        "Стекло черное",
+        "Черные",
+        "чёрные",
+        "металл черный"
+      ]
+    },
+    "facet": {
+      "enabled": true,
+      "label": "Цвет",
+      "kind": "enum"
+    }
+  },
+  {
+    "code": "body_material",
+    "name": "Материал корпуса",
+    "description": "Материал корпуса",
+    "type": "enum",
+    "unit": null,
+    "cardinality": "single",
+    "order": 60,
+    "show_in_annotation": true,
+    "highlight": true,
+    "inferable": true,
+    "tier": "B",
+    "decision_reason": "Ось эталона",
+    "coverage_now": 0,
+    "coverage_final": 80,
+    "valid_range": null,
+    "synonyms": [
+      "Материал корпуса",
+      "Материал",
+      "Материал панели",
+      "Материал передней панели"
+    ],
+    "blacklist": [
+      "Материал панели",
+      "Материал передней панели",
+      "Материал панели / окантовки / рейлинг"
+    ],
+    "value_aliases": {
+      "Металл": [
+        "Металл",
+        "металл",
+        "нержавеющая сталь",
+        "из нержавеющей стали",
+        "Из нержавеющей стали"
+      ],
+      "Металл/стекло": [
+        "Металл/стекло",
+        "металл/стекло",
+        "стекло + окрашенная сталь",
+        "корпус: металл/стекло",
+        "металл / стекло",
+        "нержавеющая сталь/белое стекло",
+        "нержавеющая сталь/бежевое стекло",
+        "нержавеющая сталь/черное стекло",
+        "черный/нержавеющая сталь",
+        "белый/нерж",
+        "черный/черный",
+        "нерж/бежевое стекло"
+      ],
+      "Стекло": [
+        "Стекло",
+        "стекло"
+      ]
+    },
+    "facet": {
+      "enabled": true,
+      "label": "Материал корпуса",
+      "kind": "enum"
+    }
+  },
+  {
+    "code": "control_type",
+    "name": "Тип управления",
+    "description": "Способ управления",
+    "type": "enum",
+    "unit": null,
+    "cardinality": "single",
+    "order": 70,
+    "show_in_annotation": true,
+    "highlight": true,
+    "inferable": true,
+    "tier": "A",
+    "decision_reason": "Ось эталона",
+    "coverage_now": 0,
+    "coverage_final": 85,
+    "valid_range": null,
+    "synonyms": [
+      "Тип управления",
+      "Управление",
+      "Вид управления",
+      "Панель управления",
+      "Переключатель",
+      "Тип переключателя"
+    ],
+    "blacklist": [],
+    "value_aliases": {
+      "Кнопочное": [
+        "Кнопочное",
+        "кнопочное",
+        "кнопочный",
+        "кнопки",
+        "клавишный",
+        "механическое, кнопочное",
+        "механическая (кнопочная)",
+        "Механическая (кнопочная)"
+      ],
+      "Механическое": [
+        "Механическое",
+        "механическое"
+      ],
+      "Ползунковое": [
+        "Ползунковое",
+        "ползунковое",
+        "ползунковый механизм"
+      ],
+      "Сенсорное": [
+        "Сенсорное",
+        "сенсорное",
+        "сенсорный",
+        "сенсорное управление",
+        "сенсорное + управление жестом",
+        "сенсорное управление, управление жестами"
+      ],
+      "Тумблерное": [
+        "Тумблерное",
+        "тумблерное",
+        "тумблер",
+        "Тумблер"
+      ],
+      "Электромеханическое": [
+        "Электромеханическое",
+        "электромеханическое",
+        "электромеханическое, клавиши",
+        "электронная"
+      ]
+    },
+    "facet": {
+      "enabled": true,
+      "label": "Тип управления",
+      "kind": "enum"
+    }
+  },
+  {
+    "code": "speeds",
+    "name": "Количество скоростей",
+    "description": "Число скоростей вентилятора",
+    "type": "number",
+    "unit": null,
+    "cardinality": "single",
+    "order": 80,
+    "show_in_annotation": true,
+    "highlight": true,
+    "inferable": false,
+    "tier": "B",
+    "decision_reason": "Ось эталона",
+    "coverage_now": 0,
+    "coverage_final": 90,
+    "valid_range": [
+      1,
+      10
+    ],
+    "synonyms": [
+      "Количество скоростей",
+      "Количество режимов"
+    ],
+    "blacklist": [],
+    "facet": {
+      "enabled": true,
+      "label": "Количество скоростей",
+      "kind": "range",
+      "breaks": [
+        2,
+        2.2,
+        2.4,
+        2.6,
+        2.8,
+        3
+      ],
+      "bound_rule": "left_closed",
+      "open_last": false
+    }
+  },
+  {
+    "code": "work_modes",
+    "name": "Режимы работы",
+    "description": "Отвод и/или рециркуляция",
+    "type": "enum",
+    "unit": null,
+    "cardinality": "single",
+    "order": 90,
+    "show_in_annotation": true,
+    "highlight": true,
+    "inferable": true,
+    "tier": "A",
+    "decision_reason": "Ось эталона",
+    "coverage_now": 0,
+    "coverage_final": 85,
+    "valid_range": null,
+    "synonyms": [
+      "Режимы работы",
+      "Режим работы"
+    ],
+    "blacklist": [
+      "Режим рециркуляции",
+      "Режим циркуляции",
+      "Рециркуляционный режим",
+      "Вытяжной режим",
+      "Отвод воздуха"
+    ],
+    "value_aliases": {
+      "Отвод / рециркуляция": [
+        "Отвод / рециркуляция",
+        "отвод / рециркуляция",
+        "вытяжка / рециркуляция"
+      ],
+      "Отвод / циркуляция": [
+        "Отвод / циркуляция",
+        "отвод / циркуляция",
+        "отвод/циркуляция",
+        "отвод, циркуляция"
+      ]
+    },
+    "facet": {
+      "enabled": true,
+      "label": "Режимы работы",
+      "kind": "enum"
+    }
+  },
+  {
+    "code": "lighting",
+    "name": "Тип освещения",
+    "description": "Тип ламп подсветки",
+    "type": "enum",
+    "unit": null,
+    "cardinality": "single",
+    "order": 100,
+    "show_in_annotation": true,
+    "highlight": true,
+    "inferable": true,
+    "tier": "B",
+    "decision_reason": "Ось эталона",
+    "coverage_now": 0,
+    "coverage_final": 80,
+    "valid_range": null,
+    "synonyms": [
+      "Тип освещения",
+      "Тип лампы",
+      "Освещение",
+      "Подсветка"
+    ],
+    "blacklist": [
+      "Количество ламп",
+      "Количество ламп освещения",
+      "Мощность каждой лампы",
+      "Макс. мощность одной лампы",
+      "Мощность освещения",
+      "Освещение",
+      "Подсветка",
+      "Мощность освещения",
+      "Количество ламп освещения"
+    ],
+    "value_aliases": {
+      "Галогенная лампа": [
+        "Галогенная лампа",
+        "галогенная лампа",
+        "С галогенной лампой",
+        "галогенная",
+        "галогенной"
+      ],
+      "Лампа накаливания": [
+        "Лампа накаливания",
+        "лампа накаливания",
+        "с лампой накаливания",
+        "накаливания"
+      ],
+      "Светодиодное": [
+        "Светодиодное",
+        "светодиодное",
+        "светодиодная",
+        "светодиодная лампа",
+        "светодиодные лампы",
+        "светодиодное LED",
+        "LED",
+        "LED лампа",
+        "LED-лампа",
+        "Со светодиоидной лампой",
+        "светодиоидной",
+        "1 LED лампа",
+        "2×3,5 LED",
+        "LED 2 х 3,5",
+        "LED 1х1,5"
+      ]
+    },
+    "facet": {
+      "enabled": true,
+      "label": "Тип освещения",
+      "kind": "enum"
+    }
+  },
+  {
+    "code": "filter",
+    "name": "Фильтр",
+    "description": "Тип фильтра",
+    "type": "enum",
+    "unit": null,
+    "cardinality": "multi",
+    "order": 110,
+    "show_in_annotation": true,
+    "highlight": true,
+    "inferable": true,
+    "tier": "A",
+    "decision_reason": "Ось эталона",
+    "coverage_now": 0,
+    "coverage_final": 90,
+    "valid_range": null,
+    "synonyms": [
+      "Фильтр",
+      "Тип жирового фильтра",
+      "Фильтр в комплекте",
+      "Фильтры очистки воздуха",
+      "Жироулавливающий фильтр"
+    ],
+    "blacklist": [
+      "Индикатор загрязнения фильтра",
+      "Модель угольного фильтра",
+      "Угольный фильтр"
+    ],
+    "value_aliases": {
+      "Алюминиевый": [
+        "Алюминиевый",
+        "алюминиевый",
+        "алюминиевых",
+        "2 алюминиевых",
+        "1 алюминиевый",
+        "анодированный алюминиевый",
+        "анодированный алюминиевый рамочный",
+        "съёмный алюминиевый фильтр",
+        "1×Al",
+        "1xAl",
+        "Al"
+      ],
+      "Жировой": [
+        "Жировой",
+        "жировой"
+      ],
+      "Угольный": [
+        "Угольный",
+        "угольный"
+      ]
+    },
+    "facet": {
+      "enabled": true,
+      "label": "Фильтр",
+      "kind": "enum"
+    }
+  },
+  {
+    "code": "noise",
+    "name": "Уровень шума",
+    "description": "Уровень шума",
+    "type": "number",
+    "unit": "дБ",
+    "cardinality": "single",
+    "order": 120,
+    "show_in_annotation": true,
+    "highlight": true,
+    "inferable": false,
+    "tier": "A",
+    "decision_reason": "Ось эталона",
+    "coverage_now": 0,
+    "coverage_final": 85,
+    "valid_range": [
+      20,
+      90
+    ],
+    "synonyms": [
+      "Уровень шума",
+      "Уровень шума, дБ",
+      "Максимальный уровень шума",
+      "Уровень звукового давления",
+      "Уровень шума (не более)",
+      "Уровень шума в максимальном режиме"
+    ],
+    "blacklist": [
+      "Минимальный уровень шума"
+    ],
+    "facet": {
+      "enabled": true,
+      "label": "Уровень шума, дБ",
+      "kind": "range",
+      "breaks": [
+        34,
+        44,
+        54,
+        64,
+        74
+      ],
+      "bound_rule": "left_closed",
+      "open_last": false
+    }
+  },
+  {
+    "code": "height",
+    "name": "Высота",
+    "description": "Высота прибора",
+    "type": "number",
+    "unit": "см",
+    "cardinality": "single",
+    "order": 130,
+    "show_in_annotation": true,
+    "highlight": true,
+    "inferable": false,
+    "tier": "B",
+    "decision_reason": "Габарит эталона",
+    "coverage_now": 0,
+    "coverage_final": 80,
+    "valid_range": [
+      10,
+      120
+    ],
+    "synonyms": [
+      "Высота",
+      "Высота, см",
+      "Минимальная высота",
+      "Максимальная высота"
+    ],
+    "blacklist": [
+      "Высота упаковки",
+      "Минимальная высота встраивания",
+      "Минимальная высота над газовой плитой",
+      "Минимальная высота над электрической плитой",
+      "Мин высота над газовой плитой",
+      "Мин высота над электрической плитой"
+    ],
+    "facet": {
+      "enabled": true,
+      "label": "Высота, см",
+      "kind": "range",
+      "breaks": [
+        17.4,
+        22.5,
+        27.5,
+        32
+      ],
+      "bound_rule": "left_closed",
+      "open_last": false
+    }
+  },
+  {
+    "code": "depth",
+    "name": "Глубина",
+    "description": "Глубина прибора",
+    "type": "number",
+    "unit": "см",
+    "cardinality": "single",
+    "order": 140,
+    "show_in_annotation": true,
+    "highlight": true,
+    "inferable": false,
+    "tier": "B",
+    "decision_reason": "Габарит эталона",
+    "coverage_now": 0,
+    "coverage_final": 80,
+    "valid_range": [
+      15,
+      80
+    ],
+    "synonyms": [
+      "Глубина",
+      "Глубина, см",
+      "Глубина встраивания"
+    ],
+    "blacklist": [
+      "Глубина упаковки"
+    ],
+    "facet": {
+      "enabled": true,
+      "label": "Глубина, см",
+      "kind": "range",
+      "breaks": [
+        28,
+        30,
+        32
+      ],
+      "bound_rule": "left_closed",
+      "open_last": false
+    }
+  },
+  {
+    "code": "duct_diameter",
+    "name": "Диаметр патрубка воздуховода",
+    "description": "Диаметр воздуховода",
+    "type": "number",
+    "unit": "мм",
+    "cardinality": "single",
+    "order": 150,
+    "show_in_annotation": true,
+    "highlight": true,
+    "inferable": false,
+    "tier": "B",
+    "decision_reason": "Ось эталона",
+    "coverage_now": 0,
+    "coverage_final": 75,
+    "valid_range": [
+      80,
+      200
+    ],
+    "synonyms": [
+      "Диаметр патрубка воздуховода",
+      "Диаметр воздуховода",
+      "Диаметр воздуховодов",
+      "Диаметр выходного отверстия",
+      "Диаметр фланца воздуховода",
+      "Диаметр штуцера для отвода воздуха"
+    ],
+    "blacklist": [],
+    "facet": {
+      "enabled": true,
+      "label": "Диаметр патрубка воздуховода, мм",
+      "kind": "range",
+      "breaks": [
+        120,
+        125,
+        130,
+        135,
+        140,
+        145,
+        150
+      ],
+      "bound_rule": "left_closed",
+      "open_last": false
+    }
+  },
+  {
+    "code": "power",
+    "name": "Потребляемая мощность",
+    "description": "Потребляемая мощность",
+    "type": "number",
+    "unit": "Вт",
+    "cardinality": "single",
+    "order": 160,
+    "show_in_annotation": true,
+    "highlight": true,
+    "inferable": false,
+    "tier": "B",
+    "decision_reason": "Ось эталона",
+    "coverage_now": 0,
+    "coverage_final": 80,
+    "valid_range": [
+      50,
+      800
+    ],
+    "synonyms": [
+      "Потребляемая мощность",
+      "Номинальная мощность",
+      "Мощность подключения",
+      "Полная потребляемая мощность",
+      "Номинальная потребляемая мощность",
+      "Максимальная мощность"
+    ],
+    "blacklist": [
+      "Мощность двигателя",
+      "Мощность мотора",
+      "Мощность каждой лампы",
+      "Мощность освещения",
+      "Мощность узла освещения"
+    ],
+    "facet": {
+      "enabled": true,
+      "label": "Потребляемая мощность, Вт",
+      "kind": "range",
+      "breaks": [
+        122,
+        200,
+        280,
+        360
+      ],
+      "bound_rule": "left_closed",
+      "open_last": false
+    }
+  },
+  {
+    "code": "brand",
+    "name": "Бренд",
+    "description": "Производитель",
+    "type": "enum",
+    "unit": null,
+    "cardinality": "single",
+    "order": 0,
+    "show_in_annotation": true,
+    "highlight": true,
+    "inferable": true,
+    "tier": "A",
+    "decision_reason": "Идентичность",
+    "coverage_now": 0,
+    "coverage_final": 95,
+    "valid_range": null,
+    "synonyms": [
+      "Бренд",
+      "Производитель",
+      "Марка"
+    ],
+    "blacklist": [
+      "Артикул",
+      "Модель",
+      "Серия"
+    ],
+    "value_aliases": {
+      "Elikor": [
+        "Elikor",
+        "ELIKOR",
+        "Эликор"
+      ],
+      "Haier": [
+        "Haier",
+        "HAIER",
+        "Хайер"
+      ],
+      "Faber": [
+        "Faber",
+        "FABER"
+      ],
+      "Oasis": [
+        "Oasis",
+        "OASIS",
+        "Оазис"
+      ],
+      "Leonord": [
+        "Leonord",
+        "LEONORD"
+      ],
+      "Samtron": [
+        "Samtron",
+        "SAMTRON"
+      ],
+      "Gefest": [
+        "Gefest",
+        "GEFEST",
+        "Гефест"
+      ]
+    },
+    "facet": {
+      "enabled": false,
+      "label": "Бренд",
+      "kind": "enum",
+      "disabled_reason": "В эталоне 929 бренд не фасет"
+    }
+  },
+  {
+    "code": "weight",
+    "name": "Вес",
+    "description": "Вес нетто",
+    "type": "number",
+    "unit": "кг",
+    "cardinality": "single",
+    "order": 170,
+    "show_in_annotation": true,
+    "highlight": false,
+    "inferable": false,
+    "tier": "C",
+    "decision_reason": "В аннотацию, не в фильтр",
+    "coverage_now": 0,
+    "coverage_final": 60,
+    "valid_range": [
+      1,
+      50
+    ],
+    "synonyms": [
+      "Вес",
+      "Вес нетто",
+      "Масса",
+      "Вес вытяжки",
+      "Масса (не более)"
+    ],
+    "blacklist": [
+      "Вес брутто",
+      "Вес в упаковке"
+    ],
+    "facet": {
+      "enabled": false,
+      "label": "Вес, кг",
+      "kind": "range",
+      "step": 5,
+      "disabled_reason": "Нет в эталоне фильтров 929"
+    }
+  }
+]

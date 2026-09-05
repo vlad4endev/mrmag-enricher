@@ -29,8 +29,97 @@ export function dictionaryPath(catId, root = '.') {
   return path.join(root, 'dictionaries', `attributes_${catId}.json`);
 }
 
+export function benchmarksPath(catId, root = '.') {
+  return path.join(root, 'dictionaries', `benchmarks_${catId}.json`);
+}
+
 export function hasDictionary(catId, root = '.') {
   return fs.existsSync(dictionaryPath(catId, root));
+}
+
+/** Все attributes_{id}.json в dictionaries/ — для вкладки «Справочник». */
+export function listDictionaries(root = '.') {
+  const dir = path.join(root, 'dictionaries');
+  if (!fs.existsSync(dir)) return [];
+  let cats = [];
+  try { cats = loadCategories(root); } catch { /* без имён */ }
+  const byId = new Map(cats.map(c => [String(c.id), c.name]));
+  return fs.readdirSync(dir)
+    .map(f => f.match(/^attributes_(\d+)\.json$/i)?.[1])
+    .filter(Boolean)
+    .sort((a, b) => Number(a) - Number(b))
+    .map(id => {
+      const file = dictionaryPath(id, root);
+      let attrs = [];
+      try { attrs = JSON.parse(fs.readFileSync(file, 'utf-8')); } catch { attrs = []; }
+      const list = Array.isArray(attrs) ? attrs : [];
+      return {
+        id: String(id),
+        name: byId.get(String(id)) || `Категория ${id}`,
+        file: path.relative(root, file),
+        attrs: list.length,
+        facets: list.filter(a => a?.facet?.enabled).length,
+        annotation: list.filter(a => a?.show_in_annotation).length,
+      };
+    });
+}
+
+/** Сырой массив атрибутов без индекса — для UI и сохранения. */
+export function readDictionaryAttrs(catId, root = '.') {
+  const file = dictionaryPath(catId, root);
+  if (!fs.existsSync(file)) throw Object.assign(new Error(`нет справочника attributes_${catId}.json`), { status: 404 });
+  const attrs = JSON.parse(fs.readFileSync(file, 'utf-8'));
+  if (!Array.isArray(attrs) || !attrs.length) {
+    throw Object.assign(new Error(`пустой справочник attributes_${catId}.json`), { status: 400 });
+  }
+  return attrs;
+}
+
+/** Проверка и запись attributes_{id}.json. */
+export function saveDictionaryAttrs(catId, attrs, root = '.') {
+  if (!/^\d+$/.test(String(catId))) {
+    throw Object.assign(new Error('id справочника — только цифры'), { status: 400 });
+  }
+  if (!Array.isArray(attrs) || !attrs.length) {
+    throw Object.assign(new Error('ожидался непустой массив атрибутов'), { status: 400 });
+  }
+  const codes = new Set();
+  for (const a of attrs) {
+    if (!a || typeof a !== 'object' || Array.isArray(a)) {
+      throw Object.assign(new Error('каждый атрибут — объект'), { status: 400 });
+    }
+    if (!a.code || typeof a.code !== 'string') {
+      throw Object.assign(new Error('у атрибута нет code'), { status: 400 });
+    }
+    if (!a.name || typeof a.name !== 'string') {
+      throw Object.assign(new Error(`у «${a.code}» нет name`), { status: 400 });
+    }
+    if (codes.has(a.code)) {
+      throw Object.assign(new Error(`дублируется code «${a.code}»`), { status: 400 });
+    }
+    codes.add(a.code);
+  }
+  // Индексация ловит битые синонимы до записи на диск.
+  indexDictionary(attrs, String(catId));
+  const file = dictionaryPath(catId, root);
+  const dir = path.dirname(file);
+  if (dir && dir !== '.') fs.mkdirSync(dir, { recursive: true });
+  const tmp = `${file}.${process.pid}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(attrs, null, 2) + '\n', 'utf-8');
+  fs.renameSync(tmp, file);
+  return readDictionaryAttrs(catId, root);
+}
+
+/** Блок сравнений для web_info. Нет файла — null (модель пишет web_info: null). */
+export function loadBenchmarks(catId, root = '.') {
+  const file = benchmarksPath(catId, root);
+  if (!fs.existsSync(file)) return null;
+  try {
+    const data = JSON.parse(fs.readFileSync(file, 'utf-8'));
+    return data && typeof data === 'object' ? data : null;
+  } catch {
+    return null;
+  }
 }
 
 export function loadDictionary(catId, root = '.') {

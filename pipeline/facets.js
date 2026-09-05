@@ -19,18 +19,62 @@ function fmt(n) {
   return Number.isInteger(n) ? String(n) : String(+n.toFixed(3));
 }
 
-/** Начало полузакрытого интервала [a; b): 600 при шаге 50 — это 600-650, не 550-600. */
-function bucketLo(value, step) {
-  return Math.floor(Number(value) / step) * step;
+function hasBreaks(facet) {
+  return Array.isArray(facet?.breaks) && facet.breaks.length >= 2;
+}
+
+/**
+ * Начало полузакрытого интервала [a; b).
+ * origin смещает сетку: шум 34–44 при step 10, а не 30–40.
+ */
+function bucketLo(value, step, origin = 0) {
+  const o = Number(origin) || 0;
+  return Math.floor((Number(value) - o) / step) * step + o;
+}
+
+/** Подпись бакета по фиксированным границам эталона: [17.4, 22.5, 27.5, 32]. */
+function labelFromBreaks(value, breaks, openLast) {
+  const b = breaks.map(Number);
+  if (openLast && value >= b[b.length - 1]) return `${fmt(b[b.length - 1])}+`;
+  if (value >= b[b.length - 1]) {
+    return `${fmt(b[b.length - 2])}-${fmt(b[b.length - 1])}`;
+  }
+  for (let i = b.length - 2; i >= 0; i--) {
+    if (value >= b[i]) return `${fmt(b[i])}-${fmt(b[i + 1])}`;
+  }
+  return `${fmt(b[0])}-${fmt(b[1])}`;
+}
+
+function rangeLo(value, facet) {
+  if (hasBreaks(facet)) {
+    const b = facet.breaks.map(Number);
+    if (value >= b[b.length - 1]) return b[b.length - (facet.open_last ? 1 : 2)];
+    for (let i = b.length - 2; i >= 0; i--) {
+      if (value >= b[i]) return b[i];
+    }
+    return b[0];
+  }
+  if (!(facet.step > 0)) throw new Error(`facet.step обязателен для range (${facet.label})`);
+  return bucketLo(value, facet.step, facet.origin);
 }
 
 export function bucketLabel(value, facet, { isLast = false } = {}) {
   if (facet.kind !== 'range') return String(value);
+  if (hasBreaks(facet)) {
+    return labelFromBreaks(value, facet.breaks, !!facet.open_last && isLast);
+  }
   const step = facet.step;
   if (!(step > 0)) throw new Error(`facet.step обязателен для range (${facet.label})`);
-  const lo = bucketLo(value, step);
+  const lo = bucketLo(value, step, facet.origin);
   if (facet.open_last && isLast) return `${fmt(lo)}+`;
   return `${fmt(lo)}-${fmt(lo + step)}`;
+}
+
+function assertRangeFacet(facet, name) {
+  if (hasBreaks(facet)) return;
+  if (!(facet.step > 0)) {
+    throw new Error(`facet.step или facet.breaks обязателен для range (${name})`);
+  }
 }
 
 function numericOf(v) {
@@ -84,13 +128,13 @@ export function buildFilters(recs, dict, config) {
     const kind = facetKind(attr);
 
     if (kind === 'range') {
-      if (!(facet.step > 0)) throw new Error(`facet.step обязателен для range (${facet.label || attr.name})`);
+      assertRangeFacet(facet, facet.label || attr.name);
       const nums = filled.map(r => numericOf(r.attrs[attr.code])).filter(v => v != null);
       if (!nums.length) continue;
-      const maxLo = Math.max(...nums.map(v => bucketLo(v, facet.step)));
+      const maxLo = Math.max(...nums.map(v => rangeLo(v, facet)));
 
       for (const v of nums) {
-        const isLast = !!facet.open_last && bucketLo(v, facet.step) === maxLo;
+        const isLast = !!facet.open_last && rangeLo(v, facet) === maxLo;
         const lab = bucketLabel(v, { ...facet, kind: 'range' }, { isLast });
         counts.set(lab, (counts.get(lab) || 0) + 1);
       }
@@ -189,7 +233,7 @@ export function assignFilterValues(rec, dict, debugFacets) {
       const n = numericOf(v);
       if (n == null) continue;
       const maxLo = Math.max(...f.value.map(x => parseFloat(x)));
-      const isLast = !!facet.open_last && bucketLo(n, facet.step) === maxLo;
+      const isLast = !!facet.open_last && rangeLo(n, facet) === maxLo;
       out[f.name] = [bucketLabel(n, { ...facet, kind: 'range' }, { isLast })];
     } else {
       const labels = [];

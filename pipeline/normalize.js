@@ -145,6 +145,19 @@ export function normalizeProduct(product, dict, config) {
     }
   }
 
+  // Тип товара из имени: «Кухонная вытяжка …» / «Воздухоочиститель …».
+  if (dict.byCode.has('product_type') && rec.attrs.product_type == null) {
+    const n = String(product.name || '').toLowerCase().replace(/ё/g, 'е');
+    let pt = null;
+    if (/воздухоочистител/.test(n)) pt = 'Воздухоочиститель';
+    else if (/вытяжк/.test(n)) pt = 'Вытяжка';
+    if (pt) {
+      setAttr(rec, 'product_type', pt, {
+        level: 'S0', raw: product.name, model: null, prompt: null, how: 'name',
+      });
+    }
+  }
+
   const parsed = parseProductFields(product, dict);
   rec.format = parsed.format;
   rec.dump = parsed.dump;

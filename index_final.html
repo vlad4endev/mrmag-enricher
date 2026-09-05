@@ -773,6 +773,26 @@ input[type=range]::-moz-range-thumb{
 .set-prompt-meta{display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:space-between;margin-bottom:8px}
 .set-prompt-meta .set-row{flex-direction:row;align-items:center;gap:8px}
 .set-prompt-meta select{min-width:180px}
+.dict-layout{display:flex;flex-direction:column;gap:12px}
+.dict-toolbar{display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end}
+.dict-toolbar .set-row{flex:1;min-width:200px}
+.dict-meta{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.dict-table-wrap{overflow:auto;max-height:min(62vh,640px);border:1px solid var(--b1);border-radius:var(--r)}
+.dict-table{width:100%;border-collapse:collapse;font-size:12.5px}
+.dict-table th,.dict-table td{padding:8px 10px;text-align:left;border-bottom:1px solid var(--b1);vertical-align:top}
+.dict-table th{position:sticky;top:0;background:var(--bg2);color:var(--t2);font-size:11px;font-weight:600;z-index:1}
+.dict-table tr:hover td{background:var(--bg3)}
+.dict-table code{font-family:var(--mono);font-size:11px;color:var(--ac)}
+.dict-table .muted{color:var(--t3);font-size:11px}
+.dict-table input[type="text"],.dict-table input[type="number"],.dict-table select{
+  width:100%;min-width:0;font-size:12px;padding:4px 6px
+}
+.dict-table .chk{display:flex;align-items:center;justify-content:center}
+.dict-table .chk input{width:auto;accent-color:var(--ac)}
+.dict-facet-off{opacity:.55}
+@media(max-width:900px){
+  .dict-table-wrap{max-height:none}
+}
 @media(max-width:768px){
   .set-body{flex-direction:column;height:auto;overflow:visible}
   .set-nav{width:100%;flex-direction:row;flex-wrap:wrap;border-right:none;border-bottom:1px solid var(--b1)}
@@ -1342,6 +1362,7 @@ input[type=range]::-moz-range-thumb{
       <button type="button" class="on" id="snProv" onclick="setTab('prov')"><i class="ti ti-brain"></i> Провайдеры ИИ</button>
       <button type="button" id="snParse" onclick="setTab('parse')"><i class="ti ti-world-search"></i> Парсеры</button>
       <button type="button" id="snCond" onclick="setTab('cond')"><i class="ti ti-adjustments"></i> Условия</button>
+      <button type="button" id="snDict" onclick="setTab('dict')"><i class="ti ti-book-2"></i> Справочник</button>
       <button type="button" id="snRun" onclick="setTab('run')"><i class="ti ti-player-play"></i> Прогон</button>
       <button type="button" id="snPrompt" onclick="setTab('prompt')"><i class="ti ti-message-2-code"></i> Промпт</button>
       <button type="button" id="snExport" onclick="setTab('export')"><i class="ti ti-file-code"></i> Выгрузка</button>
@@ -1458,6 +1479,48 @@ input[type=range]::-moz-range-thumb{
             <div class="set-row"><label for="setFuzzy">Нечёткое совпадение ключа</label><input type="number" id="setFuzzy" min="0" max="1" step="0.01"></div>
             <div class="hint">Порог сопоставления подписи характеристики со справочником (0–1).</div>
           </div>
+        </div>
+      </section>
+
+      <section class="set-panel" id="setDict">
+        <div class="set-h">Справочник атрибутов</div>
+        <p class="set-lead">Файлы <code>dictionaries/attributes_{id}.json</code> задают характеристики раздела, состав фильтров витрины и строки аннотации. Без справочника выгрузка не бакетирует фасеты. Правки пишутся в файл отдельно от остальных настроек.</p>
+        <div class="dict-layout">
+          <div class="set-card">
+            <div class="dict-toolbar">
+              <div class="set-row">
+                <label for="dictCat">Раздел</label>
+                <select id="dictCat" onchange="onDictCatChange()"></select>
+              </div>
+              <div class="set-actions">
+                <button type="button" class="sbtn ghost" onclick="loadDictList()"><i class="ti ti-refresh"></i> Обновить</button>
+                <button type="button" class="sbtn primary" id="dictSave" onclick="saveDictionary()" disabled>Сохранить справочник</button>
+              </div>
+            </div>
+            <div class="dict-meta" id="dictMeta"></div>
+          </div>
+          <div class="set-card" style="padding:0;overflow:hidden">
+            <div class="dict-table-wrap">
+              <table class="dict-table" id="dictTable">
+                <thead>
+                  <tr>
+                    <th style="width:4rem">Порядок</th>
+                    <th>Код / имя</th>
+                    <th style="width:6rem">Тип</th>
+                    <th style="width:3.5rem" title="В аннотации">Анн.</th>
+                    <th style="width:3.5rem" title="Фильтр витрины">Фасет</th>
+                    <th>Подпись фильтра</th>
+                    <th style="width:7rem">Вид</th>
+                    <th style="width:5rem">Шаг</th>
+                  </tr>
+                </thead>
+                <tbody id="dictBody">
+                  <tr><td colspan="8" class="muted">Выберите раздел…</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+          <div class="hint" id="dictHint">Включите «Фасет», чтобы характеристика попала в <code>filters_{id}.json</code>. Для range укажите шаг или оставьте breaks в JSON файла.</div>
         </div>
       </section>
 
@@ -1669,16 +1732,17 @@ function showPage(id, btn){
   if(id==='enricher') applyDefaultProviderModels();
 }
 
-const SET_TABS={prov:['setProv','snProv'],parse:['setParse','snParse'],cond:['setCond','snCond'],run:['setRun','snRun'],prompt:['setPrompt','snPrompt'],export:['setExport','snExport'],logs:['setLogs','snLogs']};
+const SET_TABS={prov:['setProv','snProv'],parse:['setParse','snParse'],cond:['setCond','snCond'],dict:['setDict','snDict'],run:['setRun','snRun'],prompt:['setPrompt','snPrompt'],export:['setExport','snExport'],logs:['setLogs','snLogs']};
 function setTab(id){
   Object.entries(SET_TABS).forEach(([k,[panel,nav]])=>{
     document.getElementById(panel).classList.toggle('on',k===id);
     document.getElementById(nav).classList.toggle('on',k===id);
   });
   const foot=document.querySelector('.set-foot');
-  if(foot) foot.style.display=(id==='export'||id==='logs')?'none':'flex';
+  if(foot) foot.style.display=(id==='export'||id==='logs'||id==='dict')?'none':'flex';
   if(id==='prompt') refreshPromptPreview();
   if(id==='logs') refreshLogsJobs();
+  if(id==='dict') loadDictList();
 }
 
 /** Эталон выгрузки заказчика — семь полей + checkbox-фасеты. Живые данные сюда не подмешиваются. */
@@ -1724,6 +1788,184 @@ function setExportTpl(kind){
   document.getElementById('tplTabV2')?.classList.toggle('on',kind==='v2');
 }
 fillExportTemplates();
+
+/* ── Справочник attributes_{id}.json ───────────────────────── */
+let dictList=[];
+let dictCurrent=null;   // { id, name, file, attrs }
+let dictDirty=false;
+
+function dictStatus(msg, ok){
+  const el=document.getElementById('dictMeta');
+  if(!el) return;
+  if(!dictCurrent){ el.innerHTML=msg?`<span class="muted">${esc(msg)}</span>`:''; return; }
+  const d=dictCurrent;
+  const facets=(d.attrs||[]).filter(a=>a.facet?.enabled).length;
+  const ann=(d.attrs||[]).filter(a=>a.show_in_annotation).length;
+  el.innerHTML=`
+    <span class="set-badge">${esc(d.id)}</span>
+    <span class="set-note">${esc(d.name||'')}</span>
+    <span class="set-file" style="margin:0">${esc(d.file||'')}</span>
+    <span class="muted">${(d.attrs||[]).length} атрибутов · ${facets} фасетов · ${ann} в аннотации</span>
+    ${dictDirty?'<span class="set-badge" style="background:var(--abg);border-color:var(--abd);color:var(--amber)">не сохранено</span>':''}
+    ${msg?`<span class="muted">${esc(msg)}</span>`:''}
+    ${ok===false?'<span class="set-badge off">ошибка</span>':''}
+  `;
+}
+
+async function loadDictList(){
+  const sel=document.getElementById('dictCat');
+  if(!sel) return;
+  const keep=sel.value||dictCurrent?.id||'';
+  try{
+    const data=await apiJson('/api/dictionaries');
+    dictList=data.dictionaries||[];
+  }catch(e){
+    dictList=[];
+    dictStatus(e.message||'не удалось загрузить список', false);
+    sel.innerHTML='<option value="">нет справочников</option>';
+    return;
+  }
+  if(!dictList.length){
+    sel.innerHTML='<option value="">нет файлов attributes_*.json</option>';
+    dictCurrent=null;
+    renderDictTable([]);
+    dictStatus('Положите dictionaries/attributes_{id}.json');
+    document.getElementById('dictSave').disabled=true;
+    return;
+  }
+  sel.innerHTML=dictList.map(d=>
+    `<option value="${esc(d.id)}">${esc(d.id)} — ${esc(d.name)} (${d.facets} фасетов)</option>`
+  ).join('');
+  const pick=dictList.some(d=>d.id===keep)?keep:dictList[0].id;
+  sel.value=pick;
+  await loadDictionary(pick);
+}
+
+async function onDictCatChange(){
+  if(dictDirty && !confirm('Есть несохранённые правки. Сменить раздел?')){
+    document.getElementById('dictCat').value=dictCurrent?.id||'';
+    return;
+  }
+  await loadDictionary(getV('dictCat'));
+}
+
+async function loadDictionary(id){
+  if(!id) return;
+  try{
+    dictCurrent=await apiJson('/api/dictionaries/'+encodeURIComponent(id));
+    dictDirty=false;
+    renderDictTable(dictCurrent.attrs||[]);
+    dictStatus('');
+    document.getElementById('dictSave').disabled=false;
+  }catch(e){
+    dictCurrent=null;
+    renderDictTable([]);
+    dictStatus(e.message||'ошибка загрузки', false);
+    document.getElementById('dictSave').disabled=true;
+  }
+}
+
+function renderDictTable(attrs){
+  const body=document.getElementById('dictBody');
+  if(!body) return;
+  if(!attrs.length){
+    body.innerHTML='<tr><td colspan="8" class="muted">Пусто</td></tr>';
+    return;
+  }
+  const rows=[...attrs].sort((a,b)=>(a.order??0)-(b.order??0)||String(a.code).localeCompare(String(b.code)));
+  body.innerHTML=rows.map((a,i)=>{
+    const facet=a.facet||{};
+    const on=!!facet.enabled;
+    const kind=facet.kind||'enum';
+    const step=facet.step!=null?facet.step:'';
+    const breaks=Array.isArray(facet.breaks)?facet.breaks.join(', '):'';
+    const stepTitle=breaks?`breaks: ${breaks}`:'шаг бакета';
+    return `<tr data-i="${i}" class="${on?'':'dict-facet-off'}">
+      <td><input type="number" data-f="order" value="${a.order??0}" step="1"></td>
+      <td><code>${esc(a.code)}</code><div>${esc(a.name||'')}</div>
+        <div class="muted">${esc(a.unit||'—')} · ${esc(a.tier||'')} · ${esc(a.cardinality||'single')}</div></td>
+      <td class="muted">${esc(a.type||'')}</td>
+      <td class="chk"><input type="checkbox" data-f="ann" ${a.show_in_annotation?'checked':''} title="show_in_annotation"></td>
+      <td class="chk"><input type="checkbox" data-f="facet" ${on?'checked':''} title="facet.enabled"></td>
+      <td><input type="text" data-f="label" value="${esc(facet.label||a.name||'')}" ${on?'':'disabled'}></td>
+      <td><select data-f="kind" ${on?'':'disabled'}>
+        <option value="enum" ${kind==='enum'?'selected':''}>enum</option>
+        <option value="range" ${kind==='range'?'selected':''}>range</option>
+      </select></td>
+      <td><input type="number" data-f="step" value="${esc(step)}" step="any" min="0" title="${esc(stepTitle)}" ${on&&kind==='range'&&!breaks?'':'disabled'} placeholder="${breaks?'breaks':''}"></td>
+    </tr>`;
+  }).join('');
+  body.querySelectorAll('input,select').forEach(el=>{
+    el.addEventListener('change', onDictFieldEdit);
+    el.addEventListener('input', ()=>{ dictDirty=true; dictStatus(''); });
+  });
+}
+
+function onDictFieldEdit(ev){
+  const tr=ev.target.closest('tr[data-i]');
+  if(!tr||!dictCurrent) return;
+  const i=Number(tr.dataset.i);
+  const sorted=[...dictCurrent.attrs].sort((a,b)=>(a.order??0)-(b.order??0)||String(a.code).localeCompare(String(b.code)));
+  const attr=sorted[i];
+  if(!attr) return;
+  const f=ev.target.dataset.f;
+  if(f==='order') attr.order=Number(ev.target.value)||0;
+  if(f==='ann') attr.show_in_annotation=ev.target.checked;
+  if(f==='facet'){
+    attr.facet=attr.facet||{};
+    attr.facet.enabled=ev.target.checked;
+    if(attr.facet.enabled && !attr.facet.label) attr.facet.label=attr.name;
+    if(attr.facet.enabled && !attr.facet.kind) attr.facet.kind='enum';
+  }
+  if(f==='label'){ attr.facet=attr.facet||{}; attr.facet.label=ev.target.value; }
+  if(f==='kind'){ attr.facet=attr.facet||{}; attr.facet.kind=ev.target.value; }
+  if(f==='step'){
+    attr.facet=attr.facet||{};
+    const n=Number(ev.target.value);
+    if(Number.isFinite(n) && n>0) attr.facet.step=n;
+    else delete attr.facet.step;
+  }
+  dictDirty=true;
+  // Перерисовать строку disabled-состояний без потери фокуса на order/label
+  if(f==='facet'||f==='kind') renderDictTable(dictCurrent.attrs);
+  else dictStatus('');
+  document.getElementById('dictSave').disabled=false;
+}
+
+async function saveDictionary(){
+  if(!dictCurrent) return;
+  const btn=document.getElementById('dictSave');
+  btn.disabled=true;
+  try{
+    const saved=await apiJson('/api/dictionaries/'+encodeURIComponent(dictCurrent.id),{
+      method:'PUT',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({attrs:dictCurrent.attrs}),
+    });
+    dictCurrent=saved;
+    dictDirty=false;
+    renderDictTable(dictCurrent.attrs||[]);
+    dictStatus('сохранено');
+    // обновить подписи в селекте
+    const hit=dictList.find(d=>d.id===dictCurrent.id);
+    if(hit){
+      hit.attrs=(dictCurrent.attrs||[]).length;
+      hit.facets=(dictCurrent.attrs||[]).filter(a=>a.facet?.enabled).length;
+    }
+    const sel=document.getElementById('dictCat');
+    if(sel){
+      const v=sel.value;
+      sel.innerHTML=dictList.map(d=>
+        `<option value="${esc(d.id)}">${esc(d.id)} — ${esc(d.name)} (${d.facets} фасетов)</option>`
+      ).join('');
+      sel.value=v;
+    }
+  }catch(e){
+    dictStatus(e.message||'не удалось сохранить', false);
+  }finally{
+    btn.disabled=false;
+  }
+}
 
 let setPayload=null;
 let promptDefault='';
@@ -2952,6 +3194,7 @@ function statusOf(i){
     return {cls:'run',sym:'',txt:`${tag}${age}`};
   }
   if(!r) return {cls:'pd',sym:'·',txt:'в очереди'};
+  if(r.needs_review) return {cls:'wa',sym:'⚑',txt:'на проверку'};
   if(r.enriched) return r.enriched.warnings?.length
     ? {cls:'wa',sym:'⚠',txt:`${r.enriched.warnings.length} расхождений`}
     : {cls:'ok',sym:'✓',txt:'готово'};
@@ -3736,7 +3979,10 @@ function applyJob(d){
     const i=qIdx(d,d.from+k);
     if(i==null) return;
     results[i]={original:items[i]??null,enriched:r.enriched??null,skipped:r.skipped,
-      source:r.source??null,iT:r.iT??0,oT:r.oT??0,cost:r.cost??0,
+      needs_review:r.needs_review||false,
+      validation_issues:r.validation_issues||null,
+      source:r.source??null,iT:r.iT??0,oT:r.oT??0,
+      cost:typeof r.cost==='number'?r.cost:null,
       ...(r.error?{error:r.error}:{})};
     // Результат привязан к товару, а не к позиции: смена окна и категории не
     // должна терять оплаченное (см. runStore).
@@ -3935,15 +4181,17 @@ function downloadAll(fmt='json'){
         out.push('','РАСХОЖДЕНИЯ С ТЕКСТОМ:');
         out.push(d.warnings.map(w=>`  ⚠ ${w.field}: модель "${w.model}"${w.source!=null?`, в тексте "${w.source}"`:''} — ${w.note}`).join('\n'));
       }
-      const cardTxt=CARD_TEXTS.filter(([k])=>!isEmpty(d[k]));
+      const cardTxt=CARD_TEXTS.filter(([k])=>!isEmpty(cardText(d,k)));
       if(cardTxt.length){
         out.push('','КАРТОЧКА:');
-        out.push(cardTxt.map(([k,t])=>`  ${t} (${String(d[k]).length}): ${d[k]}`).join('\n'));
+        out.push(cardTxt.map(([k,t])=>{
+          const v=cardText(d,k);
+          return `  ${t} (${String(v).length}): ${v}`;
+        }).join('\n'));
       }
-      const metaTxt=SEARCH_META.filter(([k])=>!isEmpty(d[k]));
-      if(metaTxt.length){
-        out.push('','ДЛЯ ПОИСКОВИКОВ:');
-        out.push(metaTxt.map(([k,t])=>`  ${t} (${String(d[k]).length}): ${d[k]}`).join('\n'));
+      if(!isEmpty(d.meta_keywords)){
+        out.push('','КЛЮЧЕВЫЕ ФРАЗЫ:');
+        out.push(`  ${d.meta_keywords}`);
       }
 
       for(const [k,v] of Object.entries(d)){
@@ -4014,9 +4262,10 @@ function fileRow(p,r){
   return {...p,
     enriched:r?.enriched??null,
     ...(r?.skipped?{skipped:r.skipped}:{}),
+    ...(r?.needs_review?{needs_review:true,validation_issues:r.validation_issues||[]}:{}),
     ...(r?.error?{error:r.error}:{}),
     ...(r?.source?{source_url:r.source}:{}),
-    ...(r?.cost!=null?{_meta:{input_tokens:r.iT??0,output_tokens:r.oT??0,cost_usd:+r.cost.toFixed(6)}}:{}),
+    ...(typeof r?.cost==='number'?{_meta:{input_tokens:r.iT??0,output_tokens:r.oT??0,cost_usd:+r.cost.toFixed(6)}}:{}),
   };
 }
 
@@ -4163,29 +4412,28 @@ const FIELD_LABELS={
   vehicle_generations:'Поколения', compatible_engines:'Двигатели',
   assembly_group:'Группа', system:'Система', placement:'Расположение',
   material:'Материал', kit_contents:'Комплект', cross_numbers:'Кросс-номера',
-  synonyms:'Синонимы', search_aliases:'Псевдонимы поиска', seo_keywords:'Ключевые фразы',
-  seo_title:'Title (поисковик)', h1:'H1', meta_description:'Meta description (поисковик)',
-  short_description:'Краткое описание', seo_description:'Описание', bullets:'Преимущества',
-  // Длины текстов: карточка и meta для поисковика — разные роли.
-  seo_issues:'Заметки по текстам',
-  // Поля, которые модель оставила пустыми, а детерминированный разбор текста заполнил.
+  short_description:'Краткое описание', description:'Описание', bullets:'Преимущества',
+  strong:'Акценты', meta_keywords:'Ключевые фразы', web_info:'Сравнение с рынком',
+  // Legacy-ключи старых прогонов — не показываем в «Прочее».
+  seo_title:'Title', h1:'H1', meta_description:'Meta description',
+  seo_description:'Описание', synonyms:'Синонимы', search_aliases:'Псевдонимы поиска',
+  seo_keywords:'Ключевые фразы', seo_issues:'Заметки по текстам',
   filled_from_text:'Добрано из текста',
 };
 // Служебные поля: выводятся отдельными блоками, не как обычные карточки.
 const META_FIELDS=new Set(['specs','technical_specs','dimensions','thread','source_facts','warnings','confidence',
-  'seo_title','h1','meta_description','short_description','seo_description','bullets',
-  'synonyms','search_aliases','seo_keywords','seo_issues','filled_from_text','source_conflicts']);
-// Карточка vs поисковик — разные блоки в превью и в txt-выгрузке.
-const CARD_TEXTS=[['h1','H1'],['short_description','Краткое описание'],['seo_description','Описание']];
-const SEARCH_META=[['seo_title','Title'],['meta_description','Meta description']];
-const SEARCH_FIELDS=[['synonyms','Синонимы'],['search_aliases','Псевдонимы поиска'],['seo_keywords','Ключевые фразы']];
+  'short_description','description','bullets','strong','meta_keywords','web_info',
+  // legacy
+  'seo_title','h1','meta_description','seo_description','synonyms','search_aliases',
+  'seo_keywords','seo_issues','filled_from_text','source_conflicts']);
+// Тексты карточки по текущему контракту (+ fallback на старые ключи).
+const CARD_TEXTS=[['short_description','Краткое описание'],['description','Описание']];
 const SPEC_UNIT={л:'л',мл:'мл',кг:'кг',г:'г',мм:'мм',см:'см',дб:'дБ',об_мин:'об/мин',кг_сут:'кг/сут',л_цикл:'л/цикл'};
 
-function isCardIssue(x){
-  return /^(h1|short_description|seo_description):/.test(String(x));
-}
-function isSearchIssue(x){
-  return /^(seo_title|meta_description):/.test(String(x));
+/** description ← seo_description для старых результатов. */
+function cardText(d,key){
+  if(key==='description') return d.description||d.seo_description||'';
+  return d[key];
 }
 
 function specLabel(k){
@@ -4227,29 +4475,14 @@ function renderVis(d){
         +` — ${esc(String(w.note||''))}</div>`).join('')
       +`</div>`;
   }
-  if(Array.isArray(d.seo_issues)&&d.seo_issues.length){
-    const cardIss=d.seo_issues.filter(isCardIssue);
-    const searchIss=d.seo_issues.filter(isSearchIssue);
-    if(cardIss.length){
-      out+=`<div class="warnbox"><div class="wt">Заметки по карточке (${cardIss.length})</div>`
-        +cardIss.map(x=>`<div class="wi">${esc(String(x))}</div>`).join('')
-        +`</div>`;
-    }
-    if(searchIss.length){
-      out+=`<div class="warnbox"><div class="wt">Для поисковиков (${searchIss.length})</div>`
-        +searchIss.map(x=>`<div class="wi">${esc(String(x))}</div>`).join('')
-        +`</div>`;
-    }
-  }
-
-  const hasCard=!isEmpty(d.h1)||!isEmpty(d.short_description)||!isEmpty(d.seo_description)
+  const desc=cardText(d,'description');
+  const hasCard=!isEmpty(d.short_description)||!isEmpty(desc)
     ||(Array.isArray(d.bullets)&&d.bullets.length);
   if(hasCard){
     out+=`<article class="pcard">`;
-    if(!isEmpty(d.h1)) out+=`<h1 class="pcard-h1">${esc(d.h1)}</h1>`;
     if(!isEmpty(d.short_description)) out+=`<p class="pcard-lead">${esc(d.short_description)}</p>`;
-    if(!isEmpty(d.seo_description)&&d.seo_description!==d.short_description){
-      out+=`<div class="pcard-body">${textBlocks(d.seo_description).map(p=>`<p>${esc(p.replace(/\n+/g,' '))}</p>`).join('')}</div>`;
+    if(!isEmpty(desc)&&desc!==d.short_description){
+      out+=`<div class="pcard-body">${textBlocks(desc).map(p=>`<p>${esc(p.replace(/\n+/g,' '))}</p>`).join('')}</div>`;
     }
     if(Array.isArray(d.bullets)&&d.bullets.length){
       out+=`<ul class="pcard-bullets">${d.bullets.map(b=>`<li>${esc(String(b))}</li>`).join('')}</ul>`;
@@ -4257,19 +4490,12 @@ function renderVis(d){
     out+=`</article>`;
   }
 
-  const hasSearch=!isEmpty(d.seo_title)||!isEmpty(d.meta_description)
-    ||(Array.isArray(d.seo_keywords)&&d.seo_keywords.length)
-    ||(Array.isArray(d.synonyms)&&d.synonyms.length)
-    ||(Array.isArray(d.search_aliases)&&d.search_aliases.length);
-  if(hasSearch){
-    out+=`<div class="spec-title mt">Для поисковиков</div><div class="fgrid">`;
-    if(!isEmpty(d.seo_title)) out+=`<div class="fc"><div class="fk">Title</div><div class="fv">${esc(d.seo_title)}</div></div>`;
-    if(!isEmpty(d.meta_description)) out+=`<div class="fc"><div class="fk">Meta description</div><div class="fv">${esc(d.meta_description)}</div></div>`;
-    for(const [k,t] of SEARCH_FIELDS){
-      if(isEmpty(d[k])) continue;
-      const v=d[k];
-      out+=`<div class="fc"><div class="fk">${esc(t)}</div>${Array.isArray(v)?tags(v):`<div class="fv">${esc(String(v))}</div>`}</div>`;
-    }
+  if(!isEmpty(d.meta_keywords)||!isEmpty(d.web_info)
+    ||(Array.isArray(d.strong)&&d.strong.length)){
+    out+=`<div class="spec-title mt">Метаданные карточки</div><div class="fgrid">`;
+    if(!isEmpty(d.meta_keywords)) out+=`<div class="fc"><div class="fk">Ключевые фразы</div><div class="fv">${esc(String(d.meta_keywords))}</div></div>`;
+    if(Array.isArray(d.strong)&&d.strong.length) out+=`<div class="fc"><div class="fk">Акценты</div>${tags(d.strong)}</div>`;
+    if(!isEmpty(d.web_info)) out+=`<div class="fc"><div class="fk">Сравнение с рынком</div><div class="fv">${esc(String(d.web_info))}</div></div>`;
     out+=`</div>`;
   }
 

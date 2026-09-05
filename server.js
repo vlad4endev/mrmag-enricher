@@ -19,6 +19,9 @@
  *   GET  /api/parser          статус и настройки поиска пустых карточек
  *   GET  /api/product?url=... прокси к каталогу, только по разрешённым хостам
  *   GET  /api/categories      разделы из требований и схемы полей
+ *   GET  /api/dictionaries    список справочников attributes_{id}.json
+ *   GET  /api/dictionaries/:id  атрибуты справочника
+ *   PUT  /api/dictionaries/:id  сохранить атрибуты справочника
  *   GET  /api/catalog?category=kholodilniki[&limit=N]
  *                             обход раздела: товары с описаниями + автофильтры
  *   POST /api/export          выгрузка заказчика: products + filters + held
@@ -61,7 +64,9 @@ import { buildV2 } from './export_v2.js';
 import { buildCustomerExport, buildGoldShapeExport } from './pipeline/export.js';
 import { dictForProducts } from './pipeline/schema.js';
 import { createJobStore } from './jobs.js';
-import { loadConfig } from './pipeline/dict.js';
+import {
+  loadConfig, listDictionaries, readDictionaryAttrs, saveDictionaryAttrs,
+} from './pipeline/dict.js';
 import { publicParserStatus } from './pipeline/search.js';
 import {
   loadSettings, saveSettings, publicSettings, applySettingsPatch,
@@ -225,13 +230,13 @@ function explainUpstream(res, text) {
   return `OpenRouter HTTP ${res.status}: ${text.slice(0, 200)}`;
 }
 
-/** Тариф модели из того же кэша. Не найден — считаем по usage.cost из ответа. */
+/** Тариф модели из того же кэша. Не найден / нули — считаем по usage.cost из ответа. */
 function pricingOf(entry) {
   if (!entry?.pricing) return null;
-  return {
-    prompt:     parseFloat(entry.pricing.prompt) || 0,      // $ за токен
-    completion: parseFloat(entry.pricing.completion) || 0,
-  };
+  const prompt = parseFloat(entry.pricing.prompt) || 0;
+  const completion = parseFloat(entry.pricing.completion) || 0;
+  if (!prompt && !completion) return null;
+  return { prompt, completion };
 }
 
 // Один лимитер на модель — иначе параллельные вкладки выбьют rate limit.
@@ -309,6 +314,48 @@ async function apiModels(res) {
     });
   } catch (e) {
     json(res, 502, { error: e.message });
+  }
+}
+
+function apiDictionariesList(res) {
+  try {
+    json(res, 200, { dictionaries: listDictionaries(ROOT) });
+  } catch (e) {
+    json(res, 500, { error: e.message });
+  }
+}
+
+function apiDictionaryGet(res, id) {
+  try {
+    const attrs = readDictionaryAttrs(id, ROOT);
+    const meta = listDictionaries(ROOT).find(d => d.id === String(id));
+    json(res, 200, {
+      id: String(id),
+      name: meta?.name || `Категория ${id}`,
+      file: meta?.file || `dictionaries/attributes_${id}.json`,
+      attrs,
+    });
+  } catch (e) {
+    json(res, e.status || 500, { error: e.message });
+  }
+}
+
+async function apiDictionaryPut(req, res, id) {
+  const raw = await readBody(req, 2_000_000);
+  let body;
+  try { body = JSON.parse(raw); } catch { return json(res, 400, { error: 'Тело запроса не JSON' }); }
+  const attrs = Array.isArray(body) ? body : body?.attrs;
+  try {
+    const saved = saveDictionaryAttrs(id, attrs, ROOT);
+    const meta = listDictionaries(ROOT).find(d => d.id === String(id));
+    json(res, 200, {
+      id: String(id),
+      name: meta?.name || `Категория ${id}`,
+      file: meta?.file || `dictionaries/attributes_${id}.json`,
+      attrs: saved,
+    });
+  } catch (e) {
+    json(res, e.status || 400, { error: e.message });
   }
 }
 
@@ -719,21 +766,50 @@ async function enrichOne(product, { model, category, provider, onNote = () => {}
 
   note(`Отправляем в модель ${model}`, { step: 'model' });
   try {
-    const { enriched, iT, oT, cost, costSource, attempts, debug } = await enrichProduct(filled, {
+    const { enriched, iT, oT, cost, costSource, attempts, debug, needs_review, validation_issues, raw_response } = await enrichProduct(filled, {
       model, apiKey, schema,
       limiter: limiterFor(`${prov.id}:${model}`),
       pricing: pricingOf(entry),
       chatUrl: ep.chatUrl,
       headers: ep.headers,
       mismatchPolicy: process.env.MISMATCH_POLICY || settings.conditions.mismatch_policy,
-      maxRetries: settings.model.max_retries,
+      maxRetries: Math.min(2, settings.model.max_retries || 2),
       timeoutMs: settings.model.timeout_ms,
       maxTokens: settings.model.max_tokens,
       systemPrompt: settings.model.system_prompt || '',
       referer: ep.headers['HTTP-Referer'] || 'https://mrmag.ru',
       title: ep.headers['X-Title'] || 'Ogran',
-      onNote: msg => note(msg, { step: /retry|rate limit|обрыв|parse|SEO/i.test(msg) ? 'retry' : 'model', level: /retry|обрыв|parse/i.test(msg) ? 'warn' : 'info' }),
+      onNote: msg => note(msg, { step: /retry|rate limit|обрыв|parse|валидац/i.test(msg) ? 'retry' : 'model', level: /retry|обрыв|parse|валидац/i.test(msg) ? 'warn' : 'info' }),
     });
+
+    if (needs_review) {
+      note(`needs_review: ${(validation_issues || []).map(i => i.field).join(', ')}`, { step: 'validate', level: 'warn' });
+      return {
+        enriched: null,
+        needs_review: true,
+        validation_issues: validation_issues || [],
+        schema: schema.slug,
+        provider: prov.id,
+        ...(sourceUrl ? { source_url: sourceUrl } : {}),
+        usage: { prompt_tokens: iT, completion_tokens: oT, cost, cost_source: costSource, attempts },
+        detail: {
+          product: productMeta,
+          schema: schema.slug,
+          provider: prov.id,
+          model,
+          status: 'needs_review',
+          validation_issues: validation_issues || [],
+          ...(sourceUrl ? { source_url: sourceUrl } : {}),
+          usage: { prompt_tokens: iT, completion_tokens: oT, cost, cost_source: costSource, attempts },
+          source_text: debug?.source_text ?? null,
+          system_prompt: debug?.system_prompt ?? null,
+          user_content: debug?.user_content ?? null,
+          raw_response: raw_response ?? debug?.raw_response ?? null,
+          enriched: null,
+        },
+      };
+    }
+
     return {
       enriched,
       schema: schema.slug,
@@ -1081,6 +1157,13 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'PUT'  && u.pathname === '/api/settings')   return await apiSettingsPut(req, res);
     if (req.method === 'POST' && u.pathname === '/api/prompt/preview') return await apiPromptPreview(req, res);
     if (req.method === 'GET'  && u.pathname === '/api/categories') return apiCategories(res);
+    if (req.method === 'GET'  && u.pathname === '/api/dictionaries') return apiDictionariesList(res);
+    const dictRoute = u.pathname.match(/^\/api\/dictionaries\/(\d+)$/);
+    if (dictRoute) {
+      const [, id] = dictRoute;
+      if (req.method === 'GET') return apiDictionaryGet(res, id);
+      if (req.method === 'PUT') return await apiDictionaryPut(req, res, id);
+    }
     if (req.method === 'POST' && u.pathname === '/api/filters')    return apiFilters(req, res);
     if (req.method === 'POST' && u.pathname === '/api/quality')    return apiQuality(req, res);
     if (req.method === 'POST' && u.pathname === '/api/export-v2')  return await apiExportV2(req, res);

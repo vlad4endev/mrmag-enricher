@@ -309,7 +309,20 @@ function aliasValue(attr, raw) {
     const keys = [valueFold(canon), ...(list || []).map(valueFold)];
     if (keys.some(k => folds.has(k))) return canon;
   }
-  return null;
+  // «Светодиодное LED, 2 x 2 Вт» → канон по вхождению самой длинной метки.
+  let best = null;
+  let bestLen = 0;
+  for (const [canon, list] of Object.entries(aliases)) {
+    for (const k of [valueFold(canon), ...(list || []).map(valueFold)]) {
+      if (!k || k.length < 4) continue;
+      if (![...folds].some(f => f.includes(k))) continue;
+      if (k.length > bestLen) {
+        best = canon;
+        bestLen = k.length;
+      }
+    }
+  }
+  return best;
 }
 
 function splitMulti(raw) {
@@ -351,7 +364,9 @@ export function normalizeValue(attr, raw, { keyText = '' } = {}) {
     }
     if (typ === 'enum' || typ === 'text') {
       // Число с единицей в enum — скорее чужой атрибут, чем допустимое значение.
-      if (/\d+(?:[.,]\d+)?\s*(?:кг|г|л|мл|см|мм|дб|об)/i.test(v) && !/фронтал|вертикал|камер/i.test(v)) {
+      // \b не работает с кириллицей в JS — смотрим границу вручную.
+      if (/\d+(?:[.,]\d+)?\s*(?:кг|г|л|мл|см|мм|дб|об\/?\s*мин|вт|w)(?![а-яёa-z])/i.test(v)
+        && !/фронтал|вертикал|камер|светоди|галоген|накалив|led|алюмин|жиров|угольн/i.test(v)) {
         return { ok: false, value: null, reason: 'qty_in_enum', raw: v };
       }
       const aliased = aliasValue(attr, v);
@@ -360,6 +375,10 @@ export function normalizeValue(attr, raw, { keyText = '' } = {}) {
       }
       const val = displayEnum(aliased || v);
       if (!val) return empty;
+      if (!aliased && (isEchoOnly(val) || valueFold(val) === valueFold(attr.name)
+        || /^(?:освещение|подсветка|фильтр|материал|цвет|тип)$/i.test(val))) {
+        return { ok: false, value: null, reason: 'echo_value', raw: v };
+      }
       if (typ === 'enum' && isBareBooleanWord(val)) {
         const k = val.trim().toLowerCase().replace(/ё/g, 'е');
         if (BOOL_FALSE.has(k)) {

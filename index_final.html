@@ -787,198 +787,200 @@ input[type=range]::-moz-range-thumb{
 .set-prompt-meta{display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:space-between;margin-bottom:8px}
 .set-prompt-meta .set-row{flex-direction:row;align-items:center;gap:8px}
 .set-prompt-meta select{min-width:180px}
-.dict-layout{display:flex;flex-direction:column;gap:14px}
-.dict-toolbar{display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end}
-.dict-toolbar .set-row{flex:1;min-width:200px}
-.dict-meta{display:block;width:100%}
-.dict-meta .sch-stats{margin-top:0}
+.dict-layout{display:flex;flex-direction:column;gap:12px}
 .dict-create{display:none;margin-top:12px;padding-top:12px;border-top:1px solid var(--b1)}
 .dict-create.open{display:block}
-.dict-table-wrap{overflow:auto;max-height:min(62vh,640px);border:1px solid var(--b1);border-radius:var(--r)}
-.dict-table{width:100%;border-collapse:collapse;font-size:12.5px}
-.dict-table th,.dict-table td{padding:8px 10px;text-align:left;border-bottom:1px solid var(--b1);vertical-align:top}
-.dict-table th{position:sticky;top:0;background:var(--bg2);color:var(--t2);font-size:11px;font-weight:600;z-index:1}
-.dict-table tr:hover td{background:var(--bg3)}
-.dict-table code{font-family:var(--mono);font-size:11px;color:var(--ac)}
-.dict-table .muted{color:var(--t3);font-size:11px}
-.dict-table input[type="text"],.dict-table input[type="number"],.dict-table select{
-  width:100%;min-width:0;font-size:12px;padding:4px 6px
-}
-.dict-table .chk{display:flex;align-items:center;justify-content:center}
-.dict-table .chk input{width:auto;accent-color:var(--ac)}
-.dict-facet-off{opacity:.55}
-.dict-row-actions{display:flex;gap:4px;justify-content:flex-end}
-.dict-foot{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:12px 14px;border-top:1px solid var(--b1);background:var(--bg2)}
+.dict-meta{display:block;width:100%}
 
-/* ── Конструктор атрибутов: список вместо плотной таблицы ── */
-.sch-shell{display:grid;grid-template-columns:minmax(0,1fr) minmax(320px,400px);gap:14px;align-items:start}
-@media(max-width:1100px){.sch-shell{grid-template-columns:1fr}}
+/* ── Attributes editor (таблица + панель) ── */
+.ae-root{display:flex;flex-direction:column;gap:12px}
+.ae-bar{
+  display:flex;gap:14px;align-items:center;justify-content:space-between;flex-wrap:wrap;
+  background:var(--bg2);border:1px solid var(--b1);border-radius:10px;padding:10px 12px;
+}
+.ae-bar-left{display:flex;gap:12px;align-items:center;flex-wrap:wrap;min-width:0;flex:1}
+.ae-bar-right{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.ae-bar .set-row{margin:0;min-width:200px;flex:0 1 280px}
+.ae-bar .set-row label{font-size:11px;color:var(--t3);margin-bottom:2px}
+.ae-bar select#dictCat{height:36px;font-weight:600}
+.ae-meta{display:flex;gap:8px;align-items:center;color:var(--t3);font-size:12.5px;flex-wrap:wrap}
+.ae-meta code{background:var(--bg3);padding:2px 6px;border-radius:5px;font-size:11.5px;font-family:var(--mono);color:var(--t2)}
+.ae-meta b{color:var(--t1);font-weight:700}
+.ae-meta i{width:3px;height:3px;border-radius:50%;background:var(--b2);display:inline-block}
+.ae-meta-warn{color:var(--amber);background:var(--abg);padding:2px 8px;border-radius:20px;font-weight:600}
+.ae-meta-dirty{color:var(--amber);font-weight:650}
 
-.sch-stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;width:100%;margin-top:4px}
-@media(max-width:700px){.sch-stats{grid-template-columns:repeat(2,minmax(0,1fr))}}
-.sch-stat{
-  display:flex;flex-direction:column;gap:2px;padding:10px 12px;
-  border:1px solid var(--b1);border-radius:var(--r);background:var(--bg3);
-}
-.sch-stat-v{font-size:18px;font-weight:700;letter-spacing:-.03em;color:var(--t1);line-height:1.1}
-.sch-stat-l{font-size:11px;color:var(--t3);font-weight:550}
-.sch-stat.warn .sch-stat-v{color:var(--amber)}
-.sch-stat.err .sch-stat-v{color:var(--red)}
-.sch-stat.dirty{border-color:var(--abd);background:var(--abg)}
+.ae-work{display:grid;grid-template-columns:minmax(0,1fr) minmax(320px,380px);gap:12px;align-items:start}
+@media(max-width:1100px){.ae-work{grid-template-columns:1fr}}
 
-.sch-list-card{padding:0;overflow:hidden;border:1px solid var(--b1);border-radius:var(--r);background:var(--bg2)}
-.sch-list-bar{
-  display:flex;flex-wrap:wrap;gap:8px;align-items:center;
-  padding:10px 12px;border-bottom:1px solid var(--b1);background:var(--bg3);
+.ae-list{background:var(--bg2);border:1px solid var(--b1);border-radius:10px;overflow:hidden;min-width:0}
+.ae-tools{display:flex;gap:10px;padding:10px;border-bottom:1px solid var(--b1);flex-wrap:wrap;background:var(--bg3)}
+.ae-search{
+  flex:1;min-width:180px;height:34px;padding:0 12px;border:1px solid var(--b1);
+  border-radius:8px;background:var(--bg2);color:var(--t1);font-size:13px;
 }
-.sch-search{
-  flex:1;min-width:160px;height:34px;padding:0 12px 0 34px;border:1px solid var(--b1);
-  border-radius:var(--r2);background:var(--bg2) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%237b8799' stroke-width='2'%3E%3Ccircle cx='11' cy='11' r='7'/%3E%3Cpath d='M20 20l-3-3'/%3E%3C/svg%3E") 10px 50% no-repeat;
-  color:var(--t1);font-size:13px;
+.ae-search:focus{outline:none;border-color:var(--ac);box-shadow:var(--focus)}
+.ae-tabs{display:flex;gap:4px;flex-wrap:wrap}
+.ae-tab{
+  height:34px;padding:0 12px;border:1px solid var(--b1);background:var(--bg2);border-radius:8px;
+  cursor:pointer;display:inline-flex;gap:6px;align-items:center;font-size:12.5px;font-weight:550;color:var(--t2);
 }
-.sch-search:focus{border-color:var(--ac);outline:none;box-shadow:var(--focus)}
-.sch-filters{display:flex;flex-wrap:wrap;gap:4px}
-.sch-filter{
-  height:30px;padding:0 10px;border:1px solid var(--b1);border-radius:999px;
-  background:var(--bg2);color:var(--t2);font-size:12px;font-weight:600;cursor:pointer;
-}
-.sch-filter:hover{border-color:var(--ac-b);color:var(--ac)}
-.sch-filter.on{background:var(--ac-w);border-color:var(--ac-b);color:var(--ac)}
+.ae-tab span{color:var(--t3);font-size:12px;font-variant-numeric:tabular-nums}
+.ae-tab.on{background:var(--ac-w);border-color:var(--ac-b);color:var(--ac);font-weight:700}
+.ae-tab.on span{color:var(--ac)}
 
-.sch-list{max-height:min(58vh,620px);overflow:auto;padding:6px}
-.sch-empty{padding:28px 16px;text-align:center;color:var(--t3);font-size:13px}
+.ae-bulk{
+  display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:8px 10px;
+  background:var(--ac-w);border-bottom:1px solid var(--b1);font-size:13px;color:var(--t1);
+}
+.ae-bulk button{
+  border:1px solid var(--ac-b);background:var(--bg2);border-radius:6px;padding:4px 10px;
+  cursor:pointer;font-size:12.5px;color:var(--t1);
+}
+.ae-bulk button.danger{color:var(--red);border-color:var(--rbd)}
+.ae-bulk button.plain{border-color:transparent;background:none;color:var(--t3)}
 
-.sch-row{
-  display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px 14px;align-items:center;
-  padding:12px 12px 12px 14px;margin-bottom:4px;border:1px solid transparent;
-  border-radius:var(--r);cursor:pointer;position:relative;background:transparent;
-  transition:background .12s,border-color .12s;
+.ae-table-wrap{max-height:min(58vh,620px);overflow:auto}
+.ae-tbl{width:100%;border-collapse:collapse;table-layout:fixed;font-size:13px}
+.ae-tbl thead th{
+  position:sticky;top:0;z-index:2;background:var(--bg3);border-bottom:1px solid var(--b1);
+  text-align:left;font-size:11.5px;font-weight:650;color:var(--t3);padding:8px 6px;white-space:nowrap;
 }
-.sch-row::before{
-  content:'';position:absolute;left:0;top:10px;bottom:10px;width:3px;border-radius:0 2px 2px 0;
-  background:transparent;
+.ae-tbl td{border-bottom:1px solid var(--b1);padding:3px 6px;vertical-align:middle}
+.ae-tbl tbody tr{cursor:pointer}
+.ae-tbl tbody tr:hover{background:var(--bg3)}
+.ae-tbl tbody tr.sel{background:var(--ac-w)!important;box-shadow:inset 3px 0 0 var(--ac)}
+.ae-tbl tbody tr.row-err{background:var(--rbg)}
+.ae-tbl tbody tr.row-warn{background:var(--abg)}
+.ae-cell{
+  width:100%;height:30px;padding:0 8px;border:1px solid transparent;border-radius:6px;
+  background:transparent;color:var(--t1);font-size:13px;
 }
-.sch-row:hover{background:var(--bg3);border-color:var(--b1)}
-.sch-row.on{background:var(--ac-w);border-color:var(--ac-b)}
-.sch-row.on::before{background:var(--ac)}
-.sch-row.off{opacity:.62}
-.sch-row.off:hover{opacity:.85}
+.ae-cell:hover{border-color:var(--b1);background:var(--bg2)}
+.ae-cell:focus{outline:none;border-color:var(--ac);background:var(--bg2);box-shadow:var(--focus)}
+.ae-cell.mono{font-family:var(--mono);font-size:12.5px}
+.ae-unit{text-align:center;color:var(--t3)}
+.ae-ord{color:var(--t3);font-size:12px;position:relative;white-space:nowrap;font-variant-numeric:tabular-nums}
+.ae-ord-btns{display:none;gap:1px;margin-left:2px}
+.ae-tbl tr:hover .ae-ord-btns{display:inline-flex}
+.ae-tbl tr:hover .ae-ord-n{display:none}
+.ae-ord-btns button{
+  border:1px solid var(--b1);background:var(--bg2);border-radius:4px;width:18px;height:20px;
+  font-size:8px;cursor:pointer;padding:0;color:var(--t3);
+}
+.ae-vals{display:flex;gap:4px;align-items:center;overflow:hidden}
+.ae-vals span{
+  background:var(--bg3);border:1px solid var(--b1);border-radius:5px;padding:2px 7px;
+  font-size:11.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:72px;color:var(--t2);
+}
+.ae-vals em{color:var(--t3);font-size:12px;font-style:normal}
+.ae-warn-text{color:var(--amber);font-size:12px}
+.ae-dash{color:var(--b2)}
+.ae-row-acts{display:flex;gap:4px;align-items:center;justify-content:flex-end}
+.ae-dot{width:8px;height:8px;border-radius:50%;display:inline-block}
+.ae-dot-err{background:var(--red)}.ae-dot-warn{background:var(--amber)}
+.ae-none{padding:28px;text-align:center;color:var(--t3)}
+.ae-foot{display:flex;gap:12px;align-items:center;padding:10px;border-top:1px solid var(--b1);background:var(--bg3)}
+.ae-hint{color:var(--t3);font-size:12px}
 
-.sch-row-main{min-width:0;display:flex;flex-direction:column;gap:4px}
-.sch-row-title{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px 8px}
-.sch-row-name{font-size:14px;font-weight:700;letter-spacing:-.02em;color:var(--t1);line-height:1.25}
-.sch-row-unit{font-size:12px;color:var(--t3);font-weight:500}
-.sch-row-meta{display:flex;flex-wrap:wrap;gap:6px 10px;align-items:center;font-size:12px;color:var(--t3)}
-.sch-row-code{
-  font-family:var(--mono);font-size:11.5px;color:var(--ac);background:var(--bg);
-  border:1px solid var(--b1);padding:1px 6px;border-radius:4px;
+.ae-chk{
+  width:18px;height:18px;border:1px solid var(--b2);border-radius:5px;background:var(--bg2);cursor:pointer;
+  display:inline-flex;align-items:center;justify-content:center;font-size:11px;color:transparent;padding:0;line-height:1;
 }
-.sch-row-side{display:flex;flex-wrap:wrap;gap:6px;justify-content:flex-end;align-items:center}
-.sch-chip{
-  display:inline-flex;align-items:center;gap:4px;height:24px;padding:0 8px;
-  border-radius:999px;border:1px solid var(--b1);background:var(--bg2);
-  font-size:11px;font-weight:650;color:var(--t2);white-space:nowrap;
-}
-.sch-chip.facet{background:var(--ac-w);border-color:var(--ac-b);color:var(--ac)}
-.sch-chip.muted{opacity:.75}
-.sch-chip .n{font-variant-numeric:tabular-nums;font-weight:700;color:var(--t1)}
+.ae-chk.on{background:var(--ac);border-color:var(--ac);color:#fff}
 
-.sch-badge{display:inline-flex;align-items:center;height:22px;padding:0 8px;border-radius:999px;font-size:10px;font-weight:700;letter-spacing:.02em;border:1px solid var(--b1)}
-.sch-ok{background:var(--ac-w);color:var(--ac);border-color:var(--ac-b)}
-.sch-warn{background:var(--abg);color:var(--amber);border-color:var(--abd)}
-.sch-err{background:var(--rbg);color:var(--red);border-color:var(--rbd)}
+.ae-panel{
+  background:var(--bg2);border:1px solid var(--b1);border-radius:10px;position:sticky;top:12px;
+  max-height:calc(100vh - 100px);display:flex;flex-direction:column;min-height:280px;
+}
+.ae-panel-head{
+  display:flex;justify-content:space-between;align-items:flex-start;gap:8px;
+  padding:12px;border-bottom:1px solid var(--b1);background:var(--bg2);position:sticky;top:0;z-index:1;
+}
+.ae-panel-key{font-family:var(--mono);font-size:13px;color:var(--ac);font-weight:700}
+.ae-panel-sub{color:var(--t3);font-size:13px;margin-top:2px}
+.ae-panel-body{overflow:auto;padding:12px;display:flex;flex-direction:column;gap:16px}
+.ae-panel-empty{padding:24px}
+.ae-empty-title{margin:0 0 6px;font-weight:650;color:var(--t1);font-size:14px}
+.ae-empty-text{margin:0;color:var(--t3);font-size:13px;line-height:1.45;max-width:32ch}
 
-.sch-drawer{
-  display:block;position:sticky;top:12px;max-height:calc(100vh - 100px);overflow:auto;
-  border:1px solid var(--b1);border-radius:var(--r);background:var(--bg2);
-  box-shadow:0 8px 24px rgba(11,18,32,.06);min-height:280px;
+.ae-grp{display:flex;flex-direction:column;gap:8px}
+.ae-grp-title{
+  font-weight:650;font-size:13px;display:flex;gap:6px;align-items:center;
+  padding-bottom:6px;border-bottom:1px solid var(--b1);color:var(--t1);
 }
-:root[data-theme="dark"] .sch-drawer{box-shadow:0 8px 28px rgba(0,0,0,.35)}
-.sch-drawer-h{
-  display:flex;align-items:center;justify-content:space-between;gap:10px;
-  position:sticky;top:0;z-index:2;padding:14px 16px 12px;margin:0;
-  font-weight:700;font-size:15px;letter-spacing:-.02em;color:var(--t1);
-  background:var(--bg2);border-bottom:1px solid var(--b1);
+.ae-count{background:var(--bg3);border-radius:20px;padding:1px 7px;font-size:11px;color:var(--t3);font-variant-numeric:tabular-nums}
+.ae-fld{display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--t3);flex:1}
+.ae-fld-row{display:flex;gap:8px}
+.ae-fld input,.ae-fld select,.ae-fld textarea{
+  height:32px;padding:0 8px;border:1px solid var(--b1);border-radius:7px;background:var(--bg);color:var(--t1);font-size:13px;
 }
-.sch-drawer-h .sch-drawer-sub{font-size:11px;font-weight:550;color:var(--t3);letter-spacing:0}
-.sch-drawer-idle{
-  display:flex;flex-direction:column;align-items:flex-start;justify-content:center;
-  gap:8px;min-height:220px;padding:28px 20px;color:var(--t3);
+.ae-fld textarea{height:auto;padding:6px 8px;resize:vertical;min-height:52px}
+.ae-fld input:focus,.ae-fld select:focus,.ae-fld textarea:focus{outline:none;border-color:var(--ac);box-shadow:var(--focus)}
+.ae-note{color:var(--t3);font-size:12px;margin:0}
+.ae-switch{display:flex;gap:8px;align-items:center;font-size:13px;cursor:pointer;color:var(--t1)}
+.ae-canon{border:1px solid var(--b1);border-radius:8px;padding:6px;display:flex;flex-direction:column;gap:6px;background:var(--bg3)}
+.ae-canon-head{display:flex;gap:4px;align-items:center}
+.ae-canon-head input{
+  flex:1;height:28px;padding:0 8px;border:1px solid transparent;border-radius:6px;font-size:13px;
+  background:var(--bg2);color:var(--t1);
 }
-.sch-drawer-idle b{color:var(--t2);font-size:14px;font-weight:650}
-.sch-drawer-idle p{margin:0;font-size:12.5px;line-height:1.45;max-width:28ch}
+.ae-canon-head input:hover,.ae-canon-head input:focus{border-color:var(--b1);outline:none}
+.ae-chips{display:flex;flex-wrap:wrap;gap:4px;align-items:center}
+.ae-chip{
+  background:var(--bg2);border:1px solid var(--b1);border-radius:20px;padding:2px 4px 2px 9px;font-size:12px;
+  display:inline-flex;gap:2px;align-items:center;color:var(--t2);
+}
+.ae-chip button{border:none;background:none;cursor:pointer;color:var(--t3);padding:0 3px;font-size:13px}
+.ae-chip-ghost{
+  background:none;border:1px dashed var(--b1);color:var(--t3);cursor:pointer;padding:2px 9px;
+  border-radius:20px;font-size:12px;
+}
+.ae-chip-input{border:none;background:none;min-width:110px;height:24px;font-size:12px;flex:1;color:var(--t1);outline:none}
+.ae-suggest{display:flex;flex-wrap:wrap;gap:4px;margin-top:2px}
+.ae-issues{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:4px}
+.ae-issue{font-size:12px;padding:6px 9px;border-radius:7px}
+.ae-issue-error{background:var(--rbg);color:var(--red)}
+.ae-issue-warn{background:var(--abg);color:var(--amber)}
+.ae-icon-btn{
+  width:26px;height:26px;border:1px solid transparent;background:none;border-radius:6px;
+  cursor:pointer;color:var(--t3);font-size:16px;line-height:1;
+}
+.ae-icon-btn:hover{background:var(--bg3);color:var(--t1)}
+.ae-icon-btn.danger:hover{background:var(--rbg);color:var(--red)}
+.ae-panel-acts{display:flex;gap:8px;flex-wrap:wrap;padding-top:4px}
 
-.sch-row{
-  display:grid;grid-template-columns:minmax(0,1fr) auto;gap:6px 12px;align-items:start;
-  padding:11px 12px 11px 14px;margin-bottom:2px;border:1px solid transparent;
-  border-radius:var(--r);cursor:pointer;position:relative;background:transparent;
-  transition:background .12s,border-color .12s,transform .12s;
+.ae-modal-wrap{
+  position:fixed;inset:0;background:rgba(11,18,32,.4);display:flex;align-items:center;
+  justify-content:center;padding:24px;z-index:80;
 }
-.sch-row::before{
-  content:'';position:absolute;left:0;top:8px;bottom:8px;width:3px;border-radius:0 2px 2px 0;
-  background:transparent;transition:background .12s;
-}
-.sch-row:hover{background:var(--bg3);border-color:var(--b1)}
-.sch-row.on{background:var(--ac-w);border-color:var(--ac-b)}
-.sch-row.on::before{background:var(--ac)}
-.sch-row.off{opacity:.55}
-.sch-row.off:hover{opacity:.9}
-.sch-row-main{min-width:0;display:flex;flex-direction:column;gap:5px}
-.sch-row-title{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px 8px}
-.sch-row-name{font-size:13.5px;font-weight:700;letter-spacing:-.02em;color:var(--t1);line-height:1.25}
-.sch-row-unit{font-size:11.5px;color:var(--t3);font-weight:500}
-.sch-row-meta{display:flex;flex-wrap:wrap;gap:6px 8px;align-items:center;font-size:11.5px;color:var(--t3)}
-.sch-row-code{
-  font-family:var(--mono);font-size:11px;color:var(--ac);background:var(--bg);
-  border:1px solid var(--b1);padding:1px 6px;border-radius:4px;
-}
-.sch-row-vals{display:flex;flex-wrap:wrap;gap:4px;margin-top:1px}
-.sch-val{
-  font-size:11px;line-height:1.2;padding:3px 7px;border-radius:4px;
-  background:var(--bg);border:1px solid var(--b1);color:var(--t2);max-width:12rem;
-  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
-}
-.sch-val.more{color:var(--t3);border-style:dashed}
-.sch-row-side{display:flex;flex-direction:column;align-items:flex-end;gap:6px;padding-top:1px}
-.sch-row-side-top{display:flex;flex-wrap:wrap;gap:5px;justify-content:flex-end;align-items:center}
-.sch-row-go{color:var(--t3);font-size:16px;line-height:1;opacity:.55}
-.sch-row.on .sch-row-go,.sch-row:hover .sch-row-go{color:var(--ac);opacity:1}
-.sch-drawer-body{padding:4px 16px 16px}
-.sch-drawer-body .set-row{margin-bottom:10px}
-.sch-drawer-body .set-check{margin:4px 0 10px}
-.sch-block{margin-top:14px;padding-top:12px;border-top:1px solid var(--b1)}
-.sch-block-h{font-weight:650;margin-bottom:6px;font-size:13px;color:var(--t1)}
-.sch-canon{margin-bottom:10px;padding:10px;border:1px solid var(--b1);border-radius:var(--r);background:var(--bg3)}
-.sch-canon-h{display:flex;gap:6px;margin-bottom:6px}
-.sch-canon textarea,.sch-drawer textarea,#schImportText{
-  width:100%;font-size:12.5px;padding:8px 10px;border:1px solid var(--b1);border-radius:var(--r2);
-  background:var(--bg);color:var(--t1);resize:vertical;line-height:1.4;
-}
-.sch-drawer input[type="text"],.sch-drawer input[type="number"],.sch-drawer select{
-  width:100%;height:34px;padding:0 10px;border:1px solid var(--b1);border-radius:var(--r2);
-  background:var(--bg);color:var(--t1);font-size:13px;
-}
-.sch-side{display:flex;flex-direction:column;gap:12px}
-.sch-issue-block{margin-bottom:10px;padding:10px 12px;border:1px solid var(--b1);border-radius:var(--r);background:var(--bg3)}
-.sch-issue-h{margin-bottom:6px;display:flex;flex-wrap:wrap;gap:6px;align-items:center}
-.sch-issue-block ul{margin:0;padding-left:18px;font-size:12.5px;color:var(--t2)}
-.sch-acts{display:inline-flex;gap:4px;margin-left:6px;flex-wrap:wrap}
-.sch-prev-card{border:1px solid var(--b1);border-radius:var(--r);padding:10px 12px;margin-bottom:8px;background:var(--bg3)}
-.sch-prev-h{font-weight:650;margin-bottom:8px;font-size:13px;display:flex;justify-content:space-between;gap:8px}
-.sch-prev-row{display:flex;justify-content:space-between;gap:8px;font-size:12.5px;padding:4px 0;border-bottom:1px solid var(--b1)}
-.sch-prev-row:last-child{border-bottom:0}
-.sch-error{color:var(--red)}.sch-info{color:var(--t3)}
+:root[data-theme="dark"] .ae-modal-wrap{background:rgba(0,0,0,.55)}
+.ae-modal{background:var(--bg2);border:1px solid var(--b1);border-radius:12px;width:min(560px,100%);max-height:80vh;display:flex;flex-direction:column}
+.ae-modal-head{display:flex;justify-content:space-between;align-items:center;padding:12px 16px;border-bottom:1px solid var(--b1)}
+.ae-modal-head h3{margin:0;font-size:15px}
+.ae-modal-body{overflow:auto;padding:12px 16px;display:flex;flex-direction:column;gap:14px}
+.ae-facet-name{font-weight:650;font-size:13px;margin-bottom:6px}
+.ae-facet-name .unit{color:var(--t3);font-weight:400}
+.ae-facet-vals{display:flex;flex-wrap:wrap;gap:5px}
+.ae-facet-val{border:1px solid var(--b1);border-radius:6px;padding:3px 9px;font-size:12px;background:var(--bg3)}
+
 .sch-import-list{display:flex;flex-direction:column;gap:2px;max-height:360px;overflow:auto;border:1px solid var(--b1);border-radius:var(--r);padding:6px;background:var(--bg3)}
 .sch-import-row{display:flex;gap:8px;align-items:flex-start;font-size:12.5px;padding:8px;border-radius:var(--r2)}
 .sch-import-row:hover{background:var(--bg2)}
 .sch-import-row input{margin-top:3px;accent-color:var(--ac)}
 .sch-import-body{flex:1;min-width:0}
-#schImportText{font-family:var(--mono,ui-monospace,monospace)}
-@media(max-width:900px){
-  .dict-table-wrap,.sch-list{max-height:none}
-  .sch-row{grid-template-columns:1fr}
-  .sch-row-side{align-items:flex-start}
-}
+#schImportText{width:100%;font-family:var(--mono);font-size:12.5px;padding:8px 10px;border:1px solid var(--b1);border-radius:var(--r2);background:var(--bg);color:var(--t1);resize:vertical}
+.sch-issue-block{margin-bottom:10px;padding:10px 12px;border:1px solid var(--b1);border-radius:var(--r);background:var(--bg3)}
+.sch-issue-h{margin-bottom:6px;display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.sch-issue-block ul{margin:0;padding-left:18px;font-size:12.5px;color:var(--t2)}
+.sch-acts{display:inline-flex;gap:4px;margin-left:6px;flex-wrap:wrap}
+.sch-badge{display:inline-flex;align-items:center;height:22px;padding:0 8px;border-radius:999px;font-size:10px;font-weight:700;border:1px solid var(--b1)}
+.sch-ok{background:var(--ac-w);color:var(--ac);border-color:var(--ac-b)}
+.sch-warn{background:var(--abg);color:var(--amber);border-color:var(--abd)}
+.sch-err{background:var(--rbg);color:var(--red);border-color:var(--rbd)}
+.sch-error{color:var(--red)}.sch-info{color:var(--t3)}
+.sch-side{display:flex;flex-direction:column;gap:12px}
+@media(max-width:900px){.ae-table-wrap{max-height:none}}
 @media(max-width:768px){
   .set-body{flex-direction:column;height:auto;overflow:visible}
   .set-nav{width:100%;flex-direction:row;flex-wrap:wrap;border-right:none;border-bottom:1px solid var(--b1)}
@@ -1675,102 +1677,129 @@ input[type=range]::-moz-range-thumb{
 
       <section class="set-panel" id="setDict">
         <div class="set-h" id="schConstructor">Атрибуты и фильтры</div>
-        <p class="set-lead">Category schema (<code>attributes_{id}.json</code>) — единственный источник истины для фильтров. AI только извлекает значение; каноны и бакеты задаются здесь. <code>filters_{id}.json</code> строится из schema + нормализованных товаров.</p>
-        <div class="dict-layout">
-          <div class="set-card">
-            <div class="dict-toolbar">
+        <p class="set-lead">Schema (<code>attributes_{id}.json</code>) — источник истины для фильтров. Каноны и фасеты задаются здесь; AI только извлекает значение.</p>
+        <div class="dict-layout ae-root">
+          <div class="ae-bar">
+            <div class="ae-bar-left">
               <div class="set-row">
                 <label for="dictCat">Категория</label>
                 <select id="dictCat" onchange="onDictCatChange()"></select>
               </div>
-              <div class="set-actions">
-                <button type="button" class="sbtn primary" onclick="runSchemaAudit()"><i class="ti ti-shield-check"></i> Проверить категорию</button>
-                <button type="button" class="sbtn ghost" onclick="runSchemaPreview()"><i class="ti ti-eye"></i> Превью фильтров</button>
-                <button type="button" class="sbtn ghost" onclick="toggleDictCreate()"><i class="ti ti-plus"></i> Создать</button>
-                <button type="button" class="sbtn ghost" onclick="dictImportPick()"><i class="ti ti-upload"></i> Импорт</button>
-                <button type="button" class="sbtn ghost" id="dictExport" onclick="exportDictionaryUi()" disabled><i class="ti ti-download"></i> Экспорт</button>
-                <button type="button" class="sbtn ghost" onclick="loadDictList()"><i class="ti ti-refresh"></i></button>
-                <button type="button" class="sbtn danger" id="dictDelete" onclick="deleteDictionaryUi()" disabled>Удалить</button>
-                <button type="button" class="sbtn primary" id="dictSave" onclick="saveDictionary()" disabled>Сохранить</button>
+              <div class="ae-meta" id="dictMeta"></div>
+            </div>
+            <div class="ae-bar-right">
+              <button type="button" class="sbtn ghost" onclick="runSchemaAudit()"><i class="ti ti-shield-check"></i> Проверить</button>
+              <button type="button" class="sbtn ghost" onclick="runSchemaPreview()"><i class="ti ti-eye"></i> Превью фильтров</button>
+              <button type="button" class="sbtn ghost" onclick="toggleDictCreate()"><i class="ti ti-plus"></i> Создать</button>
+              <button type="button" class="sbtn ghost" onclick="dictImportPick()"><i class="ti ti-upload"></i> Импорт</button>
+              <button type="button" class="sbtn ghost" id="dictExport" onclick="exportDictionaryUi()" disabled><i class="ti ti-download"></i> Экспорт</button>
+              <button type="button" class="sbtn ghost" onclick="loadDictList()" title="Обновить"><i class="ti ti-refresh"></i></button>
+              <button type="button" class="sbtn danger" id="dictDelete" onclick="deleteDictionaryUi()" disabled>Удалить</button>
+              <button type="button" class="sbtn primary" id="dictSave" onclick="saveDictionary()" disabled>Сохранить</button>
+            </div>
+          </div>
+          <input type="file" id="dictImportFile" accept=".json,application/json" hidden>
+          <div class="dict-create set-card" id="dictCreateBox">
+            <div class="set-grid">
+              <div class="set-row">
+                <label for="dictNewId">ID раздела (из categories.json)</label>
+                <input type="number" id="dictNewId" min="1" step="1" placeholder="например 929">
+              </div>
+              <div class="set-row">
+                <label for="dictCopyFrom">Скопировать атрибуты из</label>
+                <select id="dictCopyFrom">
+                  <option value="">пусто — только Бренд</option>
+                </select>
               </div>
             </div>
-            <input type="file" id="dictImportFile" accept=".json,application/json" hidden>
-            <div class="dict-create" id="dictCreateBox">
-              <div class="set-grid">
-                <div class="set-row">
-                  <label for="dictNewId">ID раздела (из categories.json)</label>
-                  <input type="number" id="dictNewId" min="1" step="1" placeholder="например 929">
-                </div>
-                <div class="set-row">
-                  <label for="dictCopyFrom">Скопировать атрибуты из</label>
-                  <select id="dictCopyFrom">
-                    <option value="">пусто — только Бренд</option>
-                  </select>
-                </div>
-              </div>
-              <div class="set-actions" style="margin-top:10px">
-                <button type="button" class="sbtn primary" onclick="createDictionaryUi()">Создать файл справочника</button>
-                <button type="button" class="sbtn ghost" onclick="dictImportPick()">Импорт из JSON…</button>
-                <button type="button" class="sbtn ghost" onclick="toggleDictCreate(false)">Отмена</button>
-              </div>
-              <div class="hint" style="margin-top:8px">ID — числовой код раздела. Импорт принимает массив атрибутов или <code>{"id":929,"attrs":[...]}</code>.</div>
+            <div class="set-actions" style="margin-top:10px">
+              <button type="button" class="sbtn primary" onclick="createDictionaryUi()">Создать файл справочника</button>
+              <button type="button" class="sbtn ghost" onclick="dictImportPick()">Импорт из JSON…</button>
+              <button type="button" class="sbtn ghost" onclick="toggleDictCreate(false)">Отмена</button>
             </div>
-            <div class="dict-meta" id="dictMeta"></div>
+            <div class="hint" style="margin-top:8px">ID — числовой код раздела. Импорт: массив или <code>{"id":929,"attrs":[...]}</code>.</div>
           </div>
 
-          <div class="sch-shell">
-            <div>
-              <div class="sch-list-card">
-                <div class="sch-list-bar">
-                  <input type="search" class="sch-search" id="schSearch" placeholder="Поиск по имени или key…" oninput="onSchemaListFilter()" autocomplete="off">
-                  <div class="sch-filters" role="group" aria-label="Фильтр списка">
-                    <button type="button" class="sch-filter on" data-sch-filter="all" onclick="setSchemaListFilter('all',this)">Все</button>
-                    <button type="button" class="sch-filter" data-sch-filter="facet" onclick="setSchemaListFilter('facet',this)">В фильтрах</button>
-                    <button type="button" class="sch-filter" data-sch-filter="problems" onclick="setSchemaListFilter('problems',this)">Проблемы</button>
-                    <button type="button" class="sch-filter" data-sch-filter="enum" onclick="setSchemaListFilter('enum',this)">ENUM</button>
-                  </div>
-                </div>
-                <div class="sch-list" id="dictBody" role="list">
-                  <div class="sch-empty">Выберите категорию…</div>
-                </div>
-                <div class="dict-foot">
-                  <button type="button" class="sbtn ghost" id="dictAddAttr" onclick="addDictAttr()" disabled><i class="ti ti-row-insert-bottom"></i> Добавить атрибут</button>
-                  <span class="hint" style="margin:0" id="schListHint">Клик по строке открывает редактор справа</span>
+          <div class="ae-work">
+            <div class="ae-list">
+              <div class="ae-tools">
+                <input type="search" class="ae-search" id="schSearch" placeholder="Поиск по ключу, названию или значению" oninput="onSchemaListFilter()" autocomplete="off">
+                <div class="ae-tabs" role="group" aria-label="Фильтр">
+                  <button type="button" class="ae-tab on" data-sch-filter="all" onclick="setSchemaListFilter('all',this)">Все <span id="aeCntAll">0</span></button>
+                  <button type="button" class="ae-tab" data-sch-filter="facet" onclick="setSchemaListFilter('facet',this)">В фильтрах <span id="aeCntFacet">0</span></button>
+                  <button type="button" class="ae-tab" data-sch-filter="problems" onclick="setSchemaListFilter('problems',this)">Проблемы <span id="aeCntProblems">0</span></button>
+                  <button type="button" class="ae-tab" data-sch-filter="enum" onclick="setSchemaListFilter('enum',this)">ENUM <span id="aeCntEnum">0</span></button>
                 </div>
               </div>
-              <div class="set-card" style="margin-top:12px">
-                <div class="set-card-h"><b>Импорт списка → атрибуты</b></div>
-                <p class="hint" style="margin-top:0">Вставьте названия характеристик или строки «ключ — значение» из карточки/PDF. ИИ разложит по существующим атрибутам (синонимы/каноны) или предложит новые. Применение только после вашего подтверждения.</p>
-                <textarea id="schImportText" rows="6" placeholder="Тип холодильника&#10;Расположение морозильной камеры — Сверху&#10;Зоны свежести&#10;Общий объём — 370 л&#10;Дисплей — есть"></textarea>
-                <div class="set-actions" style="margin-top:8px">
-                  <button type="button" class="sbtn primary" onclick="runSchemaImport('ai')"><i class="ti ti-sparkles"></i> Разобрать с ИИ</button>
-                  <button type="button" class="sbtn ghost" onclick="runSchemaImport('heuristic')">Без ИИ (эвристика)</button>
-                  <button type="button" class="sbtn ghost" id="schImportApplyBtn" onclick="applySchemaImport()" disabled>Применить выбранные</button>
-                </div>
-                <div id="schImportMeta" class="muted" style="margin-top:6px"></div>
-                <div id="schImportBox" style="margin-top:8px"></div>
+              <div class="ae-bulk" id="aeBulk" hidden>
+                <span id="aeBulkLabel">Выбрано 0</span>
+                <button type="button" onclick="aeBulkPatch({facet:true})">В фильтры</button>
+                <button type="button" onclick="aeBulkPatch({facet:false})">Убрать из фильтров</button>
+                <button type="button" onclick="aeBulkPatch({annotate:true})">Извлекать</button>
+                <button type="button" class="danger" onclick="aeBulkDelete()">Удалить</button>
+                <button type="button" class="plain" onclick="aeClearMarks()">Снять выбор</button>
               </div>
-              <div class="set-card" style="margin-top:12px">
-                <div class="set-card-h"><b>Проверка значений</b></div>
-                <div id="schAuditBox"><p class="muted">Нажмите «Проверить категорию»</p></div>
+              <div class="ae-table-wrap">
+                <table class="ae-tbl">
+                  <colgroup>
+                    <col style="width:34px"><col style="width:52px"><col style="width:160px">
+                    <col><col style="width:100px"><col style="width:64px">
+                    <col style="width:36px"><col style="width:36px"><col style="width:200px">
+                    <col style="width:64px">
+                  </colgroup>
+                  <thead>
+                    <tr>
+                      <th><button type="button" class="ae-chk" id="aeMarkAll" onclick="aeToggleMarkAll()" title="Выбрать все"></button></th>
+                      <th>№</th><th>Ключ</th><th>Название</th><th>Тип</th><th>Ед.</th>
+                      <th title="В фильтрах">Ф</th><th title="Извлекать">И</th>
+                      <th>Значения</th><th></th>
+                    </tr>
+                  </thead>
+                  <tbody id="dictBody">
+                    <tr><td colspan="10" class="ae-none">Выберите категорию…</td></tr>
+                  </tbody>
+                </table>
               </div>
-              <div class="set-card" style="margin-top:12px">
-                <div class="set-card-h"><b>Превью фильтров</b></div>
-                <div id="schPreviewBox"><p class="muted">Нажмите «Превью фильтров» (каноны схемы; счётчики — если передать товары в API)</p></div>
+              <div class="ae-foot">
+                <button type="button" class="sbtn primary" id="dictAddAttr" onclick="addDictAttr()" disabled>Добавить атрибут</button>
+                <span class="ae-hint" id="schListHint">↑ ↓ — строки, Esc — закрыть редактор</span>
               </div>
             </div>
-            <aside class="sch-drawer" id="schDrawer">
-              <div class="sch-drawer-h" id="schDrawerTitle">Редактор атрибута <span class="sch-drawer-sub">выберите слева</span></div>
-              <div class="sch-drawer-body" id="schDrawerBody">
-                <div class="sch-drawer-idle">
-                  <b>Список слева → правка здесь</b>
-                  <p>Кликните атрибут, чтобы править тип, каноны, фильтр и «не путать с». Inline-поля в списке убраны — меньше шума.</p>
+            <aside class="ae-panel" id="schDrawer">
+              <div class="ae-panel-head" id="schDrawerTitle">
+                <div>
+                  <div class="ae-panel-key">Редактор</div>
+                  <div class="ae-panel-sub">выберите строку</div>
+                </div>
+              </div>
+              <div class="ae-panel-body" id="schDrawerBody">
+                <div class="ae-panel-empty">
+                  <p class="ae-empty-title">Ничего не выбрано</p>
+                  <p class="ae-empty-text">Кликните строку — здесь откроются каноны, синонимы, фасет и «не путать с».</p>
                 </div>
               </div>
             </aside>
           </div>
-          <div class="hint" id="dictHint">filters_{id}.json — generated output из facet.enabled + canonical values / range breaks + normalized product attrs (pipeline/facets.buildFilters).</div>
+
+          <details class="set-card" style="margin:0">
+            <summary style="cursor:pointer;font-weight:650">Импорт списка → атрибуты</summary>
+            <p class="hint">Вставьте названия или «ключ — значение». Применение только после подтверждения.</p>
+            <textarea id="schImportText" rows="5" placeholder="Тип загрузки&#10;Загрузка белья — 7 кг"></textarea>
+            <div class="set-actions" style="margin-top:8px">
+              <button type="button" class="sbtn primary" onclick="runSchemaImport('ai')"><i class="ti ti-sparkles"></i> Разобрать с ИИ</button>
+              <button type="button" class="sbtn ghost" onclick="runSchemaImport('heuristic')">Без ИИ</button>
+              <button type="button" class="sbtn ghost" id="schImportApplyBtn" onclick="applySchemaImport()" disabled>Применить выбранные</button>
+            </div>
+            <div id="schImportMeta" class="muted" style="margin-top:6px"></div>
+            <div id="schImportBox" style="margin-top:8px"></div>
+          </details>
+          <details class="set-card" style="margin:0">
+            <summary style="cursor:pointer;font-weight:650">Проверка значений</summary>
+            <div id="schAuditBox" class="sch-side"><p class="muted">Нажмите «Проверить»</p></div>
+          </details>
+          <div class="hint" id="dictHint">filters_{id}.json строится из facet.enabled + канонов / range breaks + нормализованных attrs.</div>
         </div>
+        <div id="aeFacetModal" hidden></div>
       </section>
 
       <section class="set-panel" id="setRun">
@@ -2201,7 +2230,7 @@ function renderDictTable(attrs){
   const body=document.getElementById('dictBody');
   if(!body) return;
   if(!attrs.length){
-    body.innerHTML='<div class="sch-empty">Нет атрибутов — добавьте строку</div>';
+    body.innerHTML='<tr><td colspan="10" class="ae-none">Нет атрибутов — добавьте строку</td></tr>';
     return;
   }
   const rows=[...attrs].sort((a,b)=>(a.order??0)-(b.order??0)||String(a.code).localeCompare(String(b.code)));

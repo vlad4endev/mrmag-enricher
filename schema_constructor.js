@@ -1,17 +1,679 @@
 /**
- * Конструктор атрибутов и фильтров — UI поверх /api/dictionaries.
- * Подключается из index_final.html; использует apiJson/esc из страницы.
+ * Конструктор атрибутов: таблица + правая панель (AttributesEditor UX).
+ * Данные — dictionaries/attributes_{id}.json через /api/dictionaries.
  */
 (function () {
   'use strict';
 
+  const KEY_RE = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
+  const TYPES = [
+    { v: 'enum', t: 'enum' },
+    { v: 'string', t: 'string' },
+    { v: 'number', t: 'number' },
+    { v: 'integer', t: 'integer' },
+    { v: 'boolean', t: 'boolean' },
+    { v: 'text', t: 'text' },
+  ];
+  const WIDGETS = [
+    { v: 'checkbox', t: 'Чекбоксы' },
+    { v: 'radio', t: 'Радио' },
+    { v: 'slider', t: 'Слайдер' },
+    { v: 'toggle', t: 'Переключатель' },
+  ];
+
   let schemaAudit = null;
-  let schemaPreview = null;
   let editCode = null;
   let listFilter = 'all';
   let listQuery = '';
+  let marked = new Set();
+  let importSuggestions = [];
+  let issueActions = [];
 
   function $(id) { return document.getElementById(id); }
+
+  function canonList(attr) {
+    return Object.keys(attr.value_aliases || {});
+  }
+
+  function aliasesOf(attr, canon) {
+    const list = (attr.value_aliases || {})[canon] || [];
+    return list.filter(s => s !== canon);
+  }
+
+  function widgetOf(attr) {
+    if (attr.facet?.widget) return attr.facet.widget;
+    if (attr.type === 'boolean') return 'toggle';
+    if (attr.facet?.kind === 'range') return 'slider';
+    if (attr.facet?.kind === 'boolean') return 'toggle';
+    return 'checkbox';
+  }
+
+  function kindFromWidget(widget, type) {
+    if (type === 'boolean' || widget === 'toggle') return 'boolean';
+    if (widget === 'slider') return 'range';
+    return 'enum';
+  }
+
+  function localIssues(attr, all) {
+    const issues = [];
+    if (!String(attr.code || '').trim()) issues.push({ level: 'error', text: 'Пустой key' });
+    else if (!KEY_RE.test(attr.code)) issues.push({ level: 'error', text: 'key: латиница/цифры/_' });
+    if (all.some(x => x !== attr && x.code === attr.code))
+      issues.push({ level: 'error', text: 'Дубликат key' });
+    if (!String(attr.name || '').trim()) issues.push({ level: 'error', text: 'Нет названия' });
+    const canons = canonList(attr);
+    if (attr.type === 'enum' && !canons.length)
+      issues.push({ level: 'warn', text: 'enum без канонических значений' });
+    if ((attr.type === 'number' || attr.type === 'integer') && !attr.unit)
+      issues.push({ level: 'warn', text: 'У числового атрибута нет единицы' });
+    if (attr.facet?.enabled && attr.type === 'enum' && canons.length > 40)
+      issues.push({ level: 'warn', text: 'Слишком много значений для фасета' });
+    const lower = canons.map(c => c.trim().toLowerCase());
+    if (new Set(lower).size !== lower.length)
+      issues.push({ level: 'error', text: 'Дубликаты значений' });
+    const aud = (schemaAudit?.attributes || []).find(a => a.code === attr.code);
+    (aud?.issues || []).forEach(i => {
+      if (i.severity === 'error' || i.severity === 'warn')
+        issues.push({ level: i.severity === 'error' ? 'error' : 'warn', text: i.message });
+    });
+    return issues;
+  }
+
+  function issueLevel(issues) {
+    if (issues.some(i => i.level === 'error')) return 'err';
+    if (issues.length) return 'warn';
+    return '';
+  }
+
+  function markDirty(msg) {
+    window.dictDirty = true;
+    refreshSchemaMeta(msg || '');
+    setDictButtons({ save: true, del: true, add: true });
+  }
+
+  window.refreshSchemaMeta = function refreshSchemaMeta(extra) {
+    const el = $('dictMeta');
+    if (!el) return;
+    if (!window.dictCurrent) {
+      el.innerHTML = extra ? `<span>${esc(extra)}</span>` : '';
+      return;
+    }
+    const d = window.dictCurrent;
+    const attrs = d.attrs || [];
+    const facets = attrs.filter(a => a.facet?.enabled).length;
+    const enums = attrs.filter(a => a.type === 'enum').length;
+    const problems = attrs.filter(a => localIssues(a, attrs).length).length;
+    el.innerHTML = `
+      <code>${esc(d.file || ('dictionaries/attributes_' + d.id + '.json'))}</code>
+      <b>${attrs.length}</b> атрибутов<i></i>
+      <b>${facets}</b> в фильтрах<i></i>
+      <b>${enums}</b> enum
+      ${problems ? `<span class="ae-meta-warn">${problems} с проблемами</span>` : ''}
+      ${window.dictDirty ? '<span class="ae-meta-dirty">не сохранено</span>' : ''}
+      ${extra ? `<span>${esc(extra)}</span>` : ''}
+    `;
+    const set = (id, n) => { const nEl = $(id); if (nEl) nEl.textContent = String(n); };
+    set('aeCntAll', attrs.length);
+    set('aeCntFacet', facets);
+    set('aeCntProblems', problems);
+    set('aeCntEnum', enums);
+  };
+
+  function shownAttrs(attrs) {
+    const q = listQuery;
+    return [...attrs]
+      .filter(a => {
+        if (listFilter === 'facet') return !!a.facet?.enabled;
+        if (listFilter === 'problems') return localIssues(a, attrs).length > 0;
+        if (listFilter === 'enum') return a.type === 'enum';
+        return true;
+      })
+      .filter(a => {
+        if (!q) return true;
+        const hay = [
+          a.code, a.name, a.unit,
+          ...canonList(a),
+          ...Object.values(a.value_aliases || {}).flat(),
+        ].join(' ').toLowerCase();
+        return hay.includes(q);
+      })
+      .sort((a, b) => (a.order ?? 0) - (b.order ?? 0) || String(a.code).localeCompare(String(b.code)));
+  }
+
+  window.setSchemaListFilter = function setSchemaListFilter(mode) {
+    listFilter = mode || 'all';
+    document.querySelectorAll('[data-sch-filter]').forEach(b => {
+      b.classList.toggle('on', b.dataset.schFilter === listFilter);
+    });
+    renderSchemaTable(dictCurrent?.attrs || []);
+  };
+
+  window.onSchemaListFilter = function onSchemaListFilter() {
+    listQuery = String($('schSearch')?.value || '').trim().toLowerCase();
+    renderSchemaTable(dictCurrent?.attrs || []);
+  };
+
+  function chkHtml(on, attrs) {
+    return `<button type="button" class="ae-chk ${on ? 'on' : ''}" ${attrs || ''}>${on ? '✓' : ''}</button>`;
+  }
+
+  window.renderSchemaTable = function renderSchemaTable(attrs) {
+    const body = $('dictBody');
+    if (!body) return;
+    attrs = attrs || [];
+    if (!attrs.length) {
+      body.innerHTML = '<tr><td colspan="10" class="ae-none">Нет атрибутов — добавьте строку</td></tr>';
+      refreshSchemaMeta();
+      renderIdlePanel();
+      return;
+    }
+    const rows = shownAttrs(attrs);
+    const all = attrs;
+    if (!rows.length) {
+      body.innerHTML = '<tr><td colspan="10" class="ae-none">Под фильтр ничего не попало</td></tr>';
+    } else {
+      body.innerHTML = rows.map(a => {
+        const issues = localIssues(a, all);
+        const lvl = issueLevel(issues);
+        const canons = canonList(a);
+        const vals = a.type === 'enum'
+          ? (canons.length
+            ? `<span class="ae-vals">${canons.slice(0, 3).map(v => `<span>${esc(v)}</span>`).join('')}${canons.length > 3 ? `<em>+${canons.length - 3}</em>` : ''}</span>`
+            : '<span class="ae-warn-text">каноны не заданы</span>')
+          : '<span class="ae-dash">—</span>';
+        const typeOpts = TYPES.map(t =>
+          `<option value="${t.v}" ${a.type === t.v ? 'selected' : ''}>${t.t}</option>`
+        ).join('');
+        return `<tr data-code="${esc(a.code)}" class="${editCode === a.code ? 'sel' : ''} ${lvl ? 'row-' + lvl : ''}">
+          <td data-stop>${chkHtml(marked.has(a.code), `data-ae="mark"`)}</td>
+          <td class="ae-ord" data-stop>
+            <span class="ae-ord-n">${(a.order ?? 0)}</span>
+            <span class="ae-ord-btns">
+              <button type="button" data-ae="up" title="Выше">▲</button>
+              <button type="button" data-ae="down" title="Ниже">▼</button>
+            </span>
+          </td>
+          <td data-stop><input class="ae-cell mono" data-ae="code" value="${esc(a.code)}" spellcheck="false"></td>
+          <td data-stop><input class="ae-cell" data-ae="name" value="${esc(a.name || '')}"></td>
+          <td data-stop><select class="ae-cell" data-ae="type">${typeOpts}</select></td>
+          <td data-stop><input class="ae-cell ae-unit" data-ae="unit" value="${esc(a.unit || '')}"></td>
+          <td data-stop>${chkHtml(!!a.facet?.enabled, 'data-ae="facet" title="В фильтрах"')}</td>
+          <td data-stop>${chkHtml(!!a.show_in_annotation, 'data-ae="ann" title="Извлекать"')}</td>
+          <td>${vals}</td>
+          <td data-stop>
+            <div class="ae-row-acts">
+              ${lvl ? `<span class="ae-dot ae-dot-${lvl}" title="${esc(issues.map(i => i.text).join('; '))}"></span>` : ''}
+              <button type="button" class="ae-icon-btn danger" data-ae="del" title="Удалить">×</button>
+            </div>
+          </td>
+        </tr>`;
+      }).join('');
+    }
+
+    const visibleCodes = rows.map(a => a.code);
+    const allMarked = visibleCodes.length > 0 && visibleCodes.every(c => marked.has(c));
+    const markAll = $('aeMarkAll');
+    if (markAll) {
+      markAll.classList.toggle('on', allMarked);
+      markAll.textContent = allMarked ? '✓' : '';
+    }
+    updateBulkBar();
+
+    body.querySelectorAll('tr[data-code]').forEach(tr => {
+      tr.addEventListener('click', (e) => {
+        if (e.target.closest('[data-stop]')) return;
+        openSchemaEditor(tr.dataset.code);
+      });
+      tr.querySelectorAll('[data-ae]').forEach(el => {
+        const act = el.dataset.ae;
+        if (act === 'mark' || act === 'facet' || act === 'ann' || act === 'up' || act === 'down' || act === 'del') {
+          el.addEventListener('click', (e) => {
+            e.stopPropagation();
+            onRowAction(tr.dataset.code, act);
+          });
+        } else {
+          el.addEventListener('focus', () => openSchemaEditor(tr.dataset.code, { keepPanel: true }));
+          el.addEventListener('change', () => onCellEdit(tr.dataset.code, act, el));
+          if (el.tagName === 'INPUT') {
+            el.addEventListener('input', () => { window.dictDirty = true; });
+          }
+        }
+      });
+    });
+
+    const hint = $('schListHint');
+    if (hint) {
+      hint.textContent = rows.length === attrs.length
+        ? `${attrs.length} атрибутов · ↑ ↓ Esc`
+        : `Показано ${rows.length} из ${attrs.length}`;
+    }
+    refreshSchemaMeta();
+    document.querySelectorAll('#dictBody tr[data-code]').forEach(tr => {
+      tr.classList.toggle('sel', tr.dataset.code === editCode);
+    });
+  };
+
+  function onRowAction(code, act) {
+    const attrs = dictCurrent?.attrs || [];
+    const attr = attrs.find(a => a.code === code);
+    if (!attr) return;
+    if (act === 'mark') {
+      if (marked.has(code)) marked.delete(code); else marked.add(code);
+      renderSchemaTable(attrs);
+      return;
+    }
+    if (act === 'facet') {
+      attr.facet = attr.facet || {};
+      attr.facet.enabled = !attr.facet.enabled;
+      if (attr.facet.enabled && !attr.facet.kind) attr.facet.kind = kindFromWidget(widgetOf(attr), attr.type);
+      markDirty();
+      renderSchemaTable(attrs);
+      if (editCode === code) openSchemaEditor(code);
+      return;
+    }
+    if (act === 'ann') {
+      attr.show_in_annotation = !attr.show_in_annotation;
+      markDirty();
+      renderSchemaTable(attrs);
+      if (editCode === code) openSchemaEditor(code);
+      return;
+    }
+    if (act === 'up' || act === 'down') {
+      moveAttr(code, act === 'up' ? -1 : 1);
+      return;
+    }
+    if (act === 'del') {
+      if (attrs.length <= 1) { refreshSchemaMeta('нужен хотя бы один атрибут'); return; }
+      if (!confirm(`Удалить «${attr.name || code}»?`)) return;
+      dictCurrent.attrs = attrs.filter(a => a !== attr);
+      marked.delete(code);
+      if (editCode === code) { editCode = null; renderIdlePanel(); }
+      markDirty('удалено');
+      renderSchemaTable(dictCurrent.attrs);
+    }
+  }
+
+  function onCellEdit(code, field, el) {
+    const attr = (dictCurrent?.attrs || []).find(a => a.code === code);
+    if (!attr) return;
+    if (field === 'code') {
+      const next = String(el.value || '').trim();
+      if (!KEY_RE.test(next)) {
+        refreshSchemaMeta('код: латиница/цифры/_');
+        el.value = attr.code;
+        return;
+      }
+      if ((dictCurrent.attrs || []).some(a => a !== attr && a.code === next)) {
+        refreshSchemaMeta(`код «${next}» занят`);
+        el.value = attr.code;
+        return;
+      }
+      if (marked.has(attr.code)) { marked.delete(attr.code); marked.add(next); }
+      attr.code = next;
+      editCode = next;
+    }
+    if (field === 'name') {
+      attr.name = el.value;
+      if (!Array.isArray(attr.synonyms) || !attr.synonyms.length) attr.synonyms = [attr.name];
+      else attr.synonyms[0] = attr.name;
+      if (attr.facet && !attr.facet.label) attr.facet.label = attr.name;
+    }
+    if (field === 'type') {
+      attr.type = el.value;
+      if (attr.type === 'boolean') {
+        attr.facet = attr.facet || {};
+        attr.facet.kind = 'boolean';
+      }
+    }
+    if (field === 'unit') attr.unit = el.value.trim() || null;
+    markDirty();
+    renderSchemaTable(dictCurrent.attrs);
+    if (editCode) openSchemaEditor(editCode);
+  }
+
+  function moveAttr(code, dir) {
+    const list = [...(dictCurrent?.attrs || [])].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+    const i = list.findIndex(a => a.code === code);
+    const j = i + dir;
+    if (i < 0 || j < 0 || j >= list.length) return;
+    [list[i], list[j]] = [list[j], list[i]];
+    list.forEach((a, k) => { a.order = k; });
+    dictCurrent.attrs = list;
+    markDirty();
+    renderSchemaTable(list);
+  }
+
+  function updateBulkBar() {
+    const bar = $('aeBulk');
+    const lab = $('aeBulkLabel');
+    if (!bar) return;
+    const n = marked.size;
+    bar.hidden = n === 0;
+    if (lab) lab.textContent = `Выбрано ${n}`;
+  }
+
+  window.aeToggleMarkAll = function aeToggleMarkAll() {
+    const rows = shownAttrs(dictCurrent?.attrs || []);
+    const allOn = rows.length && rows.every(a => marked.has(a.code));
+    if (allOn) rows.forEach(a => marked.delete(a.code));
+    else rows.forEach(a => marked.add(a.code));
+    renderSchemaTable(dictCurrent?.attrs || []);
+  };
+
+  window.aeClearMarks = function aeClearMarks() {
+    marked.clear();
+    renderSchemaTable(dictCurrent?.attrs || []);
+  };
+
+  window.aeBulkPatch = function aeBulkPatch(upd) {
+    (dictCurrent?.attrs || []).forEach(a => {
+      if (!marked.has(a.code)) return;
+      if ('facet' in upd) {
+        a.facet = a.facet || {};
+        a.facet.enabled = !!upd.facet;
+      }
+      if ('annotate' in upd) a.show_in_annotation = !!upd.annotate;
+    });
+    markDirty('массовое изменение');
+    renderSchemaTable(dictCurrent.attrs);
+  };
+
+  window.aeBulkDelete = function aeBulkDelete() {
+    if (!marked.size) return;
+    if ((dictCurrent.attrs || []).length - marked.size < 1) {
+      refreshSchemaMeta('нужен хотя бы один атрибут');
+      return;
+    }
+    if (!confirm(`Удалить ${marked.size} атрибутов?`)) return;
+    dictCurrent.attrs = dictCurrent.attrs.filter(a => !marked.has(a.code));
+    if (editCode && marked.has(editCode)) { editCode = null; renderIdlePanel(); }
+    marked.clear();
+    markDirty('удалено');
+    renderSchemaTable(dictCurrent.attrs);
+  };
+
+  function renderIdlePanel() {
+    const title = $('schDrawerTitle');
+    const body = $('schDrawerBody');
+    if (title) {
+      title.innerHTML = `<div><div class="ae-panel-key">Редактор</div><div class="ae-panel-sub">выберите строку</div></div>`;
+    }
+    if (body) {
+      body.innerHTML = `<div class="ae-panel-empty">
+        <p class="ae-empty-title">Ничего не выбрано</p>
+        <p class="ae-empty-text">Кликните строку — здесь откроются каноны, синонимы, фасет и «не путать с».</p>
+      </div>`;
+    }
+  }
+
+  function chipsHtml(items, dataKey) {
+    return `<div class="ae-chips" data-chips="${esc(dataKey)}">
+      ${(items || []).map((x, i) =>
+        `<span class="ae-chip">${esc(x)}<button type="button" data-chip-rm="${i}">×</button></span>`
+      ).join('')}
+      <input class="ae-chip-input" data-chip-add placeholder="${dataKey === 'blacklist' ? 'термин + Enter' : 'синоним + Enter'}">
+    </div>`;
+  }
+
+  window.openSchemaEditor = function openSchemaEditor(code, opts) {
+    const attr = (dictCurrent?.attrs || []).find(a => a.code === code);
+    const body = $('schDrawerBody');
+    const title = $('schDrawerTitle');
+    if (!attr || !body) return;
+    editCode = code;
+    document.querySelectorAll('#dictBody tr[data-code]').forEach(tr => {
+      tr.classList.toggle('sel', tr.dataset.code === code);
+    });
+    if (title) {
+      title.innerHTML = `<div>
+        <div class="ae-panel-key">${esc(attr.code || 'без ключа')}</div>
+        <div class="ae-panel-sub">${esc(attr.name || 'Без названия')}</div>
+      </div>
+      <button type="button" class="ae-icon-btn" onclick="closeSchemaEditor()" title="Закрыть (Esc)">×</button>`;
+    }
+
+    const issues = localIssues(attr, dictCurrent.attrs || []);
+    const canons = Object.entries(attr.value_aliases || {});
+    const facetOn = !!attr.facet?.enabled;
+    const widget = widgetOf(attr);
+    const blacklist = attr.blacklist || [];
+
+    body.innerHTML = `
+      ${issues.length ? `<ul class="ae-issues">${issues.map(i =>
+        `<li class="ae-issue ae-issue-${i.level}">${esc(i.text)}</li>`).join('')}</ul>` : ''}
+      <section class="ae-grp">
+        <div class="ae-grp-title">Основное</div>
+        <label class="ae-fld"><span>Ключ</span><input class="mono" id="schCode" value="${esc(attr.code)}" spellcheck="false"></label>
+        <label class="ae-fld"><span>Название</span><input id="schName" value="${esc(attr.name || '')}"></label>
+        <div class="ae-fld-row">
+          <label class="ae-fld"><span>Тип</span>
+            <select id="schType">${TYPES.map(t =>
+              `<option value="${t.v}" ${attr.type === t.v ? 'selected' : ''}>${t.t}</option>`).join('')}</select>
+          </label>
+          <label class="ae-fld"><span>Единица</span>
+            <input id="schUnit" value="${esc(attr.unit || '')}" placeholder="кг, см, дБ">
+          </label>
+        </div>
+        <label class="ae-fld"><span>Подсказка для модели</span>
+          <textarea id="schDesc" rows="2" placeholder="Как трактовать при извлечении">${esc(attr.description || '')}</textarea>
+        </label>
+      </section>
+      <section class="ae-grp">
+        <div class="ae-grp-title">Канонические значения ${attr.type === 'enum' ? `<span class="ae-count">${canons.length}</span>` : ''}</div>
+        ${attr.type !== 'enum' && attr.type !== 'text'
+          ? `<p class="ae-note">Каноны для enum/text. Сейчас: ${esc(attr.type)}.</p>`
+          : `<div id="schCanons">${canons.map(([canon, syns]) => {
+            const al = (syns || []).filter(s => s !== canon);
+            return `<div class="ae-canon" data-canon="${esc(canon)}">
+              <div class="ae-canon-head">
+                <input data-cf="canon" value="${esc(canon)}">
+                <button type="button" class="ae-icon-btn danger" data-cf="del">×</button>
+              </div>
+              ${chipsHtml(al, 'syn')}
+            </div>`;
+          }).join('')}</div>
+          <button type="button" class="sbtn ghost" id="schAddCanon" style="width:100%">Добавить значение</button>`}
+      </section>
+      <section class="ae-grp">
+        <div class="ae-grp-title">Фасет в каталоге</div>
+        <label class="ae-switch">${chkHtml(facetOn, 'id="schFacet"')} <span>Показывать в фильтрах</span></label>
+        <label class="ae-fld" id="schWidgetWrap" style="${facetOn ? '' : 'display:none'}">
+          <span>Виджет</span>
+          <select id="schWidget">${WIDGETS.map(w =>
+            `<option value="${w.v}" ${widget === w.v ? 'selected' : ''}>${w.t}</option>`).join('')}</select>
+        </label>
+        <label class="ae-switch">${chkHtml(!!attr.show_in_annotation, 'id="schAnn"')} <span>Извлекать при обогащении</span></label>
+        <label class="ae-fld" id="schBreaksWrap" style="${facetOn && widget === 'slider' ? '' : 'display:none'}">
+          <span>Границы range (через запятую)</span>
+          <input id="schBreaksRaw" value="${esc((attr.facet?.breaks || []).join(', '))}" placeholder="0, 5, 7, 10">
+        </label>
+      </section>
+      <section class="ae-grp">
+        <div class="ae-grp-title">Не путать с</div>
+        <p class="ae-note">Термины/ключи, куда модель ошибочно кладёт значение.</p>
+        ${chipsHtml(blacklist, 'blacklist')}
+        <div class="ae-suggest" id="schSuggest">
+          ${(dictCurrent.attrs || []).filter(x => x.code !== attr.code && !blacklist.includes(x.code)).slice(0, 8)
+            .map(x => `<button type="button" class="ae-chip-ghost" data-suggest="${esc(x.code)}">+ ${esc(x.code)}</button>`).join('')}
+        </div>
+      </section>
+      <div class="ae-panel-acts">
+        <button type="button" class="sbtn primary" onclick="applySchemaEditor()">Применить</button>
+        <button type="button" class="sbtn ghost" onclick="closeSchemaEditor()">Закрыть</button>
+        <button type="button" class="sbtn danger" onclick="deleteSchemaAttr()">Удалить</button>
+      </div>
+    `;
+
+    wirePanel(attr);
+    if (!opts?.keepPanel) body.scrollTop = 0;
+  };
+
+  function rewireChips(scope) {
+    wireChips(scope || $('schDrawerBody'), (key, items, box) => {
+      const parent = box.parentElement;
+      box.outerHTML = chipsHtml(items, key);
+      if (parent) rewireChips(parent.closest('.ae-canon') || $('schDrawerBody'));
+      else rewireChips($('schDrawerBody'));
+    });
+  }
+
+  function wireChips(root, onChange) {
+    if (!root) return;
+    root.querySelectorAll('[data-chips]').forEach(box => {
+      if (box.dataset.wired) return;
+      box.dataset.wired = '1';
+      const input = box.querySelector('[data-chip-add]');
+      const commit = () => {
+        const t = String(input?.value || '').trim();
+        if (!t) return;
+        input.value = '';
+        const items = [...box.querySelectorAll('.ae-chip')].map(c => c.childNodes[0].textContent);
+        items.push(t);
+        onChange(box.dataset.chips, items, box);
+      };
+      input?.addEventListener('keydown', e => {
+        if (e.key === 'Enter' || e.key === ',') { e.preventDefault(); commit(); }
+      });
+      input?.addEventListener('blur', commit);
+      box.addEventListener('click', e => {
+        const btn = e.target.closest('[data-chip-rm]');
+        if (!btn) return;
+        const items = [...box.querySelectorAll('.ae-chip')].map(c => c.childNodes[0].textContent);
+        items.splice(Number(btn.dataset.chipRm), 1);
+        onChange(box.dataset.chips, items, box);
+      });
+    });
+  }
+
+  function wirePanel(attr) {
+    const facetBtn = $('schFacet');
+    const annBtn = $('schAnn');
+    facetBtn?.addEventListener('click', () => {
+      const on = !facetBtn.classList.contains('on');
+      facetBtn.classList.toggle('on', on);
+      facetBtn.textContent = on ? '✓' : '';
+      if ($('schWidgetWrap')) $('schWidgetWrap').style.display = on ? '' : 'none';
+      syncBreaksVis();
+    });
+    annBtn?.addEventListener('click', () => {
+      const on = !annBtn.classList.contains('on');
+      annBtn.classList.toggle('on', on);
+      annBtn.textContent = on ? '✓' : '';
+    });
+    $('schWidget')?.addEventListener('change', syncBreaksVis);
+    function syncBreaksVis() {
+      const on = $('schFacet')?.classList.contains('on');
+      const w = $('schWidget')?.value;
+      if ($('schBreaksWrap')) $('schBreaksWrap').style.display = on && w === 'slider' ? '' : 'none';
+    }
+    $('schAddCanon')?.addEventListener('click', () => {
+      const wrap = $('schCanons');
+      if (!wrap) return;
+      const div = document.createElement('div');
+      div.className = 'ae-canon';
+      div.innerHTML = `<div class="ae-canon-head">
+        <input data-cf="canon" value="" placeholder="Канон">
+        <button type="button" class="ae-icon-btn danger" data-cf="del">×</button>
+      </div>${chipsHtml([], 'syn')}`;
+      wrap.appendChild(div);
+      div.querySelector('[data-cf="del"]').onclick = () => div.remove();
+      rewireChips(div);
+    });
+    document.querySelectorAll('#schCanons [data-cf="del"]').forEach(btn => {
+      btn.onclick = () => btn.closest('.ae-canon')?.remove();
+    });
+    rewireChips($('schDrawerBody'));
+    $('schSuggest')?.querySelectorAll('[data-suggest]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const code = btn.dataset.suggest;
+        const box = $('schDrawerBody').querySelector('[data-chips="blacklist"]');
+        if (!box) return;
+        const items = [...box.querySelectorAll('.ae-chip')].map(c => c.childNodes[0].textContent);
+        if (items.includes(code)) return;
+        items.push(code);
+        box.outerHTML = chipsHtml(items, 'blacklist');
+        rewireChips($('schDrawerBody'));
+        btn.remove();
+      });
+    });
+  }
+
+  window.applySchemaEditor = function applySchemaEditor() {
+    if (!dictCurrent || !editCode) return;
+    const attr = dictCurrent.attrs.find(a => a.code === editCode);
+    if (!attr) return;
+    const nextCode = String($('schCode')?.value || '').trim();
+    if (!KEY_RE.test(nextCode)) { refreshSchemaMeta('код: латиница/цифры/_'); return; }
+    if (dictCurrent.attrs.some(a => a !== attr && a.code === nextCode)) {
+      refreshSchemaMeta(`код «${nextCode}» занят`);
+      return;
+    }
+    if (marked.has(attr.code) && attr.code !== nextCode) {
+      marked.delete(attr.code); marked.add(nextCode);
+    }
+    attr.code = nextCode;
+    attr.name = $('schName')?.value || attr.name;
+    attr.description = $('schDesc')?.value || '';
+    attr.type = $('schType')?.value || attr.type;
+    attr.unit = $('schUnit')?.value?.trim() || null;
+    attr.facet = attr.facet || {};
+    attr.facet.enabled = !!$('schFacet')?.classList.contains('on');
+    attr.show_in_annotation = !!$('schAnn')?.classList.contains('on');
+    const widget = $('schWidget')?.value || widgetOf(attr);
+    attr.facet.widget = widget;
+    attr.facet.kind = kindFromWidget(widget, attr.type);
+    attr.facet.label = attr.facet.label || attr.name;
+    if (attr.facet.enabled && widget === 'slider') {
+      const raw = String($('schBreaksRaw')?.value || '').split(/[,;\s]+/).map(Number).filter(Number.isFinite);
+      if (raw.length >= 2) attr.facet.breaks = raw;
+    }
+    if (attr.type === 'enum' || attr.type === 'text') {
+      const aliases = {};
+      document.querySelectorAll('#schCanons .ae-canon').forEach(el => {
+        const canon = el.querySelector('[data-cf="canon"]')?.value?.trim();
+        if (!canon) return;
+        const synBox = el.querySelector('[data-chips="syn"]');
+        const syns = synBox
+          ? [...synBox.querySelectorAll('.ae-chip')].map(c => c.childNodes[0].textContent.trim()).filter(Boolean)
+          : [];
+        if (!syns.includes(canon)) syns.unshift(canon);
+        aliases[canon] = syns;
+      });
+      attr.value_aliases = aliases;
+    }
+    const blBox = $('schDrawerBody')?.querySelector('[data-chips="blacklist"]');
+    if (blBox) {
+      attr.blacklist = [...blBox.querySelectorAll('.ae-chip')].map(c => c.childNodes[0].textContent.trim()).filter(Boolean);
+    }
+    if (!Array.isArray(attr.synonyms) || !attr.synonyms.length) attr.synonyms = [attr.name];
+    editCode = attr.code;
+    markDirty('применено — сохраните');
+    renderSchemaTable(dictCurrent.attrs);
+    openSchemaEditor(attr.code);
+  };
+
+  window.closeSchemaEditor = function closeSchemaEditor() {
+    editCode = null;
+    renderIdlePanel();
+    if (dictCurrent) renderSchemaTable(dictCurrent.attrs || []);
+  };
+
+  window.deleteSchemaAttr = function deleteSchemaAttr() {
+    if (!dictCurrent || !editCode) return;
+    if ((dictCurrent.attrs || []).length <= 1) {
+      refreshSchemaMeta('нужен хотя бы один атрибут');
+      return;
+    }
+    if (!confirm(`Удалить «${editCode}»?`)) return;
+    dictCurrent.attrs = dictCurrent.attrs.filter(a => a.code !== editCode);
+    marked.delete(editCode);
+    editCode = null;
+    markDirty('удалено');
+    renderIdlePanel();
+    renderSchemaTable(dictCurrent.attrs);
+  };
+
+  /* ── audit / preview / import (API) ── */
 
   function statusBadge(st) {
     if (st === 'ERROR') return '<span class="sch-badge sch-err">ERROR</span>';
@@ -19,167 +681,24 @@
     return '<span class="sch-badge sch-ok">OK</span>';
   }
 
-  function auditFor(code) {
-    return (schemaAudit?.attributes || []).find(a => a.code === code);
-  }
-
-  function valueCount(attr) {
-    if (attr.type === 'boolean') return 2;
-    const aliases = attr.value_aliases || {};
-    return Object.keys(aliases).length;
-  }
-
-  function facetKindUi(attr) {
-    if (!attr.facet?.enabled) return 'none';
-    if (attr.type === 'boolean') return attr.facet.kind === 'enum' ? 'boolean' : (attr.facet.kind || 'boolean');
-    return attr.facet.kind || 'enum';
-  }
-
-  function attrStatus(a) {
-    const on = !!a.facet?.enabled;
-    const aud = auditFor(a.code);
-    return aud?.status || (on && (a.type === 'enum' || a.type === 'multi_enum') && !valueCount(a) ? 'WARN' : 'OK');
-  }
-
-  function attrWarnCount(a) {
-    return (auditFor(a.code)?.issues || []).filter(i => i.severity === 'error' || i.severity === 'warn').length;
-  }
-
-  function typeLabel(type) {
-    if (type === 'multi_enum') return 'multi enum';
-    return type || '—';
-  }
-
-  function coverageLabel(a) {
-    const v = a.coverage_final ?? a.coverage_now;
-    if (v == null || v === '') return null;
-    const n = Number(v);
-    if (!Number.isFinite(n)) return String(v);
-    if (n <= 1) return Math.round(n * 100) + '%';
-    return String(n);
-  }
-
-  window.refreshSchemaMeta = function refreshSchemaMeta(extra) {
-    const el = $('dictMeta');
-    if (!el) return;
-    if (!window.dictCurrent) {
-      el.innerHTML = extra ? `<span class="muted">${esc(extra)}</span>` : '';
-      return;
-    }
-    const d = window.dictCurrent;
-    const attrs = d.attrs || [];
-    const facets = attrs.filter(a => a.facet?.enabled).length;
-    const problems = schemaAudit?.problems;
-    const problemN = typeof problems === 'number'
-      ? problems
-      : attrs.filter(a => attrStatus(a) !== 'OK').length;
-    const dirty = !!window.dictDirty;
-    const problemClass = problemN > 0 ? (attrs.some(a => attrStatus(a) === 'ERROR') ? 'err' : 'warn') : '';
-    el.innerHTML = `
-      <div class="sch-stats">
-        <div class="sch-stat">
-          <span class="sch-stat-v">${attrs.length}</span>
-          <span class="sch-stat-l">атрибутов · ${esc(d.id)}</span>
-        </div>
-        <div class="sch-stat">
-          <span class="sch-stat-v">${facets}</span>
-          <span class="sch-stat-l">в фильтрах</span>
-        </div>
-        <div class="sch-stat ${problemClass}">
-          <span class="sch-stat-v">${problemN}</span>
-          <span class="sch-stat-l">проблем</span>
-        </div>
-        <div class="sch-stat ${dirty ? 'dirty' : ''}">
-          <span class="sch-stat-v">${dirty ? '●' : '○'}</span>
-          <span class="sch-stat-l">${dirty ? 'не сохранено' : 'сохранено'}${extra ? ' · ' + esc(extra) : ''}</span>
-        </div>
-      </div>
-      ${d.name ? `<div class="muted" style="margin-top:6px">${esc(d.name)}${d.file ? ' · ' + esc(d.file) : ''}</div>` : ''}
-    `;
-  };
-
-  window.setSchemaListFilter = function setSchemaListFilter(mode, btn) {
-    listFilter = mode || 'all';
-    document.querySelectorAll('[data-sch-filter]').forEach(b => {
-      b.classList.toggle('on', b.dataset.schFilter === listFilter);
-    });
-    if (btn) btn.classList.add('on');
-    applySchemaListFilter();
-  };
-
-  window.onSchemaListFilter = function onSchemaListFilter() {
-    listQuery = String($('schSearch')?.value || '').trim().toLowerCase();
-    applySchemaListFilter();
-  };
-
-  function applySchemaListFilter() {
-    const body = $('dictBody');
-    if (!body) return;
-    const rows = [...body.querySelectorAll('.sch-row')];
-    let visible = 0;
-    rows.forEach(row => {
-      const q = listQuery;
-      const hay = (row.dataset.hay || '').toLowerCase();
-      const matchQ = !q || hay.includes(q);
-      let matchF = true;
-      if (listFilter === 'facet') matchF = row.dataset.facet === '1';
-      else if (listFilter === 'problems') matchF = row.dataset.status !== 'OK';
-      else if (listFilter === 'enum') matchF = row.dataset.type === 'enum' || row.dataset.type === 'multi_enum';
-      const show = matchQ && matchF;
-      row.hidden = !show;
-      if (show) visible++;
-    });
-    let empty = body.querySelector('.sch-empty-filter');
-    if (!rows.length) return;
-    if (!visible) {
-      if (!empty) {
-        empty = document.createElement('div');
-        empty.className = 'sch-empty sch-empty-filter';
-        empty.textContent = 'Ничего не найдено — сбросьте поиск или фильтр';
-        body.appendChild(empty);
-      }
-    } else if (empty) {
-      empty.remove();
-    }
-    const hint = $('schListHint');
-    if (hint && window.dictCurrent) {
-      hint.textContent = visible === rows.length
-        ? `${rows.length} атрибутов · клик открывает редактор`
-        : `Показано ${visible} из ${rows.length}`;
-    }
-  }
-
   window.runSchemaAudit = async function runSchemaAudit() {
     if (!window.dictCurrent?.id) return;
     try {
       schemaAudit = await apiJson('/api/dictionaries/' + encodeURIComponent(dictCurrent.id) + '/audit');
-      refreshSchemaMeta('проверка выполнена');
-      renderSchemaTable(dictCurrent.attrs || []);
       renderAuditPanel();
+      renderSchemaTable(dictCurrent.attrs || []);
+      refreshSchemaMeta('проверка выполнена');
     } catch (e) {
       refreshSchemaMeta(e.message || 'ошибка проверки');
     }
   };
-
-  window.runSchemaPreview = async function runSchemaPreview() {
-    if (!window.dictCurrent?.id) return;
-    try {
-      schemaPreview = await apiJson('/api/dictionaries/' + encodeURIComponent(dictCurrent.id) + '/filter-preview');
-      renderPreviewPanel();
-      refreshSchemaMeta('превью фильтров');
-    } catch (e) {
-      refreshSchemaMeta(e.message || 'ошибка превью');
-    }
-  };
-
-  let issueActions = [];
 
   function renderAuditPanel() {
     const box = $('schAuditBox');
     if (!box) return;
     issueActions = [];
     if (!schemaAudit) {
-      box.innerHTML = '<p class="muted">Нажмите «Проверить категорию»</p>';
+      box.innerHTML = '<p class="muted">Нажмите «Проверить»</p>';
       return;
     }
     const bad = (schemaAudit.attributes || []).filter(a => a.status !== 'OK');
@@ -199,8 +718,7 @@
               data-issue-idx="${idx}" data-act="${esc(act)}">${esc(act)}</button>`
           ).join('');
           return `<li class="sch-${i.severity}">${esc(i.message)}
-            ${acts ? `<span class="sch-acts">${acts}</span>` : ''}
-          </li>`;
+            ${acts ? `<span class="sch-acts">${acts}</span>` : ''}</li>`;
         }).join('')}</ul>
       </div>`;
     }).join('');
@@ -217,521 +735,109 @@
     const attr = (dictCurrent?.attrs || []).find(a => a.code === code);
     if (!attr) return;
     if (action === 'delete' && issue?.value) {
-      if (!confirm(`Удалить значение «${issue.value}» из «${attr.name}»?`)) return;
+      if (!confirm(`Удалить значение «${issue.value}»?`)) return;
       const aliases = attr.value_aliases || {};
-      if (aliases[issue.value]) {
-        delete aliases[issue.value];
-      } else {
+      if (aliases[issue.value]) delete aliases[issue.value];
+      else {
         for (const [canon, list] of Object.entries(aliases)) {
           aliases[canon] = (list || []).filter(s => s !== issue.value && s !== issue.canon);
         }
       }
       attr.value_aliases = aliases;
-      dictDirty = true;
+      markDirty('значение удалено');
       renderSchemaTable(dictCurrent.attrs);
       if (editCode === code) openSchemaEditor(code);
-      refreshSchemaMeta('значение удалено — сохраните');
       return;
     }
     if (action === 'merge' && issue?.merge_into && issue?.merge_from) {
-      if (!confirm(`Объединить «${issue.merge_from}» → канон «${issue.merge_into}»?`)) return;
+      if (!confirm(`Объединить «${issue.merge_from}» → «${issue.merge_into}»?`)) return;
       const aliases = { ...(attr.value_aliases || {}) };
       const from = aliases[issue.merge_from] || [];
       const into = aliases[issue.merge_into] || [];
       aliases[issue.merge_into] = [...new Set([...into, issue.merge_from, ...from])];
       delete aliases[issue.merge_from];
       attr.value_aliases = aliases;
-      dictDirty = true;
+      markDirty('объединено');
       renderSchemaTable(dictCurrent.attrs);
       if (editCode === code) openSchemaEditor(code);
-      refreshSchemaMeta('объединено — сохраните');
-      return;
     }
-    if (action === 'move' && issue?.suggest_attr) {
-      alert(`Перенос в «${issue.suggest_attr}»: откройте оба атрибута и перенесите значение вручную (автоперенос с сохранением синонимов — в следующей итерации).`);
-      openSchemaEditor(issue.suggest_attr);
-      return;
-    }
-    // keep — nothing
   };
 
-  function renderPreviewPanel() {
-    const box = $('schPreviewBox');
-    if (!box) return;
-    if (!schemaPreview?.filters?.length) {
-      box.innerHTML = '<p class="muted">Нет включённых фильтров или нажмите «Превью фильтров»</p>';
-      return;
+  window.runSchemaPreview = async function runSchemaPreview() {
+    if (!window.dictCurrent?.id) return;
+    try {
+      const data = await apiJson('/api/dictionaries/' + encodeURIComponent(dictCurrent.id) + '/filter-preview');
+      showFacetModal(data?.filters || buildLocalFacets());
+      refreshSchemaMeta('превью фильтров');
+    } catch (e) {
+      showFacetModal(buildLocalFacets());
+      refreshSchemaMeta(e.message || 'локальное превью');
     }
-    box.innerHTML = schemaPreview.filters.map(f => {
-      const vals = (f.values || []).slice(0, 12).map(v =>
-        `<div class="sch-prev-row"><span>${esc(v.value)}</span><span class="muted">${v.count} тов.</span></div>`
-      ).join('');
-      return `<div class="sch-prev-card">
-        <div class="sch-prev-h">${esc(f.name)} <span class="muted">${esc(f.kind)}</span></div>
-        ${vals || '<div class="muted">нет значений в схеме</div>'}
-      </div>`;
-    }).join('');
+  };
+
+  function buildLocalFacets() {
+    return (dictCurrent?.attrs || []).filter(a => a.facet?.enabled).map(a => ({
+      name: a.facet?.label || a.name,
+      kind: a.facet?.kind || 'enum',
+      unit: a.unit,
+      values: canonList(a).map(v => ({ value: v, count: 0 })),
+    }));
   }
 
-  window.renderSchemaTable = function renderSchemaTable(attrs) {
-    const body = $('dictBody');
-    if (!body) return;
-    if (!attrs.length) {
-      body.innerHTML = '<div class="sch-empty">Нет атрибутов — добавьте строку</div>';
-      return;
-    }
-    const rows = [...attrs].sort((a, b) => (a.order ?? 0) - (b.order ?? 0) || String(a.code).localeCompare(String(b.code)));
-    body.innerHTML = rows.map(a => {
-      const on = !!a.facet?.enabled;
-      const kind = facetKindUi(a);
-      const st = attrStatus(a);
-      const warn = attrWarnCount(a);
-      const cov = coverageLabel(a);
-      const nVals = valueCount(a);
-      const selected = editCode === a.code;
-      const hay = `${a.code} ${a.name || ''} ${a.unit || ''} ${a.type || ''}`;
-      const canons = Object.keys(a.value_aliases || {});
-      const preview = canons.slice(0, 4).map(v => `<span class="sch-val">${esc(v)}</span>`).join('')
-        + (canons.length > 4 ? `<span class="sch-val more">+${canons.length - 4}</span>` : '');
-      const typeChip = `<span class="sch-chip muted">${esc(typeLabel(a.type))}${a.cardinality === 'multi' ? ' · multi' : ''}</span>`;
-      const facetChip = on
-        ? `<span class="sch-chip facet">${esc(kind)}${nVals ? ` · <span class="n">${nVals}</span>` : ''}</span>`
-        : `<span class="sch-chip muted">спека</span>`;
-      const covChip = cov != null ? `<span class="sch-chip muted" title="покрытие">покр. <span class="n">${esc(cov)}</span></span>` : '';
-      const warnChip = warn ? `<span class="sch-badge sch-${st === 'ERROR' ? 'err' : 'warn'}">${warn}</span>` : statusBadge(st);
-      return `<div class="sch-row ${on ? '' : 'off'} ${selected ? 'on' : ''}"
-        role="listitem" tabindex="0"
-        data-code="${esc(a.code)}"
-        data-hay="${esc(hay)}"
-        data-facet="${on ? '1' : '0'}"
-        data-status="${esc(st)}"
-        data-type="${esc(a.type || '')}"
-        onclick="openSchemaEditor('${esc(a.code)}')"
-        onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openSchemaEditor('${esc(a.code)}')}">
-        <div class="sch-row-main">
-          <div class="sch-row-title">
-            <span class="sch-row-name">${esc(a.name || a.code)}</span>
-            ${a.unit ? `<span class="sch-row-unit">${esc(a.unit)}</span>` : ''}
-          </div>
-          <div class="sch-row-meta">
-            <span class="sch-row-code">${esc(a.code)}</span>
-            <span>#${a.order ?? 0}</span>
-          </div>
-          ${preview ? `<div class="sch-row-vals">${preview}</div>` : ''}
-        </div>
-        <div class="sch-row-side">
-          <div class="sch-row-side-top">
-            ${typeChip}
-            ${facetChip}
-            ${covChip}
-            ${warnChip}
-            <span class="sch-row-go" aria-hidden="true">›</span>
-          </div>
-        </div>
-      </div>`;
-    }).join('');
-    applySchemaListFilter();
-  };
-
-  // Override legacy table renderer used by loadDictionary / saveDictionary
-  const _origRender = window.renderDictTable;
-  window.renderDictTable = function (attrs) {
-    if ($('schConstructor')) {
-      renderSchemaTable(attrs);
-      refreshSchemaMeta();
-      return;
-    }
-    if (typeof _origRender === 'function') _origRender(attrs);
-  };
-
-  // Keep meta consistent when legacy dictStatus is called
-  const _origDictStatus = window.dictStatus;
-  window.dictStatus = function (msg, ok) {
-    if ($('schConstructor') && window.dictCurrent) {
-      refreshSchemaMeta(ok === false ? (msg || 'ошибка') : (msg || ''));
-      return;
-    }
-    if (typeof _origDictStatus === 'function') _origDictStatus(msg, ok);
-  };
-
-  window.openSchemaEditor = function openSchemaEditor(code) {
-    const attr = (dictCurrent?.attrs || []).find(a => a.code === code);
-    const panel = $('schDrawer');
-    if (!attr || !panel) return;
-    editCode = code;
-    document.querySelectorAll('#dictBody .sch-row').forEach(row => {
-      row.classList.toggle('on', row.dataset.code === code);
-    });
-    panel.classList.add('open');
-    const title = $('schDrawerTitle');
-    if (title) {
-      title.innerHTML = `${esc(attr.name || code)} <span class="sch-drawer-sub">${esc(attr.code)}</span>`;
-    }
-    const facet = attr.facet || {};
-    const kind = facetKindUi(attr);
-    const aliases = attr.value_aliases || {};
-    const canonRows = Object.entries(aliases).map(([canon, syns]) => {
-      const synText = (syns || []).join('\n');
-      return `<div class="sch-canon" data-canon="${esc(canon)}">
-        <div class="sch-canon-h">
-          <input type="text" data-cf="canon" value="${esc(canon)}" placeholder="Канон">
-          <button type="button" class="sbtn danger" style="padding:4px 8px" data-cf="del-canon">×</button>
-        </div>
-        <label class="muted">Синонимы (по одному на строку)</label>
-        <textarea data-cf="syns" rows="3">${esc(synText)}</textarea>
-      </div>`;
-    }).join('');
-
-    const breaks = Array.isArray(facet.breaks) ? facet.breaks : [];
-    const rangeRows = breaks.length
-      ? breaks.slice(0, -1).map((lo, i) => {
-        const hi = breaks[i + 1];
-        const open = facet.open_last && i === breaks.length - 2;
-        return `<tr>
-          <td><input type="number" data-rf="lo" data-i="${i}" value="${lo}"></td>
-          <td><input type="number" data-rf="hi" data-i="${i}" value="${open ? '' : hi}" placeholder="∞"></td>
-          <td class="muted">${open ? hi + '+' : lo + '–' + hi}</td>
-        </tr>`;
-      }).join('')
-      : '';
-
-    panel.querySelector('.sch-drawer-body').innerHTML = `
-      <div class="set-row"><label>Название</label><input type="text" id="schName" value="${esc(attr.name || '')}"></div>
-      <div class="set-row"><label>Key (code)</label><input type="text" id="schCode" value="${esc(attr.code)}" spellcheck="false"></div>
-      <div class="set-grid">
-        <div class="set-row"><label>Тип данных</label>
-          <select id="schType">
-            ${['string','text','integer','number','boolean','enum','multi_enum'].map(t =>
-              `<option value="${t}" ${attr.type === t || (t === 'multi_enum' && attr.type === 'enum' && attr.cardinality === 'multi') ? 'selected' : ''}>${t}</option>`
-            ).join('')}
-          </select>
-        </div>
-        <div class="set-row"><label>Единица</label><input type="text" id="schUnit" value="${esc(attr.unit || '')}" placeholder="—"></div>
-      </div>
-      <label class="set-check"><input type="checkbox" id="schFacet" ${facet.enabled ? 'checked' : ''}> Использовать в фильтрах</label>
-      <div class="set-grid">
-        <div class="set-row"><label>Тип фильтра</label>
-          <select id="schFacetKind">
-            <option value="none" ${kind === 'none' ? 'selected' : ''}>none</option>
-            <option value="enum" ${kind === 'enum' ? 'selected' : ''}>enum</option>
-            <option value="range" ${kind === 'range' ? 'selected' : ''}>range</option>
-            <option value="boolean" ${kind === 'boolean' ? 'selected' : ''}>boolean</option>
-          </select>
-        </div>
-        <div class="set-row"><label>Порядок</label><input type="number" id="schOrder" value="${attr.order ?? 0}"></div>
-      </div>
-      <div class="set-row"><label>Подпись фильтра</label><input type="text" id="schFacetLabel" value="${esc(facet.label || attr.name || '')}"></div>
-      <div class="set-row"><label>Описание</label><textarea id="schDesc" rows="2">${esc(attr.description || '')}</textarea></div>
-
-      <div class="sch-block" id="schEnumBlock" style="${attr.type === 'enum' || attr.type === 'text' || attr.cardinality === 'multi' ? '' : 'display:none'}">
-        <div class="sch-block-h">Канонические значения (ENUM)</div>
-        <p class="hint">AI не может создать значение вне этого списка. Синонимы → канон → filter.</p>
-        <div id="schCanons">${canonRows || '<p class="muted">Нет канонов — добавьте</p>'}</div>
-        <button type="button" class="sbtn ghost" id="schAddCanon"><i class="ti ti-plus"></i> Добавить значение</button>
-      </div>
-
-      <div class="sch-block" id="schRangeBlock" style="${kind === 'range' ? '' : 'display:none'}">
-        <div class="sch-block-h">Диапазоны (RANGE)</div>
-        <div class="set-grid">
-          <div class="set-row"><label>Шаг</label><input type="number" id="schStep" value="${facet.step ?? ''}" min="0" step="any"></div>
-          <div class="set-row"><label class="set-check" style="margin-top:22px"><input type="checkbox" id="schOpenLast" ${facet.open_last ? 'checked' : ''}> Последний открытый (N+)</label></div>
-        </div>
-        <table class="dict-table" style="margin-top:8px"><thead><tr><th>От</th><th>До</th><th>Label</th></tr></thead>
-          <tbody id="schBreaksBody">${rangeRows || '<tr><td colspan="3" class="muted">Задайте breaks или step</td></tr>'}</tbody>
-        </table>
-        <button type="button" class="sbtn ghost" id="schAddBreak" style="margin-top:8px">+ Добавить диапазон</button>
-        <div class="set-row" style="margin-top:8px"><label>Breaks через запятую</label>
-          <input type="text" id="schBreaksRaw" value="${esc((facet.breaks || []).join(', '))}" placeholder="0, 100, 200, 300, 400, 500">
+  function showFacetModal(filters) {
+    const host = $('aeFacetModal');
+    if (!host) return;
+    host.hidden = false;
+    host.innerHTML = `<div class="ae-modal-wrap" id="aeModalBg">
+      <div class="ae-modal" role="dialog">
+        <header class="ae-modal-head">
+          <h3>Фильтры на витрине — ${filters.length}</h3>
+          <button type="button" class="ae-icon-btn" id="aeModalClose">×</button>
+        </header>
+        <div class="ae-modal-body">
+          ${filters.length ? filters.map(f => {
+            const vals = (f.values || []).slice(0, 6);
+            return `<div>
+              <div class="ae-facet-name">${esc(f.name || f.code || '')}${f.unit ? `<span class="unit">, ${esc(f.unit)}</span>` : ''}</div>
+              ${(f.kind === 'range' || f.kind === 'boolean')
+                ? `<div class="ae-note">${esc(f.kind)}</div>`
+                : `<div class="ae-facet-vals">${vals.length
+                  ? vals.map(v => `<span class="ae-facet-val">${esc(v.value ?? v)}</span>`).join('')
+                    + ((f.values || []).length > 6 ? `<span class="ae-note">ещё ${(f.values || []).length - 6}</span>` : '')
+                  : '<span class="ae-note">нет значений</span>'}</div>`}
+            </div>`;
+          }).join('') : '<p class="ae-note">Нет включённых фильтров</p>'}
         </div>
       </div>
-
-      <div class="sch-block" id="schBoolBlock" style="${attr.type === 'boolean' || kind === 'boolean' ? '' : 'display:none'}">
-        <div class="sch-block-h">Boolean</div>
-        <p class="hint">true → Есть · false → Нет. Отсутствие данных ≠ false (unknown).</p>
-      </div>
-
-      <div class="sch-block">
-        <div class="sch-block-h">Не путать с</div>
-        <p class="hint">Подписи других характеристик (blacklist) — для mapping/validation.</p>
-        <textarea id="schBlacklist" rows="3" placeholder="по одной на строку">${esc((attr.blacklist || []).join('\n'))}</textarea>
-      </div>
-
-      <div class="sch-block">
-        <div class="sch-block-h">Синонимы названия атрибута</div>
-        <textarea id="schSynonyms" rows="2">${esc((attr.synonyms || []).join('\n'))}</textarea>
-      </div>
-
-      <div class="set-actions" style="margin-top:12px;position:sticky;bottom:0;background:var(--bg2);padding:10px 0">
-        <button type="button" class="sbtn primary" onclick="applySchemaEditor()">Применить</button>
-        <button type="button" class="sbtn ghost" onclick="closeSchemaEditor()">Закрыть</button>
-        <button type="button" class="sbtn danger" onclick="deleteSchemaAttr()">Удалить атрибут</button>
-      </div>
-    `;
-
-    $('schAddCanon')?.addEventListener('click', () => {
-      const wrap = $('schCanons');
-      if (!wrap) return;
-      const div = document.createElement('div');
-      div.className = 'sch-canon';
-      div.innerHTML = `<div class="sch-canon-h">
-        <input type="text" data-cf="canon" value="" placeholder="Канон">
-        <button type="button" class="sbtn danger" style="padding:4px 8px" data-cf="del-canon">×</button>
-      </div>
-      <label class="muted">Синонимы (по одному на строку)</label>
-      <textarea data-cf="syns" rows="3"></textarea>`;
-      wrap.appendChild(div);
-      div.querySelector('[data-cf="del-canon"]').onclick = () => div.remove();
-    });
-    panel.querySelectorAll('[data-cf="del-canon"]').forEach(btn => {
-      btn.onclick = () => btn.closest('.sch-canon')?.remove();
-    });
-    $('schAddBreak')?.addEventListener('click', () => {
-      const raw = $('schBreaksRaw');
-      if (!raw) return;
-      const nums = raw.value.split(/[,;\s]+/).map(Number).filter(Number.isFinite);
-      const last = nums.length ? nums[nums.length - 1] : 0;
-      nums.push(last + (Number($('schStep')?.value) || 100));
-      raw.value = nums.join(', ');
-    });
-    $('schType')?.addEventListener('change', syncEditorBlocks);
-    $('schFacetKind')?.addEventListener('change', syncEditorBlocks);
-  };
-
-  function syncEditorBlocks() {
-    const type = $('schType')?.value;
-    const kind = $('schFacetKind')?.value;
-    const enumOn = type === 'enum' || type === 'text' || type === 'multi_enum';
-    const rangeOn = kind === 'range';
-    const boolOn = type === 'boolean' || kind === 'boolean';
-    if ($('schEnumBlock')) $('schEnumBlock').style.display = enumOn ? '' : 'none';
-    if ($('schRangeBlock')) $('schRangeBlock').style.display = rangeOn ? '' : 'none';
-    if ($('schBoolBlock')) $('schBoolBlock').style.display = boolOn ? '' : 'none';
-  }
-
-  window.applySchemaEditor = function applySchemaEditor() {
-    if (!dictCurrent || !editCode) return;
-    const attr = dictCurrent.attrs.find(a => a.code === editCode);
-    if (!attr) return;
-    const nextCode = String($('schCode')?.value || '').trim();
-    if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(nextCode)) {
-      refreshSchemaMeta('код: латиница/цифры/_');
-      return;
-    }
-    if (dictCurrent.attrs.some(a => a !== attr && a.code === nextCode)) {
-      refreshSchemaMeta(`код «${nextCode}» занят`);
-      return;
-    }
-    attr.code = nextCode;
-    attr.name = $('schName')?.value || attr.name;
-    attr.description = $('schDesc')?.value || '';
-    let type = $('schType')?.value || attr.type;
-    if (type === 'multi_enum') {
-      attr.cardinality = 'multi';
-      type = 'enum';
-    } else if (type === 'enum') {
-      attr.cardinality = attr.cardinality === 'multi' ? 'single' : (attr.cardinality || 'single');
-    }
-    attr.type = type;
-    const unit = $('schUnit')?.value?.trim();
-    attr.unit = unit || null;
-    attr.order = Number($('schOrder')?.value) || 0;
-    attr.facet = attr.facet || {};
-    attr.facet.enabled = !!$('schFacet')?.checked;
-    const fk = $('schFacetKind')?.value || 'enum';
-    attr.facet.kind = fk === 'none' ? (attr.type === 'boolean' ? 'boolean' : 'enum') : fk;
-    if (!attr.facet.enabled && fk === 'none') { /* ok */ }
-    attr.facet.label = $('schFacetLabel')?.value || attr.name;
-    attr.synonyms = String($('schSynonyms')?.value || '').split('\n').map(s => s.trim()).filter(Boolean);
-    if (!attr.synonyms.length) attr.synonyms = [attr.name];
-    attr.blacklist = String($('schBlacklist')?.value || '').split('\n').map(s => s.trim()).filter(Boolean);
-
-    if (attr.type === 'enum' || attr.type === 'text') {
-      const aliases = {};
-      document.querySelectorAll('#schCanons .sch-canon').forEach(el => {
-        const canon = el.querySelector('[data-cf="canon"]')?.value?.trim();
-        if (!canon) return;
-        const syns = String(el.querySelector('[data-cf="syns"]')?.value || '')
-          .split('\n').map(s => s.trim()).filter(Boolean);
-        if (!syns.includes(canon)) syns.unshift(canon);
-        aliases[canon] = syns;
-      });
-      attr.value_aliases = aliases;
-    }
-
-    if (attr.facet.kind === 'range') {
-      const step = Number($('schStep')?.value);
-      if (Number.isFinite(step) && step > 0) attr.facet.step = step;
-      else delete attr.facet.step;
-      attr.facet.open_last = !!$('schOpenLast')?.checked;
-      const raw = String($('schBreaksRaw')?.value || '')
-        .split(/[,;\s]+/).map(Number).filter(Number.isFinite);
-      if (raw.length >= 2) attr.facet.breaks = raw;
-      else delete attr.facet.breaks;
-    }
-
-    if (attr.type === 'boolean') {
-      attr.facet.kind = 'boolean';
-    }
-
-    editCode = attr.code;
-    dictDirty = true;
-    renderSchemaTable(dictCurrent.attrs);
-    refreshSchemaMeta('применено — сохраните файл');
-    openSchemaEditor(attr.code);
-  };
-
-  window.closeSchemaEditor = function closeSchemaEditor() {
-    editCode = null;
-    const panel = $('schDrawer');
-    panel?.classList.remove('open');
-    const title = $('schDrawerTitle');
-    if (title) {
-      title.innerHTML = 'Редактор атрибута <span class="sch-drawer-sub">выберите слева</span>';
-    }
-    const body = panel?.querySelector('.sch-drawer-body');
-    if (body) {
-      body.innerHTML = `<div class="sch-drawer-idle">
-        <b>Список слева → правка здесь</b>
-        <p>Кликните атрибут, чтобы править тип, каноны, фильтр и «не путать с».</p>
-      </div>`;
-    }
-    if (dictCurrent) renderSchemaTable(dictCurrent.attrs || []);
-  };
-
-  window.deleteSchemaAttr = function deleteSchemaAttr() {
-    if (!dictCurrent || !editCode) return;
-    if ((dictCurrent.attrs || []).length <= 1) {
-      refreshSchemaMeta('нужен хотя бы один атрибут');
-      return;
-    }
-    if (!confirm(`Удалить атрибут «${editCode}»?`)) return;
-    dictCurrent.attrs = dictCurrent.attrs.filter(a => a.code !== editCode);
-    dictDirty = true;
-    closeSchemaEditor();
-    renderSchemaTable(dictCurrent.attrs);
-    refreshSchemaMeta('удалено — сохраните');
-  };
-
-  // Hook loadDictionary completion via mutation of dictStatus
-  const _load = window.loadDictionary;
-  if (typeof _load === 'function') {
-    window.loadDictionary = async function (id) {
-      schemaAudit = null;
-      schemaPreview = null;
-      editCode = null;
-      $('schDrawer')?.classList.remove('open');
-      await _load(id);
-      if (dictCurrent) {
-        refreshSchemaMeta();
-        runSchemaAudit().catch(() => {});
-      }
-    };
-  }
-
-  const _status = window.dictStatus;
-  if (typeof _status === 'function') {
-    window.dictStatus = function (msg, ok) {
-      if ($('schConstructor') && dictCurrent) {
-        refreshSchemaMeta(msg || '');
-        if (ok === false) refreshSchemaMeta(msg || 'ошибка');
-        return;
-      }
-      return _status(msg, ok);
-    };
-  }
-
-  let importSuggestions = [];
-
-  function actionLabel(a) {
-    return ({
-      value: 'значение ENUM',
-      synonym_name: 'синоним имени',
-      blacklist: 'не путать с',
-      new_attr: 'новый атрибут',
-      skip: 'пропуск',
-    })[a] || a;
-  }
-
-  function renderImportBox() {
-    const box = $('schImportBox');
-    const btn = $('schImportApplyBtn');
-    if (!box) return;
-    if (!importSuggestions.length) {
-      box.innerHTML = '';
-      if (btn) btn.disabled = true;
-      return;
-    }
-    if (btn) btn.disabled = false;
-    box.innerHTML = `<div class="sch-import-list">${importSuggestions.map((s, idx) => {
-      const prop = s.proposed
-        ? `<div class="muted">+ ${esc(s.proposed.code || '')} · ${esc(s.proposed.name || '')} · ${esc(s.proposed.type || '')}</div>`
-        : '';
-      const target = s.attr_code
-        ? `<code>${esc(s.attr_code)}</code>${s.canon ? ` → <b>${esc(s.canon)}</b>` : ''}`
-        : '';
-      return `<label class="sch-import-row">
-        <input type="checkbox" data-imp-idx="${idx}" ${s.selected !== false && s.action !== 'skip' ? 'checked' : ''}>
-        <span class="sch-import-body">
-          <span class="sch-badge ${s.action === 'skip' ? 'sch-warn' : (s.action === 'new_attr' ? 'sch-ok' : 'sch-ok')}">${esc(actionLabel(s.action))}</span>
-          <b>${esc(s.raw)}</b>
-          <div class="muted">${target} ${esc(s.note || '')} · ${Math.round((s.confidence || 0) * 100)}% · ${esc(s.source || '')}</div>
-          ${prop}
-        </span>
-      </label>`;
-    }).join('')}</div>
-    <div class="set-actions" style="margin-top:8px">
-      <button type="button" class="sbtn ghost" onclick="schemaImportSelectAll(true)">Выбрать все</button>
-      <button type="button" class="sbtn ghost" onclick="schemaImportSelectAll(false)">Снять все</button>
-      <button type="button" class="sbtn ghost" onclick="schemaImportSelectAction('new_attr')">Только новые атрибуты</button>
-      <button type="button" class="sbtn ghost" onclick="schemaImportSelectAction('value')">Только значения</button>
     </div>`;
-    box.querySelectorAll('[data-imp-idx]').forEach(cb => {
-      cb.addEventListener('change', () => {
-        const i = Number(cb.dataset.impIdx);
-        if (importSuggestions[i]) importSuggestions[i].selected = cb.checked;
-      });
-    });
+    const close = () => { host.hidden = true; host.innerHTML = ''; };
+    $('aeModalClose')?.addEventListener('click', close);
+    $('aeModalBg')?.addEventListener('click', e => { if (e.target.id === 'aeModalBg') close(); });
   }
-
-  window.schemaImportSelectAll = function (on) {
-    importSuggestions.forEach(s => { s.selected = !!on && s.action !== 'skip'; });
-    renderImportBox();
-  };
-
-  window.schemaImportSelectAction = function (action) {
-    importSuggestions.forEach(s => { s.selected = s.action === action; });
-    renderImportBox();
-  };
 
   window.runSchemaImport = async function runSchemaImport(mode) {
     if (!dictCurrent?.id) return;
     const text = $('schImportText')?.value || '';
     const meta = $('schImportMeta');
-    if (meta) meta.textContent = mode === 'ai' ? 'запрос к модели…' : 'эвристика…';
+    const btn = $('schImportApplyBtn');
+    if (btn) btn.disabled = true;
+    if (meta) meta.textContent = 'разбор…';
     try {
       const data = await apiJson('/api/dictionaries/' + encodeURIComponent(dictCurrent.id) + '/import-suggest', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          text,
-          mode: mode === 'heuristic' ? 'heuristic' : 'ai',
-          model: (typeof getV === 'function' ? getV('setModelName') : '') || undefined,
-          attrs: dictCurrent.attrs,
-        }),
+        body: JSON.stringify({ text, mode, attrs: dictCurrent.attrs }),
       });
       importSuggestions = (data.suggestions || []).map(s => ({
         ...s,
         selected: s.selected !== false && s.action !== 'skip',
       }));
       renderImportBox();
-      const nNew = importSuggestions.filter(s => s.action === 'new_attr').length;
-      const nVal = importSuggestions.filter(s => s.action === 'value').length;
       if (meta) {
-        meta.textContent = `${data.mode || mode}: ${importSuggestions.length} строк`
-          + (nNew ? `, новых атрибутов ${nNew}` : '')
-          + (nVal ? `, значений ${nVal}` : '')
+        meta.textContent = `${data.mode || mode}: ${importSuggestions.length} предложений`
           + (data.fallback ? ` (${data.fallback})` : '');
       }
+      if (btn) btn.disabled = !importSuggestions.some(s => s.selected);
     } catch (e) {
       if (meta) meta.textContent = e.message || 'ошибка импорта';
       importSuggestions = [];
@@ -739,33 +845,103 @@
     }
   };
 
+  function renderImportBox() {
+    const box = $('schImportBox');
+    const btn = $('schImportApplyBtn');
+    if (!box) return;
+    if (!importSuggestions.length) { box.innerHTML = ''; if (btn) btn.disabled = true; return; }
+    box.innerHTML = `<div class="sch-import-list">${importSuggestions.map((s, i) => `
+      <label class="sch-import-row">
+        <input type="checkbox" data-imp="${i}" ${s.selected ? 'checked' : ''}>
+        <div class="sch-import-body">
+          <div><b>${esc(s.action)}</b> → <code>${esc(s.code || s.new_code || '—')}</code>
+            ${s.canon ? ` · ${esc(s.canon)}` : ''} ${s.name ? ` · ${esc(s.name)}` : ''}</div>
+          <div class="muted">${esc(s.line || s.note || '')}</div>
+        </div>
+      </label>`).join('')}</div>`;
+    box.querySelectorAll('[data-imp]').forEach(inp => {
+      inp.addEventListener('change', () => {
+        importSuggestions[Number(inp.dataset.imp)].selected = inp.checked;
+        if (btn) btn.disabled = !importSuggestions.some(s => s.selected);
+      });
+    });
+    if (btn) btn.disabled = !importSuggestions.some(s => s.selected);
+  }
+
   window.applySchemaImport = async function applySchemaImport() {
     if (!dictCurrent?.id || !importSuggestions.length) return;
     const selected = importSuggestions.filter(s => s.selected && s.action !== 'skip');
-    if (!selected.length) {
-      refreshSchemaMeta('ничего не выбрано');
-      return;
-    }
-    if (!confirm(`Применить ${selected.length} предложений к черновику справочника? Файл сохранится отдельно кнопкой «Сохранить».`)) return;
+    if (!selected.length) { refreshSchemaMeta('ничего не выбрано'); return; }
+    if (!confirm(`Применить ${selected.length} предложений к черновику?`)) return;
     const meta = $('schImportMeta');
     try {
       const data = await apiJson('/api/dictionaries/' + encodeURIComponent(dictCurrent.id) + '/import-apply', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          attrs: dictCurrent.attrs,
-          suggestions: importSuggestions,
-          save: false,
-        }),
+        body: JSON.stringify({ suggestions: selected, attrs: dictCurrent.attrs, save: false }),
       });
       dictCurrent.attrs = data.attrs || dictCurrent.attrs;
-      dictDirty = true;
+      markDirty(`применено ${data.applied}, создано ${data.created}`);
       renderSchemaTable(dictCurrent.attrs);
-      refreshSchemaMeta(`применено ${data.applied}, создано ${data.created}, пропуск ${data.skipped} — сохраните файл`);
-      if (meta) meta.textContent = `черновик обновлён · +${data.created} атрибутов`;
-      runSchemaAudit().catch(() => {});
+      if (meta) meta.textContent = `черновик · +${data.created}`;
     } catch (e) {
       if (meta) meta.textContent = e.message || 'не удалось применить';
     }
   };
+
+  /* hooks into legacy page functions */
+  const _origRender = window.renderDictTable;
+  window.renderDictTable = function (attrs) {
+    if ($('schConstructor')) {
+      renderSchemaTable(attrs || []);
+      return;
+    }
+    if (typeof _origRender === 'function') _origRender(attrs);
+  };
+
+  const _origDictStatus = window.dictStatus;
+  window.dictStatus = function (msg, ok) {
+    if ($('schConstructor')) {
+      if (!window.dictCurrent) {
+        const el = $('dictMeta');
+        if (el) el.innerHTML = msg ? `<span>${esc(msg)}</span>` : '';
+        return;
+      }
+      refreshSchemaMeta(ok === false ? (msg || 'ошибка') : (msg || ''));
+      return;
+    }
+    if (typeof _origDictStatus === 'function') _origDictStatus(msg, ok);
+  };
+
+  const _origAdd = window.addDictAttr;
+  window.addDictAttr = function () {
+    if (typeof _origAdd === 'function') _origAdd();
+    const attrs = dictCurrent?.attrs || [];
+    const last = attrs[attrs.length - 1];
+    if (last) openSchemaEditor(last.code);
+  };
+
+  document.addEventListener('keydown', (e) => {
+    const dictPanel = $('setDict');
+    const onDict = dictPanel?.classList.contains('on');
+    if (e.key === 'Escape') {
+      if (!$('aeFacetModal')?.hidden) {
+        $('aeFacetModal').hidden = true;
+        $('aeFacetModal').innerHTML = '';
+        return;
+      }
+      if (onDict && editCode) closeSchemaEditor();
+      return;
+    }
+    if (!onDict) return;
+    const tag = document.activeElement?.tagName;
+    if (['INPUT', 'TEXTAREA', 'SELECT'].includes(tag)) return;
+    if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+    const rows = shownAttrs(dictCurrent?.attrs || []);
+    if (!rows.length) return;
+    e.preventDefault();
+    const i = Math.max(0, rows.findIndex(a => a.code === editCode));
+    const next = e.key === 'ArrowDown' ? Math.min(i + 1, rows.length - 1) : Math.max(i - 1, 0);
+    openSchemaEditor(rows[next].code);
+  });
 })();

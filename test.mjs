@@ -14,7 +14,7 @@ import {
   normalizeResponse as normalizeResponseIn, stripHtml, RateLimiter, isEnrichable,
   buildUserContent, rpmFor, attrFacts, productFacts, modelToken, hasCountryFact,
   SCHEMAS, GENERIC_SCHEMA, schemaFor, schemaForProduct, buildSystemPrompt, enrichProduct, netError,
-  seoPackageEmpty,
+  seoPackageEmpty, cardTextsEmpty,
 } from './lib.js';
 
 // Схема по умолчанию — универсальная, а не холодильник: неизвестная категория
@@ -564,10 +564,10 @@ t('промпт требует основной текст первым и аб�
   // Порядок ключей: длинный текст раньше короткого, иначе короткий забирает суть.
   assert.ok(p.indexOf('"seo_description": "..."') < p.indexOf('"short_description": "..."'));
   assert.ok(p.indexOf('"seo_description": "..."') < p.indexOf('"seo_title": "..."'));
-  // SEO до specs: при обрыве тексты не остаются пустыми.
-  assert.ok(p.indexOf('"seo_description": "..."') < p.indexOf('"specs"'), 'SEO раньше specs');
+  // Тексты карточки до specs: при обрыве страница не остаётся пустой.
+  assert.ok(p.indexOf('"seo_description": "..."') < p.indexOf('"specs"'), 'описание раньше specs');
   assert.match(p, /Вода запрещена/);
-  assert.match(p, /Нельзя вернуть их пустыми/);
+  assert.match(p, /Для поисковиков/);
 });
 t('SEO-пакет нормализуется, длины проверяются', () => {
   const r = normalizeResponse({
@@ -582,9 +582,11 @@ t('SEO-пакет нормализуется, длины проверяются'
   assert.ok(r.seo_issues.some(x => x.startsWith('meta_description: 1 симв.')));
   assert.ok(r.seo_issues.some(x => x === 'short_description: пусто'));
   assert.ok(!r.seo_issues.some(x => x.startsWith('seo_title:')), 'нормальный title не повод для заметки');
-  assert.ok(seoPackageEmpty({ specs: { бренд: 'LG' } }));
-  assert.ok(seoPackageEmpty({ seo_description: '...', seo_title: '...' }));
-  assert.ok(!seoPackageEmpty({ seo_description: 'Текст' }));
+  assert.ok(cardTextsEmpty({ specs: { бренд: 'LG' } }));
+  assert.ok(cardTextsEmpty({ seo_title: 'Title ok', meta_description: 'x'.repeat(140) }),
+    'только meta — карточка всё ещё пустая');
+  assert.ok(!cardTextsEmpty({ seo_description: 'Текст', h1: 'H1', short_description: 'Кратко' }));
+  assert.ok(!seoPackageEmpty({ seo_description: 'Текст', h1: 'H1', short_description: 'Кратко' }));
 });
 
 console.log('\nФакты стиральных машин');
@@ -924,7 +926,7 @@ console.log('\nЗапрос к модели');
     const notes = [];
     const r = await run({ name: 'X', description: 'Общий объем, л 310' }, { onNote: m => notes.push(m) });
     assert.strictEqual(record.length, 2);
-    assert.ok(notes.some(n => /SEO пусто/.test(n)));
+    assert.ok(notes.some(n => /тексты карточки пусты/.test(n)));
     assert.strictEqual(r.enriched.seo_description, 'Описание.');
   });
 
@@ -950,12 +952,12 @@ console.log('\nЗапрос к модели');
     const r = await run({ name: 'X', description: 'Общий объем, л 310' }, {
       maxRetries: 1, onNote: m => notes.push(m),
     });
-    assert.strictEqual(record.length, 2, 'основной + добор SEO');
-    assert.ok(notes.some(n => /добираем SEO/.test(n)));
-    assert.ok(record[1].body.messages[0].content.includes('SEO-редактор'));
+    assert.strictEqual(record.length, 2, 'основной + добор текстов');
+    assert.ok(notes.some(n => /добираем тексты карточки/.test(n)));
+    assert.ok(record[1].body.messages[0].content.includes('редактор карточки'));
     assert.ok(!record[1].body.messages[0].content.includes('"specs"'), 'добор без скелета specs');
     assert.match(r.enriched.seo_title, /DON/);
-    assert.ok(!seoPackageEmpty(r.enriched));
+    assert.ok(!cardTextsEmpty(r.enriched));
     assert.strictEqual(r.enriched.specs.бренд, 'DON');
     assert.strictEqual(+r.cost.toFixed(6), 0.003);
   });

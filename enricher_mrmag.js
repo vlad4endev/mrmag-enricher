@@ -173,7 +173,7 @@ function saveTXT(results, filename, schema, cat) {
       ['H1',                'h1'],
       ['Meta description',  'meta_description'],
       ['Краткое описание',  'short_description'],
-      ['SEO-описание',      'seo_description'],
+      ['Описание',          'seo_description'],
     ].filter(([, k]) => d[k]);
     if (seo.length) {
       lines.push('', 'SEO:');

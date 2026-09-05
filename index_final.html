@@ -3935,10 +3935,15 @@ function downloadAll(fmt='json'){
         out.push('','РАСХОЖДЕНИЯ С ТЕКСТОМ:');
         out.push(d.warnings.map(w=>`  ⚠ ${w.field}: модель "${w.model}"${w.source!=null?`, в тексте "${w.source}"`:''} — ${w.note}`).join('\n'));
       }
-      const seoTxt=SEO_TEXTS.filter(([k])=>!isEmpty(d[k]));
-      if(seoTxt.length){
-        out.push('','SEO:');
-        out.push(seoTxt.map(([k,t])=>`  ${t} (${String(d[k]).length}): ${d[k]}`).join('\n'));
+      const cardTxt=CARD_TEXTS.filter(([k])=>!isEmpty(d[k]));
+      if(cardTxt.length){
+        out.push('','КАРТОЧКА:');
+        out.push(cardTxt.map(([k,t])=>`  ${t} (${String(d[k]).length}): ${d[k]}`).join('\n'));
+      }
+      const metaTxt=SEARCH_META.filter(([k])=>!isEmpty(d[k]));
+      if(metaTxt.length){
+        out.push('','ДЛЯ ПОИСКОВИКОВ:');
+        out.push(metaTxt.map(([k,t])=>`  ${t} (${String(d[k]).length}): ${d[k]}`).join('\n'));
       }
 
       for(const [k,v] of Object.entries(d)){
@@ -4158,11 +4163,11 @@ const FIELD_LABELS={
   vehicle_generations:'Поколения', compatible_engines:'Двигатели',
   assembly_group:'Группа', system:'Система', placement:'Расположение',
   material:'Материал', kit_contents:'Комплект', cross_numbers:'Кросс-номера',
-  synonyms:'Синонимы', search_aliases:'Псевдонимы поиска', seo_keywords:'SEO ключи',
-  seo_title:'Title', h1:'H1', meta_description:'Meta description',
-  short_description:'Краткое описание', bullets:'Преимущества',
-  // Заметки о длине SEO-текстов: не ошибка модели, а повод причесать руками.
-  seo_issues:'Заметки по SEO',
+  synonyms:'Синонимы', search_aliases:'Псевдонимы поиска', seo_keywords:'Ключевые фразы',
+  seo_title:'Title (поисковик)', h1:'H1', meta_description:'Meta description (поисковик)',
+  short_description:'Краткое описание', seo_description:'Описание', bullets:'Преимущества',
+  // Длины текстов: карточка и meta для поисковика — разные роли.
+  seo_issues:'Заметки по текстам',
   // Поля, которые модель оставила пустыми, а детерминированный разбор текста заполнил.
   filled_from_text:'Добрано из текста',
 };
@@ -4170,11 +4175,18 @@ const FIELD_LABELS={
 const META_FIELDS=new Set(['specs','technical_specs','dimensions','thread','source_facts','warnings','confidence',
   'seo_title','h1','meta_description','short_description','seo_description','bullets',
   'synonyms','search_aliases','seo_keywords','seo_issues','filled_from_text','source_conflicts']);
-// Порядок как на странице товара: title → H1 → meta → карточка → текст.
-const SEO_TEXTS=[['seo_title','Title'],['h1','H1'],['meta_description','Meta description'],
-  ['short_description','Краткое описание'],['seo_description','SEO-описание']];
-const SEARCH_FIELDS=[['synonyms','Синонимы'],['search_aliases','Псевдонимы поиска'],['seo_keywords','SEO ключи']];
+// Карточка vs поисковик — разные блоки в превью и в txt-выгрузке.
+const CARD_TEXTS=[['h1','H1'],['short_description','Краткое описание'],['seo_description','Описание']];
+const SEARCH_META=[['seo_title','Title'],['meta_description','Meta description']];
+const SEARCH_FIELDS=[['synonyms','Синонимы'],['search_aliases','Псевдонимы поиска'],['seo_keywords','Ключевые фразы']];
 const SPEC_UNIT={л:'л',мл:'мл',кг:'кг',г:'г',мм:'мм',см:'см',дб:'дБ',об_мин:'об/мин',кг_сут:'кг/сут',л_цикл:'л/цикл'};
+
+function isCardIssue(x){
+  return /^(h1|short_description|seo_description):/.test(String(x));
+}
+function isSearchIssue(x){
+  return /^(seo_title|meta_description):/.test(String(x));
+}
 
 function specLabel(k){
   if(FIELD_LABELS[k]) return FIELD_LABELS[k];
@@ -4216,18 +4228,25 @@ function renderVis(d){
       +`</div>`;
   }
   if(Array.isArray(d.seo_issues)&&d.seo_issues.length){
-    out+=`<div class="warnbox"><div class="wt">Заметки по SEO (${d.seo_issues.length})</div>`
-      +d.seo_issues.map(x=>`<div class="wi">${esc(String(x))}</div>`).join('')
-      +`</div>`;
+    const cardIss=d.seo_issues.filter(isCardIssue);
+    const searchIss=d.seo_issues.filter(isSearchIssue);
+    if(cardIss.length){
+      out+=`<div class="warnbox"><div class="wt">Заметки по карточке (${cardIss.length})</div>`
+        +cardIss.map(x=>`<div class="wi">${esc(String(x))}</div>`).join('')
+        +`</div>`;
+    }
+    if(searchIss.length){
+      out+=`<div class="warnbox"><div class="wt">Для поисковиков (${searchIss.length})</div>`
+        +searchIss.map(x=>`<div class="wi">${esc(String(x))}</div>`).join('')
+        +`</div>`;
+    }
   }
 
-  const hasPage=!isEmpty(d.seo_title)||!isEmpty(d.h1)||!isEmpty(d.meta_description)
-    ||!isEmpty(d.short_description)||!isEmpty(d.seo_description)||(Array.isArray(d.bullets)&&d.bullets.length);
-  if(hasPage){
+  const hasCard=!isEmpty(d.h1)||!isEmpty(d.short_description)||!isEmpty(d.seo_description)
+    ||(Array.isArray(d.bullets)&&d.bullets.length);
+  if(hasCard){
     out+=`<article class="pcard">`;
-    if(!isEmpty(d.seo_title)) out+=`<div class="pcard-title">${esc(d.seo_title)}</div>`;
     if(!isEmpty(d.h1)) out+=`<h1 class="pcard-h1">${esc(d.h1)}</h1>`;
-    if(!isEmpty(d.meta_description)) out+=`<div class="pcard-meta">${esc(d.meta_description)}</div>`;
     if(!isEmpty(d.short_description)) out+=`<p class="pcard-lead">${esc(d.short_description)}</p>`;
     if(!isEmpty(d.seo_description)&&d.seo_description!==d.short_description){
       out+=`<div class="pcard-body">${textBlocks(d.seo_description).map(p=>`<p>${esc(p.replace(/\n+/g,' '))}</p>`).join('')}</div>`;
@@ -4238,6 +4257,22 @@ function renderVis(d){
     out+=`</article>`;
   }
 
+  const hasSearch=!isEmpty(d.seo_title)||!isEmpty(d.meta_description)
+    ||(Array.isArray(d.seo_keywords)&&d.seo_keywords.length)
+    ||(Array.isArray(d.synonyms)&&d.synonyms.length)
+    ||(Array.isArray(d.search_aliases)&&d.search_aliases.length);
+  if(hasSearch){
+    out+=`<div class="spec-title mt">Для поисковиков</div><div class="fgrid">`;
+    if(!isEmpty(d.seo_title)) out+=`<div class="fc"><div class="fk">Title</div><div class="fv">${esc(d.seo_title)}</div></div>`;
+    if(!isEmpty(d.meta_description)) out+=`<div class="fc"><div class="fk">Meta description</div><div class="fv">${esc(d.meta_description)}</div></div>`;
+    for(const [k,t] of SEARCH_FIELDS){
+      if(isEmpty(d[k])) continue;
+      const v=d[k];
+      out+=`<div class="fc"><div class="fk">${esc(t)}</div>${Array.isArray(v)?tags(v):`<div class="fv">${esc(String(v))}</div>`}</div>`;
+    }
+    out+=`</div>`;
+  }
+
   const sp={...(d.specs||{}),...(d.technical_specs||{}),...(d.dimensions||{}),...(d.thread||{})};
   const rows=Object.entries(sp).filter(([,v])=>!isEmpty(v));
   if(rows.length){
@@ -4246,16 +4281,6 @@ function renderVis(d){
       +`<div class="specs">${rows.map(([k,v])=>
           `<div class="sp${bad.has(k)?' bad':''}"><span class="sp-k">${esc(specLabel(k))}</span>`
           +`<span class="sp-d"></span><span class="sp-v">${esc(String(v))}</span></div>`).join('')}</div>`;
-  }
-
-  const search=SEARCH_FIELDS.filter(([k])=>!isEmpty(d[k]));
-  if(search.length){
-    out+=`<div class="spec-title mt">Поисковые и SEO-данные</div>`
-      +`<div class="fgrid">${search.map(([k,t])=>{
-        const v=d[k];
-        const inner=Array.isArray(v)?tags(v):`<div class="fv">${esc(String(v))}</div>`;
-        return `<div class="fc"><div class="fk">${esc(t)}</div>${inner}</div>`;
-      }).join('')}</div>`;
   }
 
   if(d.source_facts&&typeof d.source_facts==='object'&&!isEmpty(d.source_facts)){

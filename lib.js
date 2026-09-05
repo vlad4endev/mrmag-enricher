@@ -882,11 +882,12 @@ export function defaultSystemPromptTemplate() {
   ("графитовый металлик") сведи к базовому ("серый").
 - Значения без служебного мусора: без "шт.", "прибл.", "*", сносок и HTML.
 
-6. ТЕКСТЫ ДЛЯ СТРАНИЦЫ ТОВАРА
-Главный текст здесь один — seo_description. Пиши его ПЕРВЫМ и подробно, а
-короткие поля выжимай уже из него, а не наоборот. Дословных повторов между
-полями быть не должно.
+6. ТЕКСТЫ КАРТОЧКИ И ДЛЯ ПОИСКОВИКОВ
+Главный текст карточки — seo_description (описание на странице товара). Пиши
+его ПЕРВЫМ и подробно; краткое и H1 выжимай из него. Title и meta_description —
+отдельно: они уходят в <title>/meta и на витрине покупателю не показываются.
 
+Карточка (видит покупатель):
 - seo_description — основной текст карточки, 900–1800 символов, ТРИ абзаца,
   разделённые пустой строкой, у каждого своя работа:
     1) что это за товар и для какой задачи: тип, бренд, модель, класс товара,
@@ -906,10 +907,12 @@ export function defaultSystemPromptTemplate() {
   покупателю". Каждый пункт опирается на конкретное значение из specs.
 - short_description — выжимка первого абзаца: одно предложение до 200 символов
   для плитки каталога — что это и главное преимущество.
-- meta_description — 150–160 символов, 1–2 предложения: тип, бренд, модель и
-  2–3 конкретных факта. Без призывов вида "жми", "успей".
 - h1 — заголовок страницы, до 70 символов, человеческий, не дублирует seo_title
   дословно.
+
+Для поисковиков (в карточку не выводятся):
+- meta_description — 150–160 символов, 1–2 предложения: тип, бренд, модель и
+  2–3 конкретных факта. Без призывов вида "жми", "успей".
 - seo_title — тег <title>, 45–60 символов: тип + бренд + модель + один главный
   параметр. Допустим один коммерческий маркер ("купить"), не больше. Без CAPS,
   без эмодзи, без перечисления через запятую пяти ключей.
@@ -924,17 +927,16 @@ export function defaultSystemPromptTemplate() {
   одной и той же фразы в разных падежах.
 
 8. СХЕМА ОТВЕТА (ровно эти ключи, ничего не добавляй и не удаляй)
-"..." ниже — только типы полей, не готовый ответ: каждое текстовое SEO-поле
-(seo_description, short_description, meta_description, h1, seo_title) обязательно
-заполнить по правилам раздела 6. Нельзя вернуть их пустыми строками.
-Пиши SEO-тексты СРАЗУ после открытия объекта — до specs: иначе при обрыве
-карточка останется без описаний.
+"..." ниже — только типы полей, не готовый ответ. Тексты карточки
+(seo_description, short_description, h1, bullets) заполнить обязательно.
+Title и meta — тоже, но они для поисковика. Пиши тексты карточки СРАЗУ после
+открытия объекта — до specs: иначе при обрыве страница останется без описаний.
 {
   "seo_description": "...",
   "bullets": [],
   "short_description": "...",
-  "meta_description": "...",
   "h1": "...",
+  "meta_description": "...",
   "seo_title": "...",
   "synonyms": [],
   "search_aliases": [],
@@ -1283,11 +1285,11 @@ function snapEnum(value, allowed) {
   return hit ?? null;
 }
 
-// Длины SEO-полей. Выход за границы не ошибка модели, а причина посмотреть
-// глазами: title длиннее 60 символов поисковик обрежет, короче 30 — потеряет
-// ключи. Поэтому это заметка в seo_issues, а не обнуление поля. Отдельно от
-// warnings: там расхождения с текстом источника, то есть повод не доверять
-// значению, а здесь — повод причесать текст.
+// Длины текстовых полей. Две роли:
+//   карточка  — h1, short_description, seo_description (то, что видит покупатель);
+//   поисковик — seo_title, meta_description (в карточку не выводим).
+// Выход за границы — заметка в seo_issues, не обнуление. Отдельно от warnings:
+// там расхождения с источником, здесь — повод причесать текст.
 const SEO_LIMITS = {
   seo_title:         [30, 60],
   h1:                [10, 70],
@@ -1296,6 +1298,10 @@ const SEO_LIMITS = {
   seo_description:   [900, 2200],
 };
 const SEO_TEXT_KEYS = Object.keys(SEO_LIMITS);
+/** Тексты страницы товара — без них карточка пустая. */
+export const CARD_TEXT_KEYS = ['h1', 'short_description', 'seo_description'];
+/** Только для <title> / meta — в превью карточки не показываем. */
+export const SEARCH_META_KEYS = ['seo_title', 'meta_description'];
 
 // Длинному тексту нужен материал: на товаре с двумя характеристиками 900
 // символов честно не написать. Требовать их — значит требовать домыслов,
@@ -1304,17 +1310,24 @@ const RICH_SPECS = 5;
 const seoFloor = (key, filled) =>
   (key === 'seo_description' && filled < RICH_SPECS ? 400 : SEO_LIMITS[key][0]);
 
+function textBlank(v) {
+  const s = String(v ?? '').trim();
+  return !s || s === '...';
+}
+
 /**
- * Все SEO-тексты пустые — модель не дописала карточку: либо бюджет съел
- * thinking/specs и finish_reason=length, либо в JSON ушёл скелет с "" / "...".
- * Такой ответ нельзя принимать как готовый, пока есть смысл повторить.
+ * Нет текстов карточки (H1 / краткое / описание) — модель не дописала страницу.
+ * Пустые title/meta сами по себе не повод считать карточку пустой: они для
+ * поисковика и в витрину не выводятся.
  */
-export function seoPackageEmpty(data) {
+export function cardTextsEmpty(data) {
   if (!data || typeof data !== 'object') return true;
-  return SEO_TEXT_KEYS.every(k => {
-    const s = String(data[k] ?? '').trim();
-    return !s || s === '...';
-  });
+  return CARD_TEXT_KEYS.every(k => textBlank(data[k]));
+}
+
+/** @deprecated используй cardTextsEmpty — имя оставлено для старых вызовов. */
+export function seoPackageEmpty(data) {
+  return cardTextsEmpty(data);
 }
 
 export function normalizeResponse(data, sourceText = '', schemaKey, attributes = [], policy = MISMATCH_POLICY) {
@@ -1518,14 +1531,14 @@ function buildRequestBody(model, product, maxTokens = 3200, schemaKey, systemPro
 }
 
 /**
- * Узкий промпт только на SEO: когда основной ответ принёс specs, но тексты
- * страницы пустые — отдельный запрос дешевле и надёжнее, чем третий полный.
+ * Узкий промпт на тексты карточки (+ meta для поисковика): когда основной
+ * ответ принёс specs, но страница пустая — отдельный запрос надёжнее полного.
  */
 export function buildSeoOnlyPrompt() {
-  return `Ты — SEO-редактор карточки интернет-магазина. Specs уже готовы — не меняй их.
+  return `Ты — редактор карточки интернет-магазина. Specs уже готовы — не меняй их.
 Верни ОДИН JSON-объект без markdown и без пояснений. Язык — русский.
 
-Обязательные ключи (все текстовые поля заполнить, пустые строки запрещены):
+Карточка (покупатель видит на странице) — заполнить обязательно:
 - seo_description — 900–1800 символов, ТРИ абзаца через пустую строку:
   1) что за товар, бренд, модель, кому подходит;
   2) характеристики цифрами из specs и что они дают на практике;
@@ -1533,10 +1546,14 @@ export function buildSeoOnlyPrompt() {
   Если в specs меньше пяти значений — 400–700 символов, без домыслов.
 - bullets — 3–6 пунктов до 90 символов: «параметр — польза покупателю».
 - short_description — одно предложение до 200 символов для плитки каталога.
-- meta_description — 150–160 символов, 1–2 предложения с 2–3 фактами из specs.
 - h1 — до 70 символов, человеческий, не копия seo_title.
+
+Для поисковиков (в карточку не выводятся):
+- meta_description — 150–160 символов, 1–2 предложения с 2–3 фактами из specs.
 - seo_title — 45–60 символов: тип + бренд + модель + один параметр. Допустим один
   «купить». Без CAPS и эмодзи.
+
+Также:
 - synonyms — 4–6 бытовых названий.
 - search_aliases — 6–10 реальных запросов (с моделью и без, опечатки, транслит).
 - seo_keywords — 6–10 фраз без городов и цен.
@@ -1546,8 +1563,8 @@ export function buildSeoOnlyPrompt() {
   "seo_description": "...",
   "bullets": [],
   "short_description": "...",
-  "meta_description": "...",
   "h1": "...",
+  "meta_description": "...",
   "seo_title": "...",
   "synonyms": [],
   "search_aliases": [],
@@ -1831,7 +1848,7 @@ export async function enrichProduct(product, opts) {
       if (parsed) {
         try {
           const result = accept(parsed);
-          if (seoPackageEmpty(result.enriched) && bumpForLength()) continue;
+          if (cardTextsEmpty(result.enriched) && bumpForLength()) continue;
           return pack(await ensureSeo(result));
         } catch { /* починка дала мусор */ }
       }
@@ -1848,10 +1865,10 @@ export async function enrichProduct(product, opts) {
       fail(err);
     }
 
-    // finish_reason=stop, но SEO-пакет пуст — модель вернула скелет. Повтор
-    // полного ответа; если попытки кончились — доберём SEO узким запросом.
-    if (seoPackageEmpty(enriched) && attempt < maxRetries) {
-      onNote(`SEO пусто, retry ${attempt}`);
+    // finish_reason=stop, но тексты карточки пусты — модель вернула скелет.
+    // Повтор полного ответа; если попытки кончились — доберём узким запросом.
+    if (cardTextsEmpty(enriched) && attempt < maxRetries) {
+      onNote(`тексты карточки пусты, retry ${attempt}`);
       await sleep(2000);
       continue;
     }
@@ -1862,13 +1879,13 @@ export async function enrichProduct(product, opts) {
   fail(lastErr || new Error('Не удалось обогатить'));
 
   /**
-   * Если после основного ответа SEO всё ещё пуст — один узкий запрос только
-   * на тексты страницы. Specs уже есть, их не трогаем.
+   * Если после основного ответа карточка всё ещё без описаний — один узкий
+   * запрос на тексты страницы. Specs уже есть, их не трогаем.
    */
   async function ensureSeo(result) {
-    if (!result?.enriched || !seoPackageEmpty(result.enriched)) return result;
+    if (!result?.enriched || !cardTextsEmpty(result.enriched)) return result;
 
-    onNote('добираем SEO отдельным запросом');
+    onNote('добираем тексты карточки отдельным запросом');
     await limiter.wait(ms => onNote(`rate limit ${ms}ms`));
 
     const seoBudget = Math.min(2500, Math.max(1200, tokenBudget));
@@ -1892,14 +1909,14 @@ export async function enrichProduct(product, opts) {
       });
       bodyText = await res.text();
     } catch (e) {
-      onNote(`SEO добор: сеть — ${netError(e)}`);
+      onNote(`добор текстов: сеть — ${netError(e)}`);
       return result;
     }
 
     let data;
     try { data = JSON.parse(bodyText); } catch { data = null; }
     if (!res.ok || data?.error) {
-      onNote(`SEO добор: ${data?.error?.message || `HTTP ${res.status}`}`);
+      onNote(`добор текстов: ${data?.error?.message || `HTTP ${res.status}`}`);
       return result;
     }
 
@@ -1921,15 +1938,15 @@ export async function enrichProduct(product, opts) {
       seoRaw = repairTruncatedJson(raw);
     }
     if (!seoRaw) {
-      onNote('SEO добор: не разобрали ответ');
+      onNote('добор текстов: не разобрали ответ');
       return { ...result, ...usage(), costSource };
     }
 
     const enriched = mergeSeoPackage(
       result.enriched, seoRaw, src, schema, product.attributes, mismatchPolicy,
     );
-    if (seoPackageEmpty(enriched)) onNote('SEO добор: тексты всё ещё пустые');
-    else onNote('SEO добор: готово');
+    if (cardTextsEmpty(enriched)) onNote('добор текстов: карточка всё ещё пустая');
+    else onNote('добор текстов: готово');
     return {
       enriched,
       ...usage(),

@@ -1,3 +1,5 @@
+import { cardProseSpecIssues } from './prose_align.js';
+
 /**
  * Контракт ответа модели и строгая валидация.
  * Пустая строка вместо null — ошибка. Лишние ключи — ошибка схемы.
@@ -105,7 +107,8 @@ export function validateModelResponse(data, opts = {}) {
     add('short_description', 'обязательное непустое поле');
   } else {
     const len = short.trim().length;
-    if (len < 120 || len > 200) add('short_description', `${len} симв., нужно 120–200`);
+    // Принимаем от 100: модель часто даёт 107–119 при цели 120 в промпте.
+    if (len < 100 || len > 200) add('short_description', `${len} симв., нужно 100–200`);
     if ((short.match(/[.!?…]/g) || []).length > 1) {
       add('short_description', 'должно быть одно предложение');
     }
@@ -167,6 +170,14 @@ export function validateModelResponse(data, opts = {}) {
     } else {
       const len = data.web_info.trim().length;
       if (len < 300 || len > 700) add('web_info', `${len} симв., нужно 300–700 либо null`);
+    }
+  }
+
+  // Цифры в текстах карточки ≠ specs → блокирующая ошибка (после align в normalize
+  // сюда должны доходить только нераспознанные формулировки).
+  if (opts.checkProseSpecs !== false && data.specs && typeof data.specs === 'object') {
+    for (const m of cardProseSpecIssues(data, data.specs)) {
+      add(m.field, m.reason);
     }
   }
 

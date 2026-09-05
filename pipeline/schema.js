@@ -274,6 +274,10 @@ export function extractFactsFromDictionary(text, dict, config) {
   const pairs = extractPairs(wrapped, dict);
   const fuzzyMin = config?.fuzzy?.min_score ?? 0.9;
   const out = {};
+  const disputed = new Set();
+  const sameNum = (a, b) => typeof a === 'number' && typeof b === 'number'
+    ? Math.abs(a - b) <= Math.max(1, Math.abs(b) * 0.02)
+    : a === b;
   for (const pair of pairs) {
     const matched = matchKey(pair.key, dict, { value: pair.value, fuzzyMin });
     if (!matched.attr || matched.attr.tier === 'X') continue;
@@ -297,7 +301,17 @@ export function extractFactsFromDictionary(text, dict, config) {
     let val = norm.value;
     if (typeof val === 'number' && mul !== 1) val = Math.round(val * mul * 1000) / 1000;
     if (Array.isArray(val)) val = val[0];
-    if (out[key] == null) out[key] = val;
+    if (disputed.has(key)) continue;
+    if (out[key] == null) {
+      out[key] = val;
+      continue;
+    }
+    // Два разных значения на один ключ (например «Программы»→24ч и «…стирки»→16) —
+    // не first-wins: снимаем факт, дальше LABEL/другой источник может дать однозначное.
+    if (!sameNum(out[key], val)) {
+      delete out[key];
+      disputed.add(key);
+    }
   }
   return out;
 }

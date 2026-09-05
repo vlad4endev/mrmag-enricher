@@ -360,6 +360,15 @@ export function normalizeValue(attr, raw, { keyText = '' } = {}) {
 
   const one = (typ, v) => {
     if (typ === 'number' || typ === 'integer') {
+      const rawStr = String(v).trim();
+      // Перечень режимов («отжим, полоскание… отсрочка — 24 ч») — не счётчик.
+      // Число должно быть основным содержимым value, а не хвостом чужой строки.
+      if (rawStr.length > 48 && !/^\d+(?:[.,]\d+)?/.test(rawStr)) {
+        return { ok: false, value: null, reason: 'number_not_primary', raw: v };
+      }
+      if ((rawStr.match(/,/g) || []).length >= 2 && !/^\d+(?:[.,]\d+)?\s*(?:шт\.?)?$/i.test(rawStr)) {
+        return { ok: false, value: null, reason: 'list_not_number', raw: v };
+      }
       let n = parseNumber(v);
       if (n == null) return { ok: false, value: null, reason: 'not_number', raw: v };
       n = convert(n, srcUnit, attr.unit);

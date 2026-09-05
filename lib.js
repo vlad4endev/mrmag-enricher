@@ -22,6 +22,7 @@
 
 import { nameKeyTokens } from './pipeline/identity.js';
 import { tryLoadDictSchema, extractFactsFromDictionary, loadConfigSafe, CRAWL_SLUGS, specDest, expectedDictCatId } from './pipeline/schema.js';
+import { alignCardTextsToSpecs } from './pipeline/prose_align.js';
 import { matchKey } from './pipeline/match.js';
 import { normalizeValue } from './pipeline/types.js';
 import { loadBenchmarks, dictDebugInfo, formatDictDebug, resolveDictRoot } from './pipeline/dict.js';
@@ -1171,9 +1172,17 @@ export function attrFacts(attributes, schemaKey) {
  * Факты товара из обоих источников сразу. Расходятся — не утверждаем ничего:
  * тот же принцип, что и с «No Frost» рядом с «капельной» внутри одного текста.
  * Спор магазина с самим собой не разрешается догадкой в нашу пользу.
+ *
+ * Annotation с HTML (<li>) даёт границы пар надёжнее, чем stripHtml(sourceText):
+ * иначе synonym «Программы» проглатывает соседние строки и крадёт «24 ч» отсрочки.
  */
 export function productFacts(product, schemaKey) {
-  const facts = extractFacts(sourceText(product), schemaKey);
+  const plain = sourceText(product);
+  const fromPlain = extractFacts(plain, schemaKey);
+  // Сырой annotation/description — пока HTML жив; поверх plain.
+  const fromAnn = product?.annotation ? extractFacts(String(product.annotation), schemaKey) : {};
+  const fromDesc = product?.description ? extractFacts(String(product.description), schemaKey) : {};
+  const facts = { ...fromPlain, ...fromDesc, ...fromAnn };
   const { facts: attr, bounds, sources } = attrFacts(product?.attributes, schemaKey);
   // Спор не проглатывается молча: это ошибка в самом каталоге, и её владелец —
   // магазин, а не модель. Собираем отдельно от warnings, которые про модель.
@@ -1405,10 +1414,12 @@ export function seoPackageEmpty(data) {
   return cardTextsEmpty(data);
 }
 
-export function normalizeResponse(data, sourceText = '', schemaKey, attributes = [], policy = MISMATCH_POLICY) {
+export function normalizeResponse(data, sourceText = '', schemaKey, attributes = [], policy = MISMATCH_POLICY, product = null) {
   if (!data || typeof data !== 'object' || Array.isArray(data)) {
     throw new Error('Ответ не объект');
   }
+  // Явный undefined от вызывающего не должен обнулять политику по умолчанию.
+  const mismatch = policy == null ? MISMATCH_POLICY : policy;
   const schema = schemaFor(schemaKey);
   const raw = data.specs && typeof data.specs === 'object' ? data.specs : {};
   const specs = {};
@@ -1430,8 +1441,13 @@ export function normalizeResponse(data, sourceText = '', schemaKey, attributes =
     }
   }
 
-  const { facts, bounds, conflicts } = productFacts({ description: sourceText, attributes }, schema);
-  const warnings = crossCheck(specs, facts, bounds, policy).concat(enumIssues);
+  // Полный product (с HTML annotation) — иначе stripHtml(sourceText) снова
+  // склеивает пары и может подставить чужое число в source_facts.
+  const factSrc = product && typeof product === 'object'
+    ? product
+    : { description: sourceText, attributes };
+  const { facts, bounds, conflicts } = productFacts(factSrc, schema);
+  const warnings = crossCheck(specs, facts, bounds, mismatch).concat(enumIssues);
 
   const filled_from_text = [];
   for (const k of schema.specKeys) {
@@ -1449,16 +1465,26 @@ export function normalizeResponse(data, sourceText = '', schemaKey, attributes =
   };
 
   // Обратная совместимость: старые ответы с seo_description / seo_keywords.
-  const description = str(data.description) ?? str(data.seo_description) ?? '';
+  let description = str(data.description) ?? str(data.seo_description) ?? '';
   const meta_keywords = (() => {
     if (typeof data.meta_keywords === 'string') return str(data.meta_keywords) || '';
     if (Array.isArray(data.seo_keywords)) return data.seo_keywords.map(x => String(x).trim()).filter(Boolean).join(', ');
     return '';
   })();
 
-  // Регистр strong подтягиваем к description: иначе валидатор/HTML теряют
-  // «гарантия…» при «Гарантия…» в тексте.
-  const strong = arr(data.strong).map(s => matchLiteral(description, s) ?? s);
+  let short_description = str(data.short_description) || '';
+  let bullets = arr(data.bullets);
+
+  // Specs уже сверены с источником — цифры в прозе обязаны совпасть.
+  const aligned = alignCardTextsToSpecs({ short_description, description, bullets }, specs);
+  short_description = aligned.short_description;
+  description = aligned.description;
+  bullets = aligned.bullets;
+
+  // Регистр strong подтягиваем к (уже выровненному) description; фразы вне текста отбрасываем.
+  const strong = arr(data.strong)
+    .map(s => matchLiteral(description, s))
+    .filter(Boolean);
 
   let web_info = data.web_info;
   if (web_info === '') web_info = ''; // валидатор поймает
@@ -1467,15 +1493,16 @@ export function normalizeResponse(data, sourceText = '', schemaKey, attributes =
 
   return {
     specs,
-    short_description: str(data.short_description) || '',
+    short_description,
     description,
-    bullets: arr(data.bullets),
+    bullets,
     strong,
     meta_keywords,
     web_info,
     source_facts: facts,
     source_conflicts: conflicts,
     filled_from_text,
+    prose_fixes: aligned.prose_fixes,
     warnings,
   };
 }
@@ -1949,7 +1976,7 @@ export async function enrichProduct(product, opts) {
 
     let enriched;
     try {
-      enriched = normalizeResponse(parsedBody, src, schema, product.attributes, mismatchPolicy);
+      enriched = normalizeResponse(parsedBody, src, schema, product.attributes, mismatchPolicy, product);
       lastEnriched = enriched;
     } catch (err) {
       lastErr = err;

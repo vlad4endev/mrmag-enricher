@@ -21,8 +21,8 @@ import {
 // не должна молча получать чужие поля. Тесты холодильника называют схему сами,
 // а сам дефолт проверяется отдельно в разделе «Схемы категорий».
 const extractFacts = (text, key = 'kholodilniki') => extractFactsIn(text, key);
-const normalizeResponse = (data, src = '', key = 'kholodilniki', attrs = [], policy) =>
-  normalizeResponseIn(data, src, key, attrs, policy);
+const normalizeResponse = (data, src = '', key = 'kholodilniki', attrs = [], policy, product) =>
+  normalizeResponseIn(data, src, key, attrs, policy, product);
 const attr = (name, value) => ({ name, value });
 import { parseListing, parseProductPage, buildFilters, assignMissingBrands, writeCategoryFiles,
   parseSearchResults, parseAnyProductPage, pageDescribesProduct } from './catalog.js';
@@ -644,6 +644,32 @@ t('валидатор: порог description зависит от числа spe
     description: caseDesc,
     strong: ['гарантия на двигатель составляет 5 лет'],
   }, { filledSpecs: 5 }), []);
+
+  // short 107 — принимаем (промпт целится в 120, валидатор даёт запас).
+  const short107 = 'А'.repeat(107);
+  assert.deepStrictEqual(validateModelResponse({
+    ...base,
+    short_description: short107,
+    specs: { a: 1, b: 2, c: 3, d: 4, e: 5 },
+    description: caseDesc,
+  }, { filledSpecs: 5 }), []);
+  assert.ok(validateModelResponse({
+    ...base,
+    short_description: 'А'.repeat(99),
+    specs: { a: 1, b: 2, c: 3, d: 4, e: 5 },
+    description: caseDesc,
+  }, { filledSpecs: 5 }).some(i => i.field === 'short_description'));
+});
+t('strong вне description отбрасывается при нормализации', () => {
+  const r = normalizeResponse({
+    specs: {},
+    description: 'Текст с акцентом: скорость отжима 1000 об/мин для белья.',
+    short_description: 'Кратко',
+    bullets: [],
+    strong: ['скорость отжима 1000 об/мин', 'выдуманная фраза которой нет'],
+    meta_keywords: 'а, б, в, г, д, е, ж',
+  }, '', 'stiralnye_mashiny');
+  assert.deepStrictEqual(r.strong, ['скорость отжима 1000 об/мин']);
 });
 t('промпт требует основной текст первым и абзацами', () => {
   const p = buildSystemPrompt('kholodilniki');
@@ -686,6 +712,72 @@ t('отжим и программы читаются с числом до под
   const f = extractFacts('Скорость отжима - 1200<br>Количество программ - 15', 'stiralnye_mashiny');
   assert.strictEqual(f.скорость_отжима_об_мин, 1200);
   assert.strictEqual(f.количество_программ, 15);
+});
+t('перечень «Программы - …» не крадёт 24 ч отсрочки как количество программ', () => {
+  // Плоский stripHtml склеивает <li>: synonym «Программы» раньше глотал
+  // «Максимальное время отсрочки старта - 24 ч» → first-wins 24 вместо 16.
+  const plain =
+    'Программы - отжим, полоскание, стирка хлопка\n' +
+    'Максимальное время отсрочки старта - 24 ч\n' +
+    'Количество программ стирки - 16';
+  const html =
+    '<ul><li>Программы - отжим, полоскание, стирка хлопка</li>' +
+    '<li>Максимальное время отсрочки старта - 24 ч</li>' +
+    '<li>Количество программ стирки - 16</li></ul>';
+  assert.strictEqual(extractFacts(plain, 'stiralnye_mashiny').количество_программ, 16);
+  assert.strictEqual(extractFacts(html, 'stiralnye_mashiny').количество_программ, 16);
+});
+t('ATLANT 60С1010 (11391): в характеристиках 16 программ, не 24 от отсрочки', () => {
+  const data = JSON.parse(fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), 'data_467.json'), 'utf8'));
+  const p = (Array.isArray(data) ? data : []).find(x => String(x.id) === '11391');
+  assert.ok(p, 'товар 11391 должен быть в data_467.json');
+  const { facts } = productFacts(p, 'stiralnye_mashiny');
+  assert.strictEqual(facts.количество_программ, 16,
+    `ожидали 16 из «Количество программ стирки», получили ${facts.количество_программ}`);
+});
+t('текст карточки и specs не расходятся по числу программ', () => {
+  const data = JSON.parse(fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), 'data_467.json'), 'utf8'));
+  const p = (Array.isArray(data) ? data : []).find(x => String(x.id) === '11391');
+  // Модель написала 24 в тексте и в specs — источник говорит 16.
+  const r = normalizeResponse({
+    specs: { количество_программ: 24, максимальная_загрузка_кг: 6 },
+    short_description: 'Стиральная машина ATLANT 60С1010 с 24 программами стирки и загрузкой 6 кг белья для семьи.'.padEnd(120, ' '),
+    description: Array(4).fill(null).map((_, i) => {
+      if (i === 1) return 'Количество программ стирки — 24. Загрузка белья — 6 кг. Отсрочка старта — 24 ч.';
+      return 'Абзац про стиральную машину ATLANT с достаточным объёмом текста для прохождения валидации длины описания карточки товара в каталоге.';
+    }).join('\n\n'),
+    bullets: [
+      'Количество программ — 24',
+      'Загрузка белья — 6 кг',
+      'Отсрочка старта — 24 ч',
+    ],
+    strong: [],
+    meta_keywords: 'а, б, в, г, д, е, ж',
+    web_info: null,
+  }, '', 'stiralnye_mashiny', [], undefined, p);
+
+  assert.strictEqual(r.specs.количество_программ, 16, 'specs из фактов источника');
+  assert.match(r.description, /программ[а-яё]*(?:\s+стирки)?\s*[-–—:]?\s*16/i);
+  assert.doesNotMatch(r.description, /программ[а-яё]*(?:\s+стирки)?\s*[-–—:]?\s*24/i);
+  assert.match(r.description, /отсрочк[а-яё]*[^0-9]{0,20}24\s*ч/i, '24 ч отсрочки не трогаем');
+  assert.ok(r.bullets.some(b => /программ[а-яё]*(?:\s+стирки)?\s*[-–—:]?\s*16/i.test(b)));
+  assert.match(r.short_description, /16\s*программ/i);
+  assert.ok(r.prose_fixes.length >= 1, 'должна быть автоправка прозы');
+
+  const issues = validateModelResponse({
+    specs: r.specs,
+    short_description: r.short_description,
+    description: r.description,
+    bullets: r.bullets,
+    strong: r.strong,
+    meta_keywords: r.meta_keywords,
+    web_info: r.web_info,
+  });
+  assert.deepStrictEqual(
+    issues.filter(i => /программ|характеристик/i.test(i.reason)),
+    [],
+    `валидатор не должен видеть расхождение: ${JSON.stringify(issues)}`,
+  );
 });
 t('«вертикальные ручки» не делают загрузку вертикальной', () => {
   assert.strictEqual(extractFacts('2 ручки вертикальные', 'stiralnye_mashiny').тип_загрузки, undefined);

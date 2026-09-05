@@ -4,6 +4,9 @@ import { cardProseSpecIssues } from './prose_align.js';
  * Контракт ответа модели и строгая валидация.
  * Пустая строка вместо null — ошибка. Лишние ключи — ошибка схемы.
  * Режим бедных данных: <5 specs + description 400–700 в 2 абзацах — допустим.
+ *
+ * Лимиты чуть мягче промпта: deepseek часто даёт 940–949 / 95–99 /
+ * 6 bullets при почти правильном содержании — иначе лишний retry и needs_review.
  */
 
 export const MODEL_KEYS = Object.freeze([
@@ -19,6 +22,17 @@ export const MODEL_KEYS = Object.freeze([
 const MODEL_KEY_SET = new Set(MODEL_KEYS);
 const HTML_RE = /<\/?[a-zA-Z][^>]*>/;
 const RICH_SPECS = 5;
+
+export const SHORT_MIN = 95;
+export const SHORT_MAX = 200;
+export const DESCR_RICH_MIN = 900;
+export const DESCR_RICH_MAX = 1600;
+export const DESCR_POOR_MIN = 400;
+export const DESCR_POOR_MAX = 700;
+export const BULLET_COUNT_MAX = 5;
+export const BULLET_MAX = 120;
+export const STRONG_COUNT_MAX = 3;
+export const META_PHRASE_MAX = 9;
 
 function hasHtml(v) {
   if (typeof v === 'string') return HTML_RE.test(v);
@@ -48,6 +62,83 @@ function phraseCount(s) {
   return String(s || '').split(',').map(x => x.trim()).filter(Boolean).length;
 }
 
+function sentenceCount(s) {
+  return (String(s || '').match(/[.!?…]/g) || []).length;
+}
+
+function firstSentence(s) {
+  const t = String(s || '').trim();
+  const m = t.match(/^[\s\S]*?[.!?…](?=\s|$)/);
+  return (m ? m[0] : t).trim();
+}
+
+export function isPoorDataCard(card, filledSpecs) {
+  const n = filledSpecs ?? (card?.specs && typeof card.specs === 'object'
+    ? Object.values(card.specs).filter(v => v != null && v !== '').length
+    : 0);
+  return n < RICH_SPECS;
+}
+
+/**
+ * Мягкая правка карточки до валидации: обрезка bullets/strong/meta,
+ * одно предложение в short, укорачивание слишком длинного description.
+ * Не дописывает текст — короткие поля остаются на retry/needs_review.
+ * Мутирует card, возвращает тот же объект.
+ */
+export function softFixCardTexts(card, opts = {}) {
+  if (!card || typeof card !== 'object') return card;
+  const poor = opts.poorData === true || isPoorDataCard(card, opts.filledSpecs);
+  const dMin = poor ? DESCR_POOR_MIN : DESCR_RICH_MIN;
+  const dMax = poor ? DESCR_POOR_MAX : DESCR_RICH_MAX;
+  const wantParas = poor ? 2 : 4;
+
+  if (Array.isArray(card.bullets) && card.bullets.length > BULLET_COUNT_MAX) {
+    card.bullets = card.bullets.slice(0, BULLET_COUNT_MAX);
+  }
+  if (Array.isArray(card.strong) && card.strong.length > STRONG_COUNT_MAX) {
+    card.strong = card.strong.slice(0, STRONG_COUNT_MAX);
+  }
+  if (typeof card.meta_keywords === 'string') {
+    const phrases = card.meta_keywords.split(',').map(x => x.trim()).filter(Boolean);
+    if (phrases.length > META_PHRASE_MAX) {
+      card.meta_keywords = phrases.slice(0, META_PHRASE_MAX).join(', ');
+    }
+  }
+
+  if (typeof card.short_description === 'string' && card.short_description.trim()) {
+    let s = card.short_description.trim();
+    if (sentenceCount(s) > 1) s = firstSentence(s);
+    if (s.length > SHORT_MAX) {
+      const cut = s.slice(0, SHORT_MAX);
+      const sp = cut.lastIndexOf(' ');
+      s = (sp > SHORT_MIN ? cut.slice(0, sp) : cut).trim();
+      if (!/[.!?…]$/.test(s)) s = `${s}.`;
+    }
+    card.short_description = s;
+  }
+
+  if (typeof card.description === 'string' && card.description.trim()) {
+    let paras = paragraphs(card.description);
+    if (paras.length > wantParas) paras = paras.slice(0, wantParas);
+    let desc = paras.join('\n\n');
+    if (desc.length > dMax) {
+      while (desc.length > dMax && paras.length > 1) {
+        paras = paras.slice(0, -1);
+        desc = paras.join('\n\n');
+      }
+      if (desc.length > dMax) {
+        const cut = desc.slice(0, dMax);
+        const sp = cut.lastIndexOf(' ');
+        desc = (sp > dMin ? cut.slice(0, sp) : cut).trim();
+        if (!/[.!?…]$/.test(desc)) desc = `${desc}.`;
+      }
+    }
+    card.description = desc;
+  }
+
+  return card;
+}
+
 /**
  * Дословное вхождение без учёта регистра (кириллица: «Гарантия» ↔ «гарантия»).
  * Возвращает срез из haystack с исходным регистром — так <strong> потом совпадёт.
@@ -65,7 +156,7 @@ export function matchLiteral(haystack, needle) {
 
 /**
  * @param {object} data — сырой/нормализованный ответ модели
- * @param {{ filledSpecs?: number, requireSpecFill?: boolean }} opts
+ * @param {{ filledSpecs?: number, requireSpecFill?: boolean, checkProseSpecs?: boolean }} opts
  * @returns {{ field: string, reason: string }[]}
  */
 export function validateModelResponse(data, opts = {}) {
@@ -107,9 +198,10 @@ export function validateModelResponse(data, opts = {}) {
     add('short_description', 'обязательное непустое поле');
   } else {
     const len = short.trim().length;
-    // Принимаем от 100: модель часто даёт 107–119 при цели 120 в промпте.
-    if (len < 100 || len > 200) add('short_description', `${len} симв., нужно 100–200`);
-    if ((short.match(/[.!?…]/g) || []).length > 1) {
+    if (len < SHORT_MIN || len > SHORT_MAX) {
+      add('short_description', `${len} симв., нужно ${SHORT_MIN}–${SHORT_MAX}`);
+    }
+    if (sentenceCount(short) > 1) {
       add('short_description', 'должно быть одно предложение');
     }
   }
@@ -121,10 +213,14 @@ export function validateModelResponse(data, opts = {}) {
     const len = desc.trim().length;
     const paras = paragraphs(desc);
     if (poorData) {
-      if (len < 400 || len > 700) add('description', `${len} симв., при бедных данных нужно 400–700`);
+      if (len < DESCR_POOR_MIN || len > DESCR_POOR_MAX) {
+        add('description', `${len} симв., при бедных данных нужно ${DESCR_POOR_MIN}–${DESCR_POOR_MAX}`);
+      }
       if (paras.length !== 2) add('description', `${paras.length} абзацев, при бедных данных нужно 2`);
     } else {
-      if (len < 950 || len > 1600) add('description', `${len} симв., нужно 950–1600`);
+      if (len < DESCR_RICH_MIN || len > DESCR_RICH_MAX) {
+        add('description', `${len} симв., нужно ${DESCR_RICH_MIN}–${DESCR_RICH_MAX}`);
+      }
       if (paras.length !== 4) add('description', `${paras.length} абзацев, нужно ровно 4 через \\n\\n`);
     }
   }
@@ -133,10 +229,12 @@ export function validateModelResponse(data, opts = {}) {
     add('bullets', 'должен быть массив');
   } else {
     const n = data.bullets.length;
-    if (n < 3 || n > 5) add('bullets', `${n} элементов, нужно 3–5`);
+    if (n < 3 || n > BULLET_COUNT_MAX) add('bullets', `${n} элементов, нужно 3–${BULLET_COUNT_MAX}`);
     data.bullets.forEach((b, i) => {
       if (typeof b !== 'string') add(`bullets[${i}]`, 'не строка');
-      else if (b.trim().length > 90) add(`bullets[${i}]`, `${b.trim().length} симв., максимум 90`);
+      else if (b.trim().length > BULLET_MAX) {
+        add(`bullets[${i}]`, `${b.trim().length} симв., максимум ${BULLET_MAX}`);
+      }
     });
   }
 
@@ -145,14 +243,16 @@ export function validateModelResponse(data, opts = {}) {
     add('meta_keywords', 'обязательное непустое поле');
   } else {
     const n = phraseCount(mk);
-    if (n < 7 || n > 9) add('meta_keywords', `${n} фраз, нужно 7–9 через запятую`);
+    if (n < 7 || n > META_PHRASE_MAX) {
+      add('meta_keywords', `${n} фраз, нужно 7–${META_PHRASE_MAX} через запятую`);
+    }
   }
 
   if (data.strong != null) {
     if (!Array.isArray(data.strong)) {
       add('strong', 'должен быть массивом или отсутствовать');
-    } else if (data.strong.length > 3) {
-      add('strong', `${data.strong.length} элементов, максимум 3`);
+    } else if (data.strong.length > STRONG_COUNT_MAX) {
+      add('strong', `${data.strong.length} элементов, максимум ${STRONG_COUNT_MAX}`);
     } else {
       const body = typeof desc === 'string' ? desc : '';
       data.strong.forEach((s, i) => {
@@ -173,8 +273,6 @@ export function validateModelResponse(data, opts = {}) {
     }
   }
 
-  // Цифры в текстах карточки ≠ specs → блокирующая ошибка (после align в normalize
-  // сюда должны доходить только нераспознанные формулировки).
   if (opts.checkProseSpecs !== false && data.specs && typeof data.specs === 'object') {
     for (const m of cardProseSpecIssues(data, data.specs)) {
       add(m.field, m.reason);
@@ -184,16 +282,52 @@ export function validateModelResponse(data, opts = {}) {
   return issues;
 }
 
-/** Текст для второй попытки: перечень непройденных проверок. */
-export function validationFeedbackLine(issues) {
+/**
+ * Текст для второй попытки: только упавшие поля, с явной инструкцией
+ * (не «сократи description», когда нужно дописать; не добавляй 6-й bullet).
+ */
+export function validationFeedbackLine(issues, opts = {}) {
   if (!issues?.length) return '';
+  const poor = opts.poorData === true;
+  const dMin = poor ? DESCR_POOR_MIN : DESCR_RICH_MIN;
+  const dMax = poor ? DESCR_POOR_MAX : DESCR_RICH_MAX;
+  const wantParas = poor ? 2 : 4;
+
   const parts = issues.map(({ field, reason }) => {
+    if (field === 'short_description') {
+      if (/одно предложение/i.test(reason)) {
+        return 'short_description: ровно ОДНО предложение (одна точка в конце), без второго предложения';
+      }
+      if (/симв/i.test(reason)) {
+        return `short_description: длина строго ${SHORT_MIN}–${SHORT_MAX} символов (сейчас ${reason})`;
+      }
+    }
+    if (field === 'description') {
+      if (/абзац/i.test(reason)) {
+        return `description: ровно ${wantParas} абзаца через пустую строку (\\n\\n), без лишних`;
+      }
+      if (/симв/i.test(reason)) {
+        const tooShort = /\d+/.test(reason) && Number(reason.match(/^(\d+)/)?.[1]) < dMin;
+        return tooShort
+          ? `description: ДОПИШИ до ${dMin}–${dMax} символов (${wantParas} абзаца) — сейчас слишком коротко (${reason}). Не сокращай.`
+          : `description: уложи в ${dMin}–${dMax} символов (${wantParas} абзаца) — сейчас ${reason}`;
+      }
+    }
+    if (field === 'bullets' && /элемент/i.test(reason)) {
+      return `bullets: ровно 3–${BULLET_COUNT_MAX} пунктов (не больше ${BULLET_COUNT_MAX})`;
+    }
+    if (field === 'strong' && /максимум|элемент/i.test(reason)) {
+      return `strong: не больше ${STRONG_COUNT_MAX} фрагментов, каждый дословно из description`;
+    }
+    if (field === 'meta_keywords' && /фраз/i.test(reason)) {
+      return `meta_keywords: 7–${META_PHRASE_MAX} фраз через запятую`;
+    }
     if (/пусто|обязательн/i.test(reason)) {
       return `поле ${field} оказалось пустым или отсутствует (${reason})`;
     }
     return `поле ${field}: ${reason}`;
   });
-  return `В предыдущем ответе ${parts.join('; ')}. Исправь эти поля и верни полный JSON по контракту.`;
+  return `В предыдущем ответе ${parts.join('; ')}. Исправь ТОЛЬКО эти поля, остальное не ломай, верни полный JSON.`;
 }
 
 /**

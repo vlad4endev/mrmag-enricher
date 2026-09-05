@@ -771,11 +771,16 @@ t('промпт перечисляет значения фасетов и кон
   const p = buildSystemPrompt('kholodilniki');
   assert.match(p, /система_охлаждения/);
   if (/система_охлаждения:/.test(p)) assert.match(p, /No Frost/);
+  assert.match(p, /ЗНАЧЕНИЯ ДЛЯ ФИЛЬТРОВ/);
+  assert.match(p, /как видит покупатель|Есть.*Нет|канон/i);
+  assert.match(p, /НОРМАЛИЗАЦИЯ И ТЕРМИНОЛОГИЯ/);
+  // Синонимы → канон: модель видит, как сленг источника сводится к строке фильтра.
+  assert.match(p, /←/);
+  assert.match(p, /Ноу Фрост|Total No Frost|авторазморозка/i);
   for (const k of ['description', 'short_description', 'bullets', 'meta_keywords', 'web_info', 'strong']) {
     assert.ok(p.includes(k), `в промпте нет ${k}`);
   }
   assert.ok(!p.includes('seo_title'), 'старый seo_title убран');
-  assert.match(p, /ЗНАЧЕНИЯ ДЛЯ ФИЛЬТРОВ/);
 });
 t('значение вне списка не попадает в фасет', () => {
   const r = normalizeResponse({ specs: { тип_загрузки: 'Фронтальная', сушка: 'есть', дисплей: 'иногда' } },
@@ -833,7 +838,7 @@ t('валидатор: порог description зависит от числа spe
     strong: ['гарантия на двигатель составляет 5 лет'],
   }, { filledSpecs: 5 }), []);
 
-  // short 107 — принимаем (промпт целится в 120, валидатор даёт запас).
+  // short ниже SHORT_MIN (95) — отклоняем; 107 ещё в запасе относительно промпта 120.
   const short107 = 'А'.repeat(107);
   assert.deepStrictEqual(validateModelResponse({
     ...base,
@@ -843,7 +848,7 @@ t('валидатор: порог description зависит от числа spe
   }, { filledSpecs: 5 }), []);
   assert.ok(validateModelResponse({
     ...base,
-    short_description: 'А'.repeat(99),
+    short_description: 'А'.repeat(90),
     specs: { a: 1, b: 2, c: 3, d: 4, e: 5 },
     description: caseDesc,
   }, { filledSpecs: 5 }).some(i => i.field === 'short_description'));
@@ -861,7 +866,7 @@ t('strong вне description отбрасывается при нормализ�
 });
 t('промпт требует основной текст первым и абзацами', () => {
   const p = buildSystemPrompt('kholodilniki');
-  assert.match(p, /950–1600 символов, РОВНО ЧЕТЫРЕ абзаца/);
+  assert.match(p, /900–1600 символов,\s*РОВНО ЧЕТЫРЕ абзаца/);
   assert.ok(p.indexOf('"description": "..."') < p.indexOf('"specs"'), 'описание раньше specs');
   assert.ok(p.indexOf('"short_description"') < p.indexOf('"specs"'));
 });

@@ -24,11 +24,12 @@ import { nameKeyTokens } from './pipeline/identity.js';
 import { tryLoadDictSchema, extractFactsFromDictionary, loadConfigSafe, CRAWL_SLUGS, specDest, expectedDictCatId } from './pipeline/schema.js';
 import { alignCardTextsToSpecs } from './pipeline/prose_align.js';
 import { matchKey } from './pipeline/match.js';
-import { normalizeValue, aliasValue, enumValuesEqual, isGluedFactDump, displayEnum } from './pipeline/types.js';
+import { normalizeValue, aliasValue, enumValuesEqual, isGluedFactDump, displayEnum, valueFold } from './pipeline/types.js';
 import { loadBenchmarks, dictDebugInfo, formatDictDebug, resolveDictRoot } from './pipeline/dict.js';
 import {
-  validateModelResponse, validationFeedbackLine, MODEL_KEYS, buildDescriptionHtml,
-  matchLiteral,
+  validateModelResponse, validationFeedbackLine, softFixCardTexts, MODEL_KEYS,
+  buildDescriptionHtml, matchLiteral,
+  SHORT_MIN, SHORT_MAX, DESCR_RICH_MIN, DESCR_RICH_MAX,
 } from './pipeline/model_validate.js';
 
 // ── КУРС ─────────────────────────────────────────────────────
@@ -887,11 +888,66 @@ export const PROMPT_PLACEHOLDERS = [
   { key: '{{hints}}', note: 'строки «Что сюда входит…»' },
   { key: '{{axis_rule}}', note: 'правило осей без подписи Ш×В×Г' },
   { key: '{{unit_notes}}', note: 'заметки по единицам раздела' },
-  { key: '{{enums}}', note: 'допустимые значения фасетов' },
+  { key: '{{enums}}', note: 'каноны фасетов + синонимы → канон' },
   { key: '{{color_facets}}', note: 'палитра цвета' },
   { key: '{{spec_keys}}', note: 'скелет specs в JSON-ответе' },
   { key: '{{highlight_keys}}', note: 'атрибуты с highlight: true' },
 ];
+
+/**
+ * Строки {{enums}} для промпта: каноны + сжатые синонимы → канон.
+ * Модель должна видеть, как сленг/ошибки источника сводятся к строке фильтра.
+ */
+export function formatEnumPromptLines(schema) {
+  const enums = schema?.enums || {};
+  const bySpec = new Map();
+  for (const attr of schema?.dict?.attrs || []) {
+    if (attr.tier === 'X') continue;
+    const dest = specDest(attr);
+    const key = typeof dest === 'object' ? dest.key : dest;
+    if (key) bySpec.set(key, attr);
+  }
+  const lines = [];
+  for (const [k, vals] of Object.entries(enums)) {
+    const list = vals || [];
+    if (!list.length) continue;
+    const attr = bySpec.get(k);
+    const aliases = attr?.value_aliases && typeof attr.value_aliases === 'object'
+      ? attr.value_aliases
+      : null;
+    if (!aliases) {
+      // boolean: в specs канон «да»/«нет» (фильтр «Есть»/«Нет» рисует система).
+      const shown = list.map(v => {
+        const s = String(v);
+        if (/^(да|нет)$/i.test(s)) return `"${s.toLowerCase()}"`;
+        return `"${displayEnum(s) || s}"`;
+      });
+      lines.push(`- ${k}: ${shown.join(' | ')}`);
+      continue;
+    }
+    const parts = [];
+    for (const rawCanon of list) {
+      const shown = displayEnum(rawCanon) || rawCanon;
+      const syns = (aliases[rawCanon] || [])
+        .map(s => String(s).trim())
+        .filter(s => s && valueFold(s) !== valueFold(shown));
+      const seen = new Set([valueFold(shown)]);
+      const uniq = [];
+      for (const s of syns) {
+        const f = valueFold(s);
+        if (!f || seen.has(f)) continue;
+        seen.add(f);
+        uniq.push(s);
+        if (uniq.length >= 6) break;
+      }
+      parts.push(uniq.length
+        ? `"${shown}" ← ${uniq.map(s => `"${s}"`).join(', ')}`
+        : `"${shown}"`);
+    }
+    lines.push(`- ${k}:\n  ${parts.join('\n  ')}`);
+  }
+  return lines;
+}
 
 /**
  * Встроенный шаблон системного промпта. Пустой system_prompt в настройках
@@ -949,39 +1005,61 @@ export function defaultSystemPromptTemplate() {
 - Дробное разделяй точкой. Диапазон в числовом поле недопустим: "5–7 кг" → null.
 {{unit_notes}}
 
-4. ЗНАЧЕНИЯ ДЛЯ ФИЛЬТРОВ
-Эти поля питают фасетный фильтр сайта. Пиши значение ТОЧНО из списка, символ в
-символ. Ничего не подходит — null, свой вариант придумывать нельзя.
+4. ЗНАЧЕНИЯ ДЛЯ ФИЛЬТРОВ (как видит покупатель)
+Эти поля питают фасетный фильтр сайта. Покупатель видит на фильтре ровно ту
+формулировку, которую ты запишешь в specs для enum/text — регистр и слова
+важны. Сленг, опечатки и ярлыки источника СВОДИ к канону из списка
+(«←» = синонимы источника → канон фильтра). Свой вариант придумывать нельзя;
+ничего не подходит — null.
+
+Как отображается значение:
+- enum/text — строка канона как есть (Title Case кириллицы, латиница как в
+  каноне: LED, No Frost, Side-by-Side). Не «ноуфрост», не «нерж.», не «LED лампа».
+- boolean — в specs только «да» или «нет»; на фильтре система покажет «Есть»/«Нет».
+- числа — точное число без единицы и без бакета: «6», не «5-7» и не «6 кг».
+  Корзины «50-55», «6+» собирает система из точных чисел.
+- мультизначные — каноны через запятую: «Жировой, Угольный».
+- в description/bullets те же смыслы, что в specs, но человеческим языком;
+  для фильтра в specs — только канон.
+
 {{enums}}
 
-5. НОРМАЛИЗАЦИЯ
+5. НОРМАЛИЗАЦИЯ И ТЕРМИНОЛОГИЯ
+Ты не копируешь формулировку источника дословно — ты ПРИВОДИШЬ её к канону
+магазина. Ошибка, транслит, устаревший ярлык или сленг в данных → исправь
+на правильный термин из §4 / палитры / правил ниже. В текстах карточки тоже
+используй исправленную терминологию, не повторяй сырой ярлык источника.
 - тип_товара — существительное в единственном числе, нижним регистром:
   "холодильник", "перфоратор", "смеситель".
 - бренд — как пишет производитель: латиницей для латинских ("LG", "Haier"),
   кириллицей для российских ("Бирюса", "Позис"). Без кавычек и без "ООО".
 - модель — только индекс, без бренда и без слова "модель": "GA-B419SQGL".
 - цвет — один базовый цвет из палитры: {{color_facets}}. Оттенок из описания
-  ("графитовый металлик") сведи к базовому ("серый").
+  ("графитовый металлик") сведи к базовому ("серый"); если цвет есть в §4 —
+  пиши канон оттуда.
 - Значения без служебного мусора: без "шт.", "прибл.", "*", сносок и HTML.
-- Технические ярлыки пиши понятным языком, термин можно оставить в скобках:
-  «No Frost» → «автоматическая разморозка (No Frost)»; то же для размораживания
-  камер («автоматическое (No Frost)»). В description и bullets не оставляй
-  голое «No Frost» без пояснения, что камеры не нужно размораживать вручную.
+- Технические ярлыки → понятный канон, термин можно оставить в скобках:
+  «No Frost» / «Ноу Фрост» / «Total No Frost» → «автоматическая разморозка (No Frost)»;
+  для камер → «автоматическое (No Frost)»; «LED» → «Светодиодное».
+  В description и bullets не оставляй голое «No Frost» без пояснения, что
+  камеры не нужно размораживать вручную.
 
 6. ТЕКСТЫ КАРТОЧКИ
 Пиши тексты СРАЗУ после открытия объекта — до specs: иначе при обрыве страница
 останется без описаний.
-- description — основной текст, 950–1600 символов, РОВНО ЧЕТЫРЕ абзаца через
-  пустую строку (\\n\\n):
+- description — основной текст, ${DESCR_RICH_MIN}–${DESCR_RICH_MAX} символов,
+  РОВНО ЧЕТЫРЕ абзаца через пустую строку (\\n\\n):
     1) что это за товар: тип, бренд, модель, назначение из данных;
     2) характеристики цифрами ТОЛЬКО из specs — без домыслов «что это даёт»;
     3) функции и удобства, которые есть в specs;
     4) что учесть перед покупкой строго по данным specs.
   Если характеристик в данных меньше пяти — 400–700 символов, РОВНО ДВА абзаца,
   без домыслов. Ключевые параметры для акцента: {{highlight_keys}}.
-- bullets — 3–5 пунктов, каждый до 90 символов: только факт из specs
-  («параметр — значение»), без выдуманной «пользы покупателю».
-- short_description — одно предложение, 120–200 символов, для анонса карточки.
+- bullets — РОВНО 3–5 пунктов (не 6 и не больше), каждый до 90 символов: только
+  факт из specs («параметр — значение»), без выдуманной «пользы покупателю».
+- short_description — РОВНО одно предложение (одна точка в конце),
+  ${SHORT_MIN}–${SHORT_MAX} символов, для анонса карточки. Не ставь вторую точку
+  внутри — иначе это уже два предложения.
 - strong — 0–3 фрагмента, каждый ДОСЛОВНО встречается в description (для <strong>).
   Можно [].
 - meta_keywords — 7–9 фраз через запятую: категорийные, брендовые и с параметром
@@ -1007,8 +1085,7 @@ export function defaultSystemPromptTemplate() {
 /** Значения плейсхолдеров для схемы — и для сборки промпта, и для превью в UI. */
 export function promptVarsForSchema(schemaKey) {
   const s = schemaFor(schemaKey);
-  const enumLines = Object.entries(s.enums || {})
-    .map(([k, vals]) => `- ${k}: ${(vals || []).map(v => `"${v}"`).join(' | ')}`);
+  const enumLines = formatEnumPromptLines(s);
   const highlightKeys = (s.dict?.attrs || [])
     .filter(a => a.highlight && a.tier !== 'X')
     .map(a => {
@@ -1559,7 +1636,10 @@ function snapEnum(value, allowed) {
 }
 
 // Контракт ответа модели. Старые seo_title/h1/… — лишний ключ = ошибка схемы.
-export { MODEL_KEYS, validateModelResponse, validationFeedbackLine, buildDescriptionHtml };
+export {
+  MODEL_KEYS, validateModelResponse, validationFeedbackLine, softFixCardTexts,
+  buildDescriptionHtml,
+};
 
 /** @deprecated совместимость со старыми тестами/UI. */
 export const CARD_TEXT_KEYS = ['short_description', 'description'];
@@ -2172,6 +2252,8 @@ export async function enrichProduct(product, opts) {
     }
 
     const filledSpecs = Object.values(enriched.specs || {}).filter(v => v != null).length;
+    // DeepSeek часто даёт 6 bullets / 97 симв. short — чиним без второго запроса.
+    softFixCardTexts(enriched);
     const issues = validateModelResponse({
       specs: enriched.specs,
       short_description: enriched.short_description,
@@ -2197,7 +2279,7 @@ export async function enrichProduct(product, opts) {
       }
       logValidationFail(issues, attempt, content);
       if (attempt < attemptsCap) {
-        feedback = validationFeedbackLine(issues);
+        feedback = validationFeedbackLine(issues, { filledSpecs });
         onNote(`повтор с указанием ошибок валидации`);
         continue;
       }

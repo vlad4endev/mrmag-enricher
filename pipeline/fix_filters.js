@@ -69,8 +69,9 @@ function isJunkValue(s, attr = null) {
   if (!t) return true;
   if (BARE_BOOL.test(t)) return true;
   if (looksLikeEnumFragment(t)) return true;
-  if (/^(led|tft|lcd)\s*дисплей$/i.test(t)) return true;
-  if (attr?.code === 'control_type' && /дисплей|led|tft|lcd/i.test(t)) return true;
+  // LED/TFT как отдельный пункт «Тип управления» — не мусор, если aliases
+  // склеят в «Электронное»; иначе drop ниже через not_in_aliases.
+  if (/^(tft|lcd)\s*дисплей$/i.test(t)) return true;
   // Смешение осей внутри «Тип холодильника»
   if (attr?.code === 'fridge_type') {
     if (/^отдельно\s*стоящ|встраива/i.test(t)) return true;

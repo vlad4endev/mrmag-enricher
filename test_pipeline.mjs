@@ -1681,6 +1681,45 @@ console.log('golden tests passed');
 }
 
 {
+  // Регрессия: «грязный» каталог как у витрины до unify — санитайзер склеивает.
+  const { sanitizeFilterCatalog } = await import('./pipeline/fix_filters.js');
+  const fridge = d523.byCode.get('defrost_fridge');
+  const freezer = d523.byCode.get('defrost_freezer');
+  const prevFridge = fridge.facet;
+  const prevFreezer = freezer.facet;
+  fridge.facet = { enabled: true, label: fridge.name, kind: 'enum' };
+  freezer.facet = { enabled: true, label: freezer.name, kind: 'enum' };
+  try {
+    const dirty = [
+      {
+        name: 'Размораживание холодильной камеры',
+        value: ['Автоматическое (No Frost)', 'Капельная система', 'Ручное', 'No Frost'],
+      },
+      {
+        name: 'Тип компрессора',
+        value: ['Инвертор', 'Коллекторный', 'Стандартный', 'Inverter'],
+      },
+      {
+        name: 'Тип управления',
+        value: ['Механическое', 'Поворотный механизм', 'Сенсор', 'Электромеханическое', 'Электронная', 'LED дисплей'],
+      },
+    ];
+    const cleaned = sanitizeFilterCatalog(dirty, d523);
+    assert.ok(cleaned.validation.ok);
+    const defrost = cleaned.filters.find(f => f.name === 'Размораживание холодильной камеры');
+    assert.deepEqual(defrost.value, ['Автоматическое (No Frost)', 'Капельная система', 'Ручное']);
+    const comp = cleaned.filters.find(f => f.name === 'Тип компрессора');
+    assert.deepEqual(comp.value, ['Инверторный', 'Коллекторный', 'Стандартный']);
+    const ctrl = cleaned.filters.find(f => f.name === 'Тип управления');
+    assert.deepEqual(ctrl.value, ['Механическое', 'Сенсорное', 'Электронное']);
+  } finally {
+    fridge.facet = prevFridge;
+    freezer.facet = prevFreezer;
+  }
+  console.log('ok sanitize dirty storefront filters (No Frost / Inverter / LED)');
+}
+
+{
   // Фильтры сайта — только графа характеристик (S1), не S3/AI
   const { buildFilters, assignFilterValues, filterSourceAllowed } = await import('./pipeline/facets.js');
   const cooling = d523.byCode.get('cooling');

@@ -210,6 +210,13 @@ export function formatAttrValue(attr, v, { withUnit = false } = {}) {
     if (withUnit && attr.unit) return `${n} ${attr.unit}`;
     return n;
   }
+  // Enum/text: всегда через канон value_aliases, иначе «Inverter» и «Инвертор»
+  // уедут на витрину как разные пункты фильтра.
+  if (attr && (attr.type === 'enum' || attr.type === 'text' || attr.type === 'class_scale')) {
+    const aliased = aliasValue(attr, v);
+    if (aliased) return displayEnum(aliased);
+    if (hasStrictEnum(attr)) return '';
+  }
   return displayEnum(v);
 }
 

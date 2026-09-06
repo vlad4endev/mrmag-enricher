@@ -249,27 +249,52 @@ export function serializeProducts(recs, dict, debugFacets, opts = {}) {
 }
 
 export function serializeFilters(built) {
-  return { filters: built.filters || [] };
+  return {
+    filters: built.filters || [],
+    generated_at: new Date().toISOString(),
+  };
 }
 
 /**
  * Товар из UI/фида → вход normalizeProduct.
  * В окне id часто лежит в sku (строка «11391»), в эталоне — число.
+ * Готовый products_*.json несёт annotation_html / description_html — без них
+ * повторная выгрузка теряет характеристики и оставляет «старые» filters.
  */
 export function toPipelineProduct(p) {
   const rawId = p?.id ?? p?.sku;
   const id = rawId != null && /^\d+$/.test(String(rawId)) ? Number(rawId) : rawId;
+  const annotation = firstNonEmpty(
+    p?.annotation,
+    p?.annotation_html,
+    p?.characteristics,
+    p?.attrs_html,
+  );
+  const description = firstNonEmpty(
+    p?.description,
+    p?.description_html,
+    p?.seo_description,
+  );
   return {
     id,
     name: p?.name,
-    description: p?.description ?? '',
-    annotation: p?.annotation ?? '',
+    description,
+    annotation,
     web_info: p?.web_info
       ?? p?.review
       ?? p?.external?.web_info
       ?? p?.external?.review
       ?? '',
   };
+}
+
+function firstNonEmpty(...vals) {
+  for (const v of vals) {
+    if (v == null) continue;
+    const s = String(v).trim();
+    if (s) return s;
+  }
+  return '';
 }
 
 /**
@@ -349,7 +374,20 @@ export async function buildCustomerExport(products, {
     ...agentOpts,
   });
 
-  const built = buildFilters(exported, dict, config);
+  let built = buildFilters(exported, dict, config);
+  // Финальный проход: схлопнуть синонимы (No Frost / Inverter / Электронная),
+  // даже если сырой attrs или старый сервер пропустил unify.
+  const { sanitizeFilterCatalog } = await import('./fix_filters.js');
+  const sanitized = sanitizeFilterCatalog(built.filters, dict);
+  built = {
+    ...built,
+    filters: sanitized.filters,
+    debug: (built.debug || []).map(f => {
+      const hit = sanitized.filters.find(x => x.name === f.name);
+      return hit ? { ...f, value: hit.value } : f;
+    }).filter(f => sanitized.filters.some(x => x.name === f.name)),
+    sanitize_fixes: sanitized.fixes,
+  };
   for (const rec of exported) {
     const assigned = assignFilterValues(rec, dict, built.debug, config);
     const filterIssues = checkFilterConsistency(rec, dict, assigned);
@@ -385,6 +423,7 @@ export async function buildCustomerExport(products, {
   return {
     products: deliver ? productsOut : [],
     filters: deliver ? built.filters : [],
+    generated_at: new Date().toISOString(),
     held: held.map(r => ({
       id: r.id,
       name: r.name,
@@ -398,6 +437,7 @@ export async function buildCustomerExport(products, {
       rejected: agent.rejected?.length || 0,
       stats: agent.stats,
       notes: agent.notes || [],
+      sanitize_fixes: built.sanitize_fixes?.length || 0,
     },
     validation,
     quality: exported.map(r => ({

@@ -208,7 +208,17 @@ async function writeOutputs({ recs, dict, config, catId, cov, covAfter, formats,
   });
   console.log(`filters_agent: mode=${agent.mode} map=${agent.mappings.length} skip_stats=${agent.stats.skipped}`);
 
-  const built = buildFilters(exported, dict, config);
+  let built = buildFilters(exported, dict, config);
+  const { sanitizeFilterCatalog } = await import('./pipeline/fix_filters.js');
+  const sanitized = sanitizeFilterCatalog(built.filters, dict);
+  built = {
+    ...built,
+    filters: sanitized.filters,
+    debug: (built.debug || []).map(f => {
+      const hit = sanitized.filters.find(x => x.name === f.name);
+      return hit ? { ...f, value: hit.value } : f;
+    }).filter(f => sanitized.filters.some(x => x.name === f.name)),
+  };
   const clean = assertFiltersClean(built.filters, dict);
   if (!clean.ok) {
     writeJson(path.join(OUT, `filters_reject_${catId}.json`), { errors: clean.errors, agent }, 2);

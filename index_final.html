@@ -3505,8 +3505,15 @@ function normalizeCatalogProduct(p, catName){
   if(out.id==null && id!=null) out.id=id;
   if(out.sku==null && id!=null) out.sku=id;
   if(!String(out.category||'').trim() && catName) out.category=catName;
+  // products_*.json заказчика: annotation_html / description_html без сырых полей
+  if(!String(out.annotation||'').trim() && out.annotation_html)
+    out.annotation=String(out.annotation_html);
+  if(!String(out.description||'').trim() && out.description_html)
+    out.description=String(out.description_html);
   if(out.description==null) out.description='';
   if(out.annotation==null) out.annotation='';
+  // Старые filters на карточке не едут в повторную сборку — сервер пересоберёт.
+  delete out.filters;
   return out;
 }
 
@@ -4861,7 +4868,11 @@ function catOf(p){
 
 /** Строка, которую отдаём серверу на сборку витрины. */
 function fileRow(p,r){
-  return {...p,
+  const {filters:_dropFilters, ...rest}=p||{};
+  return {...rest,
+    // Не тащим старые filters с products_*.json — иначе кажется, что «правки не работают».
+    annotation: rest.annotation || rest.annotation_html || '',
+    description: rest.description || rest.description_html || '',
     enriched:r?.enriched??null,
     ...(r?.skipped?{skipped:r.skipped}:{}),
     ...(r?.needs_review?{needs_review:true,validation_issues:r.validation_issues||[]}:{}),
@@ -4931,13 +4942,38 @@ async function loadExport(path){
   const groups=groupItems(true);
   if(!groups.size) return null;
   const [key,g]=mergeGroups(groups);
-  const d=await apiJson(path,{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({products:g.rows, category: exportCatHint(g)})});
+  // Cache-bust + явный heuristic, чтобы не залипать на старом ответе/кэше прокси.
+  const url=path.includes('?')?`${path}&_=${Date.now()}`:`${path}?_=${Date.now()}`;
+  const d=await apiJson(url,{method:'POST',headers:{'Content-Type':'application/json','Cache-Control':'no-store'},
+    body:JSON.stringify({
+      products:g.rows,
+      category: exportCatHint(g),
+      filters_agent: 'heuristic',
+    })});
   return {key,g,d,groups};
 }
 
 async function loadV2Export(){ return loadExport('/api/export'); }
 async function loadCustomerExport(){ return loadExport('/api/export'); }
+
+function filtersDownloadPayload(d){
+  // Только то, что вернул /api/export — загруженный filters_*.json (srcFilters) НЕ подмешиваем.
+  return {
+    filters: Array.isArray(d?.filters) ? d.filters : [],
+    generated_at: d?.generated_at || new Date().toISOString(),
+  };
+}
+
+function exportStatusLine(d){
+  const n=d?.products?.length??0;
+  const fc=d?.filters?.length??0;
+  const stamp=(d?.generated_at||'').slice(11,19) || '—';
+  const mode=d?.filters_agent?.mode || '—';
+  const fixes=d?.filters_agent?.sanitize_fixes ?? 0;
+  const comp=d?.filters?.find(f=>/компрессор/i.test(f.name));
+  const hint=comp ? ` · компрессор: ${(comp.value||[]).slice(0,3).join(', ')}` : '';
+  return `товаров: ${n} · фасетов: ${fc} · ${stamp} · agent=${mode}`+(fixes?` · sanitize=${fixes}`:'')+hint;
+}
 
 async function downloadCategoryFiles(){
   const b=document.getElementById('dlCatBtn'), was=b.innerHTML;
@@ -4946,12 +4982,13 @@ async function downloadCategoryFiles(){
     const payload=await loadCustomerExport();
     if(!payload){ setSt('er','Нет обработанных товаров'); return; }
     const {key,d}=payload;
+    if(!Array.isArray(d.filters)) throw new Error('сервер не вернул filters — перезапустите node server.js');
     const files=[
       [`products_${key}.json`,d.products],
-      [`filters_${key}.json`,{filters:d.filters}],
+      [`filters_${key}.json`,filtersDownloadPayload(d)],
     ];
     files.forEach(([name,data])=>saveFile(JSON.stringify(data,null,2),name));
-    setSt('ok',`Файлов: ${files.length} · товаров: ${d.products.length}`);
+    setSt('ok',`Файлов: ${files.length} · ${exportStatusLine(d)}`);
   }catch(e){
     setSt('er',`Выгрузка: ${e.message}`);
   }finally{
@@ -4970,14 +5007,15 @@ async function downloadV2(){
     const payload=await loadCustomerExport();
     if(!payload){ setSt('er','Нет обработанных товаров'); return; }
     const {key,d,groups}=payload;
+    if(!Array.isArray(d.filters)) throw new Error('сервер не вернул filters — перезапустите node server.js');
     const files=[
       ['categories_v2.json',{categories:[...groups.values()]
         .map(g=>({id:g.cat.id??g.cat.slug,name:g.cat.name}))}],
-      [`filters_${key}.json`,{filters:d.filters}],
+      [`filters_${key}.json`,filtersDownloadPayload(d)],
       [`products_${key}.json`,d.products],
     ];
     files.forEach(([name,data])=>saveFile(JSON.stringify(data,null,2),name));
-    setSt('ok',`Файлов: ${files.length} · товаров: ${d.products.length}`);
+    setSt('ok',`Файлов: ${files.length} · ${exportStatusLine(d)}`);
   }catch(e){
     setSt('er',`Выгрузка: ${e.message}`);
   }finally{

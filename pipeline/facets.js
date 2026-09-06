@@ -215,6 +215,7 @@ export function buildFilters(recs, dict, config) {
       for (const r of filled) {
         const seen = new Set();
         for (const p of valueList(r.attrs[attr.code])) {
+          // displayValue уже алиасит; пустая строка = вне словаря при strict.
           const lab = displayValue(attr, p);
           if (!lab || seen.has(lab)) continue;
           if (allowed && !allowed.has(lab)) continue;

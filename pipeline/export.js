@@ -251,7 +251,6 @@ export function serializeProducts(recs, dict, debugFacets, opts = {}) {
 export function serializeFilters(built) {
   return {
     filters: built.filters || [],
-    generated_at: new Date().toISOString(),
   };
 }
 
@@ -423,7 +422,6 @@ export async function buildCustomerExport(products, {
   return {
     products: deliver ? productsOut : [],
     filters: deliver ? built.filters : [],
-    generated_at: new Date().toISOString(),
     held: held.map(r => ({
       id: r.id,
       name: r.name,

@@ -736,7 +736,6 @@ export function buildFilters(category, products, { facetsFrom = products } = {})
     category_id: category.id,
     category:    category.name,
     url:         category.url,
-    generated_at: new Date().toISOString(),
     products_total: products.length,
     enriched_total: enrichedTotal,
     filters: [

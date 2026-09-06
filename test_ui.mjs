@@ -801,7 +801,7 @@ const customerProduct = (id, name) => ({
   web_info: '',
 });
 const customerOk = (products, filters = [{ name: 'Цвет', value: ['белый'] }]) =>
-  reply({ filters, products, held: [], generated_at: '2026-09-06T10:00:00.000Z', filters_agent: { mode: 'heuristic', sanitize_fixes: 0 } });
+  reply({ filters, products, held: [], filters_agent: { mode: 'heuristic', sanitize_fixes: 0 } });
 
 const catchFiles = async fn => {
   const files = [];
@@ -857,7 +857,7 @@ await tAsync('одна категория выгружается парой prod
   assert.ok(!('enriched' in products[0]), 'сырой дамп прогона в витрину не идёт');
   const filtersFile = JSON.parse(files[1].body);
   assert.ok(Array.isArray(filtersFile.filters));
-  assert.ok(filtersFile.generated_at, 'метка свежести filters');
+  assert.ok(!('generated_at' in filtersFile), 'generated_at в filters не нужен');
 });
 
 await tAsync('без прогона 2 файла сервер не зовут', async () => {
@@ -1005,7 +1005,7 @@ await tAsync('три файла: категории, фасеты диапазо
     ['categories_v2.json', 'filters_523.json', 'products_523.json']);
   assert.deepStrictEqual(JSON.parse(files[0].body), { categories: [{ id: 523, name: 'Холодильники' }] });
   assert.deepStrictEqual(JSON.parse(files[1].body).filters[0].name, 'Цвет');
-  assert.ok(JSON.parse(files[1].body).generated_at);
+  assert.ok(!('generated_at' in JSON.parse(files[1].body)));
   const row = JSON.parse(files[2].body)[0];
   assert.ok(row.annotation_html);
   assert.ok('web_info' in row);

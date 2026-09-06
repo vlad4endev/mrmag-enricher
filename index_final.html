@@ -4960,19 +4960,17 @@ function filtersDownloadPayload(d){
   // Только то, что вернул /api/export — загруженный filters_*.json (srcFilters) НЕ подмешиваем.
   return {
     filters: Array.isArray(d?.filters) ? d.filters : [],
-    generated_at: d?.generated_at || new Date().toISOString(),
   };
 }
 
 function exportStatusLine(d){
   const n=d?.products?.length??0;
   const fc=d?.filters?.length??0;
-  const stamp=(d?.generated_at||'').slice(11,19) || '—';
   const mode=d?.filters_agent?.mode || '—';
   const fixes=d?.filters_agent?.sanitize_fixes ?? 0;
   const comp=d?.filters?.find(f=>/компрессор/i.test(f.name));
   const hint=comp ? ` · компрессор: ${(comp.value||[]).slice(0,3).join(', ')}` : '';
-  return `товаров: ${n} · фасетов: ${fc} · ${stamp} · agent=${mode}`+(fixes?` · sanitize=${fixes}`:'')+hint;
+  return `товаров: ${n} · фасетов: ${fc} · agent=${mode}`+(fixes?` · sanitize=${fixes}`:'')+hint;
 }
 
 async function downloadCategoryFiles(){

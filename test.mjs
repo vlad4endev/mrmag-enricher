@@ -1153,7 +1153,7 @@ t('products_(id).json — массив, filters_(id).json рядом', () => {
   const f = JSON.parse(fs.readFileSync(filtersFile, 'utf-8'));
   assert.strictEqual(f.category_id, 523);
   assert.strictEqual(f.products_total, 1);
-  assert.ok(f.generated_at);
+  assert.ok(!('generated_at' in f));
   fs.rmSync(dir, { recursive: true, force: true });
 });
 

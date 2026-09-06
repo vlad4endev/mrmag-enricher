@@ -16,6 +16,7 @@
     "inspect": "node cli.mjs inspect",
     "normalize": "node cli.mjs normalize",
     "facets": "node cli.mjs facets",
+    "fix-filters": "node cli.mjs fix-filters",
     "test:api": "node test_api.mjs",
     "quality": "node quality.mjs",
     "sample": "node sample.mjs",

@@ -11,6 +11,9 @@
  *   node cli.mjs config
  *     → текущие настройки поиска (config.json + env), в т.ч. DuckDuckGo
  *   node cli.mjs facets    data_467.json
+ *   node cli.mjs fix-filters data_523.json
+ *     → пересбор filters из характеристик + санитация под витрину
+ *   node cli.mjs fix-filters --filters out/filters_523.json --cat 523
  *   node cli.mjs artifacts data_467.json data_523.json
  *     → dictionaries/attributes_*.json, categories.json
  *   node cli.mjs validate  out/products_467.json
@@ -36,6 +39,7 @@ import { webInfoFrom } from './pipeline/reviews.js';
 import { enrichMissing } from './pipeline/external.js';
 import { resolveSearchSettings } from './pipeline/search.js';
 import { runFiltersAgent, assertFiltersClean } from './pipeline/filters_agent.js';
+import { rebuildStorefrontFilters, sanitizeStorefrontFiltersFile } from './pipeline/fix_filters.js';
 import { loadSettings, resolveProvider, providerEndpoint, providerHasKey } from './settings.js';
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const OUT = process.env.OUT_DIR || path.join(ROOT, 'out');
@@ -414,10 +418,36 @@ else if (cmd === 'artifacts') {
   }
   console.log('customer: dictionaries/attributes_*.json, categories.json');
 }
+else if (cmd === 'fix-filters') {
+  // node cli.mjs fix-filters data_523.json
+  // node cli.mjs fix-filters --filters out/filters_523.json --cat 523
+  const filtersArg = arg('--filters');
+  const catArg = arg('--cat');
+  if (filtersArg) {
+    const catId = catArg || catIdFromFile(filtersArg);
+    const out = sanitizeStorefrontFiltersFile(filtersArg, catId, { root: ROOT, outDir: OUT });
+    console.log(`fix-filters sanitize → ${out.outPath}`);
+    console.log(`  fixes=${out.report.fixes.length} issues=${out.report.issues.length} ok=${out.validation.ok}`);
+    for (const f of out.filters) console.log(`  · ${f.name}: ${f.value.join(', ')}`);
+    if (!out.validation.ok) process.exitCode = 2;
+  } else {
+    const dataFile = files[0];
+    if (!dataFile) {
+      console.error('укажите data_{id}.json или --filters filters_{id}.json --cat id');
+      process.exit(1);
+    }
+    const out = await rebuildStorefrontFilters(dataFile, { root: ROOT, outDir: OUT, mode: 'heuristic' });
+    console.log(`fix-filters rebuild ← характеристики → ${out.outPath}`);
+    console.log(`  report ${out.reportPath}`);
+    console.log(`  fixes=${out.report.fixes.length} issues=${out.report.issues.length} ok=${out.validation.ok}`);
+    for (const f of out.filters) console.log(`  · ${f.name}: ${f.value.join(', ')}`);
+    if (!out.validation.ok) process.exitCode = 2;
+  }
+}
 else if (cmd === 'config') showConfig();
 else if (cmd === 'validate') validateFile(files[0]);
 else if (cmd === 'report') reportCmd(files[0]);
 else {
-  console.error(`команды: inspect | normalize | enrich | lookup | config | facets | artifacts | validate | report`);
+  console.error(`команды: inspect | normalize | enrich | lookup | config | facets | artifacts | validate | report | fix-filters`);
   process.exit(1);
 }

@@ -1064,7 +1064,7 @@ console.log('golden tests passed');
   const exported = all.filter(r => annotationRows(r, d467).length >= MIN_ANNOTATION_ROWS);
   const built = buildFilters(exported, d467, config);
   assert.equal(expectedFilters(d467).length, 17);
-  assert.equal(expectedFilters(d523).length, 22);
+  assert.equal(expectedFilters(d523).length, 20);
   const ids = [11391, 29921, 44772, 12957, 44773, 44782, 52904, 128925, 182681, 190925];
   const recs = ids.map(id => all.find(x => x.id === id)).filter(Boolean);
   const rows = recs.map(r => serializeProduct(r, d467, built.debug));
@@ -1646,6 +1646,8 @@ console.log('golden tests passed');
 
   const fridge = d523.byCode.get('defrost_fridge');
   const freezer = d523.byCode.get('defrost_freezer');
+  assert.equal(fridge.facet?.enabled, false, 'defrost_fridge не фасет витрины');
+  assert.equal(freezer.facet?.enabled, false, 'defrost_freezer не фасет витрины');
   for (const v of ['No Frost', 'NoFrost', 'Автоматическое', 'Автоматическое (No Frost)']) {
     assert.equal(aliasValue(fridge, v), 'Автоматическое (No Frost)', v);
   }
@@ -1668,15 +1670,13 @@ console.log('golden tests passed');
   const clone = structuredClone(recs);
   await runFiltersAgent({ recs: clone, dict: d523, mode: 'heuristic', catId: '523' });
   const built = buildFilters(clone, d523, config);
-  const fr = built.filters.find(f => f.name === 'Размораживание холодильной камеры');
-  const fz = built.filters.find(f => f.name === 'Размораживание морозильной камеры');
+  assert.ok(!built.filters.some(f => /Размораживание/i.test(f.name)));
   const cool = built.filters.find(f => f.name === 'Система охлаждения');
-  assert.deepEqual(fr.value.slice().sort(), ['Автоматическое (No Frost)', 'Капельная система', 'Ручное'].sort());
-  assert.deepEqual(fz.value.slice().sort(), ['Автоматическое (No Frost)', 'Ручное'].sort());
-  assert.ok(!fr.value.includes('No Frost') && !fr.value.includes('Ручная разморозка'));
-  assert.ok(!fz.value.includes('No Frost') && !fz.value.includes('Low Frost'));
+  assert.ok(cool, 'cooling facet present');
   assert.ok(cool.value.includes('No Frost'));
   assert.equal(cool.value.filter(v => /no\s*frost/i.test(v)).length, 1);
+  assert.ok(cool.value.includes('Капельная'));
+  assert.ok(cool.value.includes('Ручная разморозка'));
   console.log('ok defrost/cooling: no duplicate No Frost / Ручное canons');
 }
 

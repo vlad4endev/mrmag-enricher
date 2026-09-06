@@ -5,13 +5,19 @@
  */
 
 import { facetKind } from './facets.js';
-import { valueFold, displayEnum } from './types.js';
+import { valueFold, displayEnum, looksLikeEnumFragment } from './types.js';
 
 const ATTR_TYPES = new Set([
   'string', 'text', 'integer', 'number', 'boolean', 'enum', 'multi_enum', 'class_scale', 'dimensions',
 ]);
 
 const FACET_KINDS = new Set(['none', 'enum', 'range', 'boolean']);
+
+/**
+ * Однословные ключи вроде «Тип» матчят чужие пары («Тип = зоны свежести - нет»)
+ * и засоряют filters_*.json на витрине.
+ */
+const GENERIC_NAME_SYNONYM = /^(?:тип|вид|класс|наличие|система|режим|опция|функция)$/i;
 
 /** Допустимые пары type × facet.kind (none = facet.enabled false). */
 const TYPE_FACET_OK = {
@@ -31,15 +37,7 @@ function fold(s) {
 }
 
 function looksLikeFragment(val) {
-  const s = String(val ?? '').trim();
-  if (!s) return true;
-  if (s === '[object Object]') return true;
-  if (/\s[-–—]\s/.test(s) && s.length > 12) return true;
-  if (/:\s*\S/.test(s) && s.length > 20) return true;
-  if (/^и\s+/i.test(s)) return true;
-  if (/^со\s+смартфона/i.test(s)) return true;
-  if (s.endsWith(' -') || s.endsWith(' —') || s.endsWith(':')) return true;
-  return false;
+  return looksLikeEnumFragment(val);
 }
 
 function otherAttrHit(val, attr, allAttrs) {
@@ -187,6 +185,22 @@ export function auditAttribute(attr, allAttrs = []) {
       message: 'facet.enabled, но value_aliases пуст — фильтр будет собирать произвольные строки',
       fix: 'добавьте канонические значения и синонимы',
     });
+  }
+
+  // Имя-синоним «Тип» / «Вид» — слишком широкий матч для пар ключ=значение.
+  for (const syn of attr.synonyms || []) {
+    const s = String(syn || '').trim();
+    if (!s) continue;
+    if (GENERIC_NAME_SYNONYM.test(s)) {
+      issues.push({
+        severity: 'error',
+        kind: 'generic_name_synonym',
+        value: s,
+        message: `синоним имени «${s}» слишком общий — матчит чужие характеристики и засоряет фильтры`,
+        fix: 'замените на уточнение: «Тип холодильника», «Тип управления»…',
+        actions: ['delete', 'keep'],
+      });
+    }
   }
 
   for (const { label, synonyms } of syns) {

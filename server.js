@@ -33,7 +33,8 @@
  *                             обход раздела: товары с описаниями + автофильтры
  *   POST /api/export          выгрузка заказчика: products + filters + held
  *   POST /api/export-v2       витрина v2: filters + products
- *   POST /api/filters         фильтры по переданному списку товаров
+ *   POST /api/filters/build   отдельный сбор filters после обогащения (агент)
+ *   POST /api/filters         фильтры по переданному списку товаров (legacy catalog)
  *   POST /api/quality         качество исходных данных по списку товаров
  *   POST /api/enrich          обогащение одного товара {model, product, category?}
  *   POST /api/jobs            фоновый прогон {model, products[], indices?, category?}
@@ -69,7 +70,7 @@ import {
 } from './lib.js';
 import { CATEGORIES, findCategory, crawlCategory, loadFeed, buildFilters, ensureSource, WEB_LOOKUP } from './catalog.js';
 import { buildV2 } from './export_v2.js';
-import { buildCustomerExport, buildGoldShapeExport } from './pipeline/export.js';
+import { buildCustomerExport, buildGoldShapeExport, buildFiltersOnly } from './pipeline/export.js';
 import { dictForProducts, expectedDictCatId } from './pipeline/schema.js';
 import { createJobStore } from './jobs.js';
 import {
@@ -92,7 +93,6 @@ import {
   bootstrapSettingsFile, PROVIDER_PRESETS, envOverrides,
   parsersView, conditionsView,
 } from './settings.js';
-
 const API_KEY = process.env.OPENROUTER_API_KEY || '';
 const PORT    = Number(process.env.PORT || 3000);
 const HOST    = process.env.HOST || '0.0.0.0';
@@ -899,6 +899,43 @@ async function apiQuality(req, res) {
 }
 
 /**
+ * Опции filters_agent для export / filters/build.
+ * mode=heuristic|ai|auto; без ключа — эвристика.
+ */
+function filtersAgentOptions(body = {}) {
+  const settings = loadSettings(ROOT);
+  const prov = resolveProvider(settings, body?.provider);
+  const ep = providerEndpoint(prov);
+  const apiKey = ep.apiKey || API_KEY;
+  const mode = body?.filters_agent === 'heuristic' || body?.mode === 'heuristic'
+    ? 'heuristic'
+    : (body?.filters_agent === 'ai' || body?.mode === 'ai' ? 'ai' : 'auto');
+  return {
+    mode,
+    model: String(body?.model || settings.run?.model || '').trim(),
+    timeoutMs: Number(settings.run?.timeout_ms) || 90_000,
+    maxTokens: Math.min(8000, Number(settings.run?.max_tokens) || 4000),
+    categoryName: body?.category_name || '',
+    provider: apiKey ? {
+      apiKey,
+      baseUrl: ep.baseUrl,
+      chatUrl: ep.chatUrl,
+      headers: ep.headers,
+      model: settings.run?.model,
+    } : null,
+  };
+}
+
+/** Убрать внутренние поля (_built…) из ответа клиенту. */
+function publicExportPayload(out) {
+  if (!out || typeof out !== 'object') return out;
+  const {
+    _built, _exported, _productsOut, ...pub
+  } = out;
+  return pub;
+}
+
+/**
  * Выгрузка v2: POST { products, category } → { products, filters, held }.
  * Те же правила, что /api/export: dict → customer; known cat без dict → 422;
  * неизвестная категория → buildV2 без silent-gold по известному разделу.
@@ -921,11 +958,22 @@ async function apiExportV2(req, res) {
     let config;
     try { config = loadConfig(ROOT); }
     catch { return json(res, 500, { error: 'не прочитался config.json' }); }
-    const out = buildCustomerExport(products, { dict, config, root: ROOT });
+    const out = await buildCustomerExport(products, {
+      dict, config, root: ROOT,
+      filtersAgent: filtersAgentOptions({ ...body, category_name: categoryName(dict.catId, ROOT) }),
+    });
+    if (!out.validation?.ok) {
+      return json(res, 422, {
+        error: 'filters не прошли проверку чистоты',
+        validation: out.validation,
+        filters_agent: out.filters_agent,
+        held: out.held,
+      });
+    }
     if (!out.products.length) {
       return json(res, 400, { error: 'нет товаров с полными характеристиками', held: out.held });
     }
-    return json(res, 200, out);
+    return json(res, 200, publicExportPayload(out));
   }
   if (expectedId) {
     return json(res, 422, {
@@ -975,11 +1023,22 @@ async function apiExport(req, res) {
     let config;
     try { config = loadConfig(ROOT); }
     catch { return json(res, 500, { error: 'не прочитался config.json' }); }
-    const out = buildCustomerExport(products, { dict, config, root: ROOT });
+    const out = await buildCustomerExport(products, {
+      dict, config, root: ROOT,
+      filtersAgent: filtersAgentOptions({ ...body, category_name: categoryName(dict.catId, ROOT) }),
+    });
+    if (!out.validation?.ok) {
+      return json(res, 422, {
+        error: 'filters не прошли проверку чистоты',
+        validation: out.validation,
+        filters_agent: out.filters_agent,
+        held: out.held,
+      });
+    }
     if (!out.products.length) {
       return json(res, 400, { error: 'нет товаров с полными характеристиками', held: out.held });
     }
-    return json(res, 200, out);
+    return json(res, 200, publicExportPayload(out));
   }
 
   if (expectedId) {
@@ -995,6 +1054,51 @@ async function apiExport(req, res) {
   const out = buildGoldShapeExport(products);
   if (!out.products.length) {
     return json(res, 400, { error: 'Нет товаров для выгрузки' });
+  }
+  return json(res, 200, out);
+}
+
+/**
+ * Отдельный сбор filters после обогащения.
+ * POST { products, category, mode? } → { filters, validation, filters_agent, debug }.
+ */
+async function apiFiltersBuild(req, res) {
+  const raw = await readBody(req, BULK_BODY_LIMIT);
+  let body;
+  try { body = JSON.parse(raw); } catch { return json(res, 400, { error: 'Тело запроса не JSON' }); }
+
+  const { products, category, category_id } = body || {};
+  if (!Array.isArray(products) || !products.length) {
+    return json(res, 400, { error: 'Не передан список товаров' });
+  }
+  const catKey = category ?? category_id
+    ?? products.find(p => p.category)?.category
+    ?? products.find(p => p.category_id)?.category_id;
+  const dict = dictForProducts(products, catKey, ROOT);
+  if (!dict) {
+    const expectedId = expectedDictCatId(products, catKey, ROOT);
+    return json(res, expectedId ? 422 : 400, {
+      error: expectedId
+        ? `категория ${expectedId} определена, но справочник недоступен`
+        : 'нужен справочник attributes_{id}.json',
+      needs_review: true,
+    });
+  }
+  let config;
+  try { config = loadConfig(ROOT); }
+  catch { return json(res, 500, { error: 'не прочитался config.json' }); }
+
+  const out = await buildFiltersOnly(products, {
+    dict,
+    config,
+    root: ROOT,
+    filtersAgent: filtersAgentOptions({ ...body, category_name: categoryName(dict.catId, ROOT) }),
+  });
+  if (!out.validation?.ok) {
+    return json(res, 422, {
+      error: 'filters не прошли проверку чистоты',
+      ...out,
+    });
   }
   return json(res, 200, out);
 }
@@ -1581,6 +1685,7 @@ const server = http.createServer(async (req, res) => {
       if (req.method === 'PUT') return await apiDictionaryPut(req, res, id);
       if (req.method === 'DELETE') return apiDictionaryDelete(res, id);
     }
+    if (req.method === 'POST' && u.pathname === '/api/filters/build') return await apiFiltersBuild(req, res);
     if (req.method === 'POST' && u.pathname === '/api/filters')    return apiFilters(req, res);
     if (req.method === 'POST' && u.pathname === '/api/quality')    return apiQuality(req, res);
     if (req.method === 'POST' && u.pathname === '/api/export-v2')  return await apiExportV2(req, res);

@@ -1,6 +1,6 @@
 /** Фильтры строго по facet.* справочника. Вид и шаг из справочника, не из данных. */
 
-import { formatAttrValue, unifyEnumValues } from './types.js';
+import { formatAttrValue, hasStrictEnum, looksLikeEnumFragment, unifyEnumValues } from './types.js';
 
 /** Доля товаров на одно значение, выше которой фильтр перестаёт различать товары. */
 const DOMINANT_SHARE = 95;
@@ -184,7 +184,7 @@ export function buildFilters(recs, dict, config) {
       // Мультизначный атрибут даёт товару несколько значений фильтра:
       // «механическое, кнопочное» попадает и в «Механическое», и в «Кнопочное».
       // Strict enum: значения вне value_aliases не создают filter value.
-      const strict = attr.value_aliases && Object.keys(attr.value_aliases).length > 0;
+      const strict = hasStrictEnum(attr);
       const allowed = strict
         ? new Set(Object.keys(attr.value_aliases).map(k => displayValue(attr, k)))
         : null;
@@ -194,6 +194,9 @@ export function buildFilters(recs, dict, config) {
           const lab = displayValue(attr, p);
           if (!lab || seen.has(lab)) continue;
           if (allowed && !allowed.has(lab)) continue;
+          // Без канонов — всё равно не пускаем «Зоны свежести - нет» на витрину.
+          if (!allowed && looksLikeEnumFragment(lab)) continue;
+          if (!allowed && /^(?:нет|да|есть|имеется|yes|no)$/i.test(lab)) continue;
           seen.add(lab);
           counts.set(lab, (counts.get(lab) || 0) + 1);
         }
@@ -271,10 +274,14 @@ export function assignFilterValues(rec, dict, debugFacets) {
       if (v !== true && v !== false) continue;
       out[f.name] = [displayValue(attr, v)];
     } else {
+      // Только значения из каталожного фасета — иначе товар ссылается на пункт,
+      // которого нет в filters_*.json, и витрина разъезжается.
+      const allowed = new Set(f.value);
       const labels = [];
       for (const p of valueList(v)) {
         const lab = displayValue(attr, p);
-        if (lab && !labels.includes(lab)) labels.push(lab);
+        if (!lab || labels.includes(lab) || !allowed.has(lab)) continue;
+        labels.push(lab);
       }
       if (labels.length) out[f.name] = labels;
     }

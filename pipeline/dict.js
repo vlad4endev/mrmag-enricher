@@ -4,6 +4,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { normKey } from './text.js';
+import { looksLikeEnumFragment } from './types.js';
 
 /**
  * Корень репозитория (рядом с pipeline/), а не process.cwd().
@@ -300,6 +301,7 @@ export function saveDictionaryAttrs(catId, attrs, root) {
     throw Object.assign(new Error('ожидался непустой массив атрибутов'), { status: 400 });
   }
   const codes = new Set();
+  const GENERIC_SYN = /^(?:тип|вид|класс|наличие|система|режим|опция|функция)$/i;
   for (const a of attrs) {
     if (!a || typeof a !== 'object' || Array.isArray(a)) {
       throw Object.assign(new Error('каждый атрибут — объект'), { status: 400 });
@@ -314,6 +316,24 @@ export function saveDictionaryAttrs(catId, attrs, root) {
       throw Object.assign(new Error(`дублируется code «${a.code}»`), { status: 400 });
     }
     codes.add(a.code);
+    for (const syn of a.synonyms || []) {
+      const s = String(syn || '').trim();
+      if (GENERIC_SYN.test(s)) {
+        throw Object.assign(new Error(
+          `у «${a.code}» синоним «${s}» слишком общий — уточните («Тип холодильника», не «Тип»)`,
+        ), { status: 400 });
+      }
+    }
+    // Мусорные каноны («Зоны свежести - нет») нельзя сохранять в schema.
+    if (a.facet?.enabled && a.value_aliases && typeof a.value_aliases === 'object') {
+      for (const canon of Object.keys(a.value_aliases)) {
+        if (looksLikeEnumFragment(canon) || /^(?:нет|да|есть)$/i.test(String(canon).trim())) {
+          throw Object.assign(new Error(
+            `у «${a.code}» канон «${canon}» похож на мусор и не должен попадать в фильтры`,
+          ), { status: 400 });
+        }
+      }
+    }
   }
   // Индексация ловит битые синонимы до записи на диск.
   indexDictionary(attrs, String(catId));

@@ -420,6 +420,25 @@ export function enumValuesEqual(attr, a, b) {
   return stem(ca) === stem(cb);
 }
 
+/**
+ * Фрагмент чужой характеристики в значении ENUM.
+ * «Зоны свежести - нет», «Освещения - лампа…», «Охлаждения -» — не тип товара.
+ */
+export function looksLikeEnumFragment(val) {
+  const s = String(val ?? '').trim();
+  if (!s) return true;
+  if (s === '[object Object]') return true;
+  if (s.endsWith(' -') || s.endsWith(' —') || s.endsWith(':') || s.endsWith('-')) return true;
+  // «… - нет/да/есть» — типичный хвост вложенного факта, не канон фильтра.
+  if (/\s[-–—]\s*(?:нет|да|есть|имеется|yes|no)\s*$/i.test(s)) return true;
+  // «Ключ - значение» длиннее короткой метки: на витрине это не пункт фасета.
+  if (/\s[-–—]\s/.test(s) && s.length > 12) return true;
+  if (/:\s*\S/.test(s) && s.length > 20) return true;
+  if (/^и\s+/i.test(s)) return true;
+  if (/^со\s+смартфона/i.test(s)) return true;
+  return false;
+}
+
 /** Склеенный хвост чужих пар («да Перевешиваемые… Габариты…») — не факт освещения. */
 export function isGluedFactDump(v) {
   const s = String(v ?? '').trim();
@@ -533,17 +552,21 @@ export function normalizeValue(attr, raw, { keyText = '' } = {}) {
       }
       const val = displayEnum(aliased || rawEnum);
       if (!val) return empty;
-      if (typ === 'enum' && (
-        /:\s*\S/.test(val)
+      // Канон из value_aliases всегда допустим; сырые строки режем как dump/fragment.
+      if (typ === 'enum' && !aliased && (
+        looksLikeEnumFragment(val)
         || val.length > 80
         || /\.\s+[а-яё]/i.test(val)
-        || ((val.match(/\s[-–—]\s/g) || []).length >= 1 && val.length > 30)
       )) {
         return { ok: false, value: null, reason: 'enum_dump', raw: v };
       }
       if (!aliased && (isEchoOnly(val) || valueFold(val) === valueFold(attr.name)
         || /^(?:освещение|подсветка|фильтр|материал|цвет|тип)$/i.test(val))) {
         return { ok: false, value: null, reason: 'echo_value', raw: v };
+      }
+      // Голое «нет/да» в ENUM-фасете не едет на витрину (это не тип/класс).
+      if (typ === 'enum' && !aliased && /^(?:нет|да|есть|имеется|yes|no)$/i.test(val)) {
+        return { ok: false, value: null, reason: 'bool_word_in_enum', raw: v };
       }
       return { ok: true, value: val };
     }

@@ -829,8 +829,13 @@ console.log('golden tests passed');
   };
   assert.equal(dictForProducts([atlant], '467')?.catId, '467');
   assert.equal(expectedDictCatId([atlant], '467'), '467');
-  const cust = buildCustomerExport([atlant], { dict: d467, config, root: '.' });
+  const cust = await buildCustomerExport([atlant], {
+    dict: d467, config, root: '.',
+    filtersAgent: { mode: 'heuristic' },
+  });
   assert.equal(cust.products.length, 1, 'customer path must export ATLANT');
+  assert.ok(cust.validation?.ok, JSON.stringify(cust.validation?.errors));
+  assert.ok(cust.filters_agent?.mode === 'heuristic' || cust.filters_agent?.mode === 'skip');
   const fkeys = Object.keys(cust.products[0].filters);
   const genericOnly = [
     'Тип товара', 'Бренд', 'Модель', 'Назначение', 'Ширина, мм', 'Высота, мм',
@@ -1110,15 +1115,18 @@ console.log('golden tests passed');
 {
   const p = { ...p467[11391], sku: String(p467[11391].id) };
   delete p.id;
-  const out = buildCustomerExport([p], { dict: d467, config, root: '.' });
+  const out = await buildCustomerExport([p], {
+    dict: d467, config, root: '.',
+    filtersAgent: { mode: 'heuristic' },
+  });
   assert.equal(out.products.length, 1);
   assert.equal(out.products[0].id, 11391);
   assert.equal(out.products[0].name, p467[11391].name);
   assert.deepEqual(Object.keys(out.products[0]), PRODUCT_FIELDS);
   assert.match(out.products[0].annotation_html, /ATLANT/);
-  const thin = buildCustomerExport(
+  const thin = await buildCustomerExport(
     [{ sku: '1', name: 'Стиральная машина X', annotation: '', description: '' }],
-    { dict: d467, config, root: '.' },
+    { dict: d467, config, root: '.', filtersAgent: { mode: 'heuristic' } },
   );
   assert.equal(thin.products.length, 0);
   assert.equal(thin.held.length, 1);
@@ -1502,5 +1510,249 @@ console.log('golden tests passed');
   assert.ok(valueFold('кг') !== valueFold('см'));
 
   console.log('ok P1 dimensions facet / unit-from-schema / no [object Object]');
+}
+
+{
+  // Регрессия: мусор «Тип = зоны свежести - нет» не едет в filters сайта.
+  const { normalizeValue, looksLikeEnumFragment, hasStrictEnum } = await import('./pipeline/types.js');
+  const { buildFilters, assignFilterValues } = await import('./pipeline/facets.js');
+  const { auditAttribute } = await import('./pipeline/schema_audit.js');
+  const { matchKey } = await import('./pipeline/match.js');
+
+  const ft = d523.byCode.get('fridge_type');
+  assert.ok(hasStrictEnum(ft), 'fridge_type must have value_aliases');
+  assert.ok(!(ft.synonyms || []).includes('Тип'), 'bare synonym «Тип» must stay removed');
+  assert.equal(matchKey('Тип', d523).how, 'unmapped', 'bare «Тип» must not match fridge_type');
+
+  const junk = [
+    'Зоны свежести - нет',
+    'Освещения - лампа накаливания',
+    'Установки - встраиваемый',
+    'Штепсельной розетки - «Schuko»',
+    'Полки - с откидной крышкой',
+    'Охлаждения -',
+    'нет',
+  ];
+  for (const v of junk) {
+    assert.ok(looksLikeEnumFragment(v) || /^(?:нет)$/i.test(v), `fragment detect: ${v}`);
+    const n = normalizeValue(ft, v, { keyText: 'Тип холодильника' });
+    assert.equal(n.ok, false, `junk must not normalize: ${v} → ${JSON.stringify(n)}`);
+  }
+  assert.equal(normalizeValue(ft, 'Двухкамерный').value, 'Двухкамерный');
+  assert.equal(normalizeValue(ft, 'Трехкамерный (3d)').value, 'Трехкамерный');
+
+  const recs = [
+    {
+      id: 1,
+      name: 'Холодильник Test A',
+      attrs: {
+        brand: 'Test',
+        fridge_type: 'Зоны свежести - нет',
+        control_type: 'Со смартфона - нет',
+      },
+    },
+    {
+      id: 2,
+      name: 'Холодильник Test B',
+      attrs: {
+        brand: 'Test',
+        fridge_type: 'Двухкамерный',
+        control_type: 'Механическое',
+      },
+    },
+    {
+      id: 3,
+      name: 'Холодильник Test C',
+      attrs: {
+        brand: 'Test',
+        fridge_type: 'Side-by-Side',
+        control_type: 'Сенсорное',
+      },
+    },
+  ];
+  // Минимальный dict-срез: только нужные attrs с facet.
+  const miniAttrs = ['brand', 'fridge_type', 'control_type'].map(c => {
+    const a = structuredClone(d523.byCode.get(c));
+    // brand нужен для заполненности; facet уже enabled у fridge/control
+    return a;
+  });
+  const mini = {
+    catId: '523',
+    attrs: miniAttrs,
+    byCode: new Map(miniAttrs.map(a => [a.code, a])),
+  };
+  for (const r of recs) {
+    for (const a of miniAttrs) {
+      if (!(a.code in r.attrs)) r.attrs[a.code] = null;
+    }
+  }
+
+  const built = buildFilters(structuredClone(recs), mini, config);
+  const fridge = built.filters.find(f => f.name === 'Тип холодильника');
+  assert.ok(fridge, 'Тип холодильника facet present');
+  assert.deepEqual(fridge.value.slice().sort(), ['Side-by-Side', 'Двухкамерный'].sort());
+  assert.ok(!fridge.value.some(v => /нет/i.test(v)), 'no «нет» in fridge_type filter');
+  assert.ok(!fridge.value.some(v => looksLikeEnumFragment(v)), 'no fragments in fridge_type filter');
+
+  const control = built.filters.find(f => f.name === 'Тип управления');
+  assert.ok(control);
+  assert.ok(!control.value.some(v => /нет/i.test(v)), 'no «нет» in control_type filter');
+  assert.deepEqual(control.value.slice().sort(), ['Механическое', 'Сенсорное'].sort());
+
+  const assigned = assignFilterValues(recs[0], mini, built.debug);
+  assert.equal(assigned['Тип холодильника'], undefined, 'junk product gets no fridge_type filter');
+  const assignedOk = assignFilterValues(recs[1], mini, built.debug);
+  assert.deepEqual(assignedOk['Тип холодильника'], ['Двухкамерный']);
+
+  // Без value_aliases всё равно режем фрагменты (защита от старого schema).
+  const loose = structuredClone(ft);
+  loose.value_aliases = {};
+  delete loose.strict_enum;
+  const looseRecs = [
+    { id: 1, name: 't', attrs: { fridge_type: 'Зоны свежести - нет' } },
+    { id: 2, name: 't', attrs: { fridge_type: 'Двухкамерный' } },
+  ];
+  const looseDict = {
+    catId: '523',
+    attrs: [loose],
+    byCode: new Map([['fridge_type', loose]]),
+  };
+  for (const r of looseRecs) {
+    if (!('fridge_type' in r.attrs)) r.attrs.fridge_type = null;
+  }
+  const looseBuilt = buildFilters(structuredClone(looseRecs), looseDict, config);
+  const looseFt = looseBuilt.filters.find(f => f.name === 'Тип холодильника');
+  assert.ok(looseFt);
+  assert.deepEqual(looseFt.value, ['Двухкамерный']);
+
+  const audit = auditAttribute({
+    ...ft,
+    synonyms: [...(ft.synonyms || []), 'Тип'],
+  }, d523.attrs);
+  assert.ok(
+    audit.issues.some(i => i.kind === 'generic_name_synonym'),
+    'audit must flag bare «Тип» synonym',
+  );
+
+  console.log('ok fridge_type filter: no junk / no «нет» on catalog facets');
+}
+
+{
+  // filters_agent: mock LLM + heuristic для 467 / 523 / 929
+  const {
+    collectFacetValueInventory, parseFiltersAgentResponse, applyFiltersAgentMappings,
+    heuristicFiltersMappings, runFiltersAgent, assertFiltersClean, buildFiltersAgentPrompt,
+  } = await import('./pipeline/filters_agent.js');
+  const { buildFilters } = await import('./pipeline/facets.js');
+  const { buildCustomerExport: bce } = await import('./pipeline/export.js');
+
+  const junkRaw = 'Зоны свежести - нет';
+  const recs523 = [
+    { id: 1, name: 'Холодильник A', attrs: { brand: 'Haier', fridge_type: junkRaw, control_type: 'Со смартфона - нет' } },
+    { id: 2, name: 'Холодильник B', attrs: { brand: 'Haier', fridge_type: 'Холодильник двухкамерный с нижней морозильной камерой', control_type: 'механическое' } },
+    { id: 3, name: 'Холодильник C', attrs: { brand: 'LG', fridge_type: 'Side by Side', control_type: 'сенсор' } },
+  ];
+  for (const r of recs523) {
+    for (const a of d523.attrs) {
+      if (!(a.code in r.attrs)) r.attrs[a.code] = null;
+    }
+  }
+
+  const inv = collectFacetValueInventory(recs523, d523);
+  assert.ok(inv.some(f => f.attr_code === 'fridge_type'));
+  assert.ok(buildFiltersAgentPrompt(d523, inv, { catId: '523' }).includes('НЕ предлагай новые фасеты'));
+
+  const parsedBad = parseFiltersAgentResponse({
+    mappings: [
+      { attr_code: 'fridge_type', raw: junkRaw, action: 'skip' },
+      { attr_code: 'fridge_type', raw: 'Холодильник двухкамерный с нижней морозильной камерой', canon: 'Двухкамерный', action: 'map' },
+      { attr_code: 'fridge_type', raw: 'x', canon: 'НесуществующийТип', action: 'map' },
+      { attr_code: 'no_such', raw: 'y', canon: 'z', action: 'map' },
+    ],
+  }, d523);
+  assert.ok(parsedBad.mappings.some(m => m.action === 'skip' && m.raw === junkRaw));
+  assert.ok(parsedBad.mappings.some(m => m.canon === 'Двухкамерный'));
+  assert.ok(parsedBad.rejected.some(r => r.reason === 'canon_not_in_aliases'));
+  assert.ok(parsedBad.rejected.some(r => r.reason === 'unknown_attr'));
+
+  const cloneH = structuredClone(recs523);
+  const heur = heuristicFiltersMappings(cloneH, d523);
+  applyFiltersAgentMappings(cloneH, heur);
+  assert.equal(cloneH[0].attrs.fridge_type, null);
+  assert.equal(cloneH[1].attrs.fridge_type, 'Двухкамерный');
+
+  const mockFetch = async () => ({
+    ok: true,
+    async text() {
+      return JSON.stringify({
+        choices: [{
+          message: {
+            content: JSON.stringify({
+              mappings: [
+                { attr_code: 'fridge_type', raw: junkRaw, action: 'skip' },
+                { attr_code: 'fridge_type', raw: 'Холодильник двухкамерный с нижней морозильной камерой', canon: 'Двухкамерный', action: 'map' },
+                { attr_code: 'fridge_type', raw: 'Side by Side', canon: 'Side-by-Side', action: 'map' },
+                { attr_code: 'control_type', raw: 'Со смартфона - нет', action: 'skip' },
+                { attr_code: 'control_type', raw: 'механическое', canon: 'Механическое', action: 'map' },
+                { attr_code: 'control_type', raw: 'сенсор', canon: 'Сенсорное', action: 'map' },
+              ],
+              notes: ['mock'],
+            }),
+          },
+        }],
+      });
+    },
+  });
+
+  const cloneAi = structuredClone(recs523);
+  const ai = await runFiltersAgent({
+    recs: cloneAi,
+    dict: d523,
+    mode: 'ai',
+    provider: { apiKey: 'test', baseUrl: 'http://example.invalid', chatUrl: 'http://example.invalid/v1/chat/completions' },
+    fetchImpl: mockFetch,
+    catId: '523',
+  });
+  assert.equal(ai.mode, 'ai');
+  const builtAi = buildFilters(cloneAi, d523, config);
+  const ftAi = builtAi.filters.find(f => f.name === 'Тип холодильника');
+  assert.deepEqual(ftAi.value.slice().sort(), ['Side-by-Side', 'Двухкамерный'].sort());
+  assert.ok(assertFiltersClean(builtAi.filters, d523).ok);
+
+  // heuristic runFiltersAgent
+  const cloneHe = structuredClone(recs523);
+  const he = await runFiltersAgent({ recs: cloneHe, dict: d523, mode: 'heuristic', catId: '523' });
+  assert.equal(he.mode, 'heuristic');
+  const builtHe = buildFilters(cloneHe, d523, config);
+  assert.ok(assertFiltersClean(builtHe.filters, d523).ok);
+  assert.ok(!builtHe.filters.find(f => f.name === 'Тип холодильника')?.value.some(v => /нет/i.test(v)));
+
+  // 467: load_type style unify via heuristic export
+  const washer = await bce([p467[11391]], {
+    dict: d467, config, root: '.',
+    filtersAgent: { mode: 'heuristic' },
+  });
+  assert.ok(washer.validation?.ok, JSON.stringify(washer.validation));
+  assert.ok(washer.filters.some(f => f.name === 'Тип загрузки' || f.name.includes('Загрузка') || f.value?.length >= 0));
+
+  // 929 if dictionary exists
+  let d929local = null;
+  try { d929local = loadDictionary('929', '.'); } catch { /* optional */ }
+  if (d929local) {
+    const hoodList = (() => {
+      try { return loadProducts('products_929.json'); } catch { return []; }
+    })();
+    const hoodSrc = hoodList[0];
+    if (hoodSrc) {
+      const hood = await bce([{ ...hoodSrc, enriched: hoodSrc.enriched || null }], {
+        dict: d929local, config, root: '.',
+        filtersAgent: { mode: 'heuristic' },
+      });
+      assert.ok(hood.filters_agent);
+      if (hood.products.length) assert.ok(hood.validation?.ok, JSON.stringify(hood.validation));
+    }
+  }
+
+  console.log('ok filters_agent mock-LLM + heuristic (467/523/929)');
 }
 

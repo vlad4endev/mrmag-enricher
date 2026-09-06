@@ -35,7 +35,8 @@ import { validateProducts } from './pipeline/validate.js';
 import { webInfoFrom } from './pipeline/reviews.js';
 import { enrichMissing } from './pipeline/external.js';
 import { resolveSearchSettings } from './pipeline/search.js';
-
+import { runFiltersAgent, assertFiltersClean } from './pipeline/filters_agent.js';
+import { loadSettings, resolveProvider, providerEndpoint, providerHasKey } from './settings.js';
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const OUT = process.env.OUT_DIR || path.join(ROOT, 'out');
 
@@ -168,7 +169,7 @@ function writeContractData(recs, dict, catId) {
   return rows;
 }
 
-function writeOutputs({ recs, dict, config, catId, cov, covAfter, formats, unmapped }, { customer = false } = {}) {
+async function writeOutputs({ recs, dict, config, catId, cov, covAfter, formats, unmapped }, { customer = false } = {}) {
   fs.mkdirSync(OUT, { recursive: true });
   const after = covAfter || cov;
   for (const rec of recs) {
@@ -180,11 +181,42 @@ function writeOutputs({ recs, dict, config, catId, cov, covAfter, formats, unmap
   const heldIds = new Set(held.map(r => r.id));
   const exported = recs.filter(r => !heldIds.has(r.id));
 
+  const settings = loadSettings(ROOT);
+  const prov = resolveProvider(settings);
+  const ep = providerEndpoint(prov);
+  const agent = await runFiltersAgent({
+    recs: exported,
+    dict,
+    catId,
+    categoryName: loadCategories(ROOT).find(c => Number(c.id) === Number(catId))?.name || '',
+    provider: providerHasKey(prov) ? {
+      apiKey: ep.apiKey,
+      baseUrl: ep.baseUrl,
+      chatUrl: ep.chatUrl,
+      headers: ep.headers,
+      model: settings.run?.model,
+    } : null,
+    model: settings.run?.model,
+    timeoutMs: Number(settings.run?.timeout_ms) || 90_000,
+    maxTokens: Number(settings.run?.max_tokens) || 4000,
+    mode: process.env.FILTERS_AGENT === '0' ? 'heuristic' : 'auto',
+  });
+  console.log(`filters_agent: mode=${agent.mode} map=${agent.mappings.length} skip_stats=${agent.stats.skipped}`);
+
   const built = buildFilters(exported, dict, config);
+  const clean = assertFiltersClean(built.filters, dict);
+  if (!clean.ok) {
+    writeJson(path.join(OUT, `filters_reject_${catId}.json`), { errors: clean.errors, agent }, 2);
+    console.error(`filters_${catId}.json отклонён: ${clean.errors.length} грязных значений`);
+    process.exitCode = 1;
+  }
+
   writeContractData(recs, dict, catId);
   const products = serializeProducts(exported, dict, built.debug, { root: ROOT });
   writeJson(path.join(OUT, `products_${catId}.json`), products, 4);
-  writeJson(path.join(OUT, `filters_${catId}.json`), serializeFilters(built), 4);
+  if (clean.ok) {
+    writeJson(path.join(OUT, `filters_${catId}.json`), serializeFilters(built), 4);
+  }
   const heldRows = held.map(r => ({
     id: r.id,
     name: r.name,
@@ -203,7 +235,9 @@ function writeOutputs({ recs, dict, config, catId, cov, covAfter, formats, unmap
   }
 
   writeJson(path.join(OUT, `products_v2_${catId}.json`), products, 4);
-  writeJson(path.join(OUT, `filters_v2_${catId}.json`), serializeFilters(built), 4);
+  if (clean.ok) {
+    writeJson(path.join(OUT, `filters_v2_${catId}.json`), serializeFilters(built), 4);
+  }
   const cat = loadCategories(ROOT).find(c => Number(c.id) === Number(catId));
   writeJson(path.join(OUT, 'categories_v2.json'), {
     categories: [{ id: Number(catId), name: cat?.name || String(catId) }],
@@ -343,7 +377,7 @@ async function runEnrich(dataFile, { external = true, limit = null } = {}) {
     r.covAfter = coverage(r.recs, r.dict);
   }
   for (const rec of r.recs) rec.card = renderCard(rec, r.dict);
-  writeOutputs(r, { customer: true });
+  await writeOutputs(r, { customer: true });
   console.log(`customer: dictionaries/attributes_${r.catId}.json, categories.json`);
   return r;
 }
@@ -354,7 +388,7 @@ const files = process.argv.slice(3).filter(a => !a.startsWith('--'));
 if (cmd === 'inspect') inspect(files[0]);
 else if (cmd === 'normalize') {
   const r = runNormalize(files[0]);
-  writeOutputs(r);
+  await writeOutputs(r);
 }
 else if (cmd === 'enrich' || cmd === 'lookup') {
   await runEnrich(files[0], {
@@ -364,7 +398,7 @@ else if (cmd === 'enrich' || cmd === 'lookup') {
 }
 else if (cmd === 'facets') {
   const r = runNormalize(files[0]);
-  const built = writeOutputs(r);
+  const built = await writeOutputs(r);
   console.log(built.filters.map(f => f.name).join(' · '));
 }
 else if (cmd === 'artifacts') {
@@ -375,7 +409,7 @@ else if (cmd === 'artifacts') {
   for (const f of targets) {
     const r = runNormalize(f);
     for (const rec of r.recs) rec.card = renderCard(rec, r.dict);
-    writeOutputs(r, { customer: true });
+    await writeOutputs(r, { customer: true });
   }
   console.log('customer: dictionaries/attributes_*.json, categories.json');
 }

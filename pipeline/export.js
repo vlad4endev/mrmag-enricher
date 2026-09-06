@@ -9,6 +9,8 @@ import { normalizeProduct, ingestPairs } from './normalize.js';
 import { specDest } from './schema.js';
 import { buildDescriptionHtml } from './model_validate.js';
 import { finalizeRecord, checkFilterConsistency, stripHallucinationClaims, checkDescriptionClaims } from './quality_validate.js';
+import { runFiltersAgent, assertFiltersClean } from './filters_agent.js';
+import { validateProducts } from './validate.js';
 
 function esc(s) {
   return String(s)
@@ -297,8 +299,16 @@ export function applyEnrichedSpecs(rec, specs, dict, config) {
 /**
  * Семь полей заказчика + фасеты. Неполные карточки (< 8 строк) — в held.
  * needs_review в products не попадает — уходит в отчёт.
+ *
+ * После finalize — отдельный category-level filters_agent (ИИ или эвристика),
+ * затем buildFilters. Битый filters_*.json не отдаём (validation.ok === false).
  */
-export function buildCustomerExport(products, { dict, config, root = '.' } = {}) {
+export async function buildCustomerExport(products, {
+  dict,
+  config,
+  root = '.',
+  filtersAgent = null,
+} = {}) {
   if (!dict) throw new Error('нет справочника категории');
   if (!config) throw new Error('нет config');
   const review = [];
@@ -325,10 +335,19 @@ export function buildCustomerExport(products, { dict, config, root = '.' } = {})
   const held = recs.filter(r => annotationRows(r, dict).length < MIN_ANNOTATION_ROWS);
   const heldIds = new Set(held.map(r => r.id));
   const exported = recs.filter(r => !heldIds.has(r.id));
-  // Сначала очистить неподтверждённые «нет», потом строить фасеты.
+  // Сначала очистить неподтверждённые «нет», потом агент фасетов, потом buildFilters.
   for (const rec of exported) {
     finalizeRecord(rec, dict, { enriched: rec._enriched, assigned: null });
   }
+
+  const agentOpts = filtersAgent && typeof filtersAgent === 'object' ? filtersAgent : {};
+  const agent = await runFiltersAgent({
+    recs: exported,
+    dict,
+    catId: dict.catId,
+    ...agentOpts,
+  });
+
   const built = buildFilters(exported, dict, config);
   for (const rec of exported) {
     const assigned = assignFilterValues(rec, dict, built.debug);
@@ -337,9 +356,34 @@ export function buildCustomerExport(products, { dict, config, root = '.' } = {})
       rec.validation_issues = [...(rec.validation_issues || []), ...filterIssues];
     }
   }
+
+  const productsOut = serializeProducts(exported, dict, built.debug, { root, skipFinalize: true });
+  const clean = assertFiltersClean(built.filters, dict);
+  const verdict = validateProducts(productsOut, dict, new Map(exported.map(r => [r.id, r])));
+  // Gate только на грязь в значениях фасетов. filter_missing (фасет из schema
+  // ни у кого не заполнен) — норма для частичной выгрузки / одного SKU.
+  const dirtyKinds = new Set([
+    'dirty_filter_value',
+    'filter_not_in_aliases',
+    'filter_object_stringified',
+    'filter_unknown',
+    'filter_not_bucketed',
+    'filter_unit_mismatch',
+  ]);
+  const dirtyVerdict = verdict.errors.filter(e => dirtyKinds.has(e.kind));
+  const validation = {
+    ok: clean.ok && dirtyVerdict.length === 0,
+    errors: [
+      ...clean.errors.map(e => ({ id: null, kind: e.kind, detail: `${e.name}=${e.value}` })),
+      ...dirtyVerdict,
+    ],
+    product_errors: verdict.errors.filter(e => !dirtyKinds.has(e.kind) && e.kind !== 'dirty_filter_value'),
+  };
+
+  const deliver = validation.ok;
   return {
-    products: serializeProducts(exported, dict, built.debug, { root, skipFinalize: true }),
-    filters: built.filters,
+    products: deliver ? productsOut : [],
+    filters: deliver ? built.filters : [],
     held: held.map(r => ({
       id: r.id,
       name: r.name,
@@ -347,6 +391,14 @@ export function buildCustomerExport(products, { dict, config, root = '.' } = {})
       reason: `характеристик ${annotationRows(r, dict).length} < ${MIN_ANNOTATION_ROWS}`,
     })),
     needs_review: review,
+    filters_agent: {
+      mode: agent.mode,
+      mappings: agent.mappings?.length || 0,
+      rejected: agent.rejected?.length || 0,
+      stats: agent.stats,
+      notes: agent.notes || [],
+    },
+    validation,
     quality: exported.map(r => ({
       id: r.id,
       score: r.quality?.score,
@@ -359,6 +411,32 @@ export function buildCustomerExport(products, { dict, config, root = '.' } = {})
       issues: (r.validation_issues || []).length,
       needs_review: Boolean(r.needs_review),
     })),
+    // Внутреннее: /api/filters/build и тесты.
+    _built: built,
+    _exported: exported,
+    _productsOut: productsOut,
+  };
+}
+
+/**
+ * Только сбор filters после агента (для POST /api/filters/build).
+ */
+export async function buildFiltersOnly(products, opts = {}) {
+  const out = await buildCustomerExport(products, opts);
+  const agentFull = out.filters_agent || {};
+  return {
+    filters: out.validation?.ok ? out.filters : [],
+    validation: out.validation,
+    filters_agent: agentFull,
+    held: out.held,
+    debug: {
+      warnings: out._built?.warnings || [],
+      excluded: out._built?.excluded || [],
+      agent_notes: agentFull.notes || [],
+      mode: agentFull.mode,
+    },
+    products_count: (out._productsOut || out.products || []).length,
+    exported_count: out._exported?.length || 0,
   };
 }
 

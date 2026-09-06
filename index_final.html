@@ -1462,7 +1462,7 @@ input[type=range]::-moz-range-thumb{
         <span class="bdg bdg-b" id="dlBtn" style="display:none;cursor:pointer" onclick="downloadAll('json')" title="Выгрузить все результаты в JSON"><i class="ti ti-download" aria-hidden="true"></i> JSON</span>
         <span class="bdg bdg-g" id="dlTxtBtn" style="display:none;cursor:pointer" onclick="downloadAll('txt')" title="Выгрузить все результаты в TXT"><i class="ti ti-file-text" aria-hidden="true"></i> TXT</span>
         <span class="bdg bdg-b" id="dlV2Btn" style="display:none;cursor:pointer" onclick="downloadV2()" title="Выгрузка заказчика плюс categories: products_(id).json, filters_(id).json"><i class="ti ti-braces" aria-hidden="true"></i> JSON v2</span>
-        <span class="bdg bdg-b" id="dlCatBtn" style="display:none;cursor:pointer" onclick="downloadCategoryFiles()" title="Два файла заказчика: products_(id).json и filters_(id).json"><i class="ti ti-files" aria-hidden="true"></i> 2 файла</span>
+        <span class="bdg bdg-b" id="dlCatBtn" style="display:none;cursor:pointer" onclick="downloadCategoryFiles()" title="Два файла заказчика: products_(id).json и filters_(id).json. Фильтры нормализуются отдельным проходом по категории."><i class="ti ti-files" aria-hidden="true"></i> 2 файла</span>
         <span class="bdg bdg-a" id="clrBtn" style="display:none;cursor:pointer" onclick="clearResults()" title="Удалить сохранённый прогон">✕ Сброс</span>
       </div>
     </div>
@@ -1797,7 +1797,7 @@ input[type=range]::-moz-range-thumb{
             <summary style="cursor:pointer;font-weight:650">Проверка значений</summary>
             <div id="schAuditBox" class="sch-side"><p class="muted">Нажмите «Проверить»</p></div>
           </details>
-          <div class="hint" id="dictHint">filters_{id}.json строится из facet.enabled + канонов / range breaks + нормализованных attrs.</div>
+          <div class="hint" id="dictHint">filters_{id}.json: после обогащения — отдельный проход нормализации значений (ИИ/эвристика) по facet.enabled + канонам; range — breaks/step из schema.</div>
         </div>
         <div id="aeFacetModal" hidden></div>
       </section>

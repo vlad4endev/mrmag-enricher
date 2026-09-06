@@ -5,7 +5,7 @@
  */
 
 import { aliasValue, displayEnum, hasStrictEnum, looksLikeEnumFragment, unifyEnumValues, valueFold } from './types.js';
-import { facetKind } from './facets.js';
+import { facetKind, filterSourceAllowed } from './facets.js';
 
 const BARE_BOOL = /^(?:нет|да|есть|имеется|yes|no)$/i;
 
@@ -26,13 +26,14 @@ function valueList(v) {
 
 /**
  * Уникальные сырые значения по facet.enabled enum/text (+ частоты).
- * Range и boolean не входят — их нормализует schema/код.
+ * Только графа характеристик (S0/S1/S2) — S3/model не попадают в inventory.
  */
-export function collectFacetValueInventory(recs, dict) {
+export function collectFacetValueInventory(recs, dict, config = {}) {
   const out = [];
   for (const attr of agentFacetAttrs(dict)) {
     const counts = new Map();
     for (const rec of recs || []) {
+      if (!filterSourceAllowed(rec, attr.code, config)) continue;
       for (const v of valueList(rec.attrs?.[attr.code])) {
         const raw = typeof v === 'string' ? v : String(v);
         if (!raw.trim()) continue;
@@ -67,12 +68,13 @@ export function buildFiltersAgentPrompt(dict, inventory, { categoryName = '', ca
 
 ПРАВИЛА:
 1. Состав фильтров задан schema — НЕ предлагай новые фасеты и НЕ меняй имена.
-2. Для каждого raw-значения: action=map + canon из списка canons этого attr_code, либо action=skip.
-3. Мусор («Зоны свежести - нет», «Освещения - …», «Установки - …», хвосты « - нет/да», «[object Object]») → skip.
-4. Голые «нет»/«да»/«есть» в enum → skip.
-5. Единый стиль: одно написание канона на весь каталог (как в canons).
-6. Если canons пуст — только skip для фрагментов; иначе оставь без map (не выдумывай канон).
-7. Ответь ТОЛЬКО JSON-объектом, без markdown.
+2. Входные raw уже только из графы характеристик карточки (annotation/S1, при пустой — description/S2). Не выдумывай значения.
+3. Для каждого raw-значения: action=map + canon из списка canons этого attr_code, либо action=skip.
+4. Мусор («Зоны свежести - нет», «Освещения - …», хвосты « - нет/да», «[object Object]») → skip.
+5. Голые «нет»/«да»/«есть» в enum → skip.
+6. Единый стиль: одно написание канона на весь каталог (как в canons).
+7. Если canons пуст — только skip для фрагментов; иначе оставь без map (не выдумывай канон).
+8. Ответь ТОЛЬКО JSON-объектом, без markdown.
 
 ФАСЕТЫ (допустимые attr_code и canons):
 ${JSON.stringify(facets, null, 2)}
@@ -169,8 +171,8 @@ export function parseFiltersAgentResponse(raw, dict) {
 }
 
 /** Эвристика без LLM: aliasValue / fragment → map|skip. */
-export function heuristicFiltersMappings(recs, dict) {
-  const inventory = collectFacetValueInventory(recs, dict);
+export function heuristicFiltersMappings(recs, dict, config = {}) {
+  const inventory = collectFacetValueInventory(recs, dict, config);
   const byCode = dict.byCode || new Map(dict.attrs.map(a => [a.code, a]));
   const mappings = [];
   for (const facet of inventory) {
@@ -291,6 +293,7 @@ export function assertFiltersClean(filters, dict) {
 export async function runFiltersAgent({
   recs,
   dict,
+  config = {},
   provider = null,
   fetchImpl = globalThis.fetch,
   mode = 'auto', // auto | ai | heuristic
@@ -300,14 +303,14 @@ export async function runFiltersAgent({
   categoryName = '',
   catId = '',
 } = {}) {
-  const inventory = collectFacetValueInventory(recs, dict);
+  const inventory = collectFacetValueInventory(recs, dict, config);
   if (!inventory.length) {
     unifyEnumValues(recs, dict);
     return {
       mode: 'skip',
       mappings: [],
       rejected: [],
-      notes: ['нет enum-фасетов со значениями'],
+      notes: ['нет enum-фасетов со значениями из характеристик'],
       stats: { applied: 0, skipped: 0 },
       inventory,
     };
@@ -359,11 +362,11 @@ export async function runFiltersAgent({
       usedMode = 'ai';
     } catch (e) {
       notes.push(`ai_fallback: ${e.message || e}`);
-      mappings = heuristicFiltersMappings(recs, dict);
+      mappings = heuristicFiltersMappings(recs, dict, config);
       usedMode = 'heuristic';
     }
   } else {
-    mappings = heuristicFiltersMappings(recs, dict);
+    mappings = heuristicFiltersMappings(recs, dict, config);
     if (mode === 'ai') notes.push('нет API-ключа — эвристика');
     usedMode = 'heuristic';
   }

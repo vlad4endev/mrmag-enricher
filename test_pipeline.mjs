@@ -1063,7 +1063,7 @@ console.log('golden tests passed');
   const all = loadProducts('data_467.json').map(p => normalizeProduct(p, d467, config));
   const exported = all.filter(r => annotationRows(r, d467).length >= MIN_ANNOTATION_ROWS);
   const built = buildFilters(exported, d467, config);
-  assert.equal(expectedFilters(d467).length, 20);
+  assert.equal(expectedFilters(d467).length, 17);
   assert.equal(expectedFilters(d523).length, 22);
   const ids = [11391, 29921, 44772, 12957, 44773, 44782, 52904, 128925, 182681, 190925];
   const recs = ids.map(id => all.find(x => x.id === id)).filter(Boolean);
@@ -1435,8 +1435,9 @@ console.log('golden tests passed');
   const dimsAttr = d467.byCode.get('dims');
   assert.equal(dimsAttr.type, 'dimensions');
   assert.equal(dimsAttr.unit, 'см');
-  assert.equal(dimsAttr.facet?.enabled, true);
-  assert.equal(dimsAttr.facet?.label, 'Габариты (ШхГхВ)');
+  // Фасет выключен: покупатель выбирает по ширине/глубине/высоте отдельно.
+  assert.equal(dimsAttr.facet?.enabled, false);
+  assert.ok(dimsAttr.facet?.reason || dimsAttr.name);
 
   const parsed = parseDimensions('Габариты (ШхГхВ)', '59.5×42×85 см');
   assert.ok(parsed?.dims);
@@ -1468,23 +1469,23 @@ console.log('golden tests passed');
   const built = buildFilters([r], d467, config);
   const assigned = assignFilterValues(r, d467, built.debug);
   const lab = 'Габариты (ШхГхВ)';
-  assert.ok(Array.isArray(assigned[lab]), JSON.stringify(assigned));
-  assert.equal(assigned[lab][0], asFilter);
-  assert.ok(!assigned[lab].some(v => String(v) === '[object Object]'));
+  // dims не в фасетах — в filters товара ключа нет; формат значения всё равно валиден.
+  assert.ok(!(lab in assigned) || !assigned[lab]?.length);
+  assert.ok(!JSON.stringify(assigned).includes('[object Object]'));
 
   const row = serializeProduct(r, d467, built.debug);
-  assert.deepEqual(row.filters[lab], [asFilter]);
+  assert.ok(!(lab in (row.filters || {})));
   assert.ok(!JSON.stringify(row.filters).includes('[object Object]'));
 
-  // Unit from schema: label without «, см» is OK when expectedFilters.unit === 'см'
+  // Unit from schema: dims хранится, но не в expectedFilters пока facet.enabled=false
   const exp = expectedFilters(d467).find(f => f.name === lab);
-  assert.equal(exp?.unit, 'см');
+  assert.equal(exp, undefined);
   const { errors } = validateProducts([row], d467, new Map([[r.id, r]]));
   assert.ok(!errors.some(e => e.kind === 'filter_unit_not_cm'), JSON.stringify(errors));
   assert.ok(!errors.some(e => e.kind === 'filter_object_stringified'));
   assert.ok(!errors.some(e => e.kind === 'filter_unit_mismatch' && String(e.detail).includes(lab)));
 
-  // Label unit must match schema unit when suffix present
+  // Label unit must match schema unit when suffix present (локальный dict с включённым фасетом)
   const badDict = {
     catId: 'test',
     attrs: [{
@@ -1635,6 +1636,88 @@ console.log('golden tests passed');
   );
 
   console.log('ok fridge_type filter: no junk / no «нет» on catalog facets');
+}
+
+{
+  // No Frost / Ручное: один канон на фильтр, без дублей написаний
+  const { aliasValue } = await import('./pipeline/types.js');
+  const { buildFilters } = await import('./pipeline/facets.js');
+  const { runFiltersAgent } = await import('./pipeline/filters_agent.js');
+
+  const fridge = d523.byCode.get('defrost_fridge');
+  const freezer = d523.byCode.get('defrost_freezer');
+  for (const v of ['No Frost', 'NoFrost', 'Автоматическое', 'Автоматическое (No Frost)']) {
+    assert.equal(aliasValue(fridge, v), 'Автоматическое (No Frost)', v);
+  }
+  for (const v of ['Ручное', 'Ручная разморозка', 'ручная']) {
+    assert.equal(aliasValue(fridge, v), 'Ручное', v);
+  }
+  assert.equal(aliasValue(freezer, 'Low Frost'), 'Автоматическое (No Frost)');
+
+  const recs = [
+    { id: 1, name: 't', attrs: { defrost_fridge: 'No Frost', defrost_freezer: 'NoFrost', cooling: 'NO FROST' } },
+    { id: 2, name: 't', attrs: { defrost_fridge: 'Автоматическое', defrost_freezer: 'Low Frost', cooling: 'Капельная' } },
+    { id: 3, name: 't', attrs: { defrost_fridge: 'Ручная разморозка', defrost_freezer: 'Ручное', cooling: 'ручная' } },
+    { id: 4, name: 't', attrs: { defrost_fridge: 'Капельная система', defrost_freezer: 'Автоматическое (No Frost)', cooling: 'Без наледи' } },
+  ];
+  for (const r of recs) {
+    for (const a of d523.attrs) {
+      if (!(a.code in r.attrs)) r.attrs[a.code] = null;
+    }
+  }
+  const clone = structuredClone(recs);
+  await runFiltersAgent({ recs: clone, dict: d523, mode: 'heuristic', catId: '523' });
+  const built = buildFilters(clone, d523, config);
+  const fr = built.filters.find(f => f.name === 'Размораживание холодильной камеры');
+  const fz = built.filters.find(f => f.name === 'Размораживание морозильной камеры');
+  const cool = built.filters.find(f => f.name === 'Система охлаждения');
+  assert.deepEqual(fr.value.slice().sort(), ['Автоматическое (No Frost)', 'Капельная система', 'Ручное'].sort());
+  assert.deepEqual(fz.value.slice().sort(), ['Автоматическое (No Frost)', 'Ручное'].sort());
+  assert.ok(!fr.value.includes('No Frost') && !fr.value.includes('Ручная разморозка'));
+  assert.ok(!fz.value.includes('No Frost') && !fz.value.includes('Low Frost'));
+  assert.ok(cool.value.includes('No Frost'));
+  assert.equal(cool.value.filter(v => /no\s*frost/i.test(v)).length, 1);
+  console.log('ok defrost/cooling: no duplicate No Frost / Ручное canons');
+}
+
+{
+  // Фильтры сайта — только графа характеристик (S1), не S3/AI
+  const { buildFilters, assignFilterValues, filterSourceAllowed } = await import('./pipeline/facets.js');
+  const cooling = d523.byCode.get('cooling');
+  assert.ok(cooling?.facet?.enabled);
+
+  const recS1 = {
+    id: 1,
+    name: 'Холодильник Test',
+    attrs: Object.fromEntries(d523.attrs.filter(a => a.tier !== 'X').map(a => [a.code, null])),
+    provenance: {},
+  };
+  recS1.attrs.cooling = 'No Frost';
+  recS1.provenance.cooling = { level: 'S1', raw: 'Система охлаждения = No Frost' };
+
+  const recS3 = {
+    id: 2,
+    name: 'Холодильник AI',
+    attrs: Object.fromEntries(d523.attrs.filter(a => a.tier !== 'X').map(a => [a.code, null])),
+    provenance: {},
+  };
+  recS3.attrs.cooling = 'Капельная';
+  recS3.provenance.cooling = { level: 'S3', raw: 'specs' };
+
+  assert.equal(filterSourceAllowed(recS1, 'cooling', config), true);
+  assert.equal(filterSourceAllowed(recS3, 'cooling', config), false);
+
+  const built = buildFilters([recS1, recS3], d523, config);
+  const cool = built.filters.find(f => f.name === 'Система охлаждения');
+  assert.ok(cool, 'S1 must create cooling facet');
+  assert.deepEqual(cool.value, ['No Frost']);
+  assert.ok(!cool.value.includes('Капельная'), 'S3 must not enter catalog filters');
+
+  const assignedS3 = assignFilterValues(recS3, d523, built.debug, config);
+  assert.equal(assignedS3['Система охлаждения'], undefined);
+  const assignedS1 = assignFilterValues(recS1, d523, built.debug, config);
+  assert.deepEqual(assignedS1['Система охлаждения'], ['No Frost']);
+  console.log('ok filters from characteristics only (S1), S3 excluded');
 }
 
 {

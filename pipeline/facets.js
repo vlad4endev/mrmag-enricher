@@ -6,6 +6,28 @@ import { formatAttrValue, hasStrictEnum, looksLikeEnumFragment, unifyEnumValues 
 const DOMINANT_SHARE = 95;
 
 /**
+ * Источники значений для filters_*.json: только графа характеристик карточки.
+ * S1 — annotation, S2 — description как замена пустой annotation, S0 — бренд из имени.
+ * S3/model/retailer в фильтры сайта не едут (остаются в attrs/аннотации при необходимости).
+ */
+export const DEFAULT_FILTER_SOURCES = Object.freeze(['S0', 'S1', 'S2']);
+
+/**
+ * Можно ли брать attrs[code] в каталожный фильтр.
+ * Записи без provenance (юнит-фикстуры) — допускаются; пустой level при живом
+ * provenance — нет (неизвестный источник).
+ */
+export function filterSourceAllowed(rec, code, config = {}) {
+  const allowed = config.filter_sources || DEFAULT_FILTER_SOURCES;
+  const set = allowed instanceof Set ? allowed : new Set(allowed);
+  const bag = rec?.provenance;
+  if (!bag || typeof bag !== 'object' || !Object.keys(bag).length) return true;
+  const level = bag[code]?.level;
+  if (!level) return false;
+  return set.has(level);
+}
+
+/**
  * Счётные величины без единицы (скорости, камеры, программы): перечень
  * точных значений, а не бакеты «2-2.2».
  */
@@ -113,8 +135,10 @@ function valueList(v) {
 }
 
 /**
- * Строит filters.json. Состав — только facet.enabled справочника: универсальный
- * набор «тип товара, назначение, вес» внутри категории ничего не различает.
+ * Строит filters.json из нормализованных attrs товаров.
+ * Источник attrs — характеристики (annotation), не проза описания.
+ * Состав — только facet.enabled справочника: универсальный набор
+ * «тип товара, назначение» внутри категории ничего не различает.
  * Для range: [a; b); последний бакет открытый при facet.open_last.
  * Пустые бакеты не создаются.
  */
@@ -139,7 +163,7 @@ export function buildFilters(recs, dict, config) {
     }
     if (attr.tier === 'X') continue;
 
-    const filled = recs.filter(r => r.attrs[attr.code] != null);
+    const filled = recs.filter(r => r.attrs[attr.code] != null && filterSourceAllowed(r, attr.code, config));
     const cov = (filled.length / total) * 100;
 
     const counts = new Map();
@@ -256,12 +280,14 @@ export function buildFilters(recs, dict, config) {
 /**
  * Значения фильтров одного товара. Всегда массив: мультизначный атрибут
  * ставит товар сразу в несколько значений фильтра.
+ * Только графа характеристик (S0/S1/S2) — см. filterSourceAllowed.
  */
-export function assignFilterValues(rec, dict, debugFacets) {
+export function assignFilterValues(rec, dict, debugFacets, config = {}) {
   const out = {};
   for (const f of debugFacets) {
     const v = rec.attrs[f._code];
     if (v == null) continue;
+    if (!filterSourceAllowed(rec, f._code, config)) continue;
     const attr = dict.byCode.get(f._code);
     const facet = attr.facet;
     if (facetKind(attr) === 'range') {

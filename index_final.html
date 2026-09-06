@@ -1797,7 +1797,7 @@ input[type=range]::-moz-range-thumb{
             <summary style="cursor:pointer;font-weight:650">Проверка значений</summary>
             <div id="schAuditBox" class="sch-side"><p class="muted">Нажмите «Проверить»</p></div>
           </details>
-          <div class="hint" id="dictHint">filters_{id}.json: после обогащения — отдельный проход нормализации значений (ИИ/эвристика) по facet.enabled + канонам; range — breaks/step из schema.</div>
+          <div class="hint" id="dictHint">filters_{id}.json: только графа характеристик (S0/S1/S2) + facet.enabled + каноны; S3/AI в фильтры сайта не едут. Единый вид через value_aliases.</div>
         </div>
         <div id="aeFacetModal" hidden></div>
       </section>

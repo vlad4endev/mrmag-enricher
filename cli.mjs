@@ -187,6 +187,7 @@ async function writeOutputs({ recs, dict, config, catId, cov, covAfter, formats,
   const agent = await runFiltersAgent({
     recs: exported,
     dict,
+    config,
     catId,
     categoryName: loadCategories(ROOT).find(c => Number(c.id) === Number(catId))?.name || '',
     provider: providerHasKey(prov) ? {

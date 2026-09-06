@@ -332,7 +332,10 @@ function deriveLinkedAttrs(rec, dict) {
   const norm = normalizeValue(attr, label, { keyText: attr.name });
   if (!norm.ok) return;
   setAttr(rec, 'freezer_pos', norm.value, {
-    level: 'S1',
+    // Не подделываем S1: иначе derived попадёт в filters без графы характеристик.
+    level: (rec.provenance?.fridge_type?.level === 'S1' || rec.provenance?.fridge_type?.level === 'S2')
+      ? rec.provenance.fridge_type.level
+      : 'model',
     raw: raw || label,
     model: null,
     prompt: null,

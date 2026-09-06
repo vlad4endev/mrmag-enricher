@@ -74,11 +74,14 @@ import { buildCustomerExport, buildGoldShapeExport, buildFiltersOnly } from './p
 import { dictForProducts, expectedDictCatId } from './pipeline/schema.js';
 import { createJobStore } from './jobs.js';
 import {
-  loadConfig, listDictionaries, readDictionaryAttrs, saveDictionaryAttrs,
+  loadConfig, loadDictionary, hasDictionary, listDictionaries,
+  readDictionaryAttrs, saveDictionaryAttrs,
   createDictionary, deleteDictionary, blankAttribute, categoryName,
   dictionaryPath, dictDebugInfo, formatDictDebug,
   bootstrapDictionariesDir,
 } from './pipeline/dict.js';
+import { normalizeProduct } from './pipeline/normalize.js';
+import { buildFilters as buildDictFilters } from './pipeline/facets.js';
 import {
   auditDictionary, previewFilters, probeProductAttribution, coerceFacetForType,
 } from './pipeline/schema_audit.js';
@@ -787,8 +790,30 @@ async function apiCatalog(res, key, limitRaw) {
   try { cat = await job; }
   catch (e) { return json(res, 502, { error: `Не удалось обойти раздел: ${netError(e)}` }); }
 
-  // Фильтр по всему разделу: бренд и цена есть у каждого товара листинга.
-  const f = buildFilters(cat, cat.items);
+  // Фильтр по всему разделу. При справочнике значения фасетов — из
+  // характеристик товаров (annotation → attrs), не из прозы описания.
+  let f;
+  if (hasDictionary(cat.id, ROOT)) {
+    try {
+      const dict = loadDictionary(String(cat.id), ROOT);
+      const config = loadConfig(ROOT);
+      const recs = cat.products.map(p => normalizeProduct(p, dict, config));
+      const built = buildDictFilters(recs, dict, config);
+      f = {
+        category_id: cat.id,
+        category: cat.name,
+        url: cat.url,
+        generated_at: new Date().toISOString(),
+        products_total: cat.items.length,
+        filters: built.filters,
+        source: 'characteristics',
+      };
+    } catch {
+      f = buildFilters(cat, cat.items);
+    }
+  } else {
+    f = buildFilters(cat, cat.items);
+  }
   json(res, 200, {
     category_id: cat.id, category: cat.name, slug: cat.slug, url: cat.url,
     // count — весь раздел, loaded — сколько пришло с описаниями.
@@ -844,8 +869,11 @@ async function apiProduct(res, target) {
 /**
  * Фильтры по переданному списку товаров: POST { products, category_id, category, url }.
  * Нужно интерфейсу для выгрузки filters_(id).json, когда товары пришли не из
- * раздела, а по адресу фида и лежат в нём вперемешку по категориям. Считает та
- * же buildFilters, что пишет файл в CLI, — иначе два формата разъедутся.
+ * раздела, а по адресу фида и лежат в нём вперемешку по категориям.
+ *
+ * При наличии справочника — тот же путь, что CLI/export: характеристики
+ * (annotation) → нормализованные attrs → filters. Иначе legacy catalog
+ * (бренд/цена + enriched.specs).
  */
 async function apiFilters(req, res) {
   const raw = await readBody(req, BULK_BODY_LIMIT);
@@ -856,6 +884,40 @@ async function apiFilters(req, res) {
   if (!Array.isArray(products) || !products.length) {
     return json(res, 400, { error: 'Не передан список товаров' });
   }
+
+  const catKey = category ?? category_id
+    ?? products.find(p => p.category)?.category
+    ?? products.find(p => p.category_id)?.category_id;
+  const dict = dictForProducts(products, catKey, ROOT);
+  if (dict) {
+    let config;
+    try { config = loadConfig(ROOT); }
+    catch { return json(res, 500, { error: 'не прочитался config.json' }); }
+    const out = await buildFiltersOnly(products, {
+      dict,
+      config,
+      root: ROOT,
+      filtersAgent: filtersAgentOptions({ ...body, category_name: categoryName(dict.catId, ROOT) }),
+    });
+    if (!out.validation?.ok) {
+      return json(res, 422, {
+        error: 'filters не прошли проверку чистоты',
+        ...out,
+      });
+    }
+    return json(res, 200, {
+      category_id: dict.catId,
+      category: categoryName(dict.catId, ROOT),
+      url,
+      generated_at: new Date().toISOString(),
+      products_total: products.length,
+      filters: out.filters,
+      filters_file: { filters: out.filters },
+      filters_agent: out.filters_agent,
+      source: 'characteristics',
+    });
+  }
+
   json(res, 200, buildFilters({ id: category_id, name: category, url }, products));
 }
 

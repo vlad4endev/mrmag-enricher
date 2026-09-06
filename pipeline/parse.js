@@ -281,14 +281,20 @@ export function detectDump(html) {
 
 export function parseProductFields(product, dict) {
   const format = annotationFormat(product.annotation);
+  // Характеристики (annotation) — единственный основной источник фактов и фильтров.
+  // Описание добирает только пустые оси: S1 всегда раньше S2, setAttr не перетирает.
   const fromAnn = extractPairs(product.annotation, dict).map(p => ({ ...p, source: 'S1' }));
   let fromDesc = [];
   let dump = false;
-  if (format === 'EMPTY' || fromAnn.length < 3) {
+  const needDesc = format === 'EMPTY' || fromAnn.length < 3;
+  if (needDesc) {
     dump = detectDump(product.description);
     fromDesc = extractPairs(product.description, dict).map(p => ({ ...p, source: 'S2' }));
     if (!dump && fromDesc.length < 3) fromDesc = [];
     if (fromDesc.length >= 3) dump = true;
   }
-  return { format, pairs: fromAnn.length ? fromAnn : fromDesc, dump, fromAnn, fromDesc };
+  // Было: либо annotation, либо description. Из-за этого при 1–2 строках
+  // в annotation фильтры строились из прозы описания, а не из характеристик.
+  const pairs = fromAnn.length ? fromAnn.concat(fromDesc) : fromDesc;
+  return { format, pairs, dump, fromAnn, fromDesc };
 }

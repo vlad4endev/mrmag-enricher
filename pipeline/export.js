@@ -205,7 +205,7 @@ export function serializeProduct(rec, dict, debugFacets, opts = {}) {
   if (!opts.skipFinalize) {
     finalizeRecord(rec, dict, { enriched: enr, assigned: null });
   }
-  const assigned = assignFilterValues(rec, dict, debugFacets);
+  const assigned = assignFilterValues(rec, dict, debugFacets, opts.config || {});
   if (!opts.skipFinalize && assigned) {
     const filterIssues = checkFilterConsistency(rec, dict, assigned);
     if (filterIssues.length) {
@@ -344,20 +344,21 @@ export async function buildCustomerExport(products, {
   const agent = await runFiltersAgent({
     recs: exported,
     dict,
+    config,
     catId: dict.catId,
     ...agentOpts,
   });
 
   const built = buildFilters(exported, dict, config);
   for (const rec of exported) {
-    const assigned = assignFilterValues(rec, dict, built.debug);
+    const assigned = assignFilterValues(rec, dict, built.debug, config);
     const filterIssues = checkFilterConsistency(rec, dict, assigned);
     if (filterIssues.length) {
       rec.validation_issues = [...(rec.validation_issues || []), ...filterIssues];
     }
   }
 
-  const productsOut = serializeProducts(exported, dict, built.debug, { root, skipFinalize: true });
+  const productsOut = serializeProducts(exported, dict, built.debug, { root, skipFinalize: true, config });
   const clean = assertFiltersClean(built.filters, dict);
   const verdict = validateProducts(productsOut, dict, new Map(exported.map(r => [r.id, r])));
   // Gate только на грязь в значениях фасетов. filter_missing (фасет из schema

@@ -1605,7 +1605,7 @@ console.log('golden tests passed');
   const assignedOk = assignFilterValues(recs[1], mini, built.debug);
   assert.deepEqual(assignedOk['Тип холодильника'], ['Двухкамерный']);
 
-  // Без value_aliases всё равно режем фрагменты (защита от старого schema).
+  // Без value_aliases enum-фасет не собираем — иначе сырой зоопарк на витрине.
   const loose = structuredClone(ft);
   loose.value_aliases = {};
   delete loose.strict_enum;
@@ -1622,9 +1622,11 @@ console.log('golden tests passed');
     if (!('fridge_type' in r.attrs)) r.attrs.fridge_type = null;
   }
   const looseBuilt = buildFilters(structuredClone(looseRecs), looseDict, config);
-  const looseFt = looseBuilt.filters.find(f => f.name === 'Тип холодильника');
-  assert.ok(looseFt);
-  assert.deepEqual(looseFt.value, ['Двухкамерный']);
+  assert.ok(!looseBuilt.filters.find(f => f.name === 'Тип холодильника'));
+  assert.ok(
+    (looseBuilt.warnings || []).some(w => /без value_aliases/i.test(w.reason || '')),
+    'empty aliases → warn + skip enum facet',
+  );
 
   const audit = auditAttribute({
     ...ft,
@@ -1692,6 +1694,10 @@ console.log('golden tests passed');
   try {
     const dirty = [
       {
+        name: 'Система охлаждения',
+        value: ['капельная', 'ручная разморозка', 'No Frost'],
+      },
+      {
         name: 'Размораживание холодильной камеры',
         value: ['Автоматическое (No Frost)', 'Капельная система', 'Ручное', 'No Frost'],
       },
@@ -1703,15 +1709,32 @@ console.log('golden tests passed');
         name: 'Тип управления',
         value: ['Механическое', 'Поворотный механизм', 'Сенсор', 'Электромеханическое', 'Электронная', 'LED дисплей'],
       },
+      {
+        name: 'Цвет корпуса',
+        value: [
+          'Белое стекло', 'Белый', 'Жемчужно-бежевый', 'Графит', 'Металлик',
+          'Текстурированное черное стекло', 'Черная нержавеющая сталь',
+        ],
+      },
     ];
     const cleaned = sanitizeFilterCatalog(dirty, d523);
     assert.ok(cleaned.validation.ok);
+    const cool = cleaned.filters.find(f => f.name === 'Система охлаждения');
+    assert.deepEqual(cool.value, ['Капельная', 'Ручная разморозка', 'No Frost']);
     const defrost = cleaned.filters.find(f => f.name === 'Размораживание холодильной камеры');
     assert.deepEqual(defrost.value, ['Автоматическое (No Frost)', 'Капельная система', 'Ручное']);
     const comp = cleaned.filters.find(f => f.name === 'Тип компрессора');
     assert.deepEqual(comp.value, ['Инверторный', 'Коллекторный', 'Стандартный']);
     const ctrl = cleaned.filters.find(f => f.name === 'Тип управления');
     assert.deepEqual(ctrl.value, ['Механическое', 'Сенсорное', 'Электронное']);
+    const color = cleaned.filters.find(f => f.name === 'Цвет корпуса');
+    assert.ok(color);
+    assert.ok(!color.value.some(v => /стекло|жемчужно|графит|металлик/i.test(v)));
+    assert.ok(color.value.includes('Белый'));
+    assert.ok(color.value.includes('Бежевый'));
+    assert.ok(color.value.includes('Серый'));
+    assert.ok(color.value.includes('Серебристый'));
+    assert.ok(color.value.includes('Чёрный'));
   } finally {
     fridge.facet = prevFridge;
     freezer.facet = prevFreezer;

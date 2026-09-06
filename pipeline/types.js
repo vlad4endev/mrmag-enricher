@@ -385,10 +385,87 @@ export function hasStrictEnum(attr) {
   return !!(aliases && typeof aliases === 'object' && Object.keys(aliases).length > 0);
 }
 
+/**
+ * Схлопнуть конфликтующие ключи value_aliases.
+ * Если «No Frost» заведён и как канон, и как синоним «Автоматическое (No Frost)» —
+ * оставляем один канон, иначе filters_* получит оба пункта.
+ */
+export function normalizeValueAliases(attr) {
+  const aliases = attr?.value_aliases;
+  if (!aliases || typeof aliases !== 'object') return attr;
+  let keys = Object.keys(aliases);
+  if (!keys.length) return attr;
+
+  // Единый регистр ключей: «капельная» → «Капельная» (displayEnum).
+  for (const k of [...keys]) {
+    const nice = displayEnum(k) || k;
+    if (nice === k) continue;
+    if (!aliases[nice]) {
+      aliases[nice] = uniqueAliasList([...(aliases[k] || []), k, nice]);
+      delete aliases[k];
+    } else {
+      aliases[nice] = uniqueAliasList([...(aliases[nice] || []), ...(aliases[k] || []), k, nice]);
+      delete aliases[k];
+    }
+  }
+
+  keys = Object.keys(aliases);
+  if (keys.length < 2) return attr;
+
+  const drop = new Set();
+  for (const a of keys) {
+    if (drop.has(a)) continue;
+    for (const b of keys) {
+      if (a === b || drop.has(b)) continue;
+      const bList = aliases[b] || [];
+      const bFolds = new Set([valueFold(b), ...bList.map(valueFold)].filter(Boolean));
+      // a — синоним b → вливаем a в b
+      if (bFolds.has(valueFold(a))) {
+        drop.add(a);
+        aliases[b] = uniqueAliasList([...(aliases[b] || []), a, ...(aliases[a] || []), b]);
+        continue;
+      }
+      // Оба про No Frost / вложенные подписи — оставляем более длинный ключ
+      const fa = valueFold(a);
+      const fb = valueFold(b);
+      if (fa && fb && fa !== fb && (fa.includes(fb) || fb.includes(fa))) {
+        const preferB = b.length >= a.length;
+        const keep = preferB ? b : a;
+        const lose = preferB ? a : b;
+        drop.add(lose);
+        aliases[keep] = uniqueAliasList([
+          ...(aliases[keep] || []),
+          lose,
+          ...(aliases[lose] || []),
+          keep,
+        ]);
+      }
+    }
+  }
+  for (const k of drop) delete aliases[k];
+  return attr;
+}
+
+function uniqueAliasList(list) {
+  const seen = new Set();
+  const out = [];
+  for (const x of list) {
+    const s = String(x || '').trim();
+    if (!s) continue;
+    const f = valueFold(s);
+    if (seen.has(f)) continue;
+    seen.add(f);
+    out.push(s);
+  }
+  return out;
+}
+
 export function aliasValue(attr, raw) {
   const aliases = attr?.value_aliases;
   if (!aliases) return null;
   const folds = new Set([valueFold(raw), valueFold(displayEnum(raw))].filter(Boolean));
+  // Сначала точное совпадение с ключом канона — но после normalizeValueAliases
+  // конфликтующих ключей уже нет.
   for (const [canon, list] of Object.entries(aliases)) {
     const keys = [valueFold(canon), ...(list || []).map(valueFold)];
     if (keys.some(k => folds.has(k))) return canon;

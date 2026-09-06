@@ -20,6 +20,9 @@ import {
 
 const BARE_BOOL = /^(?:нет|да|есть|имеется|yes|no)$/i;
 
+/** Хвост кириллического слова: \w в JS не матчит «ая/ый» без unicode. */
+const CY = '[а-яёa-z]*';
+
 /** Доп. схлопывания, если в готовом filters ещё торчат синонимы канонов. */
 const EXTRA_COLLAPSE = [
   // freezer / install leftovers inside wrong facets
@@ -31,14 +34,45 @@ const EXTRA_COLLAPSE = [
   [/^(стандартный|обычный)$/i, 'Стандартный'],
   [/^(коллекторный)$/i, 'Коллекторный'],
   // control
-  [/^(электронная|электронное|электронное управление)$/i, 'Электронное'],
-  [/^(сенсор|сенсорное|touch)$/i, 'Сенсорное'],
-  [/^(механическое|электромеханическое|электро-механическое|поворотный механизм)$/i, 'Механическое'],
-  // cooling / defrost
-  [/^(no\s*frost|nofrost|total no frost|full no frost|ноу\s*фрост|автоматическ\w*(?:\s*\(no frost\))?)$/i, 'No Frost'],
-  [/^(капельн\w*(?:\s+систем\w*)?)$/i, 'Капельная'],
-  [/^(ручн\w*(?:\s+разморозк\w*)?)$/i, 'Ручная разморозка'],
+  [/^(электронная|электронное|электронный|электронное управление|led\s*-?\s*дисплей)$/i, 'Электронное'],
+  [/^(сенсор|сенсорное|сенсорная|touch)$/i, 'Сенсорное'],
+  [/^(механическое|механическая|механический|электромеханическое|электро-механическое|электронно-механическое|поворотный механизм)$/i, 'Механическое'],
+  // cooling (система охлаждения)
+  [/^(no\s*frost|nofrost|total no frost|full no frost|ноу\s*фрост)$/i, 'No Frost'],
+  [new RegExp(`^(капельн${CY}(?:\\s+систем${CY})?)$`, 'i'), 'Капельная'],
+  [new RegExp(`^(ручн${CY}(?:\\s+разморозк${CY})?)$`, 'i'), 'Ручная разморозка'],
+  // colors
+  [/^(бел(?:ый|ое)(?:\s+стекло)?|белый\s+металлопласт)$/i, 'Белый'],
+  [new RegExp(`^(бежев${CY}|жемчужно[-\\s]?бежев${CY}|мраморно[-\\s]?бежев${CY})$`, 'i'), 'Бежевый'],
+  [new RegExp(`^(серебрист${CY}|серебро|metallic|металлик|стальн${CY})$`, 'i'), 'Серебристый'],
+  [/^(сер(?:ый|ая)|графит|насыщенный\s+серый)$/i, 'Серый'],
+  [new RegExp(`^(ч[её]рн${CY}(?:\\s+стекло)?|текстурированное\\s+ч[её]рн${CY}|черная\\s+нержавеющая\\s+сталь)$`, 'i'), 'Чёрный'],
+  [new RegExp(`^(нержавеющ${CY}|stainless)$`, 'i'), 'Нержавеющая сталь'],
+  [new RegExp(`^(золот${CY})$`, 'i'), 'Золото'],
+  [new RegExp(`^(коричнев${CY}|т[её]мно[-\\s]?коричнев${CY})$`, 'i'), 'Коричневый'],
 ];
+
+/** Для «Размораживание …» No Frost = Автоматическое (No Frost), не отдельный пункт. */
+const DEFROST_COLLAPSE = [
+  [new RegExp(`^(no\\s*frost|nofrost|total no frost|full no frost|ноу\\s*фрост|автоматическ${CY}(?:\\s*\\(no frost\\))?|low\\s*frost)$`, 'i'), 'Автоматическое (No Frost)'],
+  [new RegExp(`^(капельн${CY}(?:\\s+систем${CY})?)$`, 'i'), 'Капельная система'],
+  [new RegExp(`^(ручн${CY}(?:\\s+разморозк${CY})?)$`, 'i'), 'Ручное'],
+];
+
+function isDefrostAttr(attr, filterName = '') {
+  if (attr?.code && /^defrost_/i.test(attr.code)) return true;
+  return /размораживани/i.test(filterName || attr?.name || attr?.facet?.label || '');
+}
+
+function collapseExtra(raw, attr = null, filterName = '') {
+  const s = String(raw || '').trim();
+  if (!s) return null;
+  const rules = isDefrostAttr(attr, filterName) ? DEFROST_COLLAPSE : EXTRA_COLLAPSE;
+  for (const [re, canon] of rules) {
+    if (re.test(s)) return canon;
+  }
+  return null;
+}
 
 function attrByFilterName(dict) {
   const map = new Map();
@@ -52,15 +86,6 @@ function attrByFilterName(dict) {
 function collapseByAliases(attr, raw) {
   const aliased = aliasValue(attr, raw);
   if (aliased) return displayEnum(aliased) || aliased;
-  return null;
-}
-
-function collapseExtra(raw) {
-  const s = String(raw || '').trim();
-  if (!s) return null;
-  for (const [re, canon] of EXTRA_COLLAPSE) {
-    if (re.test(s)) return canon;
-  }
   return null;
 }
 
@@ -122,7 +147,7 @@ export function sanitizeFilterCatalog(filters, dict) {
 
       let canon = attr ? collapseByAliases(attr, s) : null;
       if (!canon) {
-        const extra = collapseExtra(s);
+        const extra = collapseExtra(s, attr, name);
         if (extra && attr) {
           // extra → попробовать как alias канона атрибута
           canon = collapseByAliases(attr, extra) || (
@@ -139,11 +164,28 @@ export function sanitizeFilterCatalog(filters, dict) {
       if (attr && hasStrictEnum(attr)) {
         const hit = Object.keys(attr.value_aliases).find(k => valueFold(k) === valueFold(canon));
         if (!hit) {
-          fixes.push({ name, raw: s, action: 'drop', reason: 'not_in_aliases', canon });
-          issues.push({ name, value: s, kind: 'filter_not_in_aliases' });
+          // Даже при strict: known EXTRA/DEFROST схлопывание, если канон есть в aliases
+          const forced = collapseExtra(s, attr, name);
+          const forcedHit = forced
+            && Object.keys(attr.value_aliases).find(k => valueFold(k) === valueFold(forced));
+          if (forcedHit) {
+            canon = forcedHit;
+          } else {
+            fixes.push({ name, raw: s, action: 'drop', reason: 'not_in_aliases', canon });
+            issues.push({ name, value: s, kind: 'filter_not_in_aliases' });
+            continue;
+          }
+        } else {
+          canon = hit;
+        }
+      } else if (attr && (attr.type === 'enum' || attr.type === 'text')) {
+        // Пустые value_aliases: не пускаем сырой зоопарк — только EXTRA_COLLAPSE.
+        const forced = collapseExtra(s, attr, name);
+        if (!forced) {
+          fixes.push({ name, raw: s, action: 'drop', reason: 'no_aliases_freeform' });
           continue;
         }
-        canon = hit;
+        canon = forced;
       }
 
       if (valueFold(canon) !== valueFold(s)) {

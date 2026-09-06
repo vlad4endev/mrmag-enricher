@@ -4,7 +4,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { normKey } from './text.js';
-import { looksLikeEnumFragment } from './types.js';
+import { looksLikeEnumFragment, normalizeValueAliases } from './types.js';
 
 /**
  * Корень репозитория (рядом с pipeline/), а не process.cwd().
@@ -385,6 +385,7 @@ export function indexDictionary(attrs, catId) {
 
   for (const attr of attrs) {
     if (!attr.code) throw new Error('у атрибута нет code');
+    normalizeValueAliases(attr);
     byCode.set(attr.code, attr);
     const names = [attr.name, ...(attr.synonyms || [])];
     for (const raw of names) {

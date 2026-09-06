@@ -208,7 +208,16 @@ export function buildFilters(recs, dict, config) {
       // Мультизначный атрибут даёт товару несколько значений фильтра:
       // «механическое, кнопочное» попадает и в «Механическое», и в «Кнопочное».
       // Strict enum: значения вне value_aliases не создают filter value.
+      // Без aliases — не собираем произвольные строки (иначе «Белое стекло»/LED).
       const strict = hasStrictEnum(attr);
+      if (!strict && (attr.type === 'enum' || attr.type === 'text')) {
+        warnings.push({
+          code: attr.code,
+          name: facet.label || attr.name,
+          reason: 'facet.enabled без value_aliases — enum-фильтр пропущен, иначе сырой зоопарк значений',
+        });
+        continue;
+      }
       const allowed = strict
         ? new Set(Object.keys(attr.value_aliases).map(k => displayValue(attr, k)))
         : null;

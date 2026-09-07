@@ -84,7 +84,7 @@ t('\\w не ломает кириллические суффиксы', () => {
   assert.strictEqual(extractFacts('Количество камер - 3').количество_камер, 3);
 });
 t('система охлаждения', () => {
-  assert.strictEqual(extractFacts('Система охлаждения - No Frost').система_охлаждения, 'Автоматическая разморозка (No Frost)');
+  assert.strictEqual(extractFacts('Система охлаждения - No Frost').система_охлаждения, 'No Frost');
   assert.strictEqual(extractFacts('Система охлаждения - капельная').система_охлаждения, 'Капельная');
 });
 t('страна производства и изготовления — одно поле', () => {
@@ -324,7 +324,7 @@ t('округление магазина по границе не придирк
 t('атрибут добирает поле, которое модель оставила пустым', () => {
   const r = normalizeResponse({ specs: { система_охлаждения: null } }, 'Холодильник',
     'kholodilniki', [attr('Система разморозки', 'Total No Frost')]);
-  assert.strictEqual(r.specs.система_охлаждения, 'Автоматическая разморозка (No Frost)');
+  assert.strictEqual(r.specs.система_охлаждения, 'No Frost');
   assert.ok(r.filled_from_text.includes('система_охлаждения'));
 });
 
@@ -424,10 +424,10 @@ t('«No Frost Нет» не становится положительным No F
   assert.notStrictEqual(extractFacts('Система охлаждения - Нет').система_охлаждения, 'No Frost');
 });
 t('пара «Система охлаждения - No Frost»', () => {
-  assert.strictEqual(extractFacts('Система охлаждения - No Frost').система_охлаждения, 'Автоматическая разморозка (No Frost)');
+  assert.strictEqual(extractFacts('Система охлаждения - No Frost').система_охлаждения, 'No Frost');
   assert.strictEqual(extractFacts('Система охлаждения - капельная').система_охлаждения, 'Капельная');
 });
-t('No Frost в specs пишется понятным языком', () => {
+t('No Frost в specs — канон словаря', () => {
   const r = normalizeResponse({
     specs: {
       система_охлаждения: 'No Frost',
@@ -438,9 +438,8 @@ t('No Frost в specs пишется понятным языком', () => {
     description: 'Система автоматической разморозки.\n\nb\n\nc\n\nd',
     bullets: ['a', 'b', 'c'], strong: [], meta_keywords: 'а, б, в, г, д, е, ж', web_info: null,
   }, 'Система охлаждения - No Frost', 'kholodilniki', [], 'prefer_source');
-  assert.match(String(r.specs.система_охлаждения), /автоматическ.*No Frost/i);
+  assert.strictEqual(r.specs.система_охлаждения, 'No Frost');
   assert.match(String(r.specs.размораживание_холодильной_камеры), /автоматическ.*No Frost/i);
-  assert.ok(!/^No Frost$/i.test(String(r.specs.система_охлаждения)));
 });
 t('кириллическая «А+» приводится к латинской', () => {
   assert.strictEqual(extractFacts('Класс энергоэффективности - А+').класс_энергоэффективности, 'A+');
@@ -456,7 +455,7 @@ t('dump-проза не склеивает размораживание с по�
     + 'Морозильное отделение: Размораживание морозильной камеры: ручное. '
     + 'Количество отделений в морозильной камере: 3 ящика';
   const f = extractFacts(dump, 'kholodilniki');
-  assert.strictEqual(f.размораживание_холодильной_камеры, 'Автоматическое');
+  assert.strictEqual(f.размораживание_холодильной_камеры, 'Автоматическое (No Frost)');
   assert.strictEqual(f.размораживание_морозильной_камеры, 'Ручное');
   assert.ok(!/полк|контейнер|температур/i.test(String(f.размораживание_холодильной_камеры || '')),
     'в факте размораживания не должно быть чужих характеристик');
@@ -466,7 +465,7 @@ t('Pozis RK-149 (44582): размораживание из dump-description — 
   const p = (Array.isArray(data) ? data : []).find(x => String(x.id) === '44582');
   assert.ok(p, 'товар 44582 в data_523.json');
   const { facts } = productFacts(p, 'kholodilniki');
-  assert.strictEqual(facts.размораживание_холодильной_камеры, 'Автоматическое');
+  assert.strictEqual(facts.размораживание_холодильной_камеры, 'Автоматическое (No Frost)');
   assert.strictEqual(facts.размораживание_морозильной_камеры, 'Ручное');
   assert.ok(String(facts.размораживание_холодильной_камеры || '').length < 40);
 });
@@ -559,7 +558,7 @@ t('Centek CT-1742: Тип конструкции → Side-by-Side, климат 
   assert.strictEqual(f.тип_холодильника, 'Side-by-Side');
   assert.match(String(f.климатический_класс), /N.*SN.*ST.*T/i);
   assert.ok(!/^N$/i.test(String(f.климатический_класс)));
-  assert.match(String(f.система_охлаждения), /автоматическ.*No Frost/i);
+  assert.match(String(f.система_охлаждения), /No Frost/i);
   // Старая карточка с обрезанными значениями
   const scrubbed = sanitizeEnrichedResult({
     specs: {
@@ -579,7 +578,7 @@ t('Centek CT-1742: Тип конструкции → Side-by-Side, климат 
   });
   assert.strictEqual(scrubbed.specs.тип_холодильника, null);
   assert.strictEqual(scrubbed.specs.климатический_класс, 'N, SN, ST, T');
-  assert.match(String(scrubbed.specs.система_охлаждения), /автоматическ.*No Frost/i);
+  assert.strictEqual(scrubbed.specs.система_охлаждения, 'No Frost');
   assert.ok(!(scrubbed.warnings || []).some(w => w.field === 'тип_холодильника' || w.field === 'климатический_класс'));
 });
 t('DON R-299: LED освещение - да → светодиодное, не габариты', () => {
@@ -1850,9 +1849,20 @@ console.log('\nТовар без описания: поиск в сети');
   const port = srv.address().port;
 
   const cacheDir = fs.mkdtempSync(path.join(os.tmpdir(), 'web-lookup-'));
-  const prevSerp = { SERPAPI_KEY: process.env.SERPAPI_KEY, SERPAPI_API_KEY: process.env.SERPAPI_API_KEY };
-  delete process.env.SERPAPI_KEY;
-  delete process.env.SERPAPI_API_KEY;
+  const prevSearch = {
+    YANDEX_SEARCH_API_KEY: process.env.YANDEX_SEARCH_API_KEY,
+    YANDEX_FOLDER_ID: process.env.YANDEX_FOLDER_ID,
+    YC_API_KEY: process.env.YC_API_KEY,
+    YC_FOLDER_ID: process.env.YC_FOLDER_ID,
+    FOLDER_ID: process.env.FOLDER_ID,
+    SEARCH_API_KEY: process.env.SEARCH_API_KEY,
+  };
+  delete process.env.YANDEX_SEARCH_API_KEY;
+  delete process.env.YANDEX_FOLDER_ID;
+  delete process.env.YC_API_KEY;
+  delete process.env.YC_FOLDER_ID;
+  delete process.env.FOLDER_ID;
+  delete process.env.SEARCH_API_KEY;
   process.env.SEARCH_URL     = `http://127.0.0.1:${port}/serp?q=%s`;
   process.env.PAGE_CACHE_DIR = cacheDir;
   process.env.SEARCH_GAP_MS  = '0';
@@ -1939,7 +1949,7 @@ console.log('\nТовар без описания: поиск в сети');
 
   await new Promise(r => srv.close(r));
   fs.rmSync(cacheDir, { recursive: true, force: true });
-  for (const [k, v] of Object.entries(prevSerp)) {
+  for (const [k, v] of Object.entries(prevSearch)) {
     if (v === undefined) delete process.env[k];
     else process.env[k] = v;
   }
@@ -2004,33 +2014,28 @@ console.log('\nТовар без описания: поиск в сети');
     assert.equal(again.search.engines[0].url, 'https://searx.example/search?q=%s');
     assert.ok(parsersView(again.search).parsers.some(p => p.name === 'SearxNG' && !p.builtin));
   });
-  t('публичное представление скрывает ключ SerpAPI', () => {
+  t('публичное представление скрывает ключ Yandex Search API', () => {
     const s = loadSettings();
-    s.search.serpapi.api_key = 'serp-secret-xyz9';
+    s.search.yandex.api_key = 'ya-secret-xyz9';
+    s.search.yandex.folder_id = 'b1gfolder';
     const pub = publicSettings(s);
-    assert.ok(!JSON.stringify(pub).includes('serp-secret-xyz9'));
-    assert.strictEqual(pub.search.serpapi.has_key, true);
-    assert.match(pub.search.serpapi.key_hint, /xyz9$/);
-    assert.ok(!('api_key' in pub.search.serpapi) || !pub.search.serpapi.api_key);
+    assert.ok(!JSON.stringify(pub).includes('ya-secret-xyz9'));
+    assert.strictEqual(pub.search.yandex.has_key, true);
+    assert.strictEqual(pub.search.yandex.has_folder, true);
+    assert.match(pub.search.yandex.key_hint, /xyz9$/);
+    assert.ok(!('api_key' in pub.search.yandex) || !pub.search.yandex.api_key);
   });
-  t('пустой ключ SerpAPI в PATCH оставляет прежний', () => {
+  t('пустой ключ Yandex в PATCH оставляет прежний', () => {
     const cur = loadSettings();
-    cur.search.serpapi.api_key = 'serp-keep';
+    cur.search.yandex.api_key = 'ya-keep';
     const next = applySettingsPatch(cur, {
-      search: { ...cur.search, serpapi: { ...cur.search.serpapi, api_key: '' } },
+      search: { ...cur.search, yandex: { ...cur.search.yandex, api_key: '' } },
     });
-    assert.strictEqual(next.search.serpapi.api_key, 'serp-keep');
+    assert.strictEqual(next.search.yandex.api_key, 'ya-keep');
   });
-  t('SerpAPI есть в списке парсеров', () => {
+  t('Yandex Search API есть в списке парсеров', () => {
     const s = loadSettings();
-    assert.ok(parsersView(s.search).parsers.some(p => p.kind === 'serpapi' && p.engine === 'google'));
-  });
-  t('список парсеров не содержит ключ SerpAPI', () => {
-    const s = loadSettings();
-    s.search.serpapi.api_key = 'serp-secret-view';
-    const view = parsersView(s.search);
-    assert.ok(!JSON.stringify(view).includes('serp-secret-view'));
-    assert.strictEqual(view.serpapi.has_key, true);
+    assert.ok(parsersView(s.search).parsers.some(p => p.kind === 'yandex' && p.search_type === 'ru'));
   });
   t('провайдер по умолчанию — выбранный default', () => {
     const s = loadSettings();

@@ -1,8 +1,8 @@
 /**
- * Поиск той же модели: SerpAPI (JSON Google/Bing/Yandex), затем DuckDuckGo
- * HTML и запасные движки без ключа.
+ * Поиск той же модели: Yandex Search API (Cloud v2), затем DuckDuckGo HTML
+ * и запасные движки без ключа.
  *
- * Настройки — config.json → search / search.serpapi / search.duckduckgo.
+ * Настройки — config.json → search / search.yandex / search.duckduckgo.
  * Переменные окружения перекрывают их в момент вызова, не при загрузке модуля.
  */
 
@@ -19,7 +19,7 @@ const PRIVATE_HOST = new RegExp([
   '^172\\.(1[6-9]|2\\d|3[01])\\.',
 ].join('|'), 'i');
 
-const ENGINE_HOST = /(?:^|\.)(?:duckduckgo|google|gstatic|googleusercontent|yastatic|bing|brave|mojeek|serpapi)\./i;
+const ENGINE_HOST = /(?:^|\.)(?:duckduckgo|google|gstatic|googleusercontent|yastatic|bing|brave|mojeek|searchapi\.api\.cloud\.yandex)\./i;
 
 /** Футер поисковика и соцсети: это не карточка товара, даже если href на странице выдачи. */
 export const JUNK_HOST = /(?:^|\.)(?:mastodon\.social|buttondown\.email|spreadprivacy\.com|twitter\.com|x\.com|facebook\.com|fb\.com|instagram\.com|t\.me|telegram\.(?:me|org)|reddit\.com|tiktok\.com|pinterest\.com|linkedin\.com|threads\.net|bsky\.app|vk\.com|ok\.ru|youtube\.com|youtu\.be|dzen\.ru)$/i;
@@ -36,8 +36,14 @@ const FALLBACK = {
 
 const DDG_HTML = 'https://html.duckduckgo.com/html/';
 const DDG_LITE = 'https://lite.duckduckgo.com/lite/';
-const SERPAPI_JSON = 'https://serpapi.com/search.json';
-const SERPAPI_ENGINES = new Set(['google', 'bing', 'yandex', 'duckduckgo']);
+const YANDEX_SEARCH = 'https://searchapi.api.cloud.yandex.net/v2/web/search';
+const YANDEX_SEARCH_TYPES = new Set(['ru', 'com', 'tr', 'kk', 'be', 'uz']);
+const YANDEX_L10N = new Set(['ru', 'en', 'uk', 'be', 'kk', 'tr']);
+const YANDEX_FAMILY = {
+  none: 'FAMILY_MODE_NONE',
+  moderate: 'FAMILY_MODE_MODERATE',
+  strict: 'FAMILY_MODE_STRICT',
+};
 
 function num(...vals) {
   for (const v of vals) {
@@ -99,22 +105,54 @@ function isSkippedHost(host, settings) {
   return skipHostsOf(settings).some(own => h === own || h.endsWith('.' + own));
 }
 
-function resolveSerpapiKey(serp = {}) {
-  if (serp.api_key) return String(serp.api_key);
-  const envName = serp.api_key_env || 'SERPAPI_KEY';
-  return process.env[envName] || process.env.SERPAPI_API_KEY || process.env.SERPAPI_KEY || '';
+function shortCode(raw, prefix) {
+  return String(raw || '').toLowerCase().replace(new RegExp(`^${prefix}`), '');
+}
+
+function yandexSearchType(raw) {
+  const code = shortCode(raw, 'search_type_');
+  return YANDEX_SEARCH_TYPES.has(code) ? code : 'ru';
+}
+
+function yandexL10n(raw) {
+  const code = shortCode(raw, 'localization_');
+  return YANDEX_L10N.has(code) ? code : 'ru';
+}
+
+function yandexFamily(raw) {
+  const code = shortCode(raw, 'family_mode_');
+  return YANDEX_FAMILY[code] ? code : 'none';
+}
+
+function resolveYandexKey(ya = {}) {
+  if (ya.api_key) return String(ya.api_key);
+  const envName = ya.api_key_env || 'YANDEX_SEARCH_API_KEY';
+  return process.env[envName]
+    || process.env.YANDEX_SEARCH_API_KEY
+    || process.env.YC_API_KEY
+    || process.env.SEARCH_API_KEY
+    || '';
+}
+
+function resolveYandexFolder(ya = {}) {
+  if (ya.folder_id) return String(ya.folder_id);
+  const envName = ya.folder_id_env || 'YANDEX_FOLDER_ID';
+  return process.env[envName]
+    || process.env.YANDEX_FOLDER_ID
+    || process.env.YC_FOLDER_ID
+    || process.env.FOLDER_ID
+    || '';
 }
 
 /**
  * Сводит config.json.search и переменные окружения.
- * WEB_LOOKUP=0 / DDG_REGION / SEARCH_URL / SERPAPI_KEY перекрывают файл.
+ * WEB_LOOKUP=0 / DDG_REGION / SEARCH_URL / YANDEX_* перекрывают файл.
  */
 export function resolveSearchSettings(config = {}) {
   const s = config.search || {};
   const ddg = s.duckduckgo || {};
-  const serp = s.serpapi || {};
+  const ya = s.yandex || {};
   const envOff = process.env.WEB_LOOKUP === '0';
-  const engine = String(process.env.SERPAPI_ENGINE || serp.engine || 'google').toLowerCase();
   return {
     enabled: !envOff && s.enabled !== false,
     tries: num(process.env.WEB_LOOKUP_TRIES, s.tries, 3),
@@ -130,18 +168,19 @@ export function resolveSearchSettings(config = {}) {
           .filter(e => e && e.enabled !== false && String(e.url || '').includes('%s'))
           .map(e => ({ name: String(e.name || e.id || 'поиск'), url: String(e.url) }))
       : [],
-    serpapi: {
-      enabled: serp.enabled !== false,
-      apiKey: resolveSerpapiKey(serp),
-      apiKeyEnv: serp.api_key_env || 'SERPAPI_KEY',
-      engine: SERPAPI_ENGINES.has(engine) ? engine : 'google',
-      gl: process.env.SERPAPI_GL || serp.gl || 'ru',
-      hl: process.env.SERPAPI_HL || serp.hl || 'ru',
-      googleDomain: process.env.SERPAPI_GOOGLE_DOMAIN || serp.google_domain || 'google.ru',
-      location: process.env.SERPAPI_LOCATION ?? (serp.location == null ? 'Russia' : serp.location),
-      num: num(serp.num, 10),
-      endpoint: process.env.SERPAPI_URL || serp.endpoint || serp.url || SERPAPI_JSON,
-      siteFilter: serp.site_filter || '',
+    yandex: {
+      enabled: ya.enabled !== false,
+      apiKey: resolveYandexKey(ya),
+      apiKeyEnv: ya.api_key_env || 'YANDEX_SEARCH_API_KEY',
+      folderId: resolveYandexFolder(ya),
+      folderIdEnv: ya.folder_id_env || 'YANDEX_FOLDER_ID',
+      searchType: yandexSearchType(process.env.YANDEX_SEARCH_TYPE || ya.search_type || 'ru'),
+      l10n: yandexL10n(ya.l10n || 'ru'),
+      familyMode: yandexFamily(ya.family_mode || 'none'),
+      region: String(process.env.YANDEX_REGION ?? (ya.region == null ? '225' : ya.region)).trim(),
+      num: num(ya.num, 10),
+      endpoint: process.env.YANDEX_SEARCH_URL || ya.endpoint || ya.url || YANDEX_SEARCH,
+      siteFilter: ya.site_filter || '',
     },
     duckduckgo: {
       enabled: ddg.enabled !== false,
@@ -159,11 +198,12 @@ export function resolveSearchSettings(config = {}) {
 export function publicParserStatus(config = {}) {
   const search = resolveSearchSettings(config);
   const ddg = search.duckduckgo;
-  const serp = search.serpapi;
+  const ya = search.yandex;
   const enabled = search.enabled;
+  const yandexReady = ya.enabled && ya.apiKey && ya.folderId;
   let engine = 'выключен';
   if (enabled) {
-    if (serp.enabled && serp.apiKey) engine = `SerpAPI ${serp.engine} ${serp.gl}`;
+    if (yandexReady) engine = `Yandex Search API ${ya.searchType}`;
     else if (search.extraUrl) engine = 'свой поисковик';
     else if (ddg.enabled) engine = `DuckDuckGo ${ddg.method} ${ddg.endpoint}`;
     else engine = search.fallback[0] || 'поиск';
@@ -180,16 +220,15 @@ export function publicParserStatus(config = {}) {
     search_url: search.extraUrl || null,
     fallback: search.fallback,
     engines: search.engines,
-    serpapi: {
-      enabled: serp.enabled,
-      has_key: !!serp.apiKey,
-      engine: serp.engine,
-      gl: serp.gl,
-      hl: serp.hl,
-      google_domain: serp.googleDomain,
-      location: serp.location || '',
-      num: serp.num,
-      site_filter: serp.siteFilter || '',
+    yandex: {
+      enabled: ya.enabled,
+      has_key: !!ya.apiKey,
+      has_folder: !!ya.folderId,
+      search_type: ya.searchType,
+      l10n: ya.l10n,
+      region: ya.region || '',
+      num: ya.num,
+      site_filter: ya.siteFilter || '',
     },
     duckduckgo: {
       enabled: ddg.enabled,
@@ -273,7 +312,15 @@ async function fetchForm(url, body, { timeoutMs = 20_000, cacheKey, gapMs } = {}
   }
 }
 
-async function fetchJson(url, { timeoutMs = 20_000, cacheKey, gapMs } = {}) {
+function jsonApiError(data, status) {
+  const err = data?.error;
+  if (typeof err === 'string' && err.trim()) return err;
+  if (err && typeof err === 'object' && err.message) return String(err.message);
+  if (typeof data?.message === 'string' && data.message.trim()) return data.message;
+  return `HTTP ${status}`;
+}
+
+async function fetchJson(url, { timeoutMs = 20_000, cacheKey, gapMs, method = 'GET', headers = {}, body } = {}) {
   const file = cachePath(cacheKey || url);
   if (fresh(file, ttlMs())) {
     try { return JSON.parse(fs.readFileSync(file, 'utf-8')); } catch { forget(file); }
@@ -282,14 +329,22 @@ async function fetchJson(url, { timeoutMs = 20_000, cacheKey, gapMs } = {}) {
   await waitGap('search', gapMs ?? Number(process.env.SEARCH_GAP_MS || 3000));
 
   try {
-    const res = await fetch(url, {
-      headers: {
-        'User-Agent': UA,
-        Accept: 'application/json',
-      },
+    const hdrs = {
+      'User-Agent': UA,
+      Accept: 'application/json',
+      ...headers,
+    };
+    const init = {
+      method,
+      headers: hdrs,
       signal: AbortSignal.timeout(timeoutMs),
       redirect: 'follow',
-    });
+    };
+    if (body != null) {
+      init.body = typeof body === 'string' ? body : JSON.stringify(body);
+      if (!hdrs['Content-Type'] && !hdrs['content-type']) hdrs['Content-Type'] = 'application/json';
+    }
+    const res = await fetch(url, init);
     const text = await res.text();
     let data;
     try { data = JSON.parse(text); } catch {
@@ -298,7 +353,7 @@ async function fetchJson(url, { timeoutMs = 20_000, cacheKey, gapMs } = {}) {
     }
     if (!res.ok || data.error) {
       forget(file);
-      throw new Error(data.error || `HTTP ${res.status}`);
+      throw new Error(jsonApiError(data, res.status));
     }
     fs.mkdirSync(cacheDir(), { recursive: true });
     fs.writeFileSync(file, text, 'utf-8');
@@ -408,57 +463,103 @@ function withSiteFilter(query, filterSource) {
   return site ? `${q} site:${site}` : q;
 }
 
+function yandexSiteFilter(settings) {
+  return { siteFilter: settings.yandex?.siteFilter || settings.duckduckgo?.siteFilter || '' };
+}
+
+function decodeXmlText(s) {
+  return String(s || '')
+    .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)))
+    .replace(/&#x([0-9a-f]+);/gi, (_, h) => String.fromCharCode(parseInt(h, 16)))
+    .trim();
+}
+
 /**
- * Organic-ссылки из JSON SerpAPI. Реклама (ads, shopping_results) не берётся.
+ * Organic-ссылки из XML Yandex Search API v2.
+ * Код 15 — пустая выдача, не ошибка.
  */
-export function parseSerpApiResults(data, settings = resolveSearchSettings()) {
+export function parseYandexSearchXml(xml, settings = resolveSearchSettings()) {
   const urls = [];
   const hosts = new Set();
-  const organic = Array.isArray(data?.organic_results) ? data.organic_results : [];
-  for (const item of organic) {
-    const href = item?.link || item?.url || '';
+  const body = String(xml || '');
+  const err = body.match(/<error\b([^>]*)>([\s\S]*?)<\/error>/i);
+  if (err) {
+    const code = (err[1].match(/\bcode="(\d+)"/) || [])[1];
+    if (code && code !== '15') {
+      const text = decodeXmlText(err[2].replace(/<[^>]+>/g, ' '));
+      throw new Error(`Yandex Search API: ${code}${text ? ` ${text}` : ''}`);
+    }
+  }
+  for (const block of body.matchAll(/<doc\b[\s\S]*?<\/doc>/gi)) {
+    const urlMatch = block[0].match(/<url\b[^>]*>([\s\S]*?)<\/url>/i);
+    if (!urlMatch) continue;
+    const href = decodeXmlText(urlMatch[1]);
     if (href) pushUrl(urls, hosts, href, settings, '');
   }
   return urls;
 }
 
-function serpapiSiteFilter(settings) {
-  return { siteFilter: settings.serpapi?.siteFilter || settings.duckduckgo?.siteFilter || '' };
+/** JSON-конверт `/v2/web/search`: `{ rawData: "<base64 XML>" }`. */
+export function parseYandexSearchResponse(data, settings = resolveSearchSettings()) {
+  const raw = data?.rawData ?? data?.raw_data;
+  if (typeof raw !== 'string' || !raw) return [];
+  return parseYandexSearchXml(Buffer.from(raw, 'base64').toString('utf8'), settings);
 }
 
-/** Поиск через SerpAPI. Ключ — SERPAPI_KEY или search.serpapi.api_key. */
-export async function searchSerpApi(query, config = {}) {
+/** Поиск через Yandex Cloud Search API v2. Ключ + folder id. */
+export async function searchYandex(query, config = {}) {
   const settings = resolveSearchSettings(config);
-  const serp = settings.serpapi;
-  if (!serp.enabled) throw new Error('SerpAPI выключен в настройках');
-  if (!serp.apiKey) throw new Error('SerpAPI: нет ключа (SERPAPI_KEY или поле в настройках)');
-  const q = withSiteFilter(query, serpapiSiteFilter(settings));
+  const ya = settings.yandex;
+  if (!ya.enabled) throw new Error('Yandex Search API выключен в настройках');
+  if (!ya.apiKey) throw new Error('Yandex Search API: нет ключа (YANDEX_SEARCH_API_KEY или поле в настройках)');
+  if (!ya.folderId) throw new Error('Yandex Search API: нет folder id (YANDEX_FOLDER_ID)');
+  const q = withSiteFilter(query, yandexSiteFilter(settings));
   if (!q) throw new Error('пустой поисковый запрос');
-
-  const params = new URLSearchParams({
-    engine: serp.engine,
-    q,
-    api_key: serp.apiKey,
-    hl: serp.hl,
-    gl: serp.gl,
-    num: String(Math.min(100, Math.max(1, serp.num || 10))),
-  });
-  if (serp.engine === 'google' && serp.googleDomain) params.set('google_domain', serp.googleDomain);
-  if (serp.location) params.set('location', serp.location);
+  const queryText = q.slice(0, 400);
 
   let endpoint;
-  try { endpoint = new URL(serp.endpoint || SERPAPI_JSON); } catch {
-    throw new Error('SerpAPI: некорректный endpoint');
+  try { endpoint = new URL(ya.endpoint || YANDEX_SEARCH); } catch {
+    throw new Error('Yandex Search API: некорректный endpoint');
   }
-  for (const [k, v] of params) endpoint.searchParams.set(k, v);
+
+  const searchType = `SEARCH_TYPE_${ya.searchType.toUpperCase()}`;
+  const l10n = `LOCALIZATION_${ya.l10n.toUpperCase()}`;
+  const body = {
+    query: {
+      searchType,
+      queryText,
+      familyMode: YANDEX_FAMILY[ya.familyMode] || 'FAMILY_MODE_NONE',
+      page: '0',
+    },
+    groupSpec: {
+      groupMode: 'GROUP_MODE_FLAT',
+      groupsOnPage: String(Math.min(100, Math.max(1, ya.num || 10))),
+      docsInGroup: '1',
+    },
+    l10n,
+    folderId: ya.folderId,
+    responseFormat: 'FORMAT_XML',
+  };
+  if (ya.region && searchType === 'SEARCH_TYPE_RU') body.region = ya.region;
 
   const data = await fetchJson(endpoint.toString(), {
     timeoutMs: settings.timeoutMs,
     gapMs: settings.gapMs,
-    cacheKey: `serpapi:${serp.engine}:${serp.gl}:${serp.hl}:${q}`,
+    cacheKey: `yandex:${searchType}:${ya.region}:${queryText}`,
+    method: 'POST',
+    headers: {
+      Authorization: `Api-Key ${ya.apiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body,
   });
-  const urls = parseSerpApiResults(data, settings);
-  if (!urls.length) throw new Error('SerpAPI: выдача без ссылок');
+  const urls = parseYandexSearchResponse(data, settings);
+  if (!urls.length) throw new Error('Yandex Search API: выдача без ссылок');
   return urls;
 }
 
@@ -517,9 +618,9 @@ export async function searchWeb(query, config = {}) {
     }
   };
 
-  if (settings.serpapi.enabled && settings.serpapi.apiKey) {
+  if (settings.yandex.enabled && settings.yandex.apiKey && settings.yandex.folderId) {
     try {
-      return await searchSerpApi(query, config);
+      return await searchYandex(query, config);
     } catch (e) {
       note(e.message, e);
     }
@@ -588,10 +689,13 @@ export function searchQuery(rec, configOrSettings = {}) {
     ? configOrSettings
     : resolveSearchSettings(configOrSettings);
   const suffix = String(settings.querySuffix ?? 'характеристики').trim();
+  const brand = String(rec?.identity?.brand || rec?.brand || '').trim();
+  const model = String(rec?.identity?.model || '').trim();
+  // Полное имя с артикулом и маркетинговым хвостом чаще ловит капчу DDG
+  // и чужие модификации, чем «бренд модель».
+  if (model) return [brand, model, suffix].filter(Boolean).join(' ');
   const name = String(rec?.name || '').replace(/["«»]/g, ' ').replace(/\s+/g, ' ').trim();
-  if (name) return suffix ? `${name} ${suffix}` : name;
-  const bits = [rec?.identity?.brand, rec?.identity?.model, suffix].filter(Boolean);
-  return bits.join(' ');
+  return suffix && name ? `${name} ${suffix}` : (name || suffix);
 }
 
 /**

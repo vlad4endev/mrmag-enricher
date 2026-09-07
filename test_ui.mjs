@@ -349,11 +349,11 @@ console.log('\nПарсер: статус и настройки на экран�
 t('показывает, включён ли поиск пустых карточек и какой движок', () => {
   api.renderParser({
     enabled: true, tries: 3, fallback: ['mojeek', 'brave'],
-    serpapi: { enabled: true, has_key: true, engine: 'google', gl: 'ru' },
+    yandex: { enabled: true, has_key: true, has_folder: true, search_type: 'ru', region: '225' },
     duckduckgo: { enabled: true, method: 'POST', endpoint: 'html', region: 'ru-ru' },
   });
   assert.match(G('parserSub').textContent, /включён/);
-  assert.match(G('parserBox').innerHTML, /SerpAPI/);
+  assert.match(G('parserBox').innerHTML, /Yandex Search API/);
   assert.match(G('parserBox').innerHTML, /DuckDuckGo/);
   assert.match(G('parserBox').innerHTML, /ru-ru/);
   assert.match(G('parserBox').innerHTML, /mojeek/);
@@ -376,7 +376,7 @@ t('рисует провайдеров и условия из ответа се�
   api.renderSettings({
     settings: {
       providers: [{ id: 'openrouter', name: 'OpenRouter', enabled: true, default: true, has_key: true, key_hint: '••••v1-abc', key_from: 'env', base_url: 'https://openrouter.ai/api/v1', models: [] }],
-      search: { enabled: true, tries: 3, gap_ms: 3000, timeout_ms: 20000, query_suffix: 'характеристики', skip_hosts: ['mrmag.ru'], search_url: '', fallback_engines: ['mojeek', 'brave'], engines: [], serpapi: { enabled: true, engine: 'google', gl: 'ru', hl: 'ru', google_domain: 'google.ru', location: 'Russia', api_key_env: 'SERPAPI_KEY', has_key: false }, duckduckgo: { enabled: true, method: 'POST', endpoint: 'html', region: 'ru-ru' } },
+      search: { enabled: true, tries: 3, gap_ms: 3000, timeout_ms: 20000, query_suffix: 'характеристики', skip_hosts: ['mrmag.ru'], search_url: '', fallback_engines: ['mojeek', 'brave'], engines: [], yandex: { enabled: true, search_type: 'ru', l10n: 'ru', region: '225', api_key_env: 'YANDEX_SEARCH_API_KEY', folder_id_env: 'YANDEX_FOLDER_ID', has_key: false, has_folder: false }, duckduckgo: { enabled: true, method: 'POST', endpoint: 'html', region: 'ru-ru' } },
       conditions: { mismatch_policy: 'flag', min_source_chars: 100, min_attrs: 5, facet_min_coverage: 70, target_coverage: 90, fuzzy_min_score: 0.93 },
       model: { name: 'deepseek/deepseek-v3.2', prompt_version: 'dict-v1', max_retries: 3, timeout_ms: 60000, max_tokens: 3200 },
     },
@@ -392,9 +392,9 @@ t('рисует провайдеров и условия из ответа се�
   assert.strictEqual(G('setMismatch').value, 'flag');
   assert.strictEqual(G('setTries').value, '3');
   assert.strictEqual(G('setDdgRegion').value, 'ru-ru');
-  assert.strictEqual(G('setSerpEngine').value, 'google');
-  assert.strictEqual(G('setSerpGl').value, 'ru');
-  assert.ok(G('setSerpOn').checked);
+  assert.strictEqual(G('setYaType').value, 'ru');
+  assert.strictEqual(G('setYaRegion').value, '225');
+  assert.ok(G('setYaOn').checked);
   assert.ok(G('setSearchOn').checked);
 });
 t('добавляет провайдера из заготовки', () => {

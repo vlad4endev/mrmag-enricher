@@ -1600,7 +1600,7 @@ input[type=range]::-moz-range-thumb{
 
       <section class="set-panel" id="setParse">
         <div class="set-h">Парсеры поиска</div>
-        <p class="set-lead">Когда у карточки нет описания, сервер ищет ту же модель в сети по названию товара. Сначала SerpAPI (Google JSON), затем свой URL, DuckDuckGo и запасные HTML-движки. Страница принимается, если на ней есть артикул или опознавательные слова имени.</p>
+        <p class="set-lead">Когда у карточки нет описания, сервер ищет ту же модель в сети по названию товара. Сначала Yandex Search API (официальный Cloud v2), затем свой URL, DuckDuckGo и запасные HTML-движки. Страница принимается, если на ней есть артикул или опознавательные слова имени.</p>
         <div class="set-card" style="margin-bottom:12px">
           <label class="set-check"><input type="checkbox" id="setSearchOn"> Искать описания пустых карточек в сети</label>
           <div class="set-grid">
@@ -1613,27 +1613,38 @@ input[type=range]::-moz-range-thumb{
           <div class="set-row"><label for="setSearchUrl">Свой поисковик (URL с %s)</label><input type="url" id="setSearchUrl" placeholder="https://searx.example/search?q=%s"></div>
         </div>
         <div class="set-card" style="margin-bottom:12px">
-          <div class="set-card-h"><b>SerpAPI</b></div>
-          <label class="set-check"><input type="checkbox" id="setSerpOn"> Использовать SerpAPI (основной поиск)</label>
+          <div class="set-card-h"><b>Yandex Search API</b></div>
+          <label class="set-check"><input type="checkbox" id="setYaOn"> Использовать Yandex Search API (основной поиск)</label>
           <div class="set-grid">
-            <div class="set-row"><label for="setSerpEngine">Движок</label>
-              <select id="setSerpEngine">
-                <option value="google">Google</option>
-                <option value="bing">Bing</option>
-                <option value="yandex">Yandex</option>
-                <option value="duckduckgo">DuckDuckGo</option>
+            <div class="set-row"><label for="setYaType">Индекс</label>
+              <select id="setYaType">
+                <option value="ru">Россия (ru)</option>
+                <option value="com">Международный (com)</option>
+                <option value="tr">Турция (tr)</option>
+                <option value="kk">Казахстан (kk)</option>
+                <option value="be">Беларусь (be)</option>
+                <option value="uz">Узбекистан (uz)</option>
               </select>
             </div>
-            <div class="set-row"><label for="setSerpGl">Страна (gl)</label><input type="text" id="setSerpGl" placeholder="ru"></div>
-            <div class="set-row"><label for="setSerpHl">Язык (hl)</label><input type="text" id="setSerpHl" placeholder="ru"></div>
-            <div class="set-row"><label for="setSerpDomain">Домен Google</label><input type="text" id="setSerpDomain" placeholder="google.ru"></div>
-            <div class="set-row"><label for="setSerpLocation">Локация</label><input type="text" id="setSerpLocation" placeholder="Russia"></div>
-            <div class="set-row"><label for="setSerpKeyEnv">Переменная ключа</label><input type="text" id="setSerpKeyEnv" placeholder="SERPAPI_KEY"></div>
+            <div class="set-row"><label for="setYaL10n">Язык выдачи</label>
+              <select id="setYaL10n">
+                <option value="ru">Русский</option>
+                <option value="en">English</option>
+                <option value="uk">Українська</option>
+                <option value="be">Беларуская</option>
+                <option value="kk">Қазақша</option>
+                <option value="tr">Türkçe</option>
+              </select>
+            </div>
+            <div class="set-row"><label for="setYaRegion">Регион (geo-id)</label><input type="text" id="setYaRegion" placeholder="225 — Россия"></div>
+            <div class="set-row"><label for="setYaFolder">Folder ID</label><input type="text" id="setYaFolder" placeholder="из консоли Yandex Cloud" autocomplete="off"></div>
+            <div class="set-row"><label for="setYaKeyEnv">Переменная ключа</label><input type="text" id="setYaKeyEnv" placeholder="YANDEX_SEARCH_API_KEY"></div>
+            <div class="set-row"><label for="setYaFolderEnv">Переменная folder</label><input type="text" id="setYaFolderEnv" placeholder="YANDEX_FOLDER_ID"></div>
           </div>
-          <div class="set-row"><label for="setSerpKey">Ключ API <span id="setSerpKeyHint" class="set-badge off">нет ключа</span></label>
-            <input type="password" id="setSerpKey" placeholder="оставьте пустым, чтобы не менять" autocomplete="off">
+          <div class="set-row"><label for="setYaKey">Ключ API <span id="setYaKeyHint" class="set-badge off">нет ключа</span></label>
+            <input type="password" id="setYaKey" placeholder="оставьте пустым, чтобы не менять" autocomplete="off">
           </div>
-          <div class="hint">Ключ остаётся на сервере. Без него SerpAPI пропускается, и поиск идёт через DuckDuckGo.</div>
+          <div class="hint">Нужны API-ключ (scope <code>yc.search-api.execute</code>) и Folder ID каталога с ролью <code>search-api.editor</code>. Ключ остаётся на сервере. Без ключа или folder поиск идёт дальше — свой URL, затем DuckDuckGo.</div>
         </div>
         <div class="set-card" style="margin-bottom:12px">
           <div class="set-card-h"><b>DuckDuckGo</b></div>
@@ -3069,7 +3080,7 @@ function renderSettings(d){
   const s=d.settings||{};
   const search=s.search||{};
   const ddg=search.duckduckgo||{};
-  const serp=search.serpapi||{};
+  const ya=search.yandex||{};
   const cond=s.conditions||{};
   const model=s.model||{};
   const fb=search.fallback_engines||[];
@@ -3080,23 +3091,23 @@ function renderSettings(d){
   setV('setSuffix', search.query_suffix??'характеристики');
   setV('setSkipHosts', (search.skip_hosts||[]).join(', '));
   setV('setSearchUrl', search.search_url||'');
-  setC('setSerpOn', serp.enabled!==false);
-  setV('setSerpEngine', serp.engine||'google');
-  setV('setSerpGl', serp.gl||'ru');
-  setV('setSerpHl', serp.hl||'ru');
-  setV('setSerpDomain', serp.google_domain||'google.ru');
-  setV('setSerpLocation', serp.location||'Russia');
-  setV('setSerpKeyEnv', serp.api_key_env||'SERPAPI_KEY');
-  setV('setSerpKey', '');
-  const hint=document.getElementById('setSerpKeyHint');
-  if(hint){
-    hint.className='set-badge'+(serp.has_key?'':' off');
-    hint.textContent=serp.has_key
-      ? `${serp.key_from==='env'?'из env':'в файле'} ${serp.key_hint||''}`.trim()
+  setC('setYaOn', ya.enabled!==false);
+  setV('setYaType', ya.search_type||'ru');
+  setV('setYaL10n', ya.l10n||'ru');
+  setV('setYaRegion', ya.region||'225');
+  setV('setYaFolder', ya.folder_id||'');
+  setV('setYaKeyEnv', ya.api_key_env||'YANDEX_SEARCH_API_KEY');
+  setV('setYaFolderEnv', ya.folder_id_env||'YANDEX_FOLDER_ID');
+  setV('setYaKey', '');
+  const yaHint=document.getElementById('setYaKeyHint');
+  if(yaHint){
+    yaHint.className='set-badge'+(ya.has_key?'':' off');
+    yaHint.textContent=ya.has_key
+      ? `${ya.key_from==='env'?'из env':'в файле'} ${ya.key_hint||''}`.trim()
       : 'нет ключа';
   }
-  const keyInput=document.getElementById('setSerpKey');
-  if(keyInput) keyInput.placeholder=serp.has_key?'оставьте пустым, чтобы не менять':'ключ с serpapi.com';
+  const yaKeyInput=document.getElementById('setYaKey');
+  if(yaKeyInput) yaKeyInput.placeholder=ya.has_key?'оставьте пустым, чтобы не менять':'Api-Key из Yandex Cloud';
   setC('setDdgOn', ddg.enabled!==false);
   setV('setDdgMethod', ddg.method||'POST');
   setV('setDdgEndpoint', ddg.endpoint||'html');
@@ -3265,15 +3276,15 @@ function readSettingsPatch(){
       search_url:getV('setSearchUrl'),
       fallback_engines:fallback,
       engines,
-      serpapi:{
-        enabled:getC('setSerpOn'),
-        engine:getV('setSerpEngine')||'google',
-        gl:getV('setSerpGl')||'ru',
-        hl:getV('setSerpHl')||'ru',
-        google_domain:getV('setSerpDomain')||'google.ru',
-        location:getV('setSerpLocation'),
-        api_key_env:getV('setSerpKeyEnv')||'SERPAPI_KEY',
-        ...(getV('setSerpKey')?{api_key:getV('setSerpKey')}:{}),
+      yandex:{
+        enabled:getC('setYaOn'),
+        search_type:getV('setYaType')||'ru',
+        l10n:getV('setYaL10n')||'ru',
+        region:getV('setYaRegion')||'225',
+        folder_id:getV('setYaFolder'),
+        api_key_env:getV('setYaKeyEnv')||'YANDEX_SEARCH_API_KEY',
+        folder_id_env:getV('setYaFolderEnv')||'YANDEX_FOLDER_ID',
+        ...(getV('setYaKey')?{api_key:getV('setYaKey')}:{}),
       },
       duckduckgo:{
         enabled:getC('setDdgOn'),
@@ -3560,16 +3571,17 @@ function renderParser(p){
   document.getElementById('parserDot').textContent=on?'✓':'·';
   sub.textContent=on?'включён':'выключен';
   const ddg=p.duckduckgo||{};
-  const serp=p.serpapi||{};
-  const serpLine=!serp.enabled
+  const ya=p.yandex||{};
+  const yaReady=ya.enabled!==false && ya.has_key && ya.has_folder;
+  const yaLine=!ya.enabled
     ? 'выключен'
-    : `${serp.engine||'google'} ${serp.gl||'ru'}${serp.has_key?'':' — нет ключа'}`;
+    : `${ya.search_type||'ru'}${ya.region?` · ${ya.region}`:''}${yaReady?'':' — нет ключа или folder'}`;
   const ddgLine=ddg.enabled===false
     ? 'выключен'
     : `${ddg.method||'POST'} ${ddg.endpoint||'html'}, ${ddg.region||'—'}`;
   const rows=[
     ['Статус', on?'ищет пустые карточки в сети':'пропускает пустые карточки'],
-    ['SerpAPI', serpLine],
+    ['Yandex Search API', yaLine],
     ['DuckDuckGo', ddgLine],
     ['Попыток на товар', String(p.tries??'—')],
     ['Запасные', (p.fallback||[]).join(', ')||'нет'],

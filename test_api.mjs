@@ -136,9 +136,9 @@ try {
     assert.strictEqual(d.duckduckgo.endpoint, 'html');
     assert.strictEqual(d.duckduckgo.region, 'ru-ru');
     assert.ok(d.tries >= 1);
-    assert.ok(d.serpapi);
-    assert.strictEqual(d.serpapi.engine, 'google');
-    if (d.serpapi.has_key) assert.match(d.label, /SerpAPI/i);
+    assert.ok(d.yandex);
+    assert.strictEqual(d.yandex.search_type, 'ru');
+    if (d.yandex.has_key && d.yandex.has_folder) assert.match(d.label, /Yandex/i);
     else assert.match(d.label, /DuckDuckGo/i);
   });
   await t('/api/settings отдаёт провайдеров без ключей и заготовки', async () => {
@@ -152,10 +152,10 @@ try {
     assert.ok(d.settings.providers.every(p => !('api_key' in p) || !p.api_key), 'секрет не должен уезжать в браузер');
     assert.strictEqual(d.conditions.items.find(i => i.id === 'mismatch_policy').value, 'prefer_source');
     assert.ok(d.parsers.parsers.some(p => p.kind === 'duckduckgo'));
-    assert.ok(d.parsers.parsers.some(p => p.kind === 'serpapi'));
-    assert.ok(!JSON.stringify(d).includes('serp-secret'), 'ключ SerpAPI не должен уезжать в браузер');
-    assert.ok(!('api_key' in (d.settings.search.serpapi || {})) || !d.settings.search.serpapi.api_key);
-    assert.ok(!('api_key' in (d.parsers.serpapi || {})) || !d.parsers.serpapi.api_key);
+    assert.ok(d.parsers.parsers.some(p => p.kind === 'yandex'));
+    assert.ok(!d.parsers.parsers.some(p => p.kind === 'serpapi'));
+    assert.ok(!('api_key' in (d.settings.search.yandex || {})) || !d.settings.search.yandex.api_key);
+    assert.ok(!('api_key' in (d.parsers.yandex || {})) || !d.parsers.yandex.api_key);
   });
   await t('/api/models отдаёт DeepSeek из карточки, не дожидаясь OpenRouter', async () => {
     const t0 = Date.now();

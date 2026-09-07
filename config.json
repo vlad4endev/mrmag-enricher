@@ -69,15 +69,16 @@
     "search_url": "",
     "fallback_engines": ["mojeek", "brave"],
     "engines": [],
-    "serpapi": {
+    "yandex": {
       "enabled": true,
       "api_key": "",
-      "api_key_env": "SERPAPI_KEY",
-      "engine": "google",
-      "gl": "ru",
-      "hl": "ru",
-      "google_domain": "google.ru",
-      "location": "Russia",
+      "api_key_env": "YANDEX_SEARCH_API_KEY",
+      "folder_id": "",
+      "folder_id_env": "YANDEX_FOLDER_ID",
+      "search_type": "ru",
+      "l10n": "ru",
+      "family_mode": "none",
+      "region": "225",
       "num": 10,
       "endpoint": "",
       "site_filter": ""

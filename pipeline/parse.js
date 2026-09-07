@@ -20,6 +20,43 @@ function splitBySep(text) {
   return { key, value };
 }
 
+/** Значение на отдельной <br>-строке: «6 кг», «A+++», «да». */
+function isBareValue(text) {
+  const s = String(text || '').trim();
+  if (!s || hasExplicitSep(s) || isHeadingLine(s)) return false;
+  if (/^(да|нет|есть|имеется)$/iu.test(s)) return true;
+  if (/^[A-GА-Е]\+{0,3}$/iu.test(s)) return true;
+  return /^-?\d/.test(s);
+}
+
+/** Ключ без значения: «Макс. загрузка» на своей строке, значение — на следующей. */
+function isKeyOnlyLine(text) {
+  const s = String(text || '').trim();
+  if (!s || hasExplicitSep(s) || isHeadingLine(s) || isBareValue(s)) return false;
+  if (!/[а-яёa-z]/i.test(s) || /^\d/.test(s) || s.length > 80) return false;
+  return true;
+}
+
+/**
+ * 1С часто кладёт ключ и значение на соседние <br>-строки:
+ * «Макс. загрузка<br />6 кг<br />Макс. скорость отжима<br />1000 об/мин».
+ * Без склейки pairFromChunk видит две обрубка и обе отбрасывает.
+ */
+export function stitchKeyValueLines(chunks) {
+  const out = [];
+  for (let i = 0; i < chunks.length; i++) {
+    const cur = chunks[i];
+    const next = chunks[i + 1];
+    if (next && isKeyOnlyLine(cur) && isBareValue(next)) {
+      out.push(`${cur}: ${next}`);
+      i++;
+      continue;
+    }
+    out.push(cur);
+  }
+  return out;
+}
+
 /**
  * M3: граница «строчная буква или ) → заглавная или цифра».
  */
@@ -183,6 +220,8 @@ function skipOrphanLead(text) {
     const m = s.match(/^([^:–—]{2,80}?)\.\s+([А-ЯЁA-Za-zа-яё][^:\n]{1,80}:\s*\S[\s\S]*)$/u);
     if (!m) break;
     if (hasExplicitSep(m[1])) break;
+    // «Макс. загрузка: 6 кг» — точка аббревиатуры, не конец фразы.
+    if (!/\s/.test(m[1].trim())) break;
     s = m[2].trim();
   }
   return s;
@@ -214,7 +253,7 @@ function promoteNestedValue(p, dict) {
 }
 
 export function extractPairs(html, dict) {
-  const chunks = splitHtmlChunks(html);
+  const chunks = stitchKeyValueLines(splitHtmlChunks(html));
   let pairs = collectPairs(chunks, dict);
   if (chunks.length <= 1 && pairs.length <= 1) {
     const expanded = expandPlain(stripHtml(html));

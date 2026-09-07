@@ -249,7 +249,10 @@ export function ingestPair(rec, pair, dict, { fuzzyMin } = {}) {
     }
     return;
   }
-  setAttr(rec, attr.code, norm.value, prov);
+  setAttr(rec, attr.code, norm.value, {
+    ...prov,
+    pending_canon: Boolean(norm.pending_canon),
+  });
 }
 
 export function normalizeProduct(product, dict, config) {

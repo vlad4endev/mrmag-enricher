@@ -7,7 +7,7 @@
  *
  * Ключи в файл можно писать, но наружу они не уходят: GET отдаёт только
  * has_key / намёк из последних символов. Пустой api_key в PUT сохраняет прежний
- * (и у провайдера ИИ, и у SerpAPI).
+ * (и у провайдера ИИ, и у Yandex Search API).
  */
 
 import fs from 'fs';
@@ -182,15 +182,16 @@ export function defaultSearch() {
     search_url: '',
     fallback_engines: ['mojeek', 'brave'],
     engines: [],
-    serpapi: {
+    yandex: {
       enabled: true,
       api_key: '',
-      api_key_env: 'SERPAPI_KEY',
-      engine: 'google',
-      gl: 'ru',
-      hl: 'ru',
-      google_domain: 'google.ru',
-      location: 'Russia',
+      api_key_env: 'YANDEX_SEARCH_API_KEY',
+      folder_id: '',
+      folder_id_env: 'YANDEX_FOLDER_ID',
+      search_type: 'ru',
+      l10n: 'ru',
+      family_mode: 'none',
+      region: '225',
       num: 10,
       endpoint: '',
       site_filter: '',
@@ -250,7 +251,13 @@ function normalizeEngine(raw) {
   };
 }
 
-const SERPAPI_ENGINES = new Set(['google', 'bing', 'yandex', 'duckduckgo']);
+const YANDEX_SEARCH_TYPES = new Set(['ru', 'com', 'tr', 'kk', 'be', 'uz']);
+const YANDEX_L10N = new Set(['ru', 'en', 'uk', 'be', 'kk', 'tr']);
+const YANDEX_FAMILY = new Set(['none', 'moderate', 'strict']);
+
+function shortCode(raw, prefix) {
+  return String(raw || '').toLowerCase().replace(new RegExp(`^${prefix}`), '');
+}
 
 function keepOrReplaceKey(raw, prevKey) {
   if (raw && Object.prototype.hasOwnProperty.call(raw, 'api_key') && raw.api_key === null) return '';
@@ -261,8 +268,8 @@ function keepOrReplaceKey(raw, prevKey) {
 function normalizeSearch(raw = {}, prev = {}) {
   const base = defaultSearch();
   const ddg = raw.duckduckgo && typeof raw.duckduckgo === 'object' ? raw.duckduckgo : {};
-  const serp = raw.serpapi && typeof raw.serpapi === 'object' ? raw.serpapi : {};
-  const prevSerp = prev.serpapi && typeof prev.serpapi === 'object' ? prev.serpapi : {};
+  const ya = raw.yandex && typeof raw.yandex === 'object' ? raw.yandex : {};
+  const prevYa = prev.yandex && typeof prev.yandex === 'object' ? prev.yandex : {};
   const skip = Array.isArray(raw.skip_hosts)
     ? raw.skip_hosts.map(h => String(h).trim()).filter(Boolean)
     : base.skip_hosts;
@@ -270,7 +277,9 @@ function normalizeSearch(raw = {}, prev = {}) {
     ? raw.fallback_engines.map(s => String(s).trim()).filter(Boolean)
     : base.fallback_engines;
   const engines = Array.isArray(raw.engines) ? raw.engines.map(normalizeEngine).filter(e => e.url) : [];
-  const engine = String(serp.engine || 'google').toLowerCase();
+  const searchType = shortCode(ya.search_type || 'ru', 'search_type_');
+  const l10n = shortCode(ya.l10n || 'ru', 'localization_');
+  const family = shortCode(ya.family_mode || 'none', 'family_mode_');
   return {
     enabled: raw.enabled !== false,
     tries: num(raw.tries, base.tries, { min: 1, max: 10 }),
@@ -282,18 +291,19 @@ function normalizeSearch(raw = {}, prev = {}) {
     search_url: str(raw.search_url),
     fallback_engines: fallback,
     engines,
-    serpapi: {
-      enabled: serp.enabled !== false,
-      api_key: keepOrReplaceKey(serp, prevSerp.api_key),
-      api_key_env: str(serp.api_key_env, 'SERPAPI_KEY').slice(0, 80),
-      engine: SERPAPI_ENGINES.has(engine) ? engine : 'google',
-      gl: str(serp.gl, 'ru').slice(0, 8),
-      hl: str(serp.hl, 'ru').slice(0, 8),
-      google_domain: str(serp.google_domain, 'google.ru').slice(0, 40),
-      location: str(serp.location, 'Russia').slice(0, 80),
-      num: num(serp.num, 10, { min: 1, max: 100 }),
-      endpoint: str(serp.endpoint || serp.url),
-      site_filter: str(serp.site_filter).slice(0, 80),
+    yandex: {
+      enabled: ya.enabled !== false,
+      api_key: keepOrReplaceKey(ya, prevYa.api_key),
+      api_key_env: str(ya.api_key_env, 'YANDEX_SEARCH_API_KEY').slice(0, 80),
+      folder_id: str(ya.folder_id, prevYa.folder_id || '').slice(0, 80),
+      folder_id_env: str(ya.folder_id_env, 'YANDEX_FOLDER_ID').slice(0, 80),
+      search_type: YANDEX_SEARCH_TYPES.has(searchType) ? searchType : 'ru',
+      l10n: YANDEX_L10N.has(l10n) ? l10n : 'ru',
+      family_mode: YANDEX_FAMILY.has(family) ? family : 'none',
+      region: str(ya.region, '225').slice(0, 16),
+      num: num(ya.num, 10, { min: 1, max: 100 }),
+      endpoint: str(ya.endpoint || ya.url),
+      site_filter: str(ya.site_filter).slice(0, 80),
     },
     duckduckgo: {
       enabled: ddg.enabled !== false,
@@ -395,17 +405,19 @@ export function providerKey(p) {
   return (envName && process.env[envName]) || '';
 }
 
-function publicSerpapi(serp = {}) {
-  const envName = serp.api_key_env || 'SERPAPI_KEY';
+function publicYandex(ya = {}) {
+  const envName = ya.api_key_env || 'YANDEX_SEARCH_API_KEY';
   const envKey = envName && process.env[envName] ? process.env[envName] : '';
-  const stored = serp.api_key || '';
-  const rest = { ...serp };
+  const stored = ya.api_key || '';
+  const folderEnv = ya.folder_id_env || 'YANDEX_FOLDER_ID';
+  const rest = { ...ya };
   delete rest.api_key;
   return {
     ...rest,
     has_key: !!(stored || envKey),
     key_hint: hintOf(stored || envKey),
     key_from: stored ? 'file' : envKey ? 'env' : 'none',
+    has_folder: !!(ya.folder_id || (folderEnv && process.env[folderEnv])),
   };
 }
 
@@ -438,7 +450,7 @@ export function publicSettings(settings) {
     providers: (settings.providers || []).map(publicProvider),
     search: {
       ...settings.search,
-      serpapi: publicSerpapi(settings.search?.serpapi || {}),
+      yandex: publicYandex(settings.search?.yandex || {}),
     },
   };
 }
@@ -447,7 +459,12 @@ export function envOverrides() {
   const out = [];
   if (process.env.WEB_LOOKUP === '0') out.push({ key: 'WEB_LOOKUP', value: '0', note: 'поиск пустых карточек выключен переменной окружения' });
   if (process.env.SEARCH_URL) out.push({ key: 'SEARCH_URL', value: process.env.SEARCH_URL, note: 'свой поисковик перекрывает поле в файле' });
-  if (process.env.SERPAPI_KEY) out.push({ key: 'SERPAPI_KEY', value: '••••', note: 'ключ SerpAPI из окружения' });
+  if (process.env.YANDEX_SEARCH_API_KEY || process.env.YC_API_KEY) {
+    out.push({ key: 'YANDEX_SEARCH_API_KEY', value: '••••', note: 'ключ Yandex Search API из окружения' });
+  }
+  if (process.env.YANDEX_FOLDER_ID || process.env.YC_FOLDER_ID || process.env.FOLDER_ID) {
+    out.push({ key: 'YANDEX_FOLDER_ID', value: '••••', note: 'folder id Yandex Cloud из окружения' });
+  }
   if (process.env.MISMATCH_POLICY) out.push({ key: 'MISMATCH_POLICY', value: process.env.MISMATCH_POLICY, note: 'политика расхождений из окружения' });
   if (process.env.DDG_REGION) out.push({ key: 'DDG_REGION', value: process.env.DDG_REGION, note: 'регион DuckDuckGo из окружения' });
   return out;
@@ -469,8 +486,8 @@ export function validateSettings(cfg) {
   }
   const ddgUrl = cfg.search?.duckduckgo?.url;
   if (ddgUrl && !isHttpUrl(ddgUrl)) errors.push('URL выдачи DuckDuckGo должен быть http(s)');
-  const serpUrl = cfg.search?.serpapi?.endpoint;
-  if (serpUrl && !isHttpUrl(serpUrl)) errors.push('endpoint SerpAPI должен быть http(s)');
+  const yaUrl = cfg.search?.yandex?.endpoint;
+  if (yaUrl && !isHttpUrl(yaUrl)) errors.push('endpoint Yandex Search API должен быть http(s)');
   const extra = cfg.search?.search_url;
   if (extra && !extra.includes('%s')) errors.push('свой поисковик: в URL должен быть %s вместо запроса');
   for (const e of cfg.search?.engines || []) {
@@ -527,7 +544,7 @@ export function saveSettings(settings, root = ROOT) {
 
 /**
  * Применяет PATCH: полная замена секции, если она передана.
- * Для провайдеров и SerpAPI api_key: "" — оставить прежний, null — стереть.
+ * Для провайдеров и Yandex Search API api_key: "" — оставить прежний, null — стереть.
  */
 export function applySettingsPatch(current, patch = {}) {
   const next = { ...current };
@@ -557,22 +574,21 @@ export function providerEndpoint(p) {
   };
 }
 
-/** Список парсеров, который рисует интерфейс: SerpAPI, DuckDuckGo, запасные, свои URL. */
+/** Список парсеров, который рисует интерфейс: Yandex, DuckDuckGo, запасные, свои URL. */
 export function parsersView(search = {}) {
   const s = normalizeSearch(search);
   const list = [];
   list.push({
-    id: 'serpapi',
-    kind: 'serpapi',
-    name: 'SerpAPI',
-    enabled: s.serpapi.enabled,
+    id: 'yandex',
+    kind: 'yandex',
+    name: 'Yandex Search API',
+    enabled: s.yandex.enabled,
     builtin: true,
-    engine: s.serpapi.engine,
-    gl: s.serpapi.gl,
-    hl: s.serpapi.hl,
-    google_domain: s.serpapi.google_domain,
-    location: s.serpapi.location || '',
-    has_key: !!(s.serpapi.api_key || (s.serpapi.api_key_env && process.env[s.serpapi.api_key_env])),
+    search_type: s.yandex.search_type,
+    l10n: s.yandex.l10n,
+    region: s.yandex.region || '',
+    has_key: !!(s.yandex.api_key || (s.yandex.api_key_env && process.env[s.yandex.api_key_env])),
+    has_folder: !!(s.yandex.folder_id || (s.yandex.folder_id_env && process.env[s.yandex.folder_id_env])),
   });
   list.push({
     id: 'duckduckgo',
@@ -616,7 +632,7 @@ export function parsersView(search = {}) {
       url: e.url,
     });
   }
-  return { ...s, serpapi: publicSerpapi(s.serpapi), parsers: list };
+  return { ...s, yandex: publicYandex(s.yandex), parsers: list };
 }
 
 export function conditionsView(conditions = {}) {

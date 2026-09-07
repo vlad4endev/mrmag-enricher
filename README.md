@@ -210,9 +210,10 @@ node --env-file=.env server.js
    не условие: «Холодильник DON R 290 G» тоже ищется, хотя отдельного
    артикула-токена в имени нет. Названия вроде «Холодильник белый» по-прежнему
    пропускаются: по ним чужую карточку не отличить;
-2. запрос уходит в поисковик. Сначала **SerpAPI** (`engine=google`, выдача
-   `organic_results` без HTML и без капчи), если задан `SERPAPI_KEY` или ключ
-   во вкладке «Настройки». Нет ключа или SerpAPI ответил ошибкой — свой
+2. запрос уходит в поисковик. Сначала **Yandex Search API** (Cloud v2,
+   `POST /v2/web/search`, XML в `rawData`), если заданы ключ и Folder ID
+   (`YANDEX_SEARCH_API_KEY` + `YANDEX_FOLDER_ID` или вкладка «Настройки»).
+   Нет пары ключ+folder или API ответил ошибкой — свой
    `SEARCH_URL`, затем DuckDuckGo (html и lite) и Mojeek. Первый, кто вернул
    ссылки, и используется;
 3. из выдачи берётся до `WEB_LOOKUP_TRIES` страниц, по одной на домен;
@@ -385,7 +386,8 @@ ranges:    { диагональ_дюйм: [1, 120] },       // диапазон 
 | переменная | зачем |
 |---|---|
 | `OPENROUTER_API_KEY` | обязательна; остаётся на сервере |
-| `SERPAPI_KEY` | поиск пустых карточек через SerpAPI (Google JSON); без ключа — DuckDuckGo |
+| `YANDEX_SEARCH_API_KEY` | поиск пустых карточек через Yandex Search API; нужен ещё `YANDEX_FOLDER_ID` |
+| `YANDEX_FOLDER_ID` | Folder ID каталога Yandex Cloud с ролью `search-api.editor` |
 | `APP_PASSWORD` | пароль на интерфейс и API; пусто = сервер открыт |
 | `HOST` / `PORT` | `0.0.0.0` нужен в контейнере |
 | `ALLOWED_HOSTS` | кому разрешён прокси `/api/product` |
@@ -626,7 +628,7 @@ OUT=mrmag_enriched.jsonl CATEGORY=kholodilniki node enricher_mrmag.js
 `APP_USER`, `APP_PASSWORD`, `HOST`, `PAGE_CACHE_DIR`, `PAGE_CACHE_TTL_MS`,
 `CRAWL_GAP_MS`, `OUT_DIR`, `CATEGORY`, `MODELS_TTL_MS`, `MAX_PROXY_BYTES`,
 `WEB_LOOKUP`, `WEB_LOOKUP_TRIES`, `SEARCH_GAP_MS`, `SEARCH_GIVE_UP`, `SEARCH_URL`,
-`SERPAPI_KEY`, `SERPAPI_ENGINE`, `SERPAPI_GL`, `SERPAPI_HL`,
+`YANDEX_SEARCH_API_KEY`, `YANDEX_FOLDER_ID`, `YANDEX_SEARCH_TYPE`,
 `WEB_ALLOW_LOCAL`, `JOBS_DIR`, `JOBS_TTL_MS`.
 Все необязательные, кроме `APP_PASSWORD` — без него сервер работает, но открыт.
 Старый `.env` продолжит работать; сверьтесь с `.env.example`.

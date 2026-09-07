@@ -30,7 +30,7 @@ import { CRAWL_SLUGS } from './pipeline/schema.js';
 import { containsTokenSequence, nameKeyTokens, parseIdentity } from './pipeline/identity.js';
 import {
   isDuckDuckGoBlocked, isJunkHost, parseDuckDuckGoResults,
-  searchWeb as pipelineSearchWeb, countryQuery,
+  searchWeb as pipelineSearchWeb, countryQuery, searchQuery,
 } from './pipeline/search.js';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
@@ -610,8 +610,15 @@ export async function ensureSource(product, schema, { onNote = () => {} } = {}) 
 
   if (!currentGate.ok) {
     const token = modelToken(product.name);
-    const query = `${String(product.name).replace(/["«»]/g, ' ')} ${product.brand || ''} характеристики`
-      .replace(/\s+/g, ' ').trim();
+    let dict = schema?.dict;
+    if (!dict) {
+      try { dict = schemaFor(schema)?.dict; } catch { /* slug без справочника */ }
+    }
+    const identity = dict
+      ? parseIdentity(product.name, dict)
+      : { brand: product.brand || null, model: token, name: product.name };
+    if (product.brand && !identity.brand) identity.brand = product.brand;
+    const query = searchQuery({ name: product.name, brand: product.brand, identity });
 
     let urls = [];
     let searchFailed = false;

@@ -17,7 +17,8 @@ import { identityMatches, nameKeyTokens, parseIdentity } from './pipeline/identi
 import { needsExternal, parseProductBySpecs, lookupExternal, enrichMissing, needsCountry, lookupCountry, parseCountryFromPage } from './pipeline/external.js';
 import {
   parseSearchResults, parseDuckDuckGoResults, isDuckDuckGoBlocked,
-  parseSerpApiResults, searchQuery, countryQuery, searchWeb, searchDuckDuckGo, searchSerpApi,
+  parseYandexSearchXml, parseYandexSearchResponse,
+  searchQuery, countryQuery, searchWeb, searchDuckDuckGo, searchYandex,
   resolveSearchSettings, publicParserStatus, isTimeoutError, fetchPage,
 } from './pipeline/search.js';
 import fs from 'node:fs';
@@ -71,6 +72,17 @@ function run(id, dict, src) {
   assert.equal(r.identity.article, '31007816');
   assert.equal(r.name, p.name);
   console.log('ok 29921');
+}
+
+{
+  // Ключ и значение на соседних <br>-строках — формат 1С, не «Ключ значение» в одной строке.
+  const { p, r } = run(444506, d467, p467);
+  assert.equal(r.format, 'BR');
+  assert.equal(r.attrs.load_max, 6, `load_max: ${r.attrs.load_max}; keys=${r.pairs.map(x => x.key).join(' | ')}`);
+  assert.equal(r.attrs.spin_max, 1000, `spin_max: ${r.attrs.spin_max}`);
+  assert.ok(r.pairs.some(x => /макс\.?\s*загрузка/i.test(x.key) && String(x.value).includes('6')));
+  assert.ok(r.pairs.some(x => /скорость отжима/i.test(x.key) && String(x.value).includes('1000')));
+  console.log('ok 444506 alternating BR');
 }
 
 {
@@ -314,7 +326,7 @@ console.log('golden tests passed');
   assert.deepEqual(parseDuckDuckGoResults(footer), []);
   assert.deepEqual(parseSearchResults(footer, 'html.duckduckgo.com'), []);
   const rec = normalizeProduct(p467[460989], d467, config);
-  assert.match(searchQuery(rec, config), /BWSE 7129X WSV RU/);
+  assert.equal(searchQuery(rec, config), 'Indesit BWSE 7129X WSV RU характеристики');
   assert.match(searchQuery(rec, config), /характеристики$/);
   console.log('ok search results: unwrap, skip mrmag and private hosts');
 }
@@ -345,23 +357,36 @@ console.log('golden tests passed');
 }
 
 {
-  const data = {
-    organic_results: [
-      { position: 1, link: 'https://shop.example/card' },
-      { position: 2, link: 'https://mrmag.ru/same' },
-      { position: 3, link: 'https://shop.example/other' },
-      { position: 4, link: 'https://www.google.com/search?q=x' },
-      { position: 5, link: 'https://mastodon.social/@x' },
-      { position: 6, url: 'https://other.example/tovar' },
-    ],
-    ads: [{ link: 'https://ads.example/buy' }],
-  };
+  const xml = `<?xml version="1.0" encoding="utf-8"?>
+<yandexsearch>
+  <response>
+    <results>
+      <grouping>
+        <group><doc><url>https://shop.example/card</url><title>A</title></doc></group>
+        <group><doc><url>https://mrmag.ru/same</url><title>skip</title></doc></group>
+        <group><doc><url><![CDATA[https://shop.example/other]]></url><title>dup host</title></doc></group>
+        <group><doc><url>https://www.google.com/search?q=x</url><title>engine</title></doc></group>
+        <group><doc><url>https://mastodon.social/@x</url><title>junk</title></doc></group>
+        <group><doc><url>https://other.example/tovar?a=1&amp;b=2</url><title>B</title></doc></group>
+      </grouping>
+    </results>
+  </response>
+</yandexsearch>`;
   assert.deepEqual(
-    parseSerpApiResults(data),
-    ['https://shop.example/card', 'https://other.example/tovar'],
+    parseYandexSearchXml(xml),
+    ['https://shop.example/card', 'https://other.example/tovar?a=1&b=2'],
   );
-  assert.deepEqual(parseSerpApiResults({ organic_results: [] }), []);
-  console.log('ok SerpAPI JSON: organic links, ads and junk skipped');
+  assert.deepEqual(parseYandexSearchXml('<response><error code="15">not found</error></response>'), []);
+  assert.throws(
+    () => parseYandexSearchXml('<response><error code="32">quota</error></response>'),
+    /Yandex Search API: 32/,
+  );
+  const encoded = Buffer.from(xml, 'utf8').toString('base64');
+  assert.deepEqual(
+    parseYandexSearchResponse({ rawData: encoded }),
+    ['https://shop.example/card', 'https://other.example/tovar?a=1&b=2'],
+  );
+  console.log('ok Yandex Search API XML: organic links, ads and junk skipped');
 }
 
 {
@@ -371,9 +396,13 @@ console.log('golden tests passed');
     DDG_REGION: process.env.DDG_REGION,
     DDG_ENDPOINT: process.env.DDG_ENDPOINT,
     SEARCH_URL: process.env.SEARCH_URL,
-    SERPAPI_KEY: process.env.SERPAPI_KEY,
-    SERPAPI_API_KEY: process.env.SERPAPI_API_KEY,
-    SERPAPI_ENGINE: process.env.SERPAPI_ENGINE,
+    YANDEX_SEARCH_API_KEY: process.env.YANDEX_SEARCH_API_KEY,
+    YANDEX_FOLDER_ID: process.env.YANDEX_FOLDER_ID,
+    YANDEX_SEARCH_TYPE: process.env.YANDEX_SEARCH_TYPE,
+    YC_API_KEY: process.env.YC_API_KEY,
+    YC_FOLDER_ID: process.env.YC_FOLDER_ID,
+    FOLDER_ID: process.env.FOLDER_ID,
+    SEARCH_API_KEY: process.env.SEARCH_API_KEY,
   };
   try {
     delete process.env.WEB_LOOKUP;
@@ -381,16 +410,21 @@ console.log('golden tests passed');
     delete process.env.DDG_REGION;
     delete process.env.DDG_ENDPOINT;
     delete process.env.SEARCH_URL;
-    delete process.env.SERPAPI_KEY;
-    delete process.env.SERPAPI_API_KEY;
-    delete process.env.SERPAPI_ENGINE;
+    delete process.env.YANDEX_SEARCH_API_KEY;
+    delete process.env.YANDEX_FOLDER_ID;
+    delete process.env.YANDEX_SEARCH_TYPE;
+    delete process.env.YC_API_KEY;
+    delete process.env.YC_FOLDER_ID;
+    delete process.env.FOLDER_ID;
+    delete process.env.SEARCH_API_KEY;
     const fromFile = resolveSearchSettings(config);
     assert.equal(fromFile.enabled, true);
     assert.equal(fromFile.tries, 3);
-    assert.equal(fromFile.serpapi.enabled, true);
-    assert.equal(fromFile.serpapi.engine, 'google');
-    assert.equal(fromFile.serpapi.gl, 'ru');
-    assert.equal(fromFile.serpapi.apiKey, '');
+    assert.equal(fromFile.yandex.enabled, true);
+    assert.equal(fromFile.yandex.searchType, 'ru');
+    assert.equal(fromFile.yandex.region, '225');
+    assert.equal(fromFile.yandex.apiKey, '');
+    assert.equal(fromFile.yandex.folderId, '');
     assert.equal(fromFile.duckduckgo.region, 'ru-ru');
     assert.equal(fromFile.duckduckgo.endpoint, 'html');
     assert.equal(fromFile.duckduckgo.method, 'POST');
@@ -408,11 +442,13 @@ console.log('golden tests passed');
     assert.equal(fromEnv.duckduckgo.endpoint, 'lite');
     assert.equal(fromEnv.extraUrl, 'https://searx.example/search?q=%s');
 
-    process.env.SERPAPI_KEY = 'test-key';
-    process.env.SERPAPI_ENGINE = 'bing';
-    const withSerp = resolveSearchSettings(config);
-    assert.equal(withSerp.serpapi.apiKey, 'test-key');
-    assert.equal(withSerp.serpapi.engine, 'bing');
+    process.env.YANDEX_SEARCH_API_KEY = 'ya-key';
+    process.env.YANDEX_FOLDER_ID = 'b1gfolder';
+    process.env.YANDEX_SEARCH_TYPE = 'com';
+    const withYa = resolveSearchSettings(config);
+    assert.equal(withYa.yandex.apiKey, 'ya-key');
+    assert.equal(withYa.yandex.folderId, 'b1gfolder');
+    assert.equal(withYa.yandex.searchType, 'com');
 
     delete process.env.WEB_LOOKUP;
     const fileOff = resolveSearchSettings({ search: { enabled: false } });
@@ -431,24 +467,39 @@ console.log('golden tests passed');
 }
 
 {
-  const prev = { SERPAPI_KEY: process.env.SERPAPI_KEY, SERPAPI_API_KEY: process.env.SERPAPI_API_KEY };
-  delete process.env.SERPAPI_KEY;
-  delete process.env.SERPAPI_API_KEY;
+  const prev = {
+    YANDEX_SEARCH_API_KEY: process.env.YANDEX_SEARCH_API_KEY,
+    YANDEX_FOLDER_ID: process.env.YANDEX_FOLDER_ID,
+    YC_API_KEY: process.env.YC_API_KEY,
+    YC_FOLDER_ID: process.env.YC_FOLDER_ID,
+    FOLDER_ID: process.env.FOLDER_ID,
+    SEARCH_API_KEY: process.env.SEARCH_API_KEY,
+  };
+  delete process.env.YANDEX_SEARCH_API_KEY;
+  delete process.env.YANDEX_FOLDER_ID;
+  delete process.env.YC_API_KEY;
+  delete process.env.YC_FOLDER_ID;
+  delete process.env.FOLDER_ID;
+  delete process.env.SEARCH_API_KEY;
   try {
     const s = publicParserStatus(config);
     assert.equal(s.enabled, true);
     assert.equal(s.status, 'on');
-    assert.equal(s.serpapi.enabled, true);
-    assert.equal(s.serpapi.has_key, false);
-    assert.equal(s.serpapi.engine, 'google');
+    assert.equal(s.yandex.enabled, true);
+    assert.equal(s.yandex.has_key, false);
+    assert.equal(s.yandex.has_folder, false);
     assert.equal(s.duckduckgo.region, 'ru-ru');
     assert.equal(s.duckduckgo.method, 'POST');
     assert.match(s.label, /DuckDuckGo/);
-    const onKey = publicParserStatus({
-      search: { ...config.search, serpapi: { ...config.search.serpapi, api_key: 'k' } },
+    const onYa = publicParserStatus({
+      search: {
+        ...config.search,
+        yandex: { ...config.search.yandex, api_key: 'yk', folder_id: 'folder' },
+      },
     });
-    assert.match(onKey.label, /SerpAPI/);
-    assert.equal(onKey.serpapi.has_key, true);
+    assert.match(onYa.label, /Yandex Search API/);
+    assert.equal(onYa.yandex.has_key, true);
+    assert.equal(onYa.yandex.has_folder, true);
     const off = publicParserStatus({ search: { enabled: false } });
     assert.equal(off.enabled, false);
     assert.equal(off.status, 'off');
@@ -477,15 +528,11 @@ console.log('golden tests passed');
     CRAWL_GAP_MS: process.env.CRAWL_GAP_MS,
     SEARCH_GAP_MS: process.env.SEARCH_GAP_MS,
     SEARCH_URL: process.env.SEARCH_URL,
-    SERPAPI_KEY: process.env.SERPAPI_KEY,
-    SERPAPI_API_KEY: process.env.SERPAPI_API_KEY,
   };
   process.env.PAGE_CACHE_DIR = cacheDir;
   process.env.CRAWL_GAP_MS = '0';
   process.env.SEARCH_GAP_MS = '0';
   delete process.env.SEARCH_URL;
-  delete process.env.SERPAPI_KEY;
-  delete process.env.SERPAPI_API_KEY;
   let fetches = 0;
   globalThis.fetch = () => {
     fetches++;
@@ -504,7 +551,7 @@ console.log('golden tests passed');
           gap_ms: 0,
           fallback_engines: ['mojeek', 'brave', 'ddg_lite'],
           duckduckgo: { enabled: true, method: 'POST', endpoint: 'html', region: 'ru-ru' },
-          serpapi: { enabled: false },
+          yandex: { enabled: false },
         },
       }),
       e => /таймаут 1500ms/.test(e.message) && !/brave|ddg_lite/.test(e.message),
@@ -558,16 +605,24 @@ console.log('golden tests passed');
     SEARCH_GAP_MS: process.env.SEARCH_GAP_MS,
     CRAWL_GAP_MS: process.env.CRAWL_GAP_MS,
     WEB_ALLOW_LOCAL: process.env.WEB_ALLOW_LOCAL,
-    SERPAPI_KEY: process.env.SERPAPI_KEY,
-    SERPAPI_API_KEY: process.env.SERPAPI_API_KEY,
+    YANDEX_SEARCH_API_KEY: process.env.YANDEX_SEARCH_API_KEY,
+    YANDEX_FOLDER_ID: process.env.YANDEX_FOLDER_ID,
+    YC_API_KEY: process.env.YC_API_KEY,
+    YC_FOLDER_ID: process.env.YC_FOLDER_ID,
+    FOLDER_ID: process.env.FOLDER_ID,
+    SEARCH_API_KEY: process.env.SEARCH_API_KEY,
   };
   process.env.SEARCH_URL = `http://127.0.0.1:${port}/serp?q=%s`;
   process.env.PAGE_CACHE_DIR = cacheDir;
   process.env.SEARCH_GAP_MS = '0';
   process.env.CRAWL_GAP_MS = '0';
   process.env.WEB_ALLOW_LOCAL = '1';
-  delete process.env.SERPAPI_KEY;
-  delete process.env.SERPAPI_API_KEY;
+  delete process.env.YANDEX_SEARCH_API_KEY;
+  delete process.env.YANDEX_FOLDER_ID;
+  delete process.env.YC_API_KEY;
+  delete process.env.YC_FOLDER_ID;
+  delete process.env.FOLDER_ID;
+  delete process.env.SEARCH_API_KEY;
   try {
     const rec = normalizeProduct(p467[460989], d467, config);
     const urls = await searchWeb(searchQuery(rec));
@@ -624,12 +679,8 @@ console.log('golden tests passed');
     CRAWL_GAP_MS: process.env.CRAWL_GAP_MS,
     WEB_ALLOW_LOCAL: process.env.WEB_ALLOW_LOCAL,
     DDG_URL: process.env.DDG_URL,
-    SERPAPI_KEY: process.env.SERPAPI_KEY,
-    SERPAPI_API_KEY: process.env.SERPAPI_API_KEY,
   };
   delete process.env.SEARCH_URL;
-  delete process.env.SERPAPI_KEY;
-  delete process.env.SERPAPI_API_KEY;
   process.env.PAGE_CACHE_DIR = cacheDir;
   process.env.SEARCH_GAP_MS = '0';
   process.env.CRAWL_GAP_MS = '0';
@@ -641,7 +692,7 @@ console.log('golden tests passed');
       search_url: '',
       fallback_engines: [],
       gap_ms: 0,
-      serpapi: { ...(config.search.serpapi || {}), enabled: false, api_key: '' },
+      yandex: { ...(config.search.yandex || {}), enabled: false, api_key: '', folder_id: '' },
       duckduckgo: {
         ...config.search.duckduckgo,
         enabled: true,
@@ -673,18 +724,32 @@ console.log('golden tests passed');
 {
   const srv = http.createServer((req, res) => {
     const u = new URL(req.url, 'http://x');
-    if (u.pathname === '/search.json') {
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      if (u.searchParams.get('api_key') !== 'test-key' || u.searchParams.get('gl') !== 'ru') {
-        return res.end(JSON.stringify({ error: 'Invalid API key' }));
-      }
-      const hit = `http://${req.headers.host}/card`;
-      return res.end(JSON.stringify({
-        organic_results: [
-          { position: 1, link: hit, title: 'Indesit BWSE' },
-          { position: 2, link: 'https://mrmag.ru/skip' },
-        ],
-      }));
+    if (u.pathname === '/v2/web/search') {
+      const chunks = [];
+      req.on('data', c => chunks.push(c));
+      req.on('end', () => {
+        if (req.headers.authorization !== 'Api-Key ya-test-key') {
+          res.writeHead(401, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ message: 'unauthorized' }));
+        }
+        let body;
+        try { body = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ message: 'bad json' }));
+        }
+        if (body.folderId !== 'b1gtest' || !body.query?.queryText) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ message: 'bad request' }));
+        }
+        const hit = `http://${req.headers.host}/card`;
+        const xml = `<?xml version="1.0"?><yandexsearch><response><results><grouping>
+          <group><doc><url>${hit}</url><title>Indesit BWSE</title></doc></group>
+          <group><doc><url>https://mrmag.ru/skip</url><title>skip</title></doc></group>
+        </grouping></results></response></yandexsearch>`;
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ rawData: Buffer.from(xml, 'utf8').toString('base64') }));
+      });
+      return;
     }
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
     res.end(`<h1>Стиральная машина Indesit BWSE 7129X WSV RU</h1>
@@ -695,48 +760,49 @@ console.log('golden tests passed');
   });
   await new Promise(r => srv.listen(0, r));
   const port = srv.address().port;
-  const cacheDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pipe-serpapi-'));
+  const cacheDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pipe-yandex-'));
   const prev = {
     SEARCH_URL: process.env.SEARCH_URL,
     PAGE_CACHE_DIR: process.env.PAGE_CACHE_DIR,
     SEARCH_GAP_MS: process.env.SEARCH_GAP_MS,
     CRAWL_GAP_MS: process.env.CRAWL_GAP_MS,
     WEB_ALLOW_LOCAL: process.env.WEB_ALLOW_LOCAL,
-    SERPAPI_KEY: process.env.SERPAPI_KEY,
-    SERPAPI_API_KEY: process.env.SERPAPI_API_KEY,
+    YANDEX_SEARCH_API_KEY: process.env.YANDEX_SEARCH_API_KEY,
+    YANDEX_FOLDER_ID: process.env.YANDEX_FOLDER_ID,
   };
   delete process.env.SEARCH_URL;
   process.env.PAGE_CACHE_DIR = cacheDir;
   process.env.SEARCH_GAP_MS = '0';
   process.env.CRAWL_GAP_MS = '0';
   process.env.WEB_ALLOW_LOCAL = '1';
-  process.env.SERPAPI_KEY = 'test-key';
-  const serpConfig = {
+  process.env.YANDEX_SEARCH_API_KEY = 'ya-test-key';
+  process.env.YANDEX_FOLDER_ID = 'b1gtest';
+  const yaConfig = {
     ...config,
     search: {
       ...config.search,
       search_url: '',
       fallback_engines: [],
       gap_ms: 0,
-      serpapi: {
+      yandex: {
         enabled: true,
         api_key: '',
-        api_key_env: 'SERPAPI_KEY',
-        engine: 'google',
-        gl: 'ru',
-        hl: 'ru',
-        google_domain: 'google.ru',
-        location: '',
-        endpoint: `http://127.0.0.1:${port}/search.json`,
+        api_key_env: 'YANDEX_SEARCH_API_KEY',
+        folder_id: '',
+        folder_id_env: 'YANDEX_FOLDER_ID',
+        search_type: 'ru',
+        l10n: 'ru',
+        region: '225',
+        endpoint: `http://127.0.0.1:${port}/v2/web/search`,
       },
       duckduckgo: { ...config.search.duckduckgo, enabled: false },
     },
   };
   try {
     const rec = normalizeProduct(p467[460989], d467, config);
-    const urls = await searchSerpApi(searchQuery(rec, serpConfig), serpConfig);
+    const urls = await searchYandex(searchQuery(rec, yaConfig), yaConfig);
     assert.ok(urls.some(u => u.includes('/card')), urls);
-    const got = await lookupExternal(rec, d467, serpConfig);
+    const got = await lookupExternal(rec, d467, yaConfig);
     assert.equal(got.ok, true, got.reason);
     assert.equal(rec.attrs.load_max, 7);
     assert.equal(rec.provenance.load_max.level, 'S3');
@@ -748,7 +814,7 @@ console.log('golden tests passed');
       else process.env[k] = v;
     }
   }
-  console.log('ok SerpAPI JSON → matching page → S3 specs');
+  console.log('ok Yandex Search API XML → matching page → S3 specs');
 }
 
 {
@@ -1574,6 +1640,22 @@ console.log('golden tests passed');
   assert.equal(normalizeValue(ft, 'Двухкамерный').value, 'Двухкамерный');
   assert.equal(normalizeValue(ft, 'Трехкамерный (3d)').value, 'Трёхкамерный');
 
+  const { aliasValue } = await import('./pipeline/types.js');
+  const pendingRaw = 'камера с двумя отделениями';
+  const pending = normalizeValue(ft, pendingRaw, { keyText: 'Тип холодильника' });
+  assert.equal(pending.ok, true, `pending must survive parse: ${JSON.stringify(pending)}`);
+  assert.equal(pending.pending_canon, true);
+  assert.equal(aliasValue(ft, pending.value), null, 'pending is not a dictionary canon yet');
+
+  const pendingRec = normalizeProduct({
+    id: 900001,
+    name: 'Холодильник Test Pending',
+    annotation: '<ul><li>Тип холодильника - камера с двумя отделениями</li></ul>',
+    description: '',
+  }, d523, config);
+  assert.equal(pendingRec.attrs.fridge_type, pending.value);
+  assert.equal(pendingRec.provenance.fridge_type?.pending_canon, true);
+
   const recs = [
     {
       id: 1,
@@ -1911,6 +1993,58 @@ console.log('golden tests passed');
   const builtHe = buildFilters(cloneHe, d523, config);
   assert.ok(assertFiltersClean(builtHe.filters, d523).ok);
   assert.ok(!builtHe.filters.find(f => f.name === 'Тип холодильника')?.value.some(v => /нет/i.test(v)));
+
+  // Сырое значение после парсинга → ИИ сводит к канону словаря; без map — снимаем.
+  {
+    const { stripPendingUnmapped } = await import('./pipeline/filters_agent.js');
+    const { aliasValue: av } = await import('./pipeline/types.js');
+    const raw = 'Камера с двумя отделениями';
+    assert.equal(av(d523.byCode.get('fridge_type'), raw), null);
+    const recMap = {
+      id: 11,
+      name: 'Холодильник Map',
+      attrs: { fridge_type: raw },
+    };
+    const recSkip = {
+      id: 12,
+      name: 'Холодильник Skip',
+      attrs: { fridge_type: raw },
+    };
+    for (const rec of [recMap, recSkip]) {
+      for (const a of d523.attrs) {
+        if (!(a.code in rec.attrs)) rec.attrs[a.code] = null;
+      }
+    }
+    const mapFetch = async () => ({
+      ok: true,
+      async text() {
+        return JSON.stringify({
+          choices: [{
+            message: {
+              content: JSON.stringify({
+                mappings: [
+                  { attr_code: 'fridge_type', raw, canon: 'Двухкамерный', action: 'map' },
+                ],
+              }),
+            },
+          }],
+        });
+      },
+    });
+    await runFiltersAgent({
+      recs: [recMap],
+      dict: d523,
+      mode: 'ai',
+      provider: { apiKey: 'test', chatUrl: 'http://example.invalid/v1/chat/completions' },
+      fetchImpl: mapFetch,
+      catId: '523',
+    });
+    assert.equal(recMap.attrs.fridge_type, 'Двухкамерный');
+
+    await runFiltersAgent({ recs: [recSkip], dict: d523, mode: 'heuristic', catId: '523' });
+    assert.equal(recSkip.attrs.fridge_type, null);
+    assert.equal(stripPendingUnmapped([recSkip], d523), 0);
+  }
 
   // 467: load_type style unify via heuristic export
   const washer = await bce([p467[11391]], {

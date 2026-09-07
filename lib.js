@@ -5,9 +5,11 @@
  * (server.js) берут промпт и нормализацию отсюда — иначе форматы расходятся.
  *
  * Факты товара (productFacts) работают в три стороны:
- *   1) уезжают модели в промпте как проверенные значения,
- *   2) сверяют её ответ (crossCheck → warnings),
- *   3) добирают поля, которые она оставила null (filled_from_text).
+ *   1) уезжают модели в промпте: числа — как есть, enum — сырой ярлык источника
+ *      (модель сводит его к канону словаря из §4);
+ *   2) сверяют её ответ (crossCheck → warnings) — enum только через aliasValue;
+ *   3) добирают поля, которые она оставила null (filled_from_text):
+ *      enum без канона словаря не копируется.
  * Поэтому ложный факт дороже пропущенного: он и подсказывает неверно, и
  * помечает верный ответ расхождением. Отсюда диапазоны правдоподобия,
  * недоверие к подписи осей, не прошедшей эти диапазоны, и отказ выставлять
@@ -24,7 +26,7 @@ import { nameKeyTokens } from './pipeline/identity.js';
 import { tryLoadDictSchema, extractFactsFromDictionary, loadConfigSafe, CRAWL_SLUGS, specDest, expectedDictCatId } from './pipeline/schema.js';
 import { alignCardTextsToSpecs } from './pipeline/prose_align.js';
 import { matchKey } from './pipeline/match.js';
-import { normalizeValue, aliasValue, enumValuesEqual, isGluedFactDump, displayEnum, valueFold } from './pipeline/types.js';
+import { normalizeValue, aliasValue, enumValuesEqual, isGluedFactDump, displayEnum, valueFold, hasStrictEnum } from './pipeline/types.js';
 import { loadBenchmarks, dictDebugInfo, formatDictDebug, resolveDictRoot } from './pipeline/dict.js';
 import {
   validateModelResponse, validationFeedbackLine, softFixCardTexts, MODEL_KEYS,
@@ -912,11 +914,12 @@ export function formatEnumPromptLines(schema) {
     const list = vals || [];
     if (!list.length) continue;
     const attr = bySpec.get(k);
-    const aliases = attr?.value_aliases && typeof attr.value_aliases === 'object'
+    const aliases = attr?.type !== 'boolean' && attr?.value_aliases && typeof attr.value_aliases === 'object'
       ? attr.value_aliases
       : null;
     if (!aliases) {
       // boolean: в specs канон «да»/«нет» (фильтр «Есть»/«Нет» рисует система).
+      // Overlay values_* может подставить каноны «Есть»/«Нет» — в specs их не пишем.
       const shown = list.map(v => {
         const s = String(v);
         if (/^(да|нет)$/i.test(s)) return `"${s.toLowerCase()}"`;
@@ -961,9 +964,10 @@ export function defaultSystemPromptTemplate() {
 
 1. ИСТОЧНИКИ И ДОВЕРИЕ
 Порядок доверия: facts → attributes → annotation → description → name → price.
-- facts — значения, уже извлечённые из текста детерминированным разбором и
-  приведённые к нужным единицам. Они приоритетнее твоей интерпретации: если
-  факт задан, перенеси его в specs как есть, ничего не пересчитывая.
+- facts — значения, уже извлечённые парсером из характеристик. Числа и единицы
+  уже приведены: не пересчитывай их. Для enum/text формулировка может быть
+  сырой (сленг источника) — СВЕДИ её к канону из §4 (словарь категории).
+  Свой вариант придумывать нельзя; ничего не подходит — null.
 - "размеры_мм" в facts — три габарита по возрастанию без привязки к осям. Если
   ширина/высота/глубина в facts не заданы, распредели тройку по осям сам.
 - Всё остальное бери только из переданных полей товара.
@@ -1038,9 +1042,9 @@ export function defaultSystemPromptTemplate() {
   ("графитовый металлик") сведи к базовому ("серый"); если цвет есть в §4 —
   пиши канон оттуда.
 - Значения без служебного мусора: без "шт.", "прибл.", "*", сносок и HTML.
-- Технические ярлыки → понятный канон, термин можно оставить в скобках:
-  «No Frost» / «Ноу Фрост» / «Total No Frost» → «автоматическая разморозка (No Frost)»;
-  для камер → «автоматическое (No Frost)»; «LED» → «Светодиодное».
+- Технические ярлыки → канон словаря из §4, термин можно пояснить в скобках:
+  «Ноу Фрост» / «nofrost» → «No Frost»; «Total No Frost» → «Full No Frost»;
+  для камер → «Автоматическое (No Frost)»; «LED» → «Светодиодное».
   В description и bullets не оставляй голое «No Frost» без пояснения, что
   камеры не нужно размораживать вручную.
 
@@ -1400,15 +1404,8 @@ export function sanitizeEnrichedResult(data) {
     const parts = specs.тип_управления.map(x => String(x ?? '').trim()).filter(Boolean);
     specs.тип_управления = parts[0] ?? null;
   }
-  // No Frost → понятная формулировка
-  const plainNoFrost = (v) => {
-    const s = String(v ?? '').trim();
-    if (!s) return null;
-    if (/^no\s*frost$/i.test(s) || /^(total|full)\s*no\s*frost$/i.test(s)) {
-      return displayEnum('автоматическая разморозка (No Frost)');
-    }
-    return null;
-  };
+  // Канон охлаждения — из словаря («No Frost» / «Full No Frost»).
+  // Размораживание камер: голое No Frost → «Автоматическое (No Frost)».
   const plainDefrost = (v) => {
     const s = String(v ?? '').trim();
     if (!s) return null;
@@ -1418,8 +1415,6 @@ export function sanitizeEnrichedResult(data) {
     return null;
   };
   if (specs) {
-    const c = plainNoFrost(specs.система_охлаждения);
-    if (c) specs.система_охлаждения = c;
     for (const k of ['размораживание_холодильной_камеры', 'размораживание_морозильной_камеры']) {
       const d = plainDefrost(specs[k]);
       if (d) specs[k] = d;
@@ -1437,8 +1432,6 @@ export function sanitizeEnrichedResult(data) {
     }
   }
   if (facts) {
-    const c = plainNoFrost(facts.система_охлаждения);
-    if (c) facts.система_охлаждения = c;
     for (const k of ['размораживание_холодильной_камеры', 'размораживание_морозильной_камеры']) {
       const d = plainDefrost(facts[k]);
       if (d) facts[k] = d;
@@ -1516,8 +1509,10 @@ export function crossCheck(specs, facts, bounds = {}, policy = MISMATCH_POLICY, 
     if (!mismatch) continue;
 
     const corrected = attr && (attr.type === 'enum' || attr.type === 'text')
-      ? (aliasValue(attr, exp) || factToSpec(exp))
+      ? (aliasValue(attr, exp) || (hasStrictEnum(attr) ? null : factToSpec(exp)))
       : factToSpec(exp);
+    // Сырой факт без канона словаря не перетирает ответ модели.
+    if (corrected == null) continue;
     specs[key] = corrected; // всегда приоритет источника
     if (audit) noteWarn(key, got, corrected, 'не совпало с текстом');
   }
@@ -1694,6 +1689,13 @@ export function normalizeResponse(data, sourceText = '', schemaKey, attributes =
     const clean = s && !/^(нет данных|не указано|-|—|n\/?a)$/i.test(s) ? s : null;
     if (clean && isGluedFactDump(clean)) {
       specs[k] = null;
+    } else if (clean && attr?.type === 'boolean') {
+      // Overlay «Есть»/«Нет» — ярлык фильтра, не канон specs.
+      const b = canonBoolish(clean);
+      specs[k] = b;
+      if (!b) {
+        enumIssues.push({ field: k, model: clean, source: null, note: 'значение вне списка (да | нет)' });
+      }
     } else if (clean && schema.enums[k]) {
       const viaAlias = attr ? aliasValue(attr, clean) : null;
       const snapped = viaAlias || snapEnum(clean, schema.enums[k]);
@@ -1719,6 +1721,16 @@ export function normalizeResponse(data, sourceText = '', schemaKey, attributes =
   const filled_from_text = [];
   for (const k of schema.specKeys) {
     if (specs[k] != null || facts[k] == null) continue;
+    const attr = attrForSpecKey(schema, k);
+    if (attr && (attr.type === 'enum' || attr.type === 'text')) {
+      const canon = aliasValue(attr, facts[k]);
+      if (canon) {
+        specs[k] = displayEnum(canon) || canon;
+        filled_from_text.push(k);
+      }
+      // pending без канона — не копируем сленг источника в specs; это работа ИИ.
+      continue;
+    }
     specs[k] = factToSpec(facts[k]);
     filled_from_text.push(k);
   }

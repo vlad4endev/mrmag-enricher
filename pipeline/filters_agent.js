@@ -68,13 +68,14 @@ export function buildFiltersAgentPrompt(dict, inventory, { categoryName = '', ca
 
 ПРАВИЛА:
 1. Состав фильтров задан schema — НЕ предлагай новые фасеты и НЕ меняй имена.
-2. Входные raw уже только из графы характеристик карточки (annotation/S1, при пустой — description/S2). Не выдумывай значения.
+2. Входные raw — значения ПОСЛЕ парсинга характеристик карточки (annotation/S1, при пустой — description/S2). Сопоставь каждое с canons словаря этой оси по смыслу, не только дословно.
 3. Для каждого raw-значения: action=map + canon из списка canons этого attr_code, либо action=skip.
 4. Мусор («Зоны свежести - нет», «Освещения - …», хвосты « - нет/да», «[object Object]») → skip.
 5. Голые «нет»/«да»/«есть» в enum → skip.
 6. Единый стиль: одно написание канона на весь каталог (как в canons).
 7. Если canons пуст — только skip для фрагментов; иначе оставь без map (не выдумывай канон).
-8. Ответь ТОЛЬКО JSON-объектом, без markdown.
+8. Нельзя создать новый канон. Нет подходящего пункта словаря — skip.
+9. Ответь ТОЛЬКО JSON-объектом, без markdown.
 
 ФАСЕТЫ (допустимые attr_code и canons):
 ${JSON.stringify(facets, null, 2)}
@@ -95,7 +96,7 @@ export function buildFiltersAgentUserContent(inventory) {
     name: f.name,
     values: f.values.slice(0, 80),
   }));
-  return `Нормализуй значения фасетов по всем товарам категории:\n${JSON.stringify(slim, null, 2)}`;
+  return `Нормализуй значения фасетов по всем товарам категории. Сопоставь каждое raw с canons словаря:\n${JSON.stringify(slim, null, 2)}`;
 }
 
 function allowedCanons(attr) {
@@ -260,6 +261,36 @@ export function applyFiltersAgentMappings(recs, mappings) {
   return { applied, skipped };
 }
 
+/**
+ * После ИИ/эвристики на витрине остаются только каноны словаря.
+ * Сырые pending, которые так и не свели к value_aliases, снимаем.
+ */
+export function stripPendingUnmapped(recs, dict) {
+  let stripped = 0;
+  const attrs = dict?.attrs || [];
+  for (const rec of recs || []) {
+    if (!rec?.attrs) continue;
+    for (const attr of attrs) {
+      if (!hasStrictEnum(attr)) continue;
+      const cur = rec.attrs[attr.code];
+      if (cur == null || cur === '') continue;
+      const list = Array.isArray(cur) ? cur : [cur];
+      const kept = [];
+      for (const one of list) {
+        const canon = aliasValue(attr, one);
+        if (canon) kept.push(canon);
+        else stripped++;
+      }
+      if (Array.isArray(cur)) rec.attrs[attr.code] = kept.length ? kept : null;
+      else rec.attrs[attr.code] = kept[0] ?? null;
+      if (rec.provenance?.[attr.code]) {
+        rec.provenance[attr.code].pending_canon = false;
+      }
+    }
+  }
+  return stripped;
+}
+
 /** Проверка готового { filters: [{name,value}] }: нет фрагментов и голых нет/да в enum. */
 export function assertFiltersClean(filters, dict) {
   const errors = [];
@@ -306,12 +337,13 @@ export async function runFiltersAgent({
   const inventory = collectFacetValueInventory(recs, dict, config);
   if (!inventory.length) {
     unifyEnumValues(recs, dict);
+    const stripped = stripPendingUnmapped(recs, dict);
     return {
       mode: 'skip',
       mappings: [],
       rejected: [],
       notes: ['нет enum-фасетов со значениями из характеристик'],
-      stats: { applied: 0, skipped: 0 },
+      stats: { applied: 0, skipped: 0, stripped },
       inventory,
     };
   }
@@ -373,6 +405,8 @@ export async function runFiltersAgent({
 
   const stats = applyFiltersAgentMappings(recs, mappings);
   unifyEnumValues(recs, dict);
+  const stripped = stripPendingUnmapped(recs, dict);
+  stats.stripped = stripped;
 
   return {
     mode: usedMode,

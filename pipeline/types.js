@@ -610,15 +610,12 @@ export function normalizeValue(attr, raw, { keyText = '' } = {}) {
             hasStrictEnum(attr) ? null : displayEnum(implied)
           );
           if (impliedCanon) return { ok: true, value: impliedCanon };
-          if (hasStrictEnum(attr)) {
-            return { ok: false, value: null, reason: 'enum_not_in_dict', raw: v };
+          const shown = displayEnum(implied);
+          if (shown && hasStrictEnum(attr) && !looksLikeEnumFragment(shown)) {
+            return { ok: true, value: shown, pending_canon: true };
           }
         }
         return { ok: false, value: null, reason: 'bool_in_enum', raw: v };
-      }
-      // Schema is SoT: if value_aliases заданы — AI не может создать новое filter value.
-      if (typ === 'enum' && hasStrictEnum(attr) && !aliased) {
-        return { ok: false, value: null, reason: 'enum_not_in_dict', raw: v };
       }
       const val = displayEnum(aliased || rawEnum);
       if (!val) return empty;
@@ -637,6 +634,11 @@ export function normalizeValue(attr, raw, { keyText = '' } = {}) {
       // Голое «нет/да» в ENUM-фасете не едет на витрину (это не тип/класс).
       if (typ === 'enum' && !aliased && /^(?:нет|да|есть|имеется|yes|no)$/i.test(val)) {
         return { ok: false, value: null, reason: 'bool_word_in_enum', raw: v };
+      }
+      // Нет точного синонима — оставляем сырое, ИИ сопоставит со словарём.
+      // Мусор сюда не доходит: fragment/echo/bool уже отсечены.
+      if (typ === 'enum' && hasStrictEnum(attr) && !aliased) {
+        return { ok: true, value: val, pending_canon: true };
       }
       return { ok: true, value: val };
     }

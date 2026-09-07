@@ -23,6 +23,9 @@ products_*.json
 filters_*.json
 !dictionaries/filters_spec_*.json
 
+# Загруженные дампы заказчика (сид — data_*.json в корне репозитория)
+dumps/
+
 # Разметка: labelset.json и label.html генерируются, эталон храним
 labelset.json
 label.html

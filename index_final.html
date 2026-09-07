@@ -722,6 +722,30 @@ input[type=range]::-moz-range-thumb{
 }
 .set-tpl-tabs button:hover{border-color:var(--ac-b);color:var(--t1)}
 .set-tpl-tabs button.on{background:var(--ac-w);border-color:var(--ac-b);color:var(--ac)}
+.dump-drop{
+  border:1px dashed var(--b2);border-radius:var(--r);padding:20px 16px;background:var(--bg3);
+  text-align:center;cursor:pointer;transition:border-color .15s,background .15s;
+}
+.dump-drop:hover,.dump-drop.on{border-color:var(--ac);background:var(--ac-w)}
+.dump-drop i{font-size:22px;color:var(--ac)}
+.dump-drop b{display:block;font-size:13.5px;margin:8px 0 4px}
+.dump-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.dump-title{display:flex;flex-direction:column;gap:2px;min-width:0}
+.dump-title strong{font-size:14.5px;font-weight:650}
+.dump-kicker{font-family:var(--mono);font-size:11px;color:var(--t3)}
+.dump-stats{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:12.5px;color:var(--t2)}
+.dump-stats b{color:var(--t1);font-weight:650}
+.dump-stats .warn b{color:var(--amber)}
+.dump-tbl{width:100%;border-collapse:collapse;font-size:12.5px}
+.dump-tbl th,.dump-tbl td{padding:7px 8px;border-bottom:1px solid var(--b1);text-align:left;vertical-align:top}
+.dump-tbl th{font-size:11px;color:var(--t3);font-weight:600}
+.dump-id{font-family:var(--mono);font-size:12px;white-space:nowrap}
+.dump-ann{font-size:11px;font-weight:650}
+.dump-ann.ok{color:var(--green)}
+.dump-ann.empty{color:var(--amber)}
+.dump-empty{padding:18px;color:var(--t3);text-align:center;font-size:13px}
+.dump-search{width:100%;min-height:var(--ctrl-h);margin:8px 0}
+#dumpPending[hidden],#dumpFile[hidden],[id^="dumpPrev"][hidden]{display:none!important}
 .set-tpl-pane{display:none}
 .set-tpl-pane.on{display:block}
 .set-file{
@@ -1366,7 +1390,7 @@ input[type=range]::-moz-range-thumb{
           <div class="file-box">
             <input type="file" id="fileIn" accept=".json,application/json" multiple
                    onchange="loadFile(this)" aria-label="Файлы JSON: data_*.json и filters_*.json">
-            <div class="hint">Можно несколько файлов: <code>data_*.json</code> (товары) и <code>filters_*.json</code> (фасеты).</div>
+            <div class="hint">Можно несколько файлов: <code>data_*.json</code> (товары) и <code>filters_*.json</code> (фасеты). Постоянное хранение — Настройки → Дампы.</div>
           </div>
         </div>
 
@@ -1555,6 +1579,7 @@ input[type=range]::-moz-range-thumb{
       <button type="button" id="snParse" onclick="setTab('parse')"><i class="ti ti-world-search"></i> Парсеры</button>
       <button type="button" id="snCond" onclick="setTab('cond')"><i class="ti ti-adjustments"></i> Условия</button>
       <button type="button" id="snDict" onclick="setTab('dict')"><i class="ti ti-adjustments-horizontal"></i> Атрибуты и фильтры</button>
+      <button type="button" id="snDumps" onclick="setTab('dumps')"><i class="ti ti-database"></i> Дампы</button>
       <button type="button" id="snRun" onclick="setTab('run')"><i class="ti ti-player-play"></i> Прогон</button>
       <button type="button" id="snPrompt" onclick="setTab('prompt')"><i class="ti ti-message-2-code"></i> Промпт</button>
       <button type="button" id="snExport" onclick="setTab('export')"><i class="ti ti-file-code"></i> Выгрузка</button>
@@ -1802,6 +1827,35 @@ input[type=range]::-moz-range-thumb{
         <div id="aeFacetModal" hidden></div>
       </section>
 
+      <section class="set-panel" id="setDumps">
+        <div class="set-h">Дампы исходников</div>
+        <p class="set-lead">Один файл <code>data_{id}.json</code> на раздел: товары заказчика с описанием и характеристиками. Замена кладёт предыдущую копию в архив. Отсюда же можно открыть дамп в обогащении.</p>
+        <div class="dump-drop" id="dumpZone" tabindex="0" role="button" aria-label="Загрузить JSON дампа">
+          <i class="ti ti-cloud-upload" aria-hidden="true"></i>
+          <b>Перетащите JSON или выберите файл</b>
+          <div class="hint" style="margin:0">Имя <code>data_467.json</code> само ставит раздел. Иначе выберите категорию ниже.</div>
+        </div>
+        <input type="file" id="dumpFile" accept=".json,application/json" hidden>
+        <div class="set-card" id="dumpPending" hidden>
+          <div class="set-card-h"><b>Куда записать файл</b></div>
+          <div class="hint" id="dumpPendingName"></div>
+          <div class="set-row">
+            <label for="dumpPendingCat">Раздел</label>
+            <select id="dumpPendingCat"></select>
+          </div>
+          <div class="set-actions">
+            <button type="button" class="sbtn primary" onclick="confirmDumpUpload()">Загрузить</button>
+            <button type="button" class="sbtn ghost" onclick="cancelDumpUpload()">Отмена</button>
+          </div>
+        </div>
+        <div class="set-actions" style="margin:4px 0 8px">
+          <button type="button" class="sbtn primary" onclick="dumpForceId=null;document.getElementById('dumpFile').click()"><i class="ti ti-upload"></i> Загрузить дамп</button>
+          <button type="button" class="sbtn ghost" onclick="loadDumps()"><i class="ti ti-refresh"></i> Обновить</button>
+          <span class="set-note" id="dumpStatus"></span>
+        </div>
+        <div id="dumpList"><p class="dump-empty">Загрузка…</p></div>
+      </section>
+
       <section class="set-panel" id="setRun">
         <div class="set-h">Параметры прогона</div>
         <p class="set-lead">Модель по умолчанию подставляется в шаг 1, если список ещё не выбран. Лимиты запроса — на один товар.</p>
@@ -2010,17 +2064,18 @@ function showPage(id, btn){
   if(id==='enricher') applyDefaultProviderModels();
 }
 
-const SET_TABS={prov:['setProv','snProv'],parse:['setParse','snParse'],cond:['setCond','snCond'],dict:['setDict','snDict'],run:['setRun','snRun'],prompt:['setPrompt','snPrompt'],export:['setExport','snExport'],logs:['setLogs','snLogs']};
+const SET_TABS={prov:['setProv','snProv'],parse:['setParse','snParse'],cond:['setCond','snCond'],dict:['setDict','snDict'],dumps:['setDumps','snDumps'],run:['setRun','snRun'],prompt:['setPrompt','snPrompt'],export:['setExport','snExport'],logs:['setLogs','snLogs']};
 function setTab(id){
   Object.entries(SET_TABS).forEach(([k,[panel,nav]])=>{
     document.getElementById(panel).classList.toggle('on',k===id);
     document.getElementById(nav).classList.toggle('on',k===id);
   });
   const foot=document.querySelector('.set-foot');
-  if(foot) foot.style.display=(id==='export'||id==='logs'||id==='dict')?'none':'flex';
+  if(foot) foot.style.display=(id==='export'||id==='logs'||id==='dict'||id==='dumps')?'none':'flex';
   if(id==='prompt') refreshPromptPreview();
   if(id==='logs') refreshLogsJobs();
   if(id==='dict') loadDictList();
+  if(id==='dumps') loadDumps();
 }
 
 /** Эталон выгрузки заказчика — семь полей + checkbox-фасеты. Живые данные сюда не подмешиваются. */
@@ -2066,6 +2121,273 @@ function setExportTpl(kind){
   document.getElementById('tplTabV2')?.classList.toggle('on',kind==='v2');
 }
 fillExportTemplates();
+
+/* ── Дампы data_{id}.json ──────────────────────────────────── */
+let dumpList=[];
+let dumpPending=null;
+let dumpOpenId=null;
+let dumpForceId=null;
+
+function dumpFmtBytes(n){
+  const b=Number(n)||0;
+  if(b<1024) return b+' Б';
+  if(b<1024*1024) return (b/1024).toFixed(b<10*1024?1:0)+' КБ';
+  return (b/1024/1024).toFixed(1)+' МБ';
+}
+function dumpFmtWhen(iso){
+  if(!iso) return '';
+  const d=new Date(iso);
+  if(Number.isNaN(d.getTime())) return '';
+  return d.toLocaleString('ru-RU',{day:'numeric',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'});
+}
+function dumpStatus(msg, ok){
+  const el=document.getElementById('dumpStatus');
+  if(!el) return;
+  el.textContent=msg||'';
+  el.style.color=ok===false?'var(--red)':ok===true?'var(--green)':'';
+}
+function dumpCatOptions(selected){
+  return dumpList.map(d=>
+    `<option value="${esc(d.id)}"${String(d.id)===String(selected)?' selected':''}>${esc(d.id)} — ${esc(d.name)}${d.has_file?' · '+d.products+' тов.':''}</option>`
+  ).join('');
+}
+
+async function loadDumps(){
+  const box=document.getElementById('dumpList');
+  if(!box) return;
+  try{
+    const data=await apiJson('/api/dumps');
+    dumpList=data.dumps||[];
+    renderDumpList();
+    dumpStatus(dumpList.filter(d=>d.has_file).length
+      ? dumpList.filter(d=>d.has_file).length+' '+plural(dumpList.filter(d=>d.has_file).length,'файл','файла','файлов')
+      : 'файлов пока нет');
+  }catch(e){
+    dumpList=[];
+    box.innerHTML=`<p class="dump-empty">${esc(e.message||'не удалось загрузить дампы')}</p>`;
+    dumpStatus(e.message||'ошибка', false);
+  }
+}
+
+function renderDumpList(){
+  const box=document.getElementById('dumpList');
+  if(!box) return;
+  if(!dumpList.length){
+    box.innerHTML='<p class="dump-empty">Нет разделов. Создайте справочник атрибутов или загрузите <code>data_{id}.json</code>.</p>';
+    return;
+  }
+  box.innerHTML=dumpList.map(d=>{
+    const empty=d.empty_annotation||0;
+    const cover=d.products?Math.round(100*(d.with_annotation||0)/d.products):0;
+    const badge=d.has_file
+      ? `<span class="set-badge">${esc(d.file)}</span>`
+      : `<span class="set-badge off">нет файла</span>`;
+    const stats=d.has_file
+      ? `<div class="dump-stats">
+          <span><b>${d.products}</b> ${plural(d.products,'товар','товара','товаров')}</span>
+          <span><b>${cover}%</b> с характеристиками</span>
+          ${empty?`<span class="warn"><b>${empty}</b> без annotation</span>`:''}
+          <span>${esc(dumpFmtBytes(d.bytes))}</span>
+          <span>${esc(dumpFmtWhen(d.mtime))}</span>
+        </div>`
+      : `<div class="hint" style="margin:0">Загрузите <code>data_${esc(d.id)}.json</code>, чтобы исходник жил на сервере и открывался отсюда.</div>`;
+    const archives=(d.archives||[]).length
+      ? `<details style="margin-top:8px"><summary style="cursor:pointer;font-size:12.5px;color:var(--t2)">Архив: ${(d.archives||[]).length}</summary>
+          <div class="set-actions" style="margin-top:8px">${(d.archives||[]).map(a=>
+            `<button type="button" class="sbtn ghost" onclick="restoreDumpUi('${esc(d.id)}','${esc(a.file)}')">${esc(a.file)} · ${esc(dumpFmtBytes(a.bytes))}</button>`
+          ).join('')}</div></details>`
+      : '';
+    const err=d.error?`<div class="hint" style="color:var(--red);margin:0">${esc(d.error)}</div>`:'';
+    return `<div class="set-card" id="dumpCard${esc(d.id)}" style="margin-bottom:12px">
+      <div class="dump-head">
+        <div class="dump-title">
+          <span class="dump-kicker">${esc(d.id)}</span>
+          <strong>${esc(d.name)}</strong>
+        </div>
+        ${badge}
+      </div>
+      ${stats}${err}
+      <div class="set-actions">
+        ${d.has_file?`<button type="button" class="sbtn primary" onclick="openDumpInEnricher('${esc(d.id)}')"><i class="ti ti-player-play"></i> Открыть в обогащении</button>`:''}
+        <button type="button" class="sbtn ghost" onclick="pickDumpForCat('${esc(d.id)}')"><i class="ti ti-upload"></i> ${d.has_file?'Заменить':'Загрузить'}</button>
+        ${d.has_file?`<button type="button" class="sbtn ghost" onclick="downloadDump('${esc(d.id)}')"><i class="ti ti-download"></i> Скачать</button>`:''}
+        ${d.has_file?`<button type="button" class="sbtn ghost" onclick="toggleDumpPreview('${esc(d.id)}')"><i class="ti ti-list"></i> Товары</button>`:''}
+        ${d.has_file?`<button type="button" class="sbtn danger" onclick="deleteDumpUi('${esc(d.id)}')">Удалить</button>`:''}
+      </div>
+      ${archives}
+      <div id="dumpPrev${esc(d.id)}" hidden></div>
+    </div>`;
+  }).join('');
+}
+
+function bindDumpZone(){
+  const zone=document.getElementById('dumpZone');
+  const inp=document.getElementById('dumpFile');
+  if(!zone||!inp) return;
+  zone.addEventListener('click',()=>{ dumpForceId=null; inp.click(); });
+  zone.addEventListener('keydown',e=>{ if(e.key==='Enter'||e.key===' '){ e.preventDefault(); dumpForceId=null; inp.click(); } });
+  zone.addEventListener('dragover',e=>{ e.preventDefault(); zone.classList.add('on'); });
+  zone.addEventListener('dragleave',()=>zone.classList.remove('on'));
+  zone.addEventListener('drop',e=>{
+    e.preventDefault();
+    zone.classList.remove('on');
+    dumpForceId=null;
+    const f=e.dataTransfer?.files?.[0];
+    if(f) ingestDumpFile(f);
+  });
+  inp.addEventListener('change',()=>{
+    const f=inp.files?.[0];
+    const forced=dumpForceId;
+    dumpForceId=null;
+    inp.value='';
+    if(f) ingestDumpFile(f, forced);
+  });
+}
+bindDumpZone();
+
+async function ingestDumpFile(file, forcedId){
+  dumpStatus('Читаем «'+file.name+'»…');
+  let text;
+  try{ text=await file.text(); JSON.parse(text); }
+  catch(e){ dumpStatus((e&&e.message)||'не JSON', false); return; }
+  const catId=forcedId || catIdFromFilename(file.name);
+  if(!catId){
+    dumpPending={ text, name:file.name };
+    const box=document.getElementById('dumpPending');
+    const sel=document.getElementById('dumpPendingCat');
+    const nm=document.getElementById('dumpPendingName');
+    if(nm) nm.textContent=file.name+' — в имени нет номера раздела';
+    if(sel) sel.innerHTML=dumpCatOptions(dumpList[0]?.id);
+    if(box) box.hidden=false;
+    dumpStatus('Выберите раздел для файла', false);
+    return;
+  }
+  await putDump(catId, text, file.name);
+}
+
+async function confirmDumpUpload(){
+  const id=document.getElementById('dumpPendingCat')?.value;
+  if(!id||!dumpPending) return;
+  const pending=dumpPending;
+  await putDump(id, pending.text, pending.name);
+}
+
+function cancelDumpUpload(){
+  dumpPending=null;
+  const box=document.getElementById('dumpPending');
+  if(box) box.hidden=true;
+  dumpStatus('');
+}
+
+function pickDumpForCat(id){
+  dumpForceId=id;
+  document.getElementById('dumpFile')?.click();
+}
+
+async function putDump(catId, text, filename){
+  const ex=dumpList.find(d=>String(d.id)===String(catId));
+  if(ex?.has_file && !confirm(`Заменить дамп ${catId} (${ex.products} ${plural(ex.products,'товар','товара','товаров')})?\nПредыдущий файл уйдёт в архив.`)){
+    dumpStatus('замена отменена');
+    return;
+  }
+  dumpStatus('Сохраняем «'+filename+'» → data_'+catId+'.json…');
+  try{
+    await apiJson('/api/dumps/'+encodeURIComponent(catId),{
+      method:'PUT', headers:{'Content-Type':'application/json'}, body:text,
+    });
+    dumpPending=null;
+    const box=document.getElementById('dumpPending');
+    if(box) box.hidden=true;
+    dumpStatus('Сохранён data_'+catId+'.json', true);
+    await loadDumps();
+  }catch(e){
+    dumpStatus(e.message||'не удалось сохранить', false);
+  }
+}
+
+async function downloadDump(id){
+  dumpStatus('Скачиваем data_'+id+'.json…');
+  try{
+    const d=await apiJson('/api/dumps/'+encodeURIComponent(id));
+    const blob=new Blob([JSON.stringify(d.products||[],null,2)+'\n'],{type:'application/json'});
+    const a=document.createElement('a');
+    a.href=URL.createObjectURL(blob);
+    a.download=`data_${id}.json`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+    dumpStatus('скачан data_'+id+'.json', true);
+  }catch(e){ dumpStatus(e.message||'ошибка скачивания', false); }
+}
+
+async function openDumpInEnricher(id){
+  dumpStatus('Открываем в обогащении…');
+  try{
+    const d=await apiJson('/api/dumps/'+encodeURIComponent(id));
+    const name=d.name||catNameFromId(id);
+    setSource((d.products||[]).map(p=>normalizeCatalogProduct(p, name)));
+    document.getElementById('urlIn').value='';
+    document.getElementById('fetchHint').textContent=`Дамп ${id} · ${name}: ${items.length} ${plural(items.length,'товар','товара','товаров')}`;
+    setSt('ok',`Дамп ${id}: ${items.length}`);
+    setSrcTab('file');
+    showPage('enricher');
+    dumpStatus('открыт в обогащении', true);
+  }catch(e){ dumpStatus(e.message||'не удалось открыть', false); }
+}
+
+async function deleteDumpUi(id){
+  const ex=dumpList.find(d=>String(d.id)===String(id));
+  if(!confirm(`Удалить текущий дамп ${id}${ex?` (${ex.products} тов.)`:''}?\nКопия сохранится в архиве.`)) return;
+  try{
+    await apiJson('/api/dumps/'+encodeURIComponent(id),{method:'DELETE'});
+    dumpStatus('удалён data_'+id+'.json', true);
+    await loadDumps();
+  }catch(e){ dumpStatus(e.message||'не удалось удалить', false); }
+}
+
+async function restoreDumpUi(id, file){
+  if(!confirm(`Вернуть ${file} как текущий дамп ${id}?`)) return;
+  try{
+    await apiJson('/api/dumps/'+encodeURIComponent(id)+'/restore',{
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({file}),
+    });
+    dumpStatus('восстановлен '+file, true);
+    await loadDumps();
+  }catch(e){ dumpStatus(e.message||'не удалось восстановить', false); }
+}
+
+async function toggleDumpPreview(id){
+  const box=document.getElementById('dumpPrev'+id);
+  if(!box) return;
+  if(!box.hidden && dumpOpenId===id){ box.hidden=true; dumpOpenId=null; return; }
+  dumpOpenId=id;
+  box.hidden=false;
+  box.innerHTML=`<input type="search" class="dump-search" id="dumpQ${esc(id)}" placeholder="Поиск по id или названию" oninput="loadDumpPreview('${esc(id)}')" autocomplete="off"><div id="dumpPrevBody${esc(id)}">Загрузка…</div>`;
+  await loadDumpPreview(id);
+}
+
+async function loadDumpPreview(id){
+  const body=document.getElementById('dumpPrevBody'+id);
+  if(!body) return;
+  const q=document.getElementById('dumpQ'+id)?.value||'';
+  try{
+    const d=await apiJson('/api/dumps/'+encodeURIComponent(id)+'/preview?limit=40&q='+encodeURIComponent(q));
+    if(!d.products_preview?.length){
+      body.innerHTML=`<p class="dump-empty">${q?'Ничего не найдено':'В дампе нет товаров'}</p>`;
+      return;
+    }
+    body.innerHTML=`<div class="hint" style="margin:0 0 6px">Показаны ${d.products_preview.length} из ${d.matched}${q?' найденных':''}</div>
+      <table class="dump-tbl"><thead><tr><th>id</th><th>Название</th><th>Характеристики</th></tr></thead><tbody>
+      ${d.products_preview.map(p=>`<tr>
+        <td class="dump-id">${esc(p.id)}</td>
+        <td>${esc(p.name)}</td>
+        <td class="dump-ann ${p.annotation_chars?'ok':'empty'}">${p.annotation_chars?p.annotation_chars+' знак.':'пусто'}</td>
+      </tr>`).join('')}
+      </tbody></table>`;
+  }catch(e){
+    body.innerHTML=`<p class="dump-empty">${esc(e.message||'ошибка')}</p>`;
+  }
+}
 
 /* ── Справочник attributes_{id}.json ───────────────────────── */
 let dictList=[];

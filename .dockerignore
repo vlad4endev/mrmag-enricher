@@ -6,6 +6,7 @@ products_*.json
 filters_*.json
 enriched_*
 mrmag_enriched*
+dumps
 test*.mjs
 .env
 .ui_under_test.mjs

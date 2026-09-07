@@ -8,6 +8,10 @@ import { webInfoFrom, cleanReviewText, isReview } from './pipeline/reviews.js';
 import { dictForProducts } from './pipeline/schema.js';
 import { buildV2 } from './export_v2.js';
 import { dictToV2Rows, v2FacetSpecKeys } from './pipeline/v2.js';
+import {
+  parseDumpPayload, normalizeDumpRow, saveDump, getDump, listDumps, deleteDump,
+  restoreDumpArchive, catIdFromDumpName, previewDump, dumpsDir,
+} from './pipeline/dumps.js';
 import { displayEnum, valueFold } from './pipeline/types.js';
 import { identityMatches, nameKeyTokens, parseIdentity } from './pipeline/identity.js';
 import { needsExternal, parseProductBySpecs, lookupExternal, enrichMissing, needsCountry, lookupCountry, parseCountryFromPage } from './pipeline/external.js';
@@ -2051,5 +2055,74 @@ console.log('golden tests passed');
   assert.equal(mixed.products.length, 2);
   assert.ok(mixed.products.some(p => p.id === 455270), 'mismatch SKU stays in products');
   console.log('ok filter spec overlays / S3→filters / mismatch / coverage');
+}
+
+{
+  const prevDir = process.env.DUMPS_DIR;
+  const prevSeed = process.env.DUMP_SEED;
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'enricher-dumps-'));
+  process.env.DUMPS_DIR = dir;
+  process.env.DUMP_SEED = '0';
+  try {
+    assert.equal(catIdFromDumpName('data_467.json'), '467');
+    assert.equal(catIdFromDumpName('products_523.json'), '523');
+    assert.equal(catIdFromDumpName('catalog.json'), null);
+
+    const wrapped = parseDumpPayload(JSON.stringify({
+      products: [
+        { sku: '10', title: 'Мойка', annotation_html: '<li>Тип</li>' },
+        { id: 11, name: 'Мойка 2', description_html: '<p>x</p>', annotation: '' },
+      ],
+    }), 'data_467.json');
+    assert.equal(wrapped.catId, '467');
+    assert.equal(wrapped.products.length, 2);
+    assert.equal(wrapped.products[0].id, 10);
+    assert.match(wrapped.products[0].annotation, /Тип/);
+
+    assert.throws(() => parseDumpPayload('[]', 'data_1.json'), /нет товаров/);
+    assert.throws(
+      () => parseDumpPayload(JSON.stringify([{ id: 1, name: 'A' }, { id: 1, name: 'B' }]), 'data_1.json'),
+      /повторный id/,
+    );
+
+    const row = normalizeDumpRow({ id: 5, name: 'X', annotation: 'y' });
+    assert.deepEqual(row, { id: 5, name: 'X', description: '', annotation: 'y' });
+
+    const saved = saveDump('42', [{ id: 7, name: 'Первый', description: '', annotation: 'есть' }], '.');
+    assert.equal(saved.has_file, true);
+    assert.equal(saved.products, 1);
+    assert.equal(saved.with_annotation, 1);
+    assert.ok(fs.existsSync(path.join(dumpsDir('.'), 'data_42.json')));
+
+    saveDump('42', [{ id: 8, name: 'Второй', description: '', annotation: '' }], '.');
+    const listed = listDumps('.');
+    const card = listed.find(d => d.id === '42');
+    assert.ok(card);
+    assert.equal(card.products, 1);
+    assert.equal(card.empty_annotation, 1);
+    assert.ok(card.archives.length >= 1, 'замена кладёт предыдущий в архив');
+    assert.equal(getDump('42', '.').products[0].id, 8);
+
+    const firstArchive = card.archives.find(a => {
+      const raw = JSON.parse(fs.readFileSync(path.join(dir, 'archive', a.file), 'utf8'));
+      return raw[0]?.id === 7;
+    });
+    assert.ok(firstArchive, 'в архиве должна быть первая версия');
+    restoreDumpArchive('42', firstArchive.file, '.');
+    assert.equal(getDump('42', '.').products[0].id, 7);
+
+    const prev = previewDump('42', { q: 'Перв', limit: 10 }, '.');
+    assert.equal(prev.matched, 1);
+    assert.equal(prev.products_preview[0].id, 7);
+
+    deleteDump('42', '.');
+    assert.equal(fs.existsSync(path.join(dumpsDir('.'), 'data_42.json')), false);
+    console.log('ok dumps store / archive / preview');
+  } finally {
+    if (prevDir === undefined) delete process.env.DUMPS_DIR;
+    else process.env.DUMPS_DIR = prevDir;
+    if (prevSeed === undefined) delete process.env.DUMP_SEED;
+    else process.env.DUMP_SEED = prevSeed;
+  }
 }
 

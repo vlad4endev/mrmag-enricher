@@ -25,12 +25,13 @@ RUN node -e "Promise.all([import('./lib.js'),import('./catalog.js'),import('./so
 # Кэш страниц и выгрузки — на том, иначе перезапуск заставляет обходить раздел заново.
 # Там же фоновые прогоны: перезапуск контейнера обязан их доводить, а не терять
 # оплаченные товары.
-RUN mkdir -p /data/cache /data/out /data/jobs /data/dictionaries && chown -R node:node /data
+RUN mkdir -p /data/cache /data/out /data/jobs /data/dictionaries /data/dumps && chown -R node:node /data
 # Встроенная поддержка HTTPS_PROXY в fetch — появилась в Node 24. Нужна там,
 # где до openrouter.ai не достучаться напрямую: сам прокси задаётся в .env.
 ENV NODE_USE_ENV_PROXY=1 \
     SETTINGS_PATH=/data/config.json \
     DICTIONARIES_DIR=/data/dictionaries \
+    DUMPS_DIR=/data/dumps \
     PAGE_CACHE_DIR=/data/cache \
     OUT_DIR=/data/out \
     JOBS_DIR=/data/jobs \

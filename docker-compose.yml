@@ -47,6 +47,7 @@ services:
       JOBS_DIR: /data/jobs           # фоновые прогоны на томе: restart их доводит
       SETTINGS_PATH: /data/config.json
       DICTIONARIES_DIR: /data/dictionaries
+      DUMPS_DIR: /data/dumps
     volumes:
       - enricher-data:/data
     restart: unless-stopped

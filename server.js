@@ -29,6 +29,12 @@
  *   POST /api/dictionaries/:id/probe  атрибуция на одном товаре
  *   POST /api/dictionaries/:id/import-suggest  AI/эвристика: список → proposals
  *   POST /api/dictionaries/:id/import-apply    применить proposals к attrs
+ *   GET  /api/dumps            исходники data_{id}.json (товары заказчика)
+ *   GET  /api/dumps/:id        дамп целиком {products, …}
+ *   GET  /api/dumps/:id/preview  таблица: id, name, есть ли характеристики
+ *   PUT  /api/dumps/:id        загрузить/заменить массив товаров
+ *   DELETE /api/dumps/:id      убрать текущий файл (копия в archive/)
+ *   POST /api/dumps/:id/restore  вернуть из archive { file }
  *   GET  /api/catalog?category=kholodilniki[&limit=N]
  *                             обход раздела: товары с описаниями + автофильтры
  *   POST /api/export          выгрузка заказчика: products + filters + held
@@ -80,6 +86,11 @@ import {
   dictionaryPath, dictDebugInfo, formatDictDebug,
   bootstrapDictionariesDir,
 } from './pipeline/dict.js';
+import {
+  bootstrapDumpsDir, listDumps, getDump, previewDump,
+  parseDumpPayload, saveDump, deleteDump, restoreDumpArchive,
+  dumpsDir, DUMP_LIMITS,
+} from './pipeline/dumps.js';
 import { normalizeProduct } from './pipeline/normalize.js';
 import { buildFilters as buildDictFilters } from './pipeline/facets.js';
 import {
@@ -115,6 +126,7 @@ const ALLOWED_HOSTS = (process.env.ALLOWED_HOSTS || 'mrmag.ru,adn-avto.ru')
 
 bootstrapSettingsFile(ROOT);
 bootstrapDictionariesDir(ROOT);
+bootstrapDumpsDir(ROOT);
 {
   const boot = loadSettings(ROOT);
   const def = resolveProvider(boot);
@@ -403,6 +415,68 @@ function apiDictionaryDelete(res, id) {
     json(res, 200, deleteDictionary(id, ROOT));
   } catch (e) {
     json(res, e.status || 400, { error: e.message });
+  }
+}
+
+function dumpHttpError(res, e) {
+  const bulky = String(e.message || '').includes('велико');
+  json(res, e.status || (bulky ? 413 : 400), { error: e.message });
+}
+
+function apiDumpsList(res) {
+  try {
+    json(res, 200, { dumps: listDumps(ROOT) });
+  } catch (e) {
+    dumpHttpError(res, e);
+  }
+}
+
+function apiDumpGet(res, id) {
+  try {
+    json(res, 200, getDump(id, ROOT));
+  } catch (e) {
+    dumpHttpError(res, e);
+  }
+}
+
+function apiDumpPreview(res, id, params) {
+  try {
+    json(res, 200, previewDump(id, {
+      q: params.get('q') || '',
+      offset: params.get('offset'),
+      limit: params.get('limit'),
+    }, ROOT));
+  } catch (e) {
+    dumpHttpError(res, e);
+  }
+}
+
+async function apiDumpPut(req, res, id) {
+  try {
+    const raw = await readBody(req, DUMP_LIMITS.MAX_DUMP_BYTES);
+    const { products } = parseDumpPayload(raw, `data_${id}.json`);
+    json(res, 200, saveDump(id, products, ROOT));
+  } catch (e) {
+    dumpHttpError(res, e);
+  }
+}
+
+function apiDumpDelete(res, id) {
+  try {
+    json(res, 200, deleteDump(id, ROOT));
+  } catch (e) {
+    dumpHttpError(res, e);
+  }
+}
+
+async function apiDumpRestore(req, res, id) {
+  const raw = await readBody(req, 64_000);
+  let body;
+  try { body = JSON.parse(raw); } catch { return json(res, 400, { error: 'Тело запроса не JSON' }); }
+  try {
+    json(res, 200, restoreDumpArchive(id, body.file || body.filename, ROOT));
+  } catch (e) {
+    dumpHttpError(res, e);
   }
 }
 
@@ -1719,6 +1793,18 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'PUT'  && u.pathname === '/api/settings')   return await apiSettingsPut(req, res);
     if (req.method === 'POST' && u.pathname === '/api/prompt/preview') return await apiPromptPreview(req, res);
     if (req.method === 'GET'  && u.pathname === '/api/categories') return apiCategories(res);
+    if (req.method === 'GET'  && u.pathname === '/api/dumps') return apiDumpsList(res);
+    const dumpPreview = u.pathname.match(/^\/api\/dumps\/(\d+)\/preview$/);
+    if (dumpPreview && req.method === 'GET') return apiDumpPreview(res, dumpPreview[1], u.searchParams);
+    const dumpRestore = u.pathname.match(/^\/api\/dumps\/(\d+)\/restore$/);
+    if (dumpRestore && req.method === 'POST') return await apiDumpRestore(req, res, dumpRestore[1]);
+    const dumpRoute = u.pathname.match(/^\/api\/dumps\/(\d+)$/);
+    if (dumpRoute) {
+      const id = dumpRoute[1];
+      if (req.method === 'GET') return apiDumpGet(res, id);
+      if (req.method === 'PUT') return await apiDumpPut(req, res, id);
+      if (req.method === 'DELETE') return apiDumpDelete(res, id);
+    }
     if (req.method === 'GET'  && u.pathname === '/api/dictionaries') return apiDictionariesList(res);
     if (req.method === 'POST' && u.pathname === '/api/dictionaries') return await apiDictionaryCreate(req, res);
     if (req.method === 'GET'  && u.pathname === '/api/dictionaries/blank-attr') return apiDictionaryBlankAttr(res);
@@ -1787,6 +1873,7 @@ server.listen(PORT, HOST, () => {
   console.log(`  Прокси разрешён для: ${ALLOWED_HOSTS.join(', ')}`);
   console.log(`  Курс: ${RUB_PER_USD} ₽/$ на ${RUB_RATE_DATE} | политика расхождений: ${loadSettings(ROOT).conditions.mismatch_policy}`);
   console.log(`  Вход: ${APP_PASSWORD ? `форма + Basic, пользователь ${APP_USER}` : 'ОТКРЫТ'}`);
+  console.log(`  Дампы: ${dumpsDir(ROOT)}`);
   try {
     const settings = loadSettings(ROOT);
     const on = settings.providers.filter(p => p.enabled);

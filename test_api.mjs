@@ -18,6 +18,7 @@ const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PORT = 3400 + Math.floor(process.uptime() * 7) % 100;
 // Фоновые прогоны пишутся на диск — в тесте в свой каталог, не в рабочий.
 const JOBS_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'enricher-jobs-'));
+const DUMPS_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'enricher-dumps-'));
 const SETTINGS_PATH = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'enricher-cfg-')), 'config.json');
 fs.copyFileSync(path.join(ROOT, 'config.json'), SETTINGS_PATH);
 const PASS = 'test-pass';
@@ -27,17 +28,21 @@ let n = 0;
 const t = async (name, fn) => { await fn(); n++; console.log(`  ✓ ${name}`); };
 const url = p => `http://127.0.0.1:${PORT}${p}`;
 
+const srvEnv = {
+  ...process.env,
+  OPENROUTER_API_KEY: 'sk-or-v1-test-not-a-real-key',
+  APP_PASSWORD: PASS,
+  PORT: String(PORT),
+  HOST: '127.0.0.1',
+  PAGE_CACHE_DIR: '.page_cache',
+  JOBS_DIR,
+  SETTINGS_PATH,
+  DUMPS_DIR,
+  DUMP_SEED: '0',
+};
+
 const srv = spawn(process.execPath, ['server.js'], {
-  env: {
-    ...process.env,
-    OPENROUTER_API_KEY: 'sk-or-v1-test-not-a-real-key',
-    APP_PASSWORD: PASS,
-    PORT: String(PORT),
-    HOST: '127.0.0.1',
-    PAGE_CACHE_DIR: '.page_cache',
-    JOBS_DIR,
-    SETTINGS_PATH,
-  },
+  env: srvEnv,
   stdio: ['ignore', 'pipe', 'pipe'],
 });
 srv.stderr.on('data', d => { if (/Error|error/.test(String(d))) process.stderr.write(d); });
@@ -62,7 +67,7 @@ try {
     assert.strictEqual((await r.json()).ok, true);
   });
   await t('без пароля закрыты и страница, и API', async () => {
-    for (const p of ['/', '/api/categories', '/api/models', '/api/parser', '/api/settings', '/api/catalog?category=523']) {
+    for (const p of ['/', '/api/categories', '/api/models', '/api/parser', '/api/settings', '/api/dumps', '/api/catalog?category=523']) {
       assert.strictEqual((await fetch(url(p))).status, 401, `${p} должен требовать вход`);
     }
     const r = await fetch(url('/api/enrich'), { method: 'POST', body: '{}' });
@@ -287,7 +292,7 @@ try {
   });
   await t('фильтры считаются той же функцией, что пишет файл', async () => {
     const r = await postFilters({
-      category_id: 523, category: 'Холодильники', url: 'https://mrmag.ru/shop/kholodilniki',
+      category_id: 1, category: 'Тестовый раздел', url: 'https://mrmag.ru/shop/test',
       products: [
         { sku: '1', brand: 'DON', brand_slug: 'don', price: 30000 },
         { sku: '2', brand: 'DON', brand_slug: 'don', price: 45000 },
@@ -297,7 +302,7 @@ try {
     });
     assert.strictEqual(r.status, 200);
     const d = await r.json();
-    assert.strictEqual(d.category_id, 523);
+    assert.strictEqual(d.category_id, 1);
     assert.strictEqual(d.products_total, 4);
     const brand = d.filters.find(f => f.code === 'brand');
     const price = d.filters.find(f => f.code === 'price');
@@ -589,6 +594,77 @@ try {
     assert.ok(!fs.existsSync(path.join(JOBS_DIR, `${jobId}.json`)), 'файл тоже должен уйти');
   });
 
+  console.log('\nДампы');
+  await t('список дампов и загрузка JSON', async () => {
+    const empty = await fetch(url('/api/dumps'), { headers: { authorization: auth } });
+    assert.strictEqual(empty.status, 200);
+    const listed = await empty.json();
+    assert.ok(Array.isArray(listed.dumps));
+
+    const body = JSON.stringify([
+      { id: 101, name: 'Тестовая мойка', description: '<p>d</p>', annotation: '<li>Тип</li>' },
+      { sku: '102', title: 'Пустая', description_html: '', annotation_html: '' },
+    ]);
+    const put = await fetch(url('/api/dumps/42'), {
+      method: 'PUT',
+      headers: { authorization: auth, 'content-type': 'application/json' },
+      body,
+    });
+    const savedText = await put.text();
+    assert.strictEqual(put.status, 200, savedText);
+    const saved = JSON.parse(savedText);
+    assert.strictEqual(saved.id, '42');
+    assert.strictEqual(saved.products, 2);
+    assert.strictEqual(saved.with_annotation, 1);
+    assert.ok(saved.has_file);
+  });
+  await t('чтение, превью, замена с архивом и удаление', async () => {
+    const got = await fetch(url('/api/dumps/42'), { headers: { authorization: auth } });
+    assert.strictEqual(got.status, 200);
+    const dump = await got.json();
+    assert.strictEqual(dump.products.length, 2);
+    assert.strictEqual(dump.products[0].id, 101);
+
+    const prev = await fetch(url('/api/dumps/42/preview?q=мойка'), { headers: { authorization: auth } });
+    assert.strictEqual(prev.status, 200);
+    const preview = await prev.json();
+    assert.strictEqual(preview.matched, 1);
+    assert.strictEqual(preview.products_preview[0].id, 101);
+
+    const put2 = await fetch(url('/api/dumps/42'), {
+      method: 'PUT',
+      headers: { authorization: auth, 'content-type': 'application/json' },
+      body: JSON.stringify([{ id: 9, name: 'Новый', description: '', annotation: 'x' }]),
+    });
+    assert.strictEqual(put2.status, 200);
+    const replaced = await put2.json();
+    assert.strictEqual(replaced.products, 1);
+    assert.ok(replaced.archives.length >= 1);
+
+    const restored = await fetch(url('/api/dumps/42/restore'), {
+      method: 'POST',
+      headers: { authorization: auth, 'content-type': 'application/json' },
+      body: JSON.stringify({ file: replaced.archives[0].file }),
+    });
+    const restoredText = await restored.text();
+    assert.strictEqual(restored.status, 200, restoredText);
+    const after = await (await fetch(url('/api/dumps/42'), { headers: { authorization: auth } })).json();
+    assert.strictEqual(after.products.length, 2, 'архив вернул предыдущие два товара');
+
+    const del = await fetch(url('/api/dumps/42'), { method: 'DELETE', headers: { authorization: auth } });
+    assert.strictEqual(del.status, 200);
+    assert.strictEqual((await fetch(url('/api/dumps/42'), { headers: { authorization: auth } })).status, 404);
+  });
+  await t('битый дамп — 400, без пароля — 401', async () => {
+    const bad = await fetch(url('/api/dumps/42'), {
+      method: 'PUT',
+      headers: { authorization: auth, 'content-type': 'application/json' },
+      body: JSON.stringify([{ name: 'без id' }]),
+    });
+    assert.strictEqual(bad.status, 400);
+    assert.strictEqual((await fetch(url('/api/dumps'))).status, 401);
+  });
+
   console.log('\nМаршрутизация');
   await t('неизвестный путь и метод', async () => {
     assert.strictEqual((await fetch(url('/секрет'), { headers: { authorization: auth } })).status, 404);
@@ -610,8 +686,7 @@ try {
 
     const port2 = PORT + 1;
     const srv2 = spawn(process.execPath, ['server.js'], {
-      env: { ...process.env, OPENROUTER_API_KEY: 'sk-or-v1-test-not-a-real-key', APP_PASSWORD: PASS,
-             PORT: String(port2), HOST: '127.0.0.1', PAGE_CACHE_DIR: '.page_cache', JOBS_DIR, SETTINGS_PATH },
+      env: { ...srvEnv, PORT: String(port2) },
       stdio: ['ignore', 'ignore', 'ignore'],
     });
     try {

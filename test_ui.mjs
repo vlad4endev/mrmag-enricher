@@ -444,6 +444,10 @@ t('переключает разделы настроек', () => {
   assert.ok(G('snLogs').classList.contains('on'));
   const foot = document.querySelector('.set-foot');
   assert.ok(foot && foot.style.display === 'none', 'на Логах нет кнопки Сохранить');
+  api.setTab('dumps');
+  assert.ok(G('setDumps').classList.contains('on'));
+  assert.ok(G('snDumps').classList.contains('on'));
+  assert.ok(foot && foot.style.display === 'none', 'на Дампах нет кнопки Сохранить');
   api.setTab('prov');
 });
 

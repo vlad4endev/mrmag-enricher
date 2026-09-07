@@ -2115,11 +2115,14 @@ export async function enrichProduct(product, opts) {
   const { facts } = productFacts(product, schema);
   const benchmarks = schema.id != null ? loadBenchmarks(schema.id, opts.root) : null;
   const baseUser = buildUserContent(product, facts, { benchmarks });
+  const dumpRow = findDumpProduct(schemaCatId(schema, product, opts.root), productDumpKey(product), opts.root);
   const attemptsCap = Math.min(2, Math.max(1, maxRetries));
   let tokenBudget = maxTokens;
   let lastErr;
   let lastIssues = [];
   let feedback = '';
+  let correctionPass = false;
+  let extraAttempt = false;
   // Фактический payload последнего model call — не реконструкция из финального товара.
   let sentSystem = null;
   let sentUser = null;
@@ -2162,13 +2165,27 @@ export async function enrichProduct(product, opts) {
   });
 
   const userPayload = () => {
-    if (!feedback) return baseUser;
     try {
       const obj = JSON.parse(baseUser);
-      obj.validation_feedback = feedback;
+      if (feedback) obj.validation_feedback = feedback;
+      if (lastEnriched) obj.current_card = slimCard(lastEnriched);
+      if (correctionPass) {
+        obj.correction = 'source_and_dump';
+        if (dumpRow) {
+          obj.dump = {
+            id: dumpRow.id,
+            name: dumpRow.name,
+            description: stripHtml(dumpRow.description),
+            annotation: stripHtml(dumpRow.annotation),
+          };
+          if (String(dumpRow.description || '').trim()) obj.description = stripHtml(dumpRow.description);
+          if (String(dumpRow.annotation || '').trim()) obj.annotation = stripHtml(dumpRow.annotation);
+        }
+      }
+      if (!feedback && !correctionPass && !lastEnriched) return baseUser;
       return JSON.stringify(obj);
     } catch {
-      return baseUser + '\n\n' + feedback;
+      return feedback ? `${baseUser}\n\n${feedback}` : baseUser;
     }
   };
 
@@ -2180,11 +2197,13 @@ export async function enrichProduct(product, opts) {
     onNote(`сырой ответ модели (попытка ${attempt}):\n${raw}`, { level: 'warn', step: 'validate' });
   };
 
-  for (let attempt = 1; attempt <= attemptsCap; attempt++) {
+  for (let attempt = 1; attempt <= attemptsCap || extraAttempt; attempt++) {
+    if (attempt > attemptsCap) extraAttempt = false;
     await limiter.wait(ms => onNote(`rate limit ${ms}ms`));
 
     const userContent = userPayload();
-    onNote(`запрос к модели${attempt > 1 ? ` · попытка ${attempt}/${attemptsCap}` : ''}…`);
+    const repairNote = correctionPass ? ' · правка по дампу' : '';
+    onNote(`запрос к модели${attempt > 1 ? ` · попытка ${attempt}/${attemptsCap}` : ''}${repairNote}…`);
 
     // Собираем тело заранее и логируем ИМЕННО его messages — то, что уйдёт в fetch.
     const requestBody = buildRequestBody(model, userContent, tokenBudget, schema, systemPrompt);
@@ -2292,7 +2311,8 @@ export async function enrichProduct(product, opts) {
 
     let enriched;
     try {
-      enriched = normalizeResponse(parsedBody, src, schema, product.attributes, mismatchPolicy, product);
+      const factProduct = correctionPass ? overlayDump(product, dumpRow) : product;
+      enriched = normalizeResponse(parsedBody, src, schema, factProduct.attributes, mismatchPolicy, factProduct);
       lastEnriched = enriched;
     } catch (err) {
       lastErr = err;
@@ -2316,6 +2336,17 @@ export async function enrichProduct(product, opts) {
       requireSpecFill: Boolean(src && src.length >= MIN_SOURCE_CHARS),
     });
 
+    const startSourceFix = (why) => {
+      correctionPass = true;
+      extraAttempt = attempt >= attemptsCap;
+      feedback = sourceCorrectionFeedback({
+        warnings: enriched.warnings || [],
+        issues,
+        hasDump: Boolean(dumpRow),
+      });
+      onNote(why, { level: 'warn', step: 'repair' });
+    };
+
     if (issues.length) {
       // Обрыв по длине + пустые тексты: сначала поднять бюджет, а не жечь попытку feedback.
       if (choice.finish_reason === 'length'
@@ -2327,12 +2358,16 @@ export async function enrichProduct(product, opts) {
         continue;
       }
       logValidationFail(issues, attempt, content);
-      if (attempt < attemptsCap) {
+      if (attempt < attemptsCap && !correctionPass) {
         feedback = validationFeedbackLine(issues, { filledSpecs });
         onNote(`повтор с указанием ошибок валидации`);
         continue;
       }
-      // Карточка есть — в выгрузку не пойдёт (needs_review), но UI/лог её видят.
+      if (!correctionPass) {
+        startSourceFix(`на проверку — сверяем ${dumpRow ? 'дамп и ' : ''}источник и правим до следующего товара`);
+        continue;
+      }
+      // Правка не сняла валидацию — в выгрузку v2 не пойдёт, UI черновик видит.
       modelStatus = 'needs_review';
       return pack({
         enriched,
@@ -2343,6 +2378,11 @@ export async function enrichProduct(product, opts) {
         costSource,
         attempts: attempt,
       });
+    }
+
+    if ((enriched.warnings || []).length && !correctionPass) {
+      startSourceFix(`расхождения с источником (${enriched.warnings.length}) — сверяем ${dumpRow ? 'дамп' : 'текст'} и правим до следующего товара`);
+      continue;
     }
 
     modelStatus = 'ok';

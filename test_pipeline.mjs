@@ -13,7 +13,7 @@ import {
   restoreDumpArchive, catIdFromDumpName, previewDump, dumpsDir, listShopCategories,
   findDumpProduct,
 } from './pipeline/dumps.js';
-import { displayEnum, valueFold } from './pipeline/types.js';
+import { displayEnum, isBrandFilterKey, valueFold } from './pipeline/types.js';
 import { identityMatches, nameKeyTokens, parseIdentity } from './pipeline/identity.js';
 import { extractPairsFromPage, pairFromTableCells, parseProductFields } from './pipeline/parse.js';
 import { needsExternal, parseProductBySpecs, lookupExternal, enrichMissing, needsCountry, lookupCountry, parseCountryFromPage } from './pipeline/external.js';
@@ -1133,6 +1133,31 @@ console.log('golden tests passed');
   assert.ok(!Object.keys(p.filters).some(n => /расход воды/i.test(n)));
   assert.ok(!Object.keys(p.filters).some(n => /отжима.*дб|шум при отжиме/i.test(n)));
   console.log('ok products_v2 washer (11391)');
+}
+
+{
+  assert.equal(isBrandFilterKey('Бренд'), true);
+  assert.equal(isBrandFilterKey('brand'), true);
+  assert.equal(isBrandFilterKey('Тип загрузки'), false);
+  const brand = d467.byCode.get('brand');
+  const prevEnabled = brand.facet.enabled;
+  const prevStatus = brand.facet.status;
+  brand.facet.enabled = true;
+  brand.facet.status = 'filter';
+  try {
+    const out = await buildCustomerExport([p467[11391]], {
+      dict: d467, config, root: '.', filtersAgent: { mode: 'heuristic' },
+    });
+    const p = out.products.find(x => x.id === 11391);
+    assert.ok(p, '11391 должен остаться в выгрузке');
+    assert.ok(!('Бренд' in p.filters), 'включённый facet бренда всё равно не едет в JSON v2');
+    assert.ok(!out.filters.some(f => /бренд/i.test(f.name)));
+    assert.ok(!/Бренд:/i.test(p.annotation_html));
+  } finally {
+    brand.facet.enabled = prevEnabled;
+    brand.facet.status = prevStatus;
+  }
+  console.log('ok brand hard-strip even if facet.enabled');
 }
 
 {

@@ -2,7 +2,7 @@
 
 import {
   annotationLabel, annotationText, annotationCase,
-  attrLabel, formatAttrValue, labelHasUnit,
+  attrLabel, formatAttrValue, isBrandAttr, labelHasUnit,
 } from './types.js';
 import { loadCategories } from './dict.js';
 import { singularProductType } from './text.js';
@@ -45,7 +45,7 @@ function lowerFirst(s) {
  */
 export function annotationRows(rec, dict) {
   return dict.attrs
-    .filter(a => a.tier !== 'X' && a.code !== 'brand' && a.show_in_annotation && rec.attrs[a.code] != null)
+    .filter(a => a.tier !== 'X' && !isBrandAttr(a) && a.show_in_annotation && rec.attrs[a.code] != null)
     .sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
     .map(a => ({ attr: a, label: annotationLabel(a), value: annotationText(a, rec.attrs[a.code]) }))
     .filter(r => r.label && r.value !== '');

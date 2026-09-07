@@ -48,6 +48,13 @@
     return 'checkbox';
   }
 
+  function isBrandAttr(attr) {
+    const k = String(attr?.code || '').trim().toLowerCase();
+    const n = String(attr?.name || '').trim().toLowerCase();
+    const lab = String(attr?.facet?.label || '').trim().toLowerCase();
+    return k === 'brand' || k === 'бренд' || n === 'бренд' || n === 'brand' || lab === 'бренд' || lab === 'brand';
+  }
+
   function kindFromWidget(widget, type) {
     if (type === 'boolean' || widget === 'toggle') return 'boolean';
     if (widget === 'slider') return 'range';
@@ -197,7 +204,9 @@
           <td data-stop><input class="ae-cell" data-ae="name" value="${esc(a.name || '')}"></td>
           <td data-stop><select class="ae-cell" data-ae="type">${typeOpts}</select></td>
           <td data-stop><input class="ae-cell ae-unit" data-ae="unit" value="${esc(a.unit || '')}"></td>
-          <td data-stop>${chkHtml(!!a.facet?.enabled, 'data-ae="facet" title="В фильтрах"')}</td>
+          <td data-stop>${chkHtml(isBrandAttr(a) ? false : !!a.facet?.enabled, isBrandAttr(a)
+            ? 'data-ae="facet" disabled aria-disabled="true" title="Бренд не фасет: сопоставление по id"'
+            : 'data-ae="facet" title="В фильтрах"')}</td>
           <td data-stop>${chkHtml(!!a.show_in_annotation, 'data-ae="ann" title="Извлекать"')}</td>
           <td>${vals}</td>
           <td data-stop>
@@ -263,6 +272,7 @@
       return;
     }
     if (act === 'facet') {
+      if (isBrandAttr(attr)) return;
       attr.facet = attr.facet || {};
       attr.facet.enabled = !attr.facet.enabled;
       if (attr.facet.enabled && !attr.facet.kind) attr.facet.kind = kindFromWidget(widgetOf(attr), attr.type);
@@ -368,7 +378,7 @@
   window.aeBulkPatch = function aeBulkPatch(upd) {
     (dictCurrent?.attrs || []).forEach(a => {
       if (!marked.has(a.code)) return;
-      if ('facet' in upd) {
+      if ('facet' in upd && !isBrandAttr(a)) {
         a.facet = a.facet || {};
         a.facet.enabled = !!upd.facet;
       }
@@ -476,7 +486,9 @@
       </section>
       <section class="ae-grp">
         <div class="ae-grp-title">Фасет в каталоге</div>
-        <label class="ae-switch">${chkHtml(facetOn, 'id="schFacet"')} <span>Показывать в фильтрах</span></label>
+        <label class="ae-switch">${chkHtml(isBrandAttr(attr) ? false : facetOn, isBrandAttr(attr)
+          ? 'id="schFacet" disabled aria-disabled="true" title="Бренд не фасет: сопоставление по id"'
+          : 'id="schFacet"')} <span>Показывать в фильтрах${isBrandAttr(attr) ? ' (бренд — по id)' : ''}</span></label>
         <label class="ae-fld" id="schWidgetWrap" style="${facetOn ? '' : 'display:none'}">
           <span>Виджет</span>
           <select id="schWidget">${WIDGETS.map(w =>
@@ -549,6 +561,7 @@
     const facetBtn = $('schFacet');
     const annBtn = $('schAnn');
     facetBtn?.addEventListener('click', () => {
+      if (facetBtn.disabled || isBrandAttr(attr)) return;
       const on = !facetBtn.classList.contains('on');
       facetBtn.classList.toggle('on', on);
       facetBtn.textContent = on ? '✓' : '';
@@ -617,7 +630,7 @@
     attr.type = $('schType')?.value || attr.type;
     attr.unit = $('schUnit')?.value?.trim() || null;
     attr.facet = attr.facet || {};
-    attr.facet.enabled = !!$('schFacet')?.classList.contains('on');
+    attr.facet.enabled = isBrandAttr(attr) ? false : !!$('schFacet')?.classList.contains('on');
     attr.show_in_annotation = !!$('schAnn')?.classList.contains('on');
     const widget = $('schWidget')?.value || widgetOf(attr);
     attr.facet.widget = widget;

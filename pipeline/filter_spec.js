@@ -3,7 +3,7 @@
  * Состав и бакеты фильтров — из spec; каноны витрины — из values, символ в символ.
  */
 
-import { valueFold } from './types.js';
+import { clampBrandFacet, isBrandAttr, isBrandFilterKey, valueFold } from './types.js';
 
 function uniqueList(list) {
   const seen = new Set();
@@ -30,6 +30,10 @@ function attrBySpec(attrs, item) {
 }
 
 export function applyOneFilterSpec(attr, item) {
+  if (isBrandAttr(attr) || isBrandFilterKey(item?.code) || isBrandFilterKey(item?.name)) {
+    clampBrandFacet(attr);
+    return;
+  }
   if (!attr.facet || typeof attr.facet !== 'object') attr.facet = {};
   const facet = attr.facet;
   if (item.status === 'not_a_filter') {

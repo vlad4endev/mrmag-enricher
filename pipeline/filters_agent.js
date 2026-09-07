@@ -4,7 +4,7 @@
  * сырые attrs к канонам value_aliases; buildFilters пишет filters_*.json.
  */
 
-import { aliasValue, displayEnum, hasStrictEnum, looksLikeEnumFragment, unifyEnumValues, valueFold } from './types.js';
+import { aliasValue, displayEnum, hasStrictEnum, isBrandAttr, looksLikeEnumFragment, unifyEnumValues, valueFold } from './types.js';
 import { facetKind, filterSourceAllowed } from './facets.js';
 
 const BARE_BOOL = /^(?:нет|да|есть|имеется|yes|no)$/i;
@@ -12,7 +12,7 @@ const BARE_BOOL = /^(?:нет|да|есть|имеется|yes|no)$/i;
 /** Фасеты, где агент склеивает строки (range — бакеты из schema, boolean — true/false). */
 function agentFacetAttrs(dict) {
   return (dict?.attrs || []).filter(a => {
-    if (!a?.facet?.enabled || a.tier === 'X') return false;
+    if (!a?.facet?.enabled || a.tier === 'X' || isBrandAttr(a)) return false;
     const kind = facetKind(a);
     if (kind === 'range' || kind === 'boolean') return false;
     return a.type === 'enum' || a.type === 'text' || a.type === 'class_scale' || !a.type;
@@ -131,7 +131,7 @@ export function parseFiltersAgentResponse(raw, dict) {
     const rawVal = item.raw == null ? '' : String(item.raw);
     const action = item.action === 'skip' ? 'skip' : 'map';
     const attr = byCode.get(attr_code);
-    if (!attr || !attr.facet?.enabled || attr.tier === 'X') {
+    if (!attr || !attr.facet?.enabled || attr.tier === 'X' || isBrandAttr(attr)) {
       rejected.push({ attr_code, raw: rawVal, reason: 'unknown_attr' });
       continue;
     }
@@ -296,7 +296,7 @@ export function assertFiltersClean(filters, dict) {
   const errors = [];
   const byName = new Map();
   for (const a of dict?.attrs || []) {
-    if (!a.facet?.enabled || a.tier === 'X') continue;
+    if (!a.facet?.enabled || a.tier === 'X' || isBrandAttr(a)) continue;
     byName.set(a.facet.label || a.name, a);
   }
   for (const f of filters || []) {

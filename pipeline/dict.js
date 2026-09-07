@@ -4,7 +4,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { normKey } from './text.js';
-import { looksLikeEnumFragment, normalizeValueAliases } from './types.js';
+import { clampBrandFacet, looksLikeEnumFragment, normalizeValueAliases } from './types.js';
 import { applyFilterOverlays, valuesObjectFromFile } from './filter_spec.js';
 
 /**
@@ -342,6 +342,7 @@ export function saveDictionaryAttrs(catId, attrs, root) {
       }
     }
   }
+  for (const a of attrs) clampBrandFacet(a);
   // Индексация ловит битые синонимы до записи на диск.
   indexDictionary(attrs, String(catId));
   const file = dictionaryPath(catId, root);
@@ -412,6 +413,7 @@ export function indexDictionary(attrs, catId) {
 
   for (const attr of attrs) {
     if (!attr.code) throw new Error('у атрибута нет code');
+    clampBrandFacet(attr);
     normalizeValueAliases(attr);
     byCode.set(attr.code, attr);
     const names = [attr.name, ...(attr.synonyms || [])];

@@ -3,7 +3,7 @@
 import { splitHtmlChunks } from './text.js';
 import { assignFilterValues, buildFilters } from './facets.js';
 import { renderCard, renderAnnotation, renderDescription, productTypeFor, annotationRows, MIN_ANNOTATION_ROWS } from './generate.js';
-import { annotationText, annotationCase } from './types.js';
+import { annotationText, annotationCase, isBrandFilterKey } from './types.js';
 import { webInfoFrom } from './reviews.js';
 import { normalizeProduct, ingestPairs } from './normalize.js';
 import { specDest } from './schema.js';
@@ -178,6 +178,7 @@ export function metaKeywords(rec, dict, { root = '.' } = {}) {
 function asFilterArrays(assigned) {
   const out = {};
   for (const [name, v] of Object.entries(assigned || {})) {
+    if (isBrandFilterKey(name)) continue;
     if (v == null || v === '') continue;
     const list = Array.isArray(v) ? v : [v];
     if (list.length) out[name] = list;
@@ -252,7 +253,7 @@ export function serializeProducts(recs, dict, debugFacets, opts = {}) {
 
 export function serializeFilters(built) {
   return {
-    filters: built.filters || [],
+    filters: (built.filters || []).filter(f => !isBrandFilterKey(f?.name)),
   };
 }
 

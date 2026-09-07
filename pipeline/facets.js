@@ -1,6 +1,6 @@
 /** Фильтры строго по facet.* справочника. Вид и шаг из справочника, не из данных. */
 
-import { formatAttrValue, hasStrictEnum, looksLikeEnumFragment, unifyEnumValues } from './types.js';
+import { formatAttrValue, hasStrictEnum, isBrandAttr, isBrandFilterKey, looksLikeEnumFragment, unifyEnumValues } from './types.js';
 
 /** Доля товаров на одно значение, выше которой фильтр перестаёт различать товары. */
 const DOMINANT_SHARE = 95;
@@ -262,6 +262,14 @@ export function buildFilters(recs, dict, config) {
 
   for (const attr of dict.attrs) {
     const facet = attr.facet || {};
+    if (isBrandAttr(attr)) {
+      excluded.push({
+        code: attr.code,
+        name: attr.name,
+        reason: facet.reason || 'brand_not_a_filter',
+      });
+      continue;
+    }
     if (!facet.enabled || facet.status === 'not_a_filter') {
       if (facet.disabled_reason || facet.status === 'not_a_filter') {
         excluded.push({
@@ -434,6 +442,7 @@ export function assignFilterValues(rec, dict, debugFacets, config = {}, unmapped
     if (!filterSourceAllowed(rec, f._code, config)) continue;
     const attr = dict.byCode.get(f._code);
     if (!attr) continue;
+    if (isBrandAttr(attr) || isBrandFilterKey(f.name)) continue;
     const facet = attr.facet || {};
     if (facet.status === 'not_a_filter') continue;
     const kind = facetKind(attr);

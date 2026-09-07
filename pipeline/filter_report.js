@@ -2,11 +2,13 @@
  * Отчёт заполненности фильтров категории: coverage, unmapped_values, mismatch.
  */
 
+import { isBrandAttr } from './types.js';
+
 const FEW_FILTERS = 5;
 
 function filterNamesFromDict(dict) {
   return (dict?.attrs || [])
-    .filter(a => a.facet?.enabled && a.tier !== 'X' && a.facet?.status !== 'not_a_filter')
+    .filter(a => !isBrandAttr(a) && a.facet?.enabled && a.tier !== 'X' && a.facet?.status !== 'not_a_filter')
     .sort((a, b) => (a.order ?? 0) - (b.order ?? 0) || a.code.localeCompare(b.code))
     .map(a => a.facet.label || a.name);
 }

@@ -83,6 +83,30 @@ export function valueStem(s) {
   return valueFold(s).replace(ADJ_END, '').replace(/ист$/, '');
 }
 
+/** Бренд — паспорт SKU. Заказчик сопоставляет товары по id, не по фасету. */
+export function isBrandFilterKey(key) {
+  const k = String(key || '').trim().toLowerCase();
+  return k === 'бренд' || k === 'brand';
+}
+
+export function isBrandAttr(attr) {
+  if (!attr || typeof attr !== 'object') return false;
+  return isBrandFilterKey(attr.code)
+    || isBrandFilterKey(attr.name)
+    || isBrandFilterKey(attr.facet?.label);
+}
+
+export function clampBrandFacet(attr) {
+  if (!isBrandAttr(attr)) return attr;
+  if (!attr.facet || typeof attr.facet !== 'object') attr.facet = {};
+  attr.facet.enabled = false;
+  attr.facet.status = 'not_a_filter';
+  if (!attr.facet.reason) {
+    attr.facet.reason = 'Сопоставление товаров по id, бренд в выгрузке v2 не нужен';
+  }
+  return attr;
+}
+
 /**
  * Единый вид enum/text: пробелы, скобки, эхо-слова, Title Case для кириллицы.
  * Латиница (A++, ATLANT, LED) не трогается.

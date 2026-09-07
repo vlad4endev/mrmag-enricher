@@ -7,7 +7,7 @@
 
 import { metaKeywords } from './export.js';
 import { loadCategories } from './dict.js';
-import { attrLabel } from './types.js';
+import { attrLabel, isBrandAttr } from './types.js';
 import { CODE_TO_SPEC } from './schema.js';
 
 /** Всегда в filters_v2, даже если в справочнике нет таких code.
@@ -25,7 +25,7 @@ export function v2FacetSpecKeys(dict) {
   const keys = new Set(IDENTITY_SPEC_KEYS);
   for (const attr of dict?.attrs || []) {
     if (attr.tier === 'X') continue;
-    if (attr.code === 'brand') continue;
+    if (isBrandAttr(attr)) continue;
     if (!attr.facet?.enabled) continue;
     keys.add(specKeyFromAttr(attr).key);
     const dest = CODE_TO_SPEC[attr.code];
@@ -188,7 +188,7 @@ export function buildSpecs(rec, dict, { root = '.' } = {}) {
 
   for (const attr of dict.attrs) {
     if (attr.tier === 'X') continue;
-    if (attr.code === 'brand') continue;
+    if (isBrandAttr(attr)) continue;
     const raw = rec.attrs?.[attr.code];
     if (raw == null || raw === '') continue;
     const { key, mul } = specKeyFromAttr(attr);

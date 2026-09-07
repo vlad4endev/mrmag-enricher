@@ -2,6 +2,12 @@
   "category_id": 467,
   "filters": [
     {
+      "code": "brand",
+      "name": "Бренд",
+      "status": "not_a_filter",
+      "reason": "Сопоставление товаров по id, бренд в выгрузке v2 не нужен"
+    },
+    {
       "code": "load_max",
       "name": "Загрузка белья, кг",
       "status": "filter",

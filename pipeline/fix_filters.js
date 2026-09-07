@@ -15,7 +15,7 @@ import {
   runFiltersAgent, assertFiltersClean, heuristicFiltersMappings, applyFiltersAgentMappings,
 } from './filters_agent.js';
 import {
-  aliasValue, displayEnum, hasStrictEnum, looksLikeEnumFragment, valueFold, unifyEnumValues,
+  aliasValue, displayEnum, hasStrictEnum, isBrandAttr, isBrandFilterKey, looksLikeEnumFragment, valueFold, unifyEnumValues,
 } from './types.js';
 
 const BARE_BOOL = /^(?:нет|да|есть|имеется|yes|no)$/i;
@@ -90,7 +90,7 @@ function collapseExtra(raw, attr = null, filterName = '') {
 function attrByFilterName(dict) {
   const map = new Map();
   for (const a of dict.attrs || []) {
-    if (!a.facet?.enabled || a.tier === 'X') continue;
+    if (!a.facet?.enabled || a.tier === 'X' || isBrandAttr(a)) continue;
     map.set(a.facet.label || a.name, a);
   }
   return map;
@@ -130,6 +130,10 @@ export function sanitizeFilterCatalog(filters, dict) {
 
   for (const f of filters || []) {
     const name = f.name;
+    if (isBrandFilterKey(name)) {
+      fixes.push({ name, raw: null, action: 'drop_facet', reason: 'brand_not_a_filter' });
+      continue;
+    }
     const attr = byName.get(name);
     // Витрина — только facet.enabled из справочника.
     if (dict?.attrs?.length && !attr) {

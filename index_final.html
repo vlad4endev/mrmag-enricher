@@ -2674,7 +2674,7 @@ function renderDictTable(attrs){
         <option value="string" ${a.type==='string'?'selected':''}>string</option>
       </select></td>
       <td class="chk"><input type="checkbox" data-f="ann" ${a.show_in_annotation?'checked':''} title="show_in_annotation"></td>
-      <td class="chk"><input type="checkbox" data-f="facet" ${on?'checked':''} title="facet.enabled"></td>
+      <td class="chk"><input type="checkbox" data-f="facet" ${on && a.code !== 'brand' ? 'checked' : ''} ${a.code === 'brand' || /^бренд$/i.test(a.name || '') ? 'disabled title="Бренд не фасет: сопоставление по id"' : 'title="facet.enabled"'}></td>
       <td><input type="text" data-f="label" value="${esc(facet.label||a.name||'')}" ${on?'':'disabled'}></td>
       <td><select data-f="kind" ${on?'':'disabled'}>
         <option value="enum" ${kind==='enum'?'selected':''}>enum</option>
@@ -2742,10 +2742,16 @@ function onDictFieldEdit(ev){
   if(f==='type') attr.type=ev.target.value;
   if(f==='ann') attr.show_in_annotation=ev.target.checked;
   if(f==='facet'){
-    attr.facet=attr.facet||{};
-    attr.facet.enabled=ev.target.checked;
-    if(attr.facet.enabled && !attr.facet.label) attr.facet.label=attr.name;
-    if(attr.facet.enabled && !attr.facet.kind) attr.facet.kind='enum';
+    if(attr.code === 'brand' || /^бренд$/i.test(attr.name || '')){
+      ev.target.checked = false;
+      attr.facet = attr.facet || {};
+      attr.facet.enabled = false;
+    } else {
+      attr.facet=attr.facet||{};
+      attr.facet.enabled=ev.target.checked;
+      if(attr.facet.enabled && !attr.facet.label) attr.facet.label=attr.name;
+      if(attr.facet.enabled && !attr.facet.kind) attr.facet.kind='enum';
+    }
   }
   if(f==='label'){ attr.facet=attr.facet||{}; attr.facet.label=ev.target.value; }
   if(f==='kind'){ attr.facet=attr.facet||{}; attr.facet.kind=ev.target.value; }

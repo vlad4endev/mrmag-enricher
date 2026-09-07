@@ -7,7 +7,7 @@ import { facetKind } from './facets.js';
 import { DESC, MIN_ANNOTATION_ROWS, verifyDescription } from './generate.js';
 import { WEB_INFO } from './reviews.js';
 import { KEYWORDS } from './export.js';
-import { valueFold } from './types.js';
+import { isBrandAttr, valueFold } from './types.js';
 
 /** Порядок и состав полей записи — ровно семь, как в схеме заказчика. */
 export const PRODUCT_FIELDS = [
@@ -110,7 +110,7 @@ export function validateAnnotation(html) {
 /** Ожидаемый состав и порядок фильтров — из справочника, а не из данных. */
 export function expectedFilters(dict) {
   return dict.attrs
-    .filter(a => a.tier !== 'X' && a.facet?.enabled && a.facet?.status !== 'not_a_filter')
+    .filter(a => a.tier !== 'X' && !isBrandAttr(a) && a.facet?.enabled && a.facet?.status !== 'not_a_filter')
     .sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
     .map(a => ({ code: a.code, name: a.facet.label || a.name, kind: facetKind(a), unit: a.unit }));
 }

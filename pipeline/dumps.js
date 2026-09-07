@@ -403,9 +403,9 @@ function dumpFileCandidates(catId, root) {
 
 function indexDumpFile(file) {
   if (!fs.existsSync(file)) return null;
-  const mtime = fs.statSync(file).mtimeMs;
+  const st = fs.statSync(file);
   const cached = dumpIndexCache.get(file);
-  if (cached && cached.mtime === mtime) return cached.byKey;
+  if (cached && cached.mtime === st.mtimeMs && cached.size === st.size) return cached.byKey;
   let parsed;
   try {
     parsed = JSON.parse(fs.readFileSync(file, 'utf-8'));
@@ -428,7 +428,7 @@ function indexDumpFile(file) {
       }
     }
   }
-  dumpIndexCache.set(file, { mtime, byKey });
+  dumpIndexCache.set(file, { mtime: st.mtimeMs, size: st.size, byKey });
   return byKey;
 }
 

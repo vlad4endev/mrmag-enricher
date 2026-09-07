@@ -154,6 +154,11 @@ function skipSpecKey(key) {
   return /(?:^|_)(?:модель|комплектация|артикул|бренд|brand)$/.test(k);
 }
 
+function isBrandSpecKey(key) {
+  const k = String(key || '').toLowerCase();
+  return k === 'бренд' || k === 'brand' || /(?:^|_)(?:бренд|brand)$/.test(k);
+}
+
 function keepStringFacet(name, values) {
   if (/^тип товара$/i.test(String(name))) return true;
   if (/^(бренд|brand)$/i.test(String(name))) return false;
@@ -196,7 +201,7 @@ function descHtml(e) {
   if (bullets.length) out.push(`<ul>${bullets.map(b => `<li>${esc(b)}</li>`).join('')}</ul>`);
 
   const li = Object.entries(e.specs || {})
-    .filter(([, v]) => v != null && v !== '')
+    .filter(([k, v]) => v != null && v !== '' && !isBrandSpecKey(k))
     .map(([k, v]) => {
       const { label, unit } = splitKey(k);
       const val = typeof v === 'number'

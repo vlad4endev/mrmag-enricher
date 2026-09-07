@@ -33,7 +33,7 @@ import fs from 'fs';
 import path from 'path';
 import {
   RateLimiter, enrichProduct, fetchModelPricing, rpmFor,
-  schemaFor, isEnrichable, MISMATCH_POLICY,
+  schemaFor, isEnrichable, hydrateFromDump, MISMATCH_POLICY,
   RUB_PER_USD, RUB_RATE_DATE,
 } from './lib.js';
 import {
@@ -274,17 +274,19 @@ async function main() {
     process.stdout.write(`  [${String(i + 1).padStart(4)}/${todo.length}] ${name.padEnd(48)}...`);
 
     // Нечего извлекать — не платим за запрос, помечаем и идём дальше.
-    // Пустая карточка: описание из сети. Своё описание без страны: ищем
-    // только страну по модели. ensureSource это делает сам.
+    // Сначала дамп: пустая карточка магазина может быть полной в data_{id}.json.
+    // Пустая/бедная карточка: описание из сети. Достаточно фактов без страны:
+    // ищем только страну по модели. ensureSource это делает сам.
     let item = p, sourceUrl = null;
-    const first = isEnrichable(p, schema);
+    const prepared = hydrateFromDump(p, schema).product;
+    const first = isEnrichable(prepared, schema);
     if (!first.ok && !first.web) {
       write({ original: p, enriched: null, skipped: first.reason, _meta: {} });
       skipped++;
       console.log(` ⊘  пропущен — ${first.reason}`);
       continue;
     }
-    const found = await ensureSource(p, schema, { onNote: n => process.stdout.write(` [${n}]`) });
+    const found = await ensureSource(prepared, schema, { onNote: n => process.stdout.write(` [${n}]`) });
     if (!found.gate.ok) {
       write({ original: p, enriched: null, skipped: found.gate.reason, _meta: {} });
       skipped++;

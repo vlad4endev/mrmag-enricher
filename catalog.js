@@ -23,11 +23,12 @@ import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 import { fileURLToPath } from 'url';
-import { netError, isEnrichable, modelToken, MIN_SOURCE_CHARS, extractFacts, hasCountryFact, canSearchWeb, schemaFor } from './lib.js';
+import { netError, isEnrichable, modelToken, MIN_SOURCE_CHARS, extractFacts, hasCountryFact, canSearchWeb, schemaFor, hydrateFromDump, isSourceThin } from './lib.js';
 import { specFacets, enrichedRows } from './export_v2.js';
 import { loadConfig, loadCategories, hasDictionary } from './pipeline/dict.js';
 import { CRAWL_SLUGS } from './pipeline/schema.js';
-import { containsTokenSequence, nameKeyTokens, parseIdentity } from './pipeline/identity.js';
+import { containsTokenSequence, identityMatches, nameKeyTokens, parseIdentity } from './pipeline/identity.js';
+import { extractPairsFromPage, visibleText } from './pipeline/parse.js';
 import {
   isDuckDuckGoBlocked, isJunkHost, parseDuckDuckGoResults,
   searchWeb as pipelineSearchWeb, countryQuery, searchQuery,
@@ -331,27 +332,36 @@ const WEB_UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.
 const WEB_TRIES = Number(process.env.WEB_LOOKUP_TRIES || 3);   // страниц на товар
 export const WEB_LOOKUP = process.env.WEB_LOOKUP !== '0';
 
-/** Сравнение артикулов: «GC-Q247CAMT», «GC Q247CAMT» и «gcq247camt» — одно и то же. */
-const squash = s => String(s || '').toLowerCase().replace(/[^\p{L}\d]/gu, '');
-
 const htmlText = h => decode(String(h || '')
   .replace(/<(script|style|noscript|svg|template)[\s\S]*?<\/\1>/gi, ' ')
   .replace(/<[^>]+>/g, ' '));
 
 /**
  * Страница про этот товар, а не про соседа.
- * Сначала артикул (если он есть в названии), иначе все опознавательные слова.
+ * Модель часто только в JSON-LD — поэтому смотрим visibleText, а не голый HTML.
+ * Подстрока без границ токена не годится: GC-Q247 не должен совпасть с GC-Q247CAMT.
  */
-export function pageDescribesProduct(html, product) {
-  const text = htmlText(html);
-  const hay = squash(text);
+export function pageDescribesProduct(html, product, dict) {
+  const text = visibleText(html);
+  const identity = dict
+    ? parseIdentity(product?.name, dict)
+    : { brand: product?.brand || null, model: modelToken(product?.name), name: product?.name };
+  if (product?.brand && !identity.brand) identity.brand = product.brand;
+
+  // Модель из справочника, если в ней есть буквы: «290» одно — слишком широко.
+  if (identity.model && /[A-Za-zА-Яа-яЁё]/.test(identity.model)
+      && identityMatches(text, identity, dict)) {
+    return { ok: true, how: 'identity', model: identity.model };
+  }
   const token = modelToken(product?.name);
-  if (token && hay.includes(squash(token))) return { ok: true, how: 'article', token };
-  const keys = nameKeyTokens(product?.name, product?.brand);
+  if (token && containsTokenSequence(text, token)) {
+    return { ok: true, how: 'article', token };
+  }
+  const keys = nameKeyTokens(product?.name, product?.brand || identity.brand);
   if (!keys.length) {
     return { ok: false, reason: token ? `нет артикула ${token}` : 'в названии нет опознавательных слов' };
   }
-  const missing = keys.filter(k => !containsTokenSequence(text, k) && !hay.includes(squash(k)));
+  const missing = keys.filter(k => !containsTokenSequence(text, k));
   if (missing.length) {
     const why = token ? `нет артикула ${token}` : `нет в тексте «${missing.join(', ')}»`;
     return { ok: false, reason: why };
@@ -367,26 +377,21 @@ const SALES_RE = /куп(и|ить|лю)|цена|руб|₽|достав|маг
  * Таблица «подпись / значение» есть почти у всех — она же самая ценная часть,
  * потому что из неё extractFacts достаёт факты так же, как из annotation.
  */
-export function parseAnyProductPage(html) {
-  const body = String(html || '').replace(/<(script|style|noscript|svg|template)[\s\S]*?<\/\1>/gi, ' ');
+export function parseAnyProductPage(html, dict) {
+  const pairs = extractPairsFromPage(html, dict);
   const attributes = [];
   const seen = new Set();
-  const add = (name, value) => {
-    if (!name || !value || name === value) return;
-    if (name.length > 60 || value.length > 160 || /^https?:/i.test(value)) return;
+  for (const p of pairs) {
+    const name = String(p.key || '').replace(/\s+/g, ' ').trim();
+    const value = String(p.value || '').replace(/\s+/g, ' ').trim();
+    if (!name || !value) continue;
     const key = name.toLowerCase();
-    if (seen.has(key)) return;
+    if (seen.has(key)) continue;
     seen.add(key);
     attributes.push({ name, value });
-  };
-  for (const row of body.matchAll(/<tr[^>]*>([\s\S]*?)<\/tr>/gi)) {
-    const cells = [...row[1].matchAll(/<t[dh][^>]*>([\s\S]*?)<\/t[dh]>/gi)].map(m => htmlText(m[1]));
-    if (cells.length === 2) add(cells[0], cells[1]);
-  }
-  for (const pair of body.matchAll(/<dt[^>]*>([\s\S]*?)<\/dt>\s*<dd[^>]*>([\s\S]*?)<\/dd>/gi)) {
-    add(htmlText(pair[1]), htmlText(pair[2]));
   }
 
+  const body = String(html || '').replace(/<(script|style|noscript|svg|template)[\s\S]*?<\/\1>/gi, ' ');
   const meta = body.match(/<meta[^>]+(?:name|property)="(?:og:)?description"[^>]*content="([^"]*)"/i)?.[1] ?? '';
   const prose = [decode(meta), ...[...body.matchAll(/<p[^>]*>([\s\S]*?)<\/p>/gi)].map(m => htmlText(m[1]))]
     .join(' ')
@@ -496,8 +501,36 @@ export async function searchWeb(query) {
   }
 }
 
-function countryFromHtml(html, schema) {
-  const found = parseAnyProductPage(html);
+function dictOf(schema) {
+  if (schema?.dict) return schema.dict;
+  try { return schemaFor(schema)?.dict; } catch { return undefined; }
+}
+
+function minAttrsOf() {
+  try {
+    const c = loadConfig(ROOT);
+    const n = Number(c?.description?.min_attrs ?? c?.conditions?.min_attrs ?? 5);
+    return Number.isFinite(n) ? n : 5;
+  } catch {
+    return 5;
+  }
+}
+
+/**
+ * Парсер страницы запускается не только на пустой карточке: если после дампа
+ * фактов меньше min_attrs (по умолчанию 5), модель додумает остальное.
+ * Ищем, если товар опознаваем.
+ */
+export function needsWebSpecs(product, schema, { minAttrs } = {}) {
+  const n = minAttrs ?? minAttrsOf();
+  if (!canSearchWeb(product)) return false;
+  const gate = isEnrichable(product, schema);
+  if (!gate.ok) return Boolean(gate.web);
+  return isSourceThin(product, schema, { minFacts: n });
+}
+
+function countryFromHtml(html, schema, dict) {
+  const found = parseAnyProductPage(html, dict);
   const text = [found.annotation, found.description].filter(Boolean).join('\n');
   const v = extractFacts(text, schema).страна_производства;
   if (v != null && String(v).trim()) return String(v).trim();
@@ -546,6 +579,7 @@ async function fillCountryFromWeb(product, schema, { onNote = () => {} } = {}) {
     onNote(`страну в сети не нашли: ${webSearchSkippedReason()}`);
     return { ok: false, product };
   }
+  const dict = dictOf(schema);
   const query = countryQuery({
     name: product.name,
     brand: product.brand,
@@ -566,12 +600,12 @@ async function fillCountryFromWeb(product, schema, { onNote = () => {} } = {}) {
     let html;
     try { html = await fetchPage(url, { ua: WEB_UA, timeoutMs: 20_000 }); }
     catch { tried.push(`${host}: не открылась`); continue; }
-    const who = pageDescribesProduct(html, product);
+    const who = pageDescribesProduct(html, product, dict);
     if (!who.ok) {
       tried.push(`${host}: ${who.reason}`);
       continue;
     }
-    const country = countryFromHtml(html, schema);
+    const country = countryFromHtml(html, schema, dict);
     if (!country) {
       tried.push(`${host}: страны нет на странице`);
       continue;
@@ -584,13 +618,15 @@ async function fillCountryFromWeb(product, schema, { onNote = () => {} } = {}) {
 }
 
 /**
- * Товар с описанием: своим, если оно есть, иначе найденным в сети.
+ * Товар с описанием: дамп заказчика, своё, иначе найденное в сети.
  * Возвращает { product, gate, source }: product — то, что уходит в модель,
  * gate — вердикт по нему, source — адрес страницы, откуда добран текст.
  *
- * Если товар опознаваем по имени (gate.web), поиск — лучшее усилие, а не
- * условие: таймаут или пустая выдача не пропускают карточку. Модели тогда
- * уходит исходное имя. Чужие характеристики по-прежнему не подставляются.
+ * Сначала data_{catId}.json по sku/id. Если после дампа фактов меньше
+ * min_attrs — парсим карточку этой модели: иначе модель додумывает объём
+ * и габариты. Если товар опознаваем по имени, поиск — лучшее усилие:
+ * таймаут не пропускает карточку, модели уходит исходное имя. Чужие
+ * характеристики без совпадения модели по-прежнему не подставляются.
  *
  * Страна производства — отдельный случай: своих характеристик может быть
  * достаточно, а страны в исходнике нет. Тогда ищем её по модели.
@@ -599,41 +635,50 @@ async function fillCountryFromWeb(product, schema, { onNote = () => {} } = {}) {
  * подмешивать в них чужую таблицу нельзя — спор «каталога с самим собой»
  * должен оставаться спором каталога.
  */
-export async function ensureSource(product, schema, { onNote = () => {} } = {}) {
-  const gate = isEnrichable(product, schema);
-  if (!WEB_LOOKUP) return { product, gate };
-  if (!gate.ok && !gate.web) return { product, gate };
+export async function ensureSource(product, schema, { onNote = () => {}, root = ROOT } = {}) {
+  const fromDump = hydrateFromDump(product, schema, root);
+  let current = fromDump.product;
+  const gate = isEnrichable(current, schema);
+  if (!WEB_LOOKUP) return { product: current, gate };
+  if (!gate.ok && !gate.web) return { product: current, gate };
 
-  let current = product;
+  const dict = dictOf(schema);
+  const minAttrs = minAttrsOf();
+  const wantSpecs = needsWebSpecs(current, schema, { minAttrs });
+
   let source = null;
   let currentGate = gate;
 
-  if (!currentGate.ok) {
-    const token = modelToken(product.name);
-    let dict = schema?.dict;
-    if (!dict) {
-      try { dict = schemaFor(schema)?.dict; } catch { /* slug без справочника */ }
-    }
+  if (wantSpecs) {
+    const token = modelToken(current.name);
     const identity = dict
-      ? parseIdentity(product.name, dict)
-      : { brand: product.brand || null, model: token, name: product.name };
-    if (product.brand && !identity.brand) identity.brand = product.brand;
-    const query = searchQuery({ name: product.name, brand: product.brand, identity });
+      ? parseIdentity(current.name, dict)
+      : { brand: current.brand || null, model: token, name: current.name };
+    if (current.brand && !identity.brand) identity.brand = current.brand;
+    const query = searchQuery({ name: current.name, brand: current.brand, identity });
 
     let urls = [];
     let searchFailed = false;
     if (isWebSearchDisabled()) {
       const why = webSearchSkippedReason();
       onNote(`поиск не удался, отправляем как есть: ${why}`);
-      currentGate = { ...gate, ok: true, reason: `${gate.reason}; поиск в сети не удался: ${why}` };
+      if (!gate.ok) {
+        currentGate = { ...gate, ok: true, reason: `${gate.reason}; поиск в сети не удался: ${why}` };
+      }
       searchFailed = true;
     } else {
       try {
-        onNote(`ищем в сети: ${token || product.name}`);
+        onNote(fromDump.dump && fromDump.thin
+          ? `в дампе мало характеристик (${fromDump.facts}) — парсим карточку: ${token || current.name}`
+          : gate.ok
+            ? `мало характеристик (${gate.facts ?? 0} < ${minAttrs}) — ищем в сети: ${token || current.name}`
+            : `ищем в сети: ${token || current.name}`);
         urls = await searchWeb(query);
       } catch (e) {
         onNote(`поиск не удался, отправляем как есть: ${e.message}`);
-        currentGate = { ...gate, ok: true, reason: `${gate.reason}; поиск в сети не удался: ${e.message}` };
+        if (!gate.ok) {
+          currentGate = { ...gate, ok: true, reason: `${gate.reason}; поиск в сети не удался: ${e.message}` };
+        }
         searchFailed = true;
       }
     }
@@ -647,35 +692,37 @@ export async function ensureSource(product, schema, { onNote = () => {} } = {}) 
         try { html = await fetchPage(url, { ua: WEB_UA, timeoutMs: 20_000 }); }
         catch { tried.push(`${host}: не открылась`); continue; }
 
-        const who = pageDescribesProduct(html, product);
+        const who = pageDescribesProduct(html, current, dict);
         if (!who.ok) {
           tried.push(`${host}: ${who.reason}`);
           continue;
         }
-        const found = parseAnyProductPage(html);
+        const found = parseAnyProductPage(html, dict);
         if (!found.annotation && found.description.length < MIN_SOURCE_CHARS) {
           tried.push(`${host}: нечего взять`);
           continue;
         }
         const merged = {
-          ...product,
-          description: String(product.description || '').trim() || found.description,
-          annotation:  [product.annotation, found.annotation].filter(Boolean).join(' ').trim(),
+          ...current,
+          description: String(current.description || '').trim() || found.description,
+          annotation:  [current.annotation, found.annotation].filter(Boolean).join('<br>'),
           source_url:  url,
         };
         const after = isEnrichable(merged, schema);
-        if (!after.ok) { tried.push(`${host}: ${after.reason}`); continue; }
+        if (!after.ok && !gate.ok) { tried.push(`${host}: ${after.reason}`); continue; }
         onNote(`описание из сети: ${host}`);
         current = merged;
         source = url;
-        currentGate = after;
+        currentGate = after.ok ? after : { ...gate, ok: true, facts: after.facts };
         foundPage = true;
         break;
       }
       if (!foundPage) {
         const why = tried.length ? tried.join('; ') : 'выдача пуста';
         onNote(`в сети не нашлось, отправляем как есть: ${why}`);
-        currentGate = { ...gate, ok: true, reason: `${gate.reason}; в сети не нашлось (${why})` };
+        if (!gate.ok) {
+          currentGate = { ...gate, ok: true, reason: `${gate.reason}; в сети не нашлось (${why})` };
+        }
       }
     }
   }

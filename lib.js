@@ -1869,12 +1869,12 @@ export function canSearchWeb(product) {
 export function isEnrichable(product, schemaKey) {
   const web = canSearchWeb(product);
   const text = sourceText(product);
-  if (!text) return { ok: false, reason: 'нет ни description, ни annotation', web };
+  if (!text) return { ok: false, reason: 'нет ни description, ни annotation', web, facts: 0 };
   const factCount = Object.keys(extractFacts(text, schemaKey)).length;
   if (text.length < MIN_SOURCE_CHARS && factCount === 0) {
-    return { ok: false, reason: `текст ${text.length} симв. и ни одной распознанной характеристики`, web };
+    return { ok: false, reason: `текст ${text.length} симв. и ни одной распознанной характеристики`, web, facts: 0 };
   }
-  return { ok: true };
+  return { ok: true, facts: factCount, web };
 }
 
 /** Верх ретрая при обрыве. Совпадает с потолком max_tokens в настройках. */
@@ -2018,12 +2018,103 @@ function retryAfterMs(res) {
   return null;
 }
 
-function overlayDump(product, dump) {
+function productDumpKey(product) {
+  const v = product?.sku ?? product?.id ?? product?.article;
+  return v == null ? null : String(v).trim() || null;
+}
+
+function schemaCatId(schema, product, root) {
+  if (product?.category_id != null && String(product.category_id).trim() !== '') {
+    return String(product.category_id);
+  }
+  if (schema && typeof schema === 'object' && schema.slug !== '_generic') {
+    if (schema.id != null) return String(schema.id);
+    if (schema.dict?.catId != null) return String(schema.dict.catId);
+  }
+  const key = typeof schema === 'string' || typeof schema === 'number'
+    ? schema
+    : (product?.category ?? schema?.slug ?? schema?.name);
+  return resolveCatId(key, root) || resolveCatId(key);
+}
+
+/** Сколько однозначных фактов уже есть в дампе/карточке (без тройки размеров). */
+export function sourceFactCount(product, schemaKey) {
+  const { facts } = productFacts(product || {}, schemaKey);
+  let n = 0;
+  for (const [k, v] of Object.entries(facts || {})) {
+    if (k === 'размеры_мм') continue;
+    if (v == null || v === '') continue;
+    n++;
+  }
+  return n;
+}
+
+export function sourceMinFacts() {
+  const cfg = loadConfigSafe();
+  const n = Number(cfg?.description?.min_attrs ?? cfg?.conditions?.min_attrs ?? 5);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 5;
+}
+
+/**
+ * Мало фактов для полной карточки (порог как у «бедных данных» / min_attrs).
+ * Такую карточку в прогоне добираем парсингом страницы товара.
+ */
+export function isSourceThin(product, schemaKey, opts = {}) {
+  const min = opts.minFacts ?? sourceMinFacts();
+  return sourceFactCount(product, schemaKey) < min;
+}
+
+/**
+ * Дамп заказчика — исходник. Если в карточке пусто или дамп длиннее, берём дамп.
+ * Разные тексты склеиваем: дамп первым, чтобы его факты не затёрлись.
+ */
+export function mergeDumpIntoProduct(product, dump) {
   if (!product || !dump) return product;
   const next = { ...product };
-  if (String(dump.annotation || '').trim()) next.annotation = dump.annotation;
-  if (String(dump.description || '').trim()) next.description = dump.description;
+  const dumpAnn = String(dump.annotation || '').trim();
+  const prodAnn = String(product.annotation || '').trim();
+  const dumpDesc = String(dump.description || '').trim();
+  const prodDesc = String(product.description || '').trim();
+  if (dumpAnn) {
+    next.annotation = prodAnn && prodAnn !== dumpAnn
+      ? `${dump.annotation}<br>${product.annotation}`
+      : dump.annotation;
+  }
+  if (dumpDesc) {
+    next.description = prodDesc && prodDesc !== dumpDesc
+      ? `${dump.description} ${product.description}`
+      : dump.description;
+  }
+  if (!String(next.name || '').trim() && dump.name) next.name = dump.name;
   return next;
+}
+
+export function overlayDump(product, dump) {
+  return mergeDumpIntoProduct(product, dump);
+}
+
+/**
+ * Подставить data_{catId}.json по sku/id и сказать, хватит ли фактов
+ * для полного обогащения без сети.
+ */
+export function hydrateFromDump(product, schemaKey, root) {
+  const catId = schemaCatId(schemaKey, product, root);
+  let schema = schemaKey;
+  if (!schema || typeof schema !== 'object' || !schema.specKeys || schema.slug === '_generic') {
+    try { schema = schemaFor(schemaKey); } catch { /* справочник проекта */ }
+    if (!schema || typeof schema !== 'object' || !schema.specKeys) {
+      try { schema = schemaFor(schemaKey, root); } catch { schema = schemaKey; }
+    }
+  }
+  const dump = findDumpProduct(catId, productDumpKey(product), root);
+  const merged = mergeDumpIntoProduct(product, dump);
+  const facts = sourceFactCount(merged, schema);
+  return {
+    product: merged,
+    dump,
+    facts,
+    thin: isSourceThin(merged, schema),
+  };
 }
 
 function slimCard(enriched) {
@@ -2038,18 +2129,6 @@ function slimCard(enriched) {
     web_info: enriched.web_info,
     warnings: enriched.warnings || [],
   };
-}
-
-function productDumpKey(product) {
-  const v = product?.sku ?? product?.id ?? product?.article;
-  return v == null ? null : String(v).trim() || null;
-}
-
-function schemaCatId(schema, product, root) {
-  if (schema?.id != null) return String(schema.id);
-  if (schema?.dict?.catId != null) return String(schema.dict.catId);
-  if (product?.category_id != null) return String(product.category_id);
-  return resolveCatId(product?.category, root);
 }
 
 /**
@@ -2192,8 +2271,9 @@ export async function enrichProduct(product, opts) {
   const logValidationFail = (issues, attempt, raw) => {
     lastIssues = issues;
     lastRaw = raw;
+    const capLabel = correctionPass ? attemptsCap + 1 : attemptsCap;
     const list = issues.map(i => `${i.field}: ${i.reason}`).join('; ');
-    onNote(`валидация не прошла · попытка ${attempt}/${attemptsCap}: ${list}`, { level: 'warn', step: 'validate' });
+    onNote(`валидация не прошла · попытка ${attempt}/${capLabel}: ${list}`, { level: 'warn', step: 'validate' });
     onNote(`сырой ответ модели (попытка ${attempt}):\n${raw}`, { level: 'warn', step: 'validate' });
   };
 

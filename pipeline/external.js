@@ -19,7 +19,7 @@ import { ingestPairs } from './normalize.js';
 import { matchKey } from './match.js';
 import { searchWeb, fetchPage, searchQuery, countryQuery, resolveSearchSettings } from './search.js';
 
-const MIN_PAIRS = 3;
+const MIN_PAIRS = 2;
 
 function filledCount(rec) {
   let n = 0;

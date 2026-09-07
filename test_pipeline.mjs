@@ -11,9 +11,11 @@ import { dictToV2Rows, v2FacetSpecKeys } from './pipeline/v2.js';
 import {
   parseDumpPayload, normalizeDumpRow, saveDump, getDump, listDumps, deleteDump,
   restoreDumpArchive, catIdFromDumpName, previewDump, dumpsDir, listShopCategories,
+  findDumpProduct,
 } from './pipeline/dumps.js';
 import { displayEnum, valueFold } from './pipeline/types.js';
 import { identityMatches, nameKeyTokens, parseIdentity } from './pipeline/identity.js';
+import { extractPairsFromPage, pairFromTableCells, parseProductFields } from './pipeline/parse.js';
 import { needsExternal, parseProductBySpecs, lookupExternal, enrichMissing, needsCountry, lookupCountry, parseCountryFromPage } from './pipeline/external.js';
 import {
   parseSearchResults, parseDuckDuckGoResults, isDuckDuckGoBlocked,
@@ -182,6 +184,43 @@ console.log('golden tests passed');
   assert.equal(r.attrs.depth, 46.5);
   assert.ok(!Object.values(r.provenance).some(x => x.level === 'S3'));
   console.log('ok 391361 empty annotation → specs from description');
+}
+
+{
+  const parsed = parseProductFields({
+    annotation: 'Линейка - Super<br>Комплектация - полная<br>Артикул поставщика - 111',
+    description: 'Макс. загрузка - 6 кг<br>Скорость отжима - 1000 об/мин<br>Высота - 85 см<br>Ширина - 60 см<br>Глубина - 45 см',
+  }, d467);
+  assert.ok(parsed.fromAnn.length >= 3);
+  assert.ok(parsed.fromDesc.length >= 4, `desc pairs: ${parsed.fromDesc.map(x => x.key).join(' | ')}`);
+  const r = normalizeProduct({
+    id: 1,
+    name: 'Стиральная машина Test 6kg',
+    annotation: 'Линейка - Super<br>Комплектация - полная<br>Артикул поставщика - 111',
+    description: 'Макс. загрузка - 6 кг<br>Скорость отжима - 1000 об/мин<br>Высота - 85 см<br>Ширина - 60 см<br>Глубина - 45 см',
+  }, d467, config);
+  assert.equal(r.attrs.load_max, 6, `load_max from dump description, got ${r.attrs.load_max}`);
+  assert.equal(r.attrs.spin_max, 1000);
+  console.log('ok sparse annotation + dump description fills empty axes');
+}
+
+{
+  assert.deepEqual(pairFromTableCells(['Ширина', '60 см']), ['Ширина', '60 см']);
+  assert.deepEqual(pairFromTableCells(['★', 'Ширина', '60 см']), ['Ширина', '60 см']);
+  assert.deepEqual(pairFromTableCells(['Высота', '85', 'см']), ['Высота', '85 см']);
+  const html = `<script type="application/ld+json">${JSON.stringify({
+    '@type': 'Product',
+    additionalProperty: [{ name: 'Максимальная загрузка', value: '7 кг' }],
+    width: { value: 60, unitText: 'см' },
+  })}</script>
+    <div class="chars__name">Скорость отжима</div>
+    <div class="chars__value">1200 об/мин</div>`;
+  const pairs = extractPairsFromPage(html, d467);
+  const byKey = Object.fromEntries(pairs.map(p => [p.key, p.value]));
+  assert.equal(byKey['Максимальная загрузка'], '7 кг');
+  assert.match(String(byKey['Ширина'] || ''), /60/);
+  assert.match(String(byKey['Скорость отжима'] || ''), /1200/);
+  console.log('ok page parser: json-ld + div specs + 3-cell');
 }
 
 {
@@ -832,7 +871,7 @@ console.log('golden tests passed');
   assert.match(row.annotation_html, /^<ul><li>.+: .+<\/li>/);
   assert.equal(row.annotation_html.includes('\n'), false);
   assert.match(row.annotation_html, /Тип загрузки: фронтальная/);
-  assert.match(row.annotation_html, /Бренд: ATLANT/);
+  assert.ok(!/Бренд:/i.test(row.annotation_html), 'бренд не строка характеристик');
   assert.ok(Array.isArray(row.filters['Высота, см']));
   assert.equal(row.filters['Высота, см'][0], '80-85');
   assert.equal(row.filters['Скорость отжима, об/мин'][0], '1000-1200');
@@ -1078,6 +1117,7 @@ console.log('golden tests passed');
   assert.match(p.description_html, /<li>Система охлаждения: Full No Frost<\/li>/);
   assert.match(p.description_html, /<li>Хладагент: R600a<\/li>/);
   assert.match(p.description_html, /<li>Вес: 74 кг<\/li>/);
+  assert.ok(!/Бренд:/i.test(p.description_html), 'бренд не строка характеристик');
   console.log('ok products_v2 shape (260 Pozis)');
 }
 
@@ -2246,6 +2286,15 @@ console.log('golden tests passed');
     assert.ok(firstArchive, 'в архиве должна быть первая версия');
     restoreDumpArchive('42', firstArchive.file, '.');
     assert.equal(getDump('42', '.').products[0].id, 7);
+
+    const fromDump = findDumpProduct('42', 7, '.');
+    assert.ok(fromDump);
+    assert.equal(fromDump.id, 7);
+    assert.match(fromDump.annotation, /есть/);
+    assert.equal(findDumpProduct('42', 'нет-такого', '.'), null);
+    const bundled = findDumpProduct('467', 11391, '.');
+    assert.ok(bundled, 'без файла в dumps/ берём bundled data_467.json');
+    assert.match(bundled.name, /ATLANT/i);
 
     const prev = previewDump('42', { q: 'Перв', limit: 10 }, '.');
     assert.equal(prev.matched, 1);

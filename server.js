@@ -70,11 +70,11 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import {
   RateLimiter, enrichProduct, rpmFor, schemaFor, schemaForProduct, SCHEMAS, netError,
-  RUB_PER_USD, RUB_RATE_DATE, isEnrichable, productFacts,
+  RUB_PER_USD, RUB_RATE_DATE, isEnrichable, productFacts, hydrateFromDump,
   buildSystemPrompt, defaultSystemPromptTemplate, PROMPT_PLACEHOLDERS,
   modelNotCalledDebug,
 } from './lib.js';
-import { CATEGORIES, findCategory, crawlCategory, loadFeed, buildFilters, ensureSource, WEB_LOOKUP } from './catalog.js';
+import { CATEGORIES, findCategory, crawlCategory, loadFeed, buildFilters, ensureSource, WEB_LOOKUP, needsWebSpecs } from './catalog.js';
 import { buildV2 } from './export_v2.js';
 import { buildCustomerExport, buildGoldShapeExport, buildFiltersOnly } from './pipeline/export.js';
 import { dictForProducts, expectedDictCatId } from './pipeline/schema.js';
@@ -1325,15 +1325,27 @@ async function enrichOne(product, { model, category, provider, onNote = () => {}
     };
   };
 
+  // Дамп заказчика — исходник. Смотрим его до пропуска: пустая карточка
+  // магазина с полной таблицей в data_{id}.json не должна уходить в skip.
+  const fromDump = hydrateFromDump(product, schema, ROOT);
+  const prepared = fromDump.product;
+  if (fromDump.dump && fromDump.thin) {
+    note(`В дампе мало характеристик (${fromDump.facts}) — парсим карточку`, { step: 'web' });
+  } else if (fromDump.dump) {
+    note(`Дамп: ${fromDump.facts} характеристик`, { step: 'gate' });
+  }
+
   // Дешёвый вердикт без сети: своего текста нет и в названии не за что
   // зацепиться (нет ни артикула, ни бренда/модели) — искать нечего.
-  const first = isEnrichable(product, schema);
+  const first = isEnrichable(prepared, schema);
   if (!first.ok && !first.web) {
     note(`Предпроверка: пропуск — ${first.reason}`, { step: 'gate', level: 'skip' });
     return skip(first.reason);
   }
   if (!first.ok && first.web) {
     note(`Предпроверка: своего текста нет — ищем описание в сети`, { step: 'gate' });
+  } else if (needsWebSpecs(prepared, schema)) {
+    note(`Предпроверка: мало характеристик (${first.facts ?? 0}) — доберём со страницы в сети`, { step: 'gate' });
   } else {
     note(`Предпроверка: ок, есть исходный текст`, { step: 'gate' });
   }
@@ -1385,12 +1397,13 @@ async function enrichOne(product, { model, category, provider, onNote = () => {}
 
   note(`Модель ${model}`, { step: 'model' });
 
-  // Пустая карточка — описание из сети. Карточка с текстом, но без страны —
-  // отдельный поиск только страны по модели. ensureSource сам решает, что
-  // искать: чужую таблицу в уже заполненные поля не мешает.
+  // Пустая или бедная карточка — описание из сети (после дампа). Карточка
+  // с достаточным числом фактов, но без страны — отдельный поиск только
+  // страны по модели. ensureSource сам решает, что искать.
   note(`Готовим исходный текст (сеть при необходимости)`, { step: 'web' });
-  const found = await ensureSource(product, schema, {
+  const found = await ensureSource(prepared, schema, {
     onNote: msg => note(msg, { step: 'web' }),
+    root: ROOT,
   });
   if (!found.gate.ok) {
     note(`После поиска: пропуск — ${found.gate.reason}`, { step: 'gate', level: 'skip' });
@@ -1417,7 +1430,7 @@ async function enrichOne(product, { model, category, provider, onNote = () => {}
       systemPrompt: settings.model.system_prompt || '',
       referer: ep.headers['HTTP-Referer'] || 'https://mrmag.ru',
       title: ep.headers['X-Title'] || 'Ogran',
-      onNote: msg => note(msg, { step: /retry|rate limit|обрыв|parse|валидац/i.test(msg) ? 'retry' : 'model', level: /retry|обрыв|parse|валидац/i.test(msg) ? 'warn' : 'info' }),
+      onNote: msg => note(msg, { step: /retry|rate limit|обрыв|parse|валидац|расхожден|дамп|проверку|правка/i.test(msg) ? 'retry' : 'model', level: /retry|обрыв|parse|валидац|расхожден|дамп|проверку/i.test(msg) ? 'warn' : 'info' }),
     });
 
     if (needs_review) {

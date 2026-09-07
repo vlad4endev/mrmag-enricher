@@ -11,13 +11,13 @@ import { attrLabel } from './types.js';
 import { CODE_TO_SPEC } from './schema.js';
 
 /** Всегда в filters_v2, даже если в справочнике нет таких code.
- *  Модель и бренд — паспорт, не фасет: заказчик сопоставляет товар по id.
- *  В description_html / annotation они остаются. */
+ *  Модель и бренд — паспорт, не фасет и не строка характеристик:
+ *  заказчик сопоставляет товар по id. */
 const IDENTITY_SPEC_KEYS = ['тип_товара'];
 
 /**
  * Ключи specs, которые можно класть в filters_v2.
- * HTML-характеристики собираются из всех specs; сюда — только facet.enabled
+ * HTML-характеристики собираются из specs без бренда; сюда — только facet.enabled
  * и тип товара. Два ключа на атрибут: подпись справочника и CODE_TO_SPEC
  * (ИИ пишет объём_общий_л, словарь — общий_объем_л).
  */
@@ -188,6 +188,7 @@ export function buildSpecs(rec, dict, { root = '.' } = {}) {
 
   for (const attr of dict.attrs) {
     if (attr.tier === 'X') continue;
+    if (attr.code === 'brand') continue;
     const raw = rec.attrs?.[attr.code];
     if (raw == null || raw === '') continue;
     const { key, mul } = specKeyFromAttr(attr);

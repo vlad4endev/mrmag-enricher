@@ -269,34 +269,118 @@ export function extractPairs(html, dict) {
   return pairs;
 }
 
+const UNIT_CELL = /^(?:кг|г|см|мм|м|л|мл|дба|дб|шт|%|об\/?\s*мин|квт·ч\/год)$/i;
+
+/** Ячейки строки таблицы → [ключ, значение]. Иконка / единица — третья колонка. */
+export function pairFromTableCells(cells) {
+  const c = (cells || []).map(s => String(s || '').replace(/\s+/g, ' ').trim()).filter(s => s && s !== '–' && s !== '-');
+  if (c.length < 2) return null;
+  if (c.length === 2) return [c[0], c[1]];
+  if (UNIT_CELL.test(c[c.length - 1])) return [c[0], `${c[1]} ${c[c.length - 1]}`.trim()];
+  if (c[0].length <= 2 && !/[а-яёa-z]/i.test(c[0])) return [c[1], c[2]];
+  return [c[0], c[1]];
+}
+
+function ldScalar(v) {
+  if (v == null || v === '') return '';
+  if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') return String(v).trim();
+  if (Array.isArray(v)) return ldScalar(v[0]);
+  if (typeof v === 'object') {
+    if (v.value != null) {
+      const u = v.unitText || v.unitCode || '';
+      return String(u ? `${v.value} ${u}` : v.value).trim();
+    }
+    if (typeof v.name === 'string' && v.value == null) return '';
+  }
+  return '';
+}
+
+function walkJsonLd(node, add, depth = 0) {
+  if (!node || depth > 8) return;
+  if (Array.isArray(node)) {
+    for (const x of node) walkJsonLd(x, add, depth + 1);
+    return;
+  }
+  if (typeof node !== 'object') return;
+  const props = node.additionalProperty || node.additionalProperties;
+  if (props) {
+    for (const p of Array.isArray(props) ? props : [props]) {
+      const name = p?.name || p?.propertyID;
+      const val = ldScalar(p?.value);
+      if (name && val) add(name, val, 'jsonld');
+    }
+  }
+  for (const [key, label] of [
+    ['color', 'Цвет'], ['width', 'Ширина'], ['height', 'Высота'],
+    ['depth', 'Глубина'], ['weight', 'Вес'], ['material', 'Материал'],
+  ]) {
+    const val = ldScalar(node[key]);
+    if (val) add(label, val, 'jsonld');
+  }
+  if (node.brand) {
+    const b = typeof node.brand === 'string' ? node.brand : ldScalar(node.brand.name);
+    if (b) add('Бренд', b, 'jsonld');
+  }
+  if (node['@graph']) walkJsonLd(node['@graph'], add, depth + 1);
+}
+
+function pairsFromJsonLd(html, add) {
+  for (const m of String(html || '').matchAll(/<script[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi)) {
+    let data;
+    try { data = JSON.parse(m[1]); } catch { continue; }
+    walkJsonLd(data, add);
+  }
+}
+
+function mappedPairCount(pairs, dict) {
+  if (!dict || !pairs?.length) return 0;
+  let n = 0;
+  for (const p of pairs) {
+    if (exactMatch(p.key, dict, p.value)) n++;
+  }
+  return n;
+}
+
 /**
- * Таблица характеристик с произвольной HTML-страницы: tr/td, dt/dd, затем
- * обычный разбор, если таблиц нет. Для товаров без своих annotation/description.
+ * Таблица характеристик с произвольной HTML-страницы: JSON-LD, tr/td,
+ * dt/dd, блоки name/value магазинов, затем обычный разбор текста.
+ * Для товаров без своих annotation/description и для добора пустых осей.
  */
 export function extractPairsFromPage(html, dict) {
-  const body = String(html || '').replace(/<(script|style|noscript|svg|template)[\s\S]*?<\/\1>/gi, ' ');
+  const raw = String(html || '');
+  const body = raw.replace(/<(script|style|noscript|svg|template)[\s\S]*?<\/\1>/gi, ' ');
   const pairs = [];
   const seen = new Set();
   const add = (key, value, via) => {
     const k = String(key || '').replace(/\s+/g, ' ').trim();
     const v = String(value || '').replace(/\s+/g, ' ').trim();
     if (!k || !v || k === v) return;
-    if (k.length > 80 || v.length > 200 || /^https?:/i.test(v)) return;
+    if (k.length > 80 || v.length > 240 || /^https?:/i.test(v)) return;
     if (isHeadingLine(k)) return;
     const id = k.toLowerCase();
     if (seen.has(id)) return;
     seen.add(id);
     pairs.push({ key: k, value: v, via });
   };
+  pairsFromJsonLd(raw, add);
   for (const row of body.matchAll(/<tr[^>]*>([\s\S]*?)<\/tr>/gi)) {
     const cells = [...row[1].matchAll(/<t[dh][^>]*>([\s\S]*?)<\/t[dh]>/gi)].map(m => stripHtml(m[1]));
-    if (cells.length === 2) add(cells[0], cells[1], 'table');
+    const pair = pairFromTableCells(cells);
+    if (pair) add(pair[0], pair[1], 'table');
   }
   for (const pair of body.matchAll(/<dt[^>]*>([\s\S]*?)<\/dt>\s*<dd[^>]*>([\s\S]*?)<\/dd>/gi)) {
     add(stripHtml(pair[1]), stripHtml(pair[2]), 'dl');
   }
-  if (pairs.length < 3) {
-    for (const p of extractPairs(body, dict)) add(p.key, p.value, p.via || 'text');
+  const divPair = /<(div|span|dt|th)[^>]*class="[^"]*(?:-name|_name|__name)[^"]*"[^>]*>([\s\S]*?)<\/\1>\s*<(div|span|dd|td)[^>]*class="[^"]*(?:-value|_value|__value)[^"]*"[^>]*>([\s\S]*?)<\/\3>/gi;
+  for (const m of body.matchAll(divPair)) {
+    add(stripHtml(m[2]), stripHtml(m[4]), 'div');
+  }
+  // Текст вне таблиц и dl: иначе stripHtml(table) склеивает ячейки в ложные пары.
+  const rest = body
+    .replace(/<table\b[\s\S]*?<\/table>/gi, ' ')
+    .replace(/<dl\b[\s\S]*?<\/dl>/gi, ' ');
+  if (stripHtml(rest).length > 20) {
+    for (const p of extractPairs(rest, dict)) add(p.key, p.value, p.via || 'text');
   }
   return pairs;
 }
@@ -320,20 +404,23 @@ export function detectDump(html) {
 
 export function parseProductFields(product, dict) {
   const format = annotationFormat(product.annotation);
-  // Характеристики (annotation) — единственный основной источник фактов и фильтров.
-  // Описание добирает только пустые оси: S1 всегда раньше S2, setAttr не перетирает.
+  // Характеристики (annotation) — основной источник. Описание добирает пустые
+  // оси: S1 всегда раньше S2, setAttr не перетирает. Раньше description
+  // открывался только при <3 строк annotation — 4 мусорные строки в 1С
+  // оставляли карточку дырявой, хотя в описании была полная таблица.
   const fromAnn = extractPairs(product.annotation, dict).map(p => ({ ...p, source: 'S1' }));
   let fromDesc = [];
   let dump = false;
-  const needDesc = format === 'EMPTY' || fromAnn.length < 3;
+  const mappedAnn = mappedPairCount(fromAnn, dict);
+  const dumpDesc = detectDump(product.description);
+  const needDesc = format === 'EMPTY' || fromAnn.length < 3 || mappedAnn < 3
+    || (dumpDesc && mappedAnn < 5);
   if (needDesc) {
-    dump = detectDump(product.description);
+    dump = dumpDesc;
     fromDesc = extractPairs(product.description, dict).map(p => ({ ...p, source: 'S2' }));
     if (!dump && fromDesc.length < 3) fromDesc = [];
     if (fromDesc.length >= 3) dump = true;
   }
-  // Было: либо annotation, либо description. Из-за этого при 1–2 строках
-  // в annotation фильтры строились из прозы описания, а не из характеристик.
   const pairs = fromAnn.length ? fromAnn.concat(fromDesc) : fromDesc;
   return { format, pairs, dump, fromAnn, fromDesc };
 }

@@ -14,8 +14,9 @@ import {
   normalizeResponse as normalizeResponseIn, stripHtml, RateLimiter, isEnrichable,
   buildUserContent, rpmFor, attrFacts, productFacts, modelToken, hasCountryFact,
   SCHEMAS, GENERIC_SCHEMA, schemaFor, schemaForProduct, buildSystemPrompt, enrichProduct, netError,
-  seoPackageEmpty, cardTextsEmpty, validateModelResponse, buildDescriptionHtml,
-  sanitizeEnrichedResult,
+  validateModelResponse, buildDescriptionHtml, sourceCorrectionFeedback,
+  sanitizeEnrichedResult, seoPackageEmpty, cardTextsEmpty,
+  hydrateFromDump, isSourceThin, sourceFactCount, mergeDumpIntoProduct,
 } from './lib.js';
 
 // Схема по умолчанию — универсальная, а не холодильник: неизвестная категория
@@ -26,7 +27,7 @@ const normalizeResponse = (data, src = '', key = 'kholodilniki', attrs = [], pol
   normalizeResponseIn(data, src, key, attrs, policy, product);
 const attr = (name, value) => ({ name, value });
 import { parseListing, parseProductPage, buildFilters, assignMissingBrands, writeCategoryFiles,
-  parseSearchResults, parseAnyProductPage, pageDescribesProduct } from './catalog.js';
+  parseSearchResults, parseAnyProductPage, pageDescribesProduct, needsWebSpecs } from './catalog.js';
 import http from 'http';
 import { buildV2, splitKey } from './export_v2.js';
 import { loadDictionary } from './pipeline/dict.js';
@@ -180,6 +181,42 @@ t('длинное описание проходит даже без распоз
 t('annotation учитывается наравне с description', () => {
   assert.strictEqual(isEnrichable({ description: '', annotation: 'Общий объем - 250 л' }).ok, true);
 });
+
+{
+  const dumpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'dump-hydrate-'));
+  fs.mkdirSync(path.join(dumpRoot, 'dumps'));
+  const thinAnn = 'Цвет - белый';
+  const richAnn = 'Общий объём - 310 л<br>Система разморозки - No Frost<br>Ширина - 59.5 см<br>Высота - 190 см<br>Глубина - 65 см<br>Вес - 80 кг<br>Класс энергопотребления - A+';
+  fs.writeFileSync(path.join(dumpRoot, 'dumps', 'data_523.json'), JSON.stringify([
+    { id: 11, name: 'Холодильник LG GC-Q247CAMT', description: '', annotation: thinAnn },
+    { id: 22, name: 'Холодильник LG GC-Q247CAMT', description: 'Двухкамерный с No Frost.', annotation: richAnn },
+  ]));
+  t('бедный дамп — мало фактов для полного обогащения', () => {
+    assert.equal(isSourceThin({ annotation: thinAnn }, 'kholodilniki'), true);
+    assert.ok(sourceFactCount({ annotation: thinAnn }, 'kholodilniki') < 5);
+    assert.equal(isSourceThin({ annotation: richAnn }, 'kholodilniki'), false);
+  });
+  t('hydrateFromDump подставляет annotation из data_{id}.json', () => {
+    const got = hydrateFromDump({ sku: 11, name: 'Холодильник LG GC-Q247CAMT' }, 'kholodilniki', dumpRoot);
+    assert.ok(got.dump);
+    assert.equal(got.thin, true);
+    assert.match(got.product.annotation, /Цвет - белый/);
+    const rich = hydrateFromDump({ sku: 22, name: 'Холодильник LG GC-Q247CAMT' }, 'kholodilniki', dumpRoot);
+    assert.equal(rich.thin, false);
+    assert.match(rich.product.annotation, /310 л/);
+  });
+  t('mergeDumpIntoProduct ставит дамп первым и не затирает чужой текст', () => {
+    const merged = mergeDumpIntoProduct(
+      { annotation: 'Ширина - 60 см', description: 'магазин' },
+      { annotation: 'Общий объём - 310 л', description: 'дамп' },
+    );
+    assert.match(merged.annotation, /^Общий объём - 310 л/);
+    assert.match(merged.annotation, /Ширина - 60 см/);
+    assert.match(merged.description, /^дамп/);
+    assert.match(merged.description, /магазин/);
+  });
+  fs.rmSync(dumpRoot, { recursive: true, force: true });
+}
 
 console.log('\nРазбор ответа модели');
 t('чистый JSON', () => {
@@ -985,6 +1022,18 @@ t('нормализация берёт поля своей категории', 
   assert.match(String(r.specs.тип_загрузки), /фронтальн/i, 'факт должен добраться');
   assert.ok(!('объем_морозильной_камеры_л' in r.specs));
 });
+t('правка по источнику требует дамп и перечисляет расхождения', () => {
+  const line = sourceCorrectionFeedback({
+    warnings: [{ field: 'объем_общий_л', model: 250, source: 310, note: 'не совпало с текстом' }],
+    issues: [{ field: 'description', reason: '800 симв., нужно 900–1600' }],
+    hasDump: true,
+  });
+  assert.match(line, /dump\.annotation/);
+  assert.match(line, /объем_общий_л/);
+  assert.match(line, /250/);
+  assert.match(line, /310/);
+  assert.match(line, /выгрузку v2/);
+});
 
 // ── РАЗБОР КАТАЛОГА ──────────────────────────────────────────
 // Разметка ниже — вырезка из реальных страниц mrmag.ru.
@@ -1302,12 +1351,17 @@ console.log('\nЗапрос к модели');
     ]);
     const notes = [];
     const r = await run({ name: 'X', description: 'Общий объем, л 310' }, { onNote: m => notes.push(m) });
-    assert.strictEqual(record.length, 2);
+    assert.strictEqual(record.length, 3, 'после двух неудач — правка по источнику до следующего товара');
     assert.ok(notes.some(n => /валидация не прошла/.test(n)));
+    assert.ok(notes.some(n => /на проверку|дамп|правка/.test(n)));
     assert.ok(r.needs_review);
     assert.ok(r.enriched, 'черновик карточки остаётся для UI при needs_review');
     const user2 = JSON.parse(record[1].body.messages[1].content);
     assert.ok(user2.validation_feedback, 'вторая попытка несёт перечень ошибок');
+    const user3 = JSON.parse(record[2].body.messages[1].content);
+    assert.equal(user3.correction, 'source_and_dump');
+    assert.ok(user3.current_card, 'правка видит черновик карточки');
+    assert.match(user3.validation_feedback, /на проверку|валидац|поле /i);
   });
 
   await tAsync('вторая ветка SEO отключена: после двух неудач needs_review', async () => {
@@ -1321,12 +1375,52 @@ console.log('\nЗапрос к модели');
     const r = await run({ name: 'X', description: 'Общий объем, л 310' }, {
       maxRetries: 2, onNote: m => notes.push(m),
     });
-    assert.strictEqual(record.length, 2, 'ровно две попытки, без ensureSeo');
+    assert.strictEqual(record.length, 3, 'две попытки валидации + правка, без ensureSeo');
     assert.ok(!notes.some(n => /добираем тексты/.test(n)));
     assert.ok(r.needs_review);
     assert.ok(r.enriched, 'черновик есть, выгрузка режет по needs_review');
     assert.ok(r.validation_issues?.length);
-    assert.strictEqual(+r.cost.toFixed(6), 0.003);
+    assert.strictEqual(+r.cost.toFixed(6), 0.005);
+  });
+
+  await tAsync('needs_review правится с третьей попытки и проходит дальше', async () => {
+    record.length = 0;
+    stub([
+      reply(JSON.stringify({ specs: { бренд: 'DON' } }), { usage: { prompt_tokens: 5, completion_tokens: 5, cost: 0.001 } }),
+      reply(JSON.stringify({ specs: { бренд: 'DON' } }), { usage: { prompt_tokens: 5, completion_tokens: 5, cost: 0.001 } }),
+      reply(answer({ бренд: 'DON' }), { usage: { prompt_tokens: 5, completion_tokens: 20, cost: 0.002 } }),
+    ]);
+    const notes = [];
+    const r = await run({ name: 'X', description: 'Общий объем, л 310' }, { onNote: m => notes.push(m) });
+    assert.strictEqual(record.length, 3);
+    assert.ok(notes.some(n => /на проверку/.test(n)));
+    assert.ok(!r.needs_review, 'после правки карточка не «на проверку»');
+    assert.strictEqual(r.enriched.specs.бренд, 'DON');
+  });
+
+  await tAsync('расхождение с источником правится по дампу до следующего товара', async () => {
+    record.length = 0;
+    const notes = [];
+    stub([
+      reply(answer({ объем_общий_л: 250 }), { usage: { prompt_tokens: 10, completion_tokens: 5, cost: 0.001 } }),
+      reply(answer({ объем_общий_л: 310 }), { usage: { prompt_tokens: 10, completion_tokens: 5, cost: 0.001 } }),
+    ]);
+    const r = await run({
+      sku: 'no-dump-sku',
+      name: 'Холодильник DON',
+      category: 'Холодильники',
+      description: 'Общий объем, л 310 Вес (кг) - 62',
+      annotation: 'Общий объем - 310 л',
+    }, { mismatchPolicy: 'flag', onNote: m => notes.push(m) });
+    assert.ok(record.length >= 2, 'правка сразу, до следующего товара');
+    assert.ok(notes.some(n => /расхождения с источником/.test(n)));
+    const lastUser = JSON.parse(record[record.length - 1].body.messages[1].content);
+    assert.equal(lastUser.correction, 'source_and_dump');
+    assert.ok(lastUser.current_card);
+    assert.ok((lastUser.current_card.warnings || []).length, 'в правку уехали пометки расхождений');
+    assert.ok(!r.needs_review);
+    assert.strictEqual(r.enriched.specs.объем_общий_л, 310);
+    assert.deepStrictEqual(r.enriched.warnings, []);
   });
 
   await tAsync('ретрай обрыва идёт до потолка настроек, не до 8000', async () => {
@@ -1641,6 +1735,7 @@ t('да/нет становится Есть/Нет и в фильтре, и в 
 t('таблица заказчика: выключенный фасет остаётся в HTML, не в filters', () => {
   const dict = loadDictionary(523);
   const [p] = buildV2([v2row('1', {
+    бренд: 'Pozis',
     цвет: 'белый',
     хладагент: 'R600a',
     вес_кг: 74,
@@ -1648,10 +1743,12 @@ t('таблица заказчика: выключенный фасет оста
   })], { dict }).products;
   assert.strictEqual(p.filters['Цвет'], 'Белый');
   assert.strictEqual(p.filters['Тип товара'], 'Холодильник');
+  assert.ok(!('Бренд' in p.filters));
   assert.ok(!('Хладагент' in p.filters));
   assert.ok(!('Вес, кг' in p.filters));
   assert.match(p.description_html, /<li>Хладагент: R600a<\/li>/);
   assert.match(p.description_html, /<li>Вес: 74 кг<\/li>/);
+  assert.ok(!/Бренд:/i.test(p.description_html), 'бренд не строка характеристик');
 });
 
 t('description_html: описание, характеристики с единицами, ключи в meta', () => {
@@ -1713,6 +1810,7 @@ t('enum сводится к одному написанию, бренд/моде
     assert.ok(!('Модель' in p.filters));
     assert.ok(!('Комплектация' in p.filters));
     assert.equal(p.filters['Цвет'], colors[0]);
+    assert.ok(!/Бренд:/i.test(p.description_html));
   }
 });
 
@@ -1798,6 +1896,52 @@ console.log('\nТовар без описания: поиск в сети');
       'пары разделены <br> для пайплайна справочника');
     assert.match(got.description, /инверторным компрессором/);
     assert.doesNotMatch(got.description, /БыстроТехника|руб/, 'чужая реклама в описание не идёт');
+  });
+
+  t('JSON-LD, трёхколоночная таблица и блоки name/value разбираются', () => {
+    const page = `<script type="application/ld+json">${JSON.stringify({
+      '@type': 'Product',
+      additionalProperty: [
+        { '@type': 'PropertyValue', name: 'Общий объём', value: '310 л' },
+        { '@type': 'PropertyValue', name: 'Цвет', value: 'белый' },
+      ],
+    })}</script>
+      <table>
+        <tr><td>★</td><td>Ширина</td><td>60 см</td></tr>
+        <tr><td>Высота</td><td>85</td><td>см</td></tr>
+      </table>
+      <div class="product-item-detail-properties-name">Загрузка</div>
+      <div class="product-item-detail-properties-value">7 кг</div>`;
+    const got = parseAnyProductPage(page);
+    const byName = Object.fromEntries(got.attributes.map(a => [a.name, a.value]));
+    assert.equal(byName['Общий объём'], '310 л');
+    assert.equal(byName['Цвет'], 'белый');
+    assert.equal(byName['Ширина'], '60 см');
+    assert.equal(byName['Высота'], '85 см');
+    assert.equal(byName['Загрузка'], '7 кг');
+  });
+
+  t('модель в JSON-LD принимается, соседний артикул без границы токена — нет', () => {
+    const ld = `<script type="application/ld+json">{"@type":"Product","name":"LG GC-Q247CAMT","sku":"GC-Q247CAMT"}</script>`;
+    assert.strictEqual(pageDescribesProduct(ld, { name: 'Холодильник LG GC-Q247CAMT' }).ok, true);
+    assert.strictEqual(
+      pageDescribesProduct('<p>Холодильник LG GC-Q247CAMT No Frost</p>', { name: 'Холодильник LG GC-Q247' }).ok,
+      false,
+      'GC-Q247 не должен совпасть как подстрока GC-Q247CAMT',
+    );
+  });
+
+  t('парсер страницы нужен и при непустой, но бедной карточке', () => {
+    assert.equal(needsWebSpecs({ name: 'Холодильник белый', description: 'x'.repeat(200) }, 'kholodilniki'), false);
+    assert.equal(needsWebSpecs({ name: 'Холодильник LG GC-Q247CAMT', description: '', annotation: '' }, 'kholodilniki'), true);
+    assert.equal(needsWebSpecs({
+      name: 'Холодильник LG GC-Q247CAMT',
+      annotation: 'Общий объём - 310 л<br>Вес - 80 кг',
+    }, 'kholodilniki'), true);
+    assert.equal(needsWebSpecs({
+      name: 'Холодильник LG GC-Q247CAMT',
+      annotation: 'Общий объём - 310 л<br>Система разморозки - No Frost<br>Ширина - 59.5 см<br>Высота - 190 см<br>Глубина - 65 см<br>Вес - 80 кг<br>Класс энергопотребления - A+',
+    }, 'kholodilniki'), false);
   });
 
   // Прогон целиком на своих «поисковике» и «чужой карточке»: сеть не трогаем,
@@ -1887,12 +2031,13 @@ console.log('\nТовар без описания: поиск в сети');
       name: 'Холодильник LG GC-Q247CAMT',
       brand: 'LG',
       description: 'Двухкамерный холодильник с нижней морозильной камерой, общим объёмом 310 литров и системой No Frost.',
-      annotation: 'Общий объём - 310 л<br>Система разморозки - No Frost',
+      annotation: 'Общий объём - 310 л<br>Система разморозки - No Frost<br>Ширина - 59.5 см<br>Высота - 190 см<br>Глубина - 65 см<br>Вес - 80 кг<br>Класс энергопотребления - A+',
     };
     const got = await web.ensureSource(product, 'kholodilniki');
     assert.strictEqual(got.gate.ok, true, got.gate.reason);
     assert.match(got.product.annotation, /Страна производства - Китай/);
     assert.match(got.product.description, /Двухкамерный холодильник/);
+    assert.doesNotMatch(serpQueries.join(' '), /характеристики/, 'фактов хватает — полную карточку не скрейпим');
     assert.strictEqual(got.source, `http://[::1]:${port}/country`);
   });
 
@@ -1902,7 +2047,7 @@ console.log('\nТовар без описания: поиск в сети');
       name: 'Холодильник ATLANT ХМ 6025-031',
       brand: 'ATLANT',
       description: 'Двухкамерный холодильник с общим объёмом 384 литра и капельной системой охлаждения.',
-      annotation: 'Общий объём - 384 л<br>Вес - 80 кг',
+      annotation: 'Общий объём - 384 л<br>Вес - 80 кг<br>Высота - 200 см<br>Ширина - 60 см<br>Глубина - 63 см<br>Система разморозки - капельная',
     };
     const got = await web.ensureSource(product, 'kholodilniki');
     assert.strictEqual(got.gate.ok, true, got.gate.reason);
@@ -1915,15 +2060,17 @@ console.log('\nТовар без описания: поиск в сети');
   });
 
   await tAsync('страна уже в исходнике — в сеть за ней не ходим', async () => {
+    serpQueries.length = 0;
     const product = {
       sku: '320420',
       name: 'Холодильник LG GC-Q247CAMT',
       description: 'Двухкамерный холодильник с нижней морозильной камерой, общим объёмом 310 литров и системой No Frost.',
-      annotation: 'Общий объём - 310 л<br>Страна производства - Россия',
+      annotation: 'Общий объём - 310 л<br>Система разморозки - No Frost<br>Ширина - 59.5 см<br>Высота - 190 см<br>Глубина - 65 см<br>Вес - 80 кг<br>Страна производства - Россия',
     };
     const got = await web.ensureSource(product, 'kholodilniki');
     assert.strictEqual(got.gate.ok, true);
     assert.strictEqual(got.source, undefined);
+    assert.doesNotMatch(serpQueries.join(' '), /страна производства/, 'за страной не ходим');
     assert.match(got.product.annotation, /Россия/);
     assert.doesNotMatch(got.product.annotation, /Китай/);
   });
@@ -1937,17 +2084,62 @@ console.log('\nТовар без описания: поиск в сети');
     assert.strictEqual(got.product.description, '', 'чужой текст не подставляется');
   });
 
+  const dumpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'web-dump-'));
+  fs.mkdirSync(path.join(dumpRoot, 'dumps'));
+  fs.writeFileSync(path.join(dumpRoot, 'dumps', 'data_523.json'), JSON.stringify([
+    { id: 'dump-thin', name: 'Холодильник LG GC-Q247CAMT', description: '', annotation: 'Цвет - белый' },
+    {
+      id: 'dump-rich',
+      name: 'Холодильник LG GC-Q247CAMT',
+      description: 'Двухкамерный холодильник с нижней морозильной камерой, общим объёмом 310 литров и системой No Frost.',
+      annotation: 'Общий объём - 310 л<br>Система разморозки - No Frost<br>Ширина - 59.5 см<br>Высота - 190 см<br>Глубина - 65 см<br>Вес - 80 кг<br>Класс энергопотребления - A+',
+    },
+  ]));
+
+  await tAsync('бедный дамп — парсим карточку этой модели', async () => {
+    serpQueries.length = 0;
+    const notes = [];
+    const product = { sku: 'dump-thin', name: 'Холодильник LG GC-Q247CAMT', description: '', annotation: '' };
+    const got = await web.ensureSource(product, 'kholodilniki', { root: dumpRoot, onNote: m => notes.push(m) });
+    assert.strictEqual(got.gate.ok, true, got.gate.reason);
+    assert.match(notes.join(' '), /в дампе мало характеристик/);
+    assert.match(serpQueries.join(' '), /характеристики/);
+    assert.match(got.product.annotation, /Цвет - белый/);
+    assert.match(got.product.annotation, /Общий объём - 310 л/);
+    assert.strictEqual(got.source, `http://[::1]:${port}/right`);
+  });
+
+  await tAsync('полный дамп — только страну, карточку не скрейпим', async () => {
+    serpQueries.length = 0;
+    const product = { sku: 'dump-rich', name: 'Холодильник LG GC-Q247CAMT', brand: 'LG', description: '', annotation: '' };
+    const got = await web.ensureSource(product, 'kholodilniki', { root: dumpRoot });
+    assert.strictEqual(got.gate.ok, true, got.gate.reason);
+    assert.doesNotMatch(serpQueries.join(' '), /характеристики/);
+    assert.match(got.product.annotation, /310 л/);
+    assert.match(got.product.annotation, /Страна производства - Китай/);
+    assert.match(got.product.description, /Двухкамерный холодильник/);
+    assert.strictEqual(got.source, `http://[::1]:${port}/country`);
+  });
+
   await tAsync('WEB_LOOKUP=0 возвращает прежний пропуск без единого запроса', async () => {
     process.env.WEB_LOOKUP = '0';
     const off = await import('./catalog.js?web-off');
     const got = await off.ensureSource({ name: 'Холодильник LG GC-Q247CAMT' }, 'kholodilniki');
     assert.strictEqual(got.gate.ok, false);
     assert.strictEqual(got.gate.reason, 'нет ни description, ни annotation');
+    const fromDump = await off.ensureSource(
+      { sku: 'dump-rich', name: 'Холодильник LG GC-Q247CAMT' },
+      'kholodilniki',
+      { root: dumpRoot },
+    );
+    assert.strictEqual(fromDump.gate.ok, true, 'дамп подставляется и без сети');
+    assert.match(fromDump.product.annotation, /310 л/);
     delete process.env.WEB_LOOKUP;
   });
 
   await new Promise(r => srv.close(r));
   fs.rmSync(cacheDir, { recursive: true, force: true });
+  fs.rmSync(dumpRoot, { recursive: true, force: true });
   for (const [k, v] of Object.entries(prevSearch)) {
     if (v === undefined) delete process.env[k];
     else process.env[k] = v;

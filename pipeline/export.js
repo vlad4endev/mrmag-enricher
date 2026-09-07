@@ -325,7 +325,8 @@ export function applyEnrichedSpecs(rec, specs, dict, config) {
 /**
  * Семь полей заказчика + фасеты. Неполные карточки (< 8 строк) остаются
  * в products и дублируются в held: потеря SKU хуже неполного фильтра.
- * needs_review в products не попадает — уходит в отчёт.
+ * Карточки с пометкой needs_review тоже в products: ИИ уже правил,
+ * дыра в выгрузке хуже черновика. Отчёт needs_review — только аудит.
  *
  * После finalize — отдельный category-level filters_agent (ИИ или эвристика),
  * затем buildFilters. Битый filters_*.json не отдаём (validation.ok === false).
@@ -349,7 +350,6 @@ export async function buildCustomerExport(products, {
         validation_issues: p.validation_issues || [],
         raw_response: p.raw_response || null,
       });
-      continue;
     }
     const src = toPipelineProduct(p);
     const rec = normalizeProduct(src, dict, config);

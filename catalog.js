@@ -591,7 +591,7 @@ async function fillCountryFromWeb(product, schema, { onNote = () => {} } = {}) {
     urls = await searchWeb(query);
   } catch (e) {
     onNote(`страну в сети не нашли: ${e.message}`);
-    return { ok: false, product };
+    return { ok: false, product, parser: true };
   }
 
   const tried = [];
@@ -611,16 +611,17 @@ async function fillCountryFromWeb(product, schema, { onNote = () => {} } = {}) {
       continue;
     }
     onNote(`страна из сети: ${country} (${host})`);
-    return { ok: true, product: withCountryLine(product, country, url), source: url };
+    return { ok: true, product: withCountryLine(product, country, url), source: url, parser: true };
   }
   if (tried.length) onNote(`страну в сети не нашли: ${tried.join('; ')}`);
-  return { ok: false, product };
+  return { ok: false, product, parser: true };
 }
 
 /**
  * Товар с описанием: дамп заказчика, своё, иначе найденное в сети.
- * Возвращает { product, gate, source }: product — то, что уходит в модель,
- * gate — вердикт по нему, source — адрес страницы, откуда добран текст.
+ * Возвращает { product, gate, source, parser }: product — то, что уходит в модель,
+ * gate — вердикт по нему, source — адрес страницы, откуда добран текст,
+ * parser — поиск или разбор страницы реально запускались.
  *
  * Сначала data_{catId}.json по sku/id. Если после дампа фактов меньше
  * min_attrs — парсим карточку этой модели: иначе модель додумывает объём
@@ -647,6 +648,7 @@ export async function ensureSource(product, schema, { onNote = () => {}, root = 
   const wantSpecs = needsWebSpecs(current, schema, { minAttrs });
 
   let source = null;
+  let parser = false;
   let currentGate = gate;
 
   if (wantSpecs) {
@@ -674,7 +676,9 @@ export async function ensureSource(product, schema, { onNote = () => {}, root = 
             ? `мало характеристик (${gate.facts ?? 0} < ${minAttrs}) — ищем в сети: ${token || current.name}`
             : `ищем в сети: ${token || current.name}`);
         urls = await searchWeb(query);
+        parser = true;
       } catch (e) {
+        parser = true;
         onNote(`поиск не удался, отправляем как есть: ${e.message}`);
         if (!gate.ok) {
           currentGate = { ...gate, ok: true, reason: `${gate.reason}; поиск в сети не удался: ${e.message}` };
@@ -728,13 +732,20 @@ export async function ensureSource(product, schema, { onNote = () => {}, root = 
   }
 
   const country = await fillCountryFromWeb(current, schema, { onNote });
+  if (country.parser) parser = true;
   if (country.ok) {
     current = country.product;
     source = source || country.source;
     currentGate = isEnrichable(current, schema);
   }
+  if (source) parser = true;
 
-  return { product: current, gate: currentGate, ...(source ? { source } : {}) };
+  return {
+    product: current,
+    gate: currentGate,
+    ...(source ? { source } : {}),
+    ...(parser ? { parser: true } : {}),
+  };
 }
 
 // ── АВТОФИЛЬТРЫ ──────────────────────────────────────────────

@@ -1641,6 +1641,17 @@ export {
 export const CARD_TEXT_KEYS = ['short_description', 'description'];
 export const SEARCH_META_KEYS = [];
 
+/**
+ * Подпись «готово» в списке и логе: отдельно видны парсер страницы
+ * и повтор модели после ошибок валидации / расхождений.
+ */
+export function doneStatusLabel({ parser = false, corrected = false } = {}) {
+  const tags = [];
+  if (parser) tags.push('парсер');
+  if (corrected) tags.push('исправлен');
+  return tags.length ? `готово - ${tags.join(', ')}` : 'готово';
+}
+
 /** @deprecated карточные тексты проверяет validateModelResponse. */
 export function cardTextsEmpty(data) {
   if (!data || typeof data !== 'object') return true;
@@ -1879,6 +1890,13 @@ export function isEnrichable(product, schemaKey) {
 
 /** Верх ретрая при обрыве. Совпадает с потолком max_tokens в настройках. */
 export const MAX_COMPLETION_TOKENS = 16_000;
+
+/**
+ * Дополнительные вызовы модели после первых попыток валидации.
+ * Карточка не уходит в needs_review: ИИ правит, пока не пройдёт проверку,
+ * либо отдаём последний черновик в выгрузку.
+ */
+export const AI_REPAIR_PASSES = 3;
 
 /**
  * DeepSeek/Qwen по умолчанию думают вслух. Цепочка рассуждений и JSON делят
@@ -2134,10 +2152,8 @@ function slimCard(enriched) {
 /**
  * Один товар → обогащённая запись.
  * До двух попыток на валидацию: 1) исходный промпт, 2) перечень ошибок.
- * Если остались расхождения с источником или карточка «на проверку» —
- * ещё один проход: сверка с дампом и текстом, сразу, до следующего товара.
- * После неудачи правки — needs_review (не done, не в выгрузку v2).
- * Токены и стоимость суммируются. Сеть/HTTP ретраятся в пределах тех же попыток.
+ * Дальше ИИ правит по дампу и источнику (AI_REPAIR_PASSES), без needs_review:
+ * товар всегда идёт дальше в выгрузку. Сеть/HTTP ретраятся в том же лимите.
  */
 export async function enrichProduct(product, opts) {
   const {
@@ -2196,12 +2212,13 @@ export async function enrichProduct(product, opts) {
   const baseUser = buildUserContent(product, facts, { benchmarks });
   const dumpRow = findDumpProduct(schemaCatId(schema, product, opts.root), productDumpKey(product), opts.root);
   const attemptsCap = Math.min(2, Math.max(1, maxRetries));
+  const repairMax = attemptsCap + AI_REPAIR_PASSES;
   let tokenBudget = maxTokens;
   let lastErr;
   let lastIssues = [];
   let feedback = '';
   let correctionPass = false;
-  let extraAttempt = false;
+  let corrected = false;
   // Фактический payload последнего model call — не реконструкция из финального товара.
   let sentSystem = null;
   let sentUser = null;
@@ -2240,7 +2257,8 @@ export async function enrichProduct(product, opts) {
   };
   const pack = (result) => ({
     ...result,
-    debug: debugOf({ attempts: result.attempts, error: result.error || null }),
+    corrected,
+    debug: debugOf({ attempts: result.attempts, error: result.error || null, corrected }),
   });
 
   const userPayload = () => {
@@ -2268,22 +2286,24 @@ export async function enrichProduct(product, opts) {
     }
   };
 
-  const logValidationFail = (issues, attempt, raw) => {
+  const logRepair = (issues, attempt) => {
     lastIssues = issues;
-    lastRaw = raw;
-    const capLabel = correctionPass ? attemptsCap + 1 : attemptsCap;
-    const list = issues.map(i => `${i.field}: ${i.reason}`).join('; ');
-    onNote(`валидация не прошла · попытка ${attempt}/${capLabel}: ${list}`, { level: 'warn', step: 'validate' });
-    onNote(`сырой ответ модели (попытка ${attempt}):\n${raw}`, { level: 'warn', step: 'validate' });
+    const fields = [...new Set(issues.map(i => i.field))].join(', ');
+    onNote(`правим карточку ИИ · ${attempt}/${repairMax}: ${fields}`, { level: 'info', step: 'repair' });
+  };
+  const accept = (enriched, attempt) => {
+    modelStatus = 'ok';
+    lastEnriched = enriched;
+    return pack({ enriched, ...usage(), costSource, attempts: attempt });
   };
 
-  for (let attempt = 1; attempt <= attemptsCap || extraAttempt; attempt++) {
-    if (attempt > attemptsCap) extraAttempt = false;
+  for (let attempt = 1; attempt <= repairMax; attempt++) {
+    const canRetry = attempt < repairMax;
     await limiter.wait(ms => onNote(`rate limit ${ms}ms`));
 
     const userContent = userPayload();
     const repairNote = correctionPass ? ' · правка по дампу' : '';
-    onNote(`запрос к модели${attempt > 1 ? ` · попытка ${attempt}/${attemptsCap}` : ''}${repairNote}…`);
+    onNote(`запрос к модели${attempt > 1 ? ` · попытка ${attempt}/${repairMax}` : ''}${repairNote}…`);
 
     // Собираем тело заранее и логируем ИМЕННО его messages — то, что уйдёт в fetch.
     const requestBody = buildRequestBody(model, userContent, tokenBudget, schema, systemPrompt);
@@ -2316,6 +2336,7 @@ export async function enrichProduct(product, opts) {
       lastRaw = `MODEL_ERROR: ${safeErr(lastErr)}`;
       modelStatus = 'MODEL_ERROR';
       if (attempt < attemptsCap) { onNote(`сеть, retry ${attempt}`); await sleep(attempt * 3000); continue; }
+      if (lastEnriched) return accept(lastEnriched, attempt);
       fail(lastErr);
     }
 
@@ -2333,6 +2354,7 @@ export async function enrichProduct(product, opts) {
         await sleep(wait);
         continue;
       }
+      if (lastEnriched) return accept(lastEnriched, attempt);
       fail(lastErr);
     }
 
@@ -2342,6 +2364,7 @@ export async function enrichProduct(product, opts) {
       lastRaw = 'MODEL_EMPTY_RESPONSE';
       modelStatus = 'MODEL_EMPTY_RESPONSE';
       if (attempt < attemptsCap) { onNote(`пустой ответ, retry ${attempt}`); await sleep(attempt * 5000); continue; }
+      if (lastEnriched) return accept(lastEnriched, attempt);
       fail(lastErr, 'MODEL_EMPTY_RESPONSE');
     }
 
@@ -2363,6 +2386,7 @@ export async function enrichProduct(product, opts) {
       modelStatus = 'MODEL_EMPTY_RESPONSE';
       lastErr = new Error('MODEL_EMPTY_RESPONSE');
       if (attempt < attemptsCap) { onNote(`пустой content, retry ${attempt}`); await sleep(attempt * 5000); continue; }
+      if (lastEnriched) return accept(lastEnriched, attempt);
       fail(lastErr, 'MODEL_EMPTY_RESPONSE');
     }
     lastRaw = content; // сырой ответ ДО parse/normalize
@@ -2377,6 +2401,7 @@ export async function enrichProduct(product, opts) {
           onNote(`обрыв по длине, max_tokens→${tokenBudget}`);
           continue;
         }
+        if (lastEnriched) return accept(lastEnriched, attempt);
         fail(new Error(`Ответ обрезан на max_tokens=${tokenBudget}`));
       }
     } else {
@@ -2385,6 +2410,7 @@ export async function enrichProduct(product, opts) {
       } catch (err) {
         lastErr = err;
         if (attempt < attemptsCap) { onNote(`parse err, retry ${attempt}`); await sleep(2000); continue; }
+        if (lastEnriched) return accept(lastEnriched, attempt);
         fail(err);
       }
     }
@@ -2397,12 +2423,13 @@ export async function enrichProduct(product, opts) {
     } catch (err) {
       lastErr = err;
       if (attempt < attemptsCap) { onNote(`normalize err, retry ${attempt}`); await sleep(2000); continue; }
+      if (lastEnriched) return accept(lastEnriched, attempt);
       fail(err);
     }
 
     const filledSpecs = Object.values(enriched.specs || {}).filter(v => v != null).length;
     // DeepSeek часто даёт 6 bullets / 97 симв. short — чиним без второго запроса.
-    softFixCardTexts(enriched);
+    softFixCardTexts(enriched, { filledSpecs });
     const issues = validateModelResponse({
       specs: enriched.specs,
       short_description: enriched.short_description,
@@ -2418,55 +2445,45 @@ export async function enrichProduct(product, opts) {
 
     const startSourceFix = (why) => {
       correctionPass = true;
-      extraAttempt = attempt >= attemptsCap;
+      corrected = true;
       feedback = sourceCorrectionFeedback({
         warnings: enriched.warnings || [],
         issues,
         hasDump: Boolean(dumpRow),
       });
-      onNote(why, { level: 'warn', step: 'repair' });
+      onNote(why, { level: 'info', step: 'repair' });
     };
 
     if (issues.length) {
       // Обрыв по длине + пустые тексты: сначала поднять бюджет, а не жечь попытку feedback.
       if (choice.finish_reason === 'length'
-        && attempt < attemptsCap
+        && canRetry
         && tokenBudget < MAX_COMPLETION_TOKENS
         && cardTextsEmpty(enriched)) {
         tokenBudget = Math.min(MAX_COMPLETION_TOKENS, tokenBudget * 2);
         onNote(`обрыв по длине, max_tokens→${tokenBudget}`);
         continue;
       }
-      logValidationFail(issues, attempt, content);
-      if (attempt < attemptsCap && !correctionPass) {
-        feedback = validationFeedbackLine(issues, { filledSpecs });
-        onNote(`повтор с указанием ошибок валидации`);
+      logRepair(issues, attempt);
+      if (canRetry) {
+        corrected = true;
+        if (!correctionPass && attempt < attemptsCap) {
+          feedback = validationFeedbackLine(issues, { filledSpecs });
+          onNote(`правим карточку ИИ`);
+        } else {
+          startSourceFix(`правим по ${dumpRow ? 'дампу и ' : ''}источнику`);
+        }
         continue;
       }
-      if (!correctionPass) {
-        startSourceFix(`на проверку — сверяем ${dumpRow ? 'дамп и ' : ''}источник и правим до следующего товара`);
-        continue;
-      }
-      // Правка не сняла валидацию — в выгрузку v2 не пойдёт, UI черновик видит.
-      modelStatus = 'needs_review';
-      return pack({
-        enriched,
-        needs_review: true,
-        validation_issues: issues,
-        raw_response: content,
-        ...usage(),
-        costSource,
-        attempts: attempt,
-      });
+      return accept(enriched, attempt);
     }
 
-    if ((enriched.warnings || []).length && !correctionPass) {
-      startSourceFix(`расхождения с источником (${enriched.warnings.length}) — сверяем ${dumpRow ? 'дамп' : 'текст'} и правим до следующего товара`);
+    if ((enriched.warnings || []).length && canRetry) {
+      startSourceFix(`сверяем расхождения с ${dumpRow ? 'дампом' : 'источником'} (${enriched.warnings.length})`);
       continue;
     }
 
-    modelStatus = 'ok';
-    return pack({ enriched, ...usage(), costSource, attempts: attempt });
+    return accept(enriched, attempt);
   }
 
   fail(lastErr || new Error('Не удалось обогатить'));

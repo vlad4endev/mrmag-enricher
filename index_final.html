@@ -1485,7 +1485,7 @@ input[type=range]::-moz-range-thumb{
         <span class="bdg bdg-b" id="cpyBtn" style="display:none;cursor:pointer" onclick="copyJSON()" title="Скопировать JSON товара"><i class="ti ti-copy" aria-hidden="true"></i> Копировать</span>
         <span class="bdg bdg-b" id="dlBtn" style="display:none;cursor:pointer" onclick="downloadAll('json')" title="Выгрузить все результаты в JSON"><i class="ti ti-download" aria-hidden="true"></i> JSON</span>
         <span class="bdg bdg-g" id="dlTxtBtn" style="display:none;cursor:pointer" onclick="downloadAll('txt')" title="Выгрузить все результаты в TXT"><i class="ti ti-file-text" aria-hidden="true"></i> TXT</span>
-        <span class="bdg bdg-b" id="dlV2Btn" style="display:none;cursor:pointer" onclick="downloadV2()" title="Выгрузка заказчика плюс categories: products_(id).json, filters_(id).json"><i class="ti ti-braces" aria-hidden="true"></i> JSON v2</span>
+        <span class="bdg bdg-b" id="dlV2Btn" style="display:none;cursor:pointer" onclick="downloadV2()" title="Только обработанные карточки плюс categories: products_(id).json, filters_(id).json. Остаток дампа не входит."><i class="ti ti-braces" aria-hidden="true"></i> JSON v2</span>
         <span class="bdg bdg-b" id="dlCatBtn" style="display:none;cursor:pointer" onclick="downloadCategoryFiles()" title="Два файла заказчика: products_(id).json и filters_(id).json. Фильтры нормализуются отдельным проходом по категории."><i class="ti ti-files" aria-hidden="true"></i> 2 файла</span>
         <span class="bdg bdg-a" id="clrBtn" style="display:none;cursor:pointer" onclick="clearResults()" title="Удалить сохранённый прогон">✕ Сброс</span>
       </div>
@@ -2422,10 +2422,12 @@ async function openDumpInEnricher(id){
   try{
     const d=await apiJson('/api/dumps/'+encodeURIComponent(id));
     const name=d.name||catNameFromId(id);
-    setSource((d.products||[]).map(p=>normalizeCatalogProduct(p, name)));
+    const loaded=(d.products||[]).map(p=>normalizeCatalogProduct(p, name));
+    setSource(loaded);
     document.getElementById('urlIn').value='';
-    document.getElementById('fetchHint').textContent=`Дамп ${id} · ${name}: ${items.length} ${plural(items.length,'товар','товара','товаров')}`;
-    setSt('ok',`Дамп ${id}: ${items.length}`);
+    const extra=loaded.length!==items.length?` · в окне ${items.length} из ${loaded.length}`:'';
+    document.getElementById('fetchHint').textContent=`Дамп ${id} · ${name}: ${loaded.length} ${plural(loaded.length,'товар','товара','товаров')}${extra}`;
+    setSt('ok',`Дамп ${id}: в окне ${items.length} из ${loaded.length}`);
     setSrcTab('file');
     showPage('enricher');
     dumpStatus('открыт в обогащении', true);
@@ -4206,15 +4208,21 @@ function statusOf(i){
     return {cls:'run',sym:'',txt:`${tag}${age}`};
   }
   if(!r) return {cls:'pd',sym:'·',txt:'в очереди'};
-  if(r.needs_review) return {cls:'wa',sym:'⚑',txt:'на проверку'};
   if(r.enriched){
     sanitizeEnriched(r.enriched);
-    return r.enriched.warnings?.length
-      ? {cls:'wa',sym:'⚠',txt:`${r.enriched.warnings.length} расхождений`}
-      : {cls:'ok',sym:'✓',txt:'готово'};
+    return {cls:'ok',sym:'✓',txt:doneStatusText(r)};
   }
+  if(r.needs_review) return {cls:'wa',sym:'⚑',txt:'на проверку'};
   if(r.skipped) return {cls:'sk',sym:'⊘',txt:'пропущен'};
   return {cls:'er',sym:'✗',txt:'ошибка'};
+}
+
+/** «готово», «готово - парсер», «готово - исправлен». */
+function doneStatusText(r){
+  const tags=[];
+  if(r?.parser||r?.source) tags.push('парсер');
+  if(r?.corrected) tags.push('исправлен');
+  return tags.length?`готово - ${tags.join(', ')}`:'готово';
 }
 
 function passesFilter(i){
@@ -4415,12 +4423,10 @@ function renderDetail(){
   // Откуда взялся исходный текст, видно на самой карточке: часть товаров
   // описана не магазином, а найденной страницей того же артикула.
   const from=r.source?`<div class="hint">Исходного текста в карточке не было — описание добрано из сети: `
-    +`<a href="${esc(r.source)}" target="_blank" rel="noopener noreferrer">${esc(hostOf(r.source))}</a></div>`:'';
-  const review=r.needs_review
-    ? `<div class="warnbox"><div class="wt">⚑ На проверку — не попадёт в выгрузку v2</div>`
-      +`<div class="wi">${esc((r.validation_issues||[]).map(i=>`${i.field}: ${i.reason}`).join('; ')||'валидация не прошла')}</div></div>`
-    : '';
-  setP('detail',conf+review+from+(curTab==='json'?`<div class="jv">${hl(r.enriched)}</div>`:renderVis(r.enriched)));
+    +`<a href="${esc(r.source)}" target="_blank" rel="noopener noreferrer">${esc(hostOf(r.source))}</a></div>`
+    :(r.parser?`<div class="hint">Для этой карточки запускался парсер страницы.</div>`:'');
+  const fix=r.corrected?`<div class="hint">Карточка исправлена после ошибок валидации.</div>`:'';
+  setP('detail',conf+from+fix+(curTab==='json'?`<div class="jv">${hl(r.enriched)}</div>`:renderVis(r.enriched)));
 }
 
 function showActions(){
@@ -4431,7 +4437,7 @@ function showActions(){
 /** Кнопки выгрузки живут своей строкой и зависят от прогона, не от выбранного товара. */
 function syncExportButtons(){
   const hasDone=doneRes().length>0;
-  const hasEnriched=doneRes().some(r=>r?.enriched);
+  const hasEnriched=doneRes().some(isEnrichedResult);
   (hasDone?show:hide)('dlBtn');
   (hasDone?show:hide)('dlTxtBtn');
   (hasEnriched?show:hide)('dlV2Btn');
@@ -4781,8 +4787,8 @@ function fmtJobOpt(j){
   return `${when} · ${st} · ${j.done||0}/${j.total||0} · ${model}`;
 }
 
-function logsStatusLabel(s){
-  if(s==='ok') return ['ok','готово'];
+function logsStatusLabel(s, extra){
+  if(s==='ok') return ['ok', doneStatusText(extra||{})];
   if(s==='error'||s==='err') return ['err','ошибка'];
   if(s==='skip') return ['skip','пропуск'];
   if(s==='needs_review') return ['wa','на проверку'];
@@ -4836,7 +4842,7 @@ async function loadLogsSummaries(){
     if(logsPos==null||logsPos>=rows.length) logsPos=rows.findIndex(r=>r.status==='running');
     if(logsPos<0) logsPos=0;
     list.innerHTML=rows.map(r=>{
-      const [cls,lab]=logsStatusLabel(r.status);
+      const [cls,lab]=logsStatusLabel(r.status, r);
       const name=r.product?.name||r.label||`товар №${r.pos+1}`;
       const sku=r.product?.sku?` · ${r.product.sku}`:'';
       return `<li class="${r.pos===logsPos?'on':''}" data-pos="${r.pos}" onclick="selectLogsItem(${r.pos})">`
@@ -4883,7 +4889,7 @@ async function loadLogsDetail(pos){
       detail.innerHTML='<div class="logs-empty">Нет деталей по этому товару.</div>';
       return;
     }
-    const [cls,lab]=logsStatusLabel(x.status);
+    const [cls,lab]=logsStatusLabel(x.status, x);
     const name=x.product?.name||`товар №${(x.pos??pos)+1}`;
     const meta=[
       x.schema?`схема ${x.schema}`:null,
@@ -5009,7 +5015,7 @@ function applyJob(d){
     results[i]={original:items[i]??null,enriched:r.enriched?sanitizeEnriched(r.enriched):null,skipped:r.skipped,
       needs_review:r.needs_review||false,
       validation_issues:r.validation_issues||null,
-      source:r.source??null,iT:r.iT??0,oT:r.oT??0,
+      source:r.source??null,parser:!!r.parser,corrected:!!r.corrected,iT:r.iT??0,oT:r.oT??0,
       cost:typeof r.cost==='number'?r.cost:null,
       ...(r.error?{error:r.error}:{})};
     // Результат привязан к товару, а не к позиции: смена окна и категории не
@@ -5296,7 +5302,6 @@ function fileRow(p,r){
     description: rest.description || rest.description_html || '',
     enriched:r?.enriched??null,
     ...(r?.skipped?{skipped:r.skipped}:{}),
-    ...(r?.needs_review?{needs_review:true,validation_issues:r.validation_issues||[]}:{}),
     ...(r?.error?{error:r.error}:{}),
     ...(r?.source?{source_url:r.source}:{}),
     ...(typeof r?.cost==='number'?{_meta:{input_tokens:r.iT??0,output_tokens:r.oT??0,cost_usd:+r.cost.toFixed(6)}}:{}),
@@ -5310,6 +5315,9 @@ function fileRow(p,r){
  * количество, и тогда в файл попадал бы один открытый товар вместо всех
  * обработанных. Товар из окна идёт первым и своим результатом: у него он
  * актуальный, даже когда прогон ещё идёт.
+ *
+ * Сам список ещё не отсев: в окне после «открыть дамп» лежит весь data_*.json.
+ * В JSON v2 попадают только строки с ответом модели — groupItems(true).
  */
 function exportRows(){
   const rows=items.map((p,i)=>[rowKey(p,i),p,results[i]]);
@@ -5318,11 +5326,20 @@ function exportRows(){
   return rows;
 }
 
+/** Ответ модели, а не сырой annotation дампа. Пустой {} не считается. */
+function isEnrichedResult(r){
+  const e=r?.enriched;
+  if(!e||typeof e!=='object'||Array.isArray(e)) return false;
+  const specs=e.specs;
+  if(specs&&typeof specs==='object'&&!Array.isArray(specs)&&Object.keys(specs).length) return true;
+  return Boolean(String(e.description||e.short_description||'').trim());
+}
+
 /** Товары по разделам: обе файловые выгрузки раскладывают их одинаково. */
 function groupItems(onlyEnriched=false){
   const groups=new Map();
   for(const [,p,r] of exportRows()){
-    if(onlyEnriched && !r?.enriched) continue;
+    if(onlyEnriched && !isEnrichedResult(r)) continue;
     const cat=catOf(p);
     const key=String(cat.id??cat.slug);
     const g=groups.get(key)||{cat,rows:[]};
@@ -5637,13 +5654,6 @@ function renderVis(d){
   d=sanitizeEnriched(d);
   let out=confBox(curIdx);
 
-  if(Array.isArray(d.warnings)&&d.warnings.length){
-    out+=`<div class="warnbox"><div class="wt">⚠ Расхождения с текстом источника (${d.warnings.length})</div>`
-      +d.warnings.map(w=>`<div class="wi">${esc(label(w.field))}: модель <code>${esc(String(w.model))}</code>`
-        +(w.source!=null?`, в тексте <code>${esc(String(w.source))}</code>`:'')
-        +` — ${esc(String(w.note||''))}</div>`).join('')
-      +`</div>`;
-  }
   const desc=cardText(d,'description');
   const hasCard=!isEmpty(d.short_description)||!isEmpty(desc)
     ||(Array.isArray(d.bullets)&&d.bullets.length);

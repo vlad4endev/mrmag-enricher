@@ -1233,7 +1233,9 @@ console.log('golden tests passed');
   assert.equal(out.products[0].id, 11391);
   assert.equal(out.products[0].name, p467[11391].name);
   assert.deepEqual(Object.keys(out.products[0]), PRODUCT_FIELDS);
-  assert.match(out.products[0].annotation_html, /ATLANT/);
+  assert.match(out.products[0].name, /ATLANT/);
+  assert.ok(!/Бренд:/i.test(out.products[0].annotation_html), 'бренд не строка характеристик');
+  assert.match(out.products[0].annotation_html, /Тип загрузки: фронтальная/);
   const thin = await buildCustomerExport(
     [{ sku: '1', name: 'Стиральная машина X', annotation: '', description: '' }],
     { dict: d467, config, root: '.', filtersAgent: { mode: 'heuristic' } },

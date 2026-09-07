@@ -1070,6 +1070,24 @@ function publicExportPayload(out) {
 }
 
 /**
+ * JSON v2 / витрина заказчика: если в пакете есть ответ модели, дамп без ИИ
+ * в файл не примешиваем. Карточки дампа уже с annotation — иначе buildCustomerExport
+ * сериализует весь data_*.json как «готовый» каталог.
+ * Пакет без enriched (CLI: дамп → products_*.json) оставляем как есть.
+ */
+function productsForExport(products) {
+  const list = Array.isArray(products) ? products : [];
+  const ready = list.filter(p => {
+    const e = p?.enriched;
+    if (!e || typeof e !== 'object' || Array.isArray(e)) return false;
+    const specs = e.specs;
+    if (specs && typeof specs === 'object' && !Array.isArray(specs) && Object.keys(specs).length) return true;
+    return Boolean(String(e.description || e.short_description || '').trim());
+  });
+  return ready.length ? ready : list;
+}
+
+/**
  * Выгрузка v2: POST { products, category } → { products, filters, held }.
  * Те же правила, что /api/export: dict → customer; known cat без dict → 422;
  * неизвестная категория → buildV2 без silent-gold по известному разделу.
@@ -1079,10 +1097,11 @@ async function apiExportV2(req, res) {
   let body;
   try { body = JSON.parse(raw); } catch { return json(res, 400, { error: 'Тело запроса не JSON' }); }
 
-  const { products, category, category_id } = body || {};
-  if (!Array.isArray(products) || !products.length) {
+  const { products: rawProducts, category, category_id } = body || {};
+  if (!Array.isArray(rawProducts) || !rawProducts.length) {
     return json(res, 400, { error: 'Не передан список товаров' });
   }
+  const products = productsForExport(rawProducts);
   const catKey = category ?? category_id
     ?? products.find(p => p.category)?.category
     ?? products.find(p => p.category_id)?.category_id;
@@ -1131,10 +1150,11 @@ async function apiExport(req, res) {
   let body;
   try { body = JSON.parse(raw); } catch { return json(res, 400, { error: 'Тело запроса не JSON' }); }
 
-  const { products, category, category_id } = body || {};
-  if (!Array.isArray(products) || !products.length) {
+  const { products: rawProducts, category, category_id } = body || {};
+  if (!Array.isArray(rawProducts) || !rawProducts.length) {
     return json(res, 400, { error: 'Не передан список товаров' });
   }
+  const products = productsForExport(rawProducts);
   const catKey = category ?? category_id
     ?? products.find(p => p.category)?.category
     ?? products.find(p => p.category_id)?.category_id;
@@ -1411,12 +1431,14 @@ async function enrichOne(product, { model, category, provider, onNote = () => {}
   }
   const filled = found.product;
   let sourceUrl = found.source ?? null;
+  const parserUsed = Boolean(found.parser || sourceUrl);
   if (sourceUrl) note(`Исходный текст готов (сеть: ${sourceUrl})`, { step: 'web' });
+  else if (parserUsed) note(`Парсер запускался, своего текста хватает — отправляем в модель`, { step: 'web' });
   else note(`Исходный текст готов, отправляем в модель`, { step: 'model' });
 
   note(`Отправляем в модель ${model}`, { step: 'model' });
   try {
-    const { enriched, iT, oT, cost, costSource, attempts, debug, needs_review, validation_issues, raw_response } = await enrichProduct(filled, {
+    const { enriched, iT, oT, cost, costSource, attempts, debug, needs_review, validation_issues, raw_response, corrected } = await enrichProduct(filled, {
       model, apiKey, schema,
       root: ROOT,
       limiter: limiterFor(`${prov.id}:${model}`),
@@ -1430,20 +1452,25 @@ async function enrichOne(product, { model, category, provider, onNote = () => {}
       systemPrompt: settings.model.system_prompt || '',
       referer: ep.headers['HTTP-Referer'] || 'https://mrmag.ru',
       title: ep.headers['X-Title'] || 'Ogran',
-      onNote: msg => note(msg, { step: /retry|rate limit|обрыв|parse|валидац|расхожден|дамп|проверку|правка/i.test(msg) ? 'retry' : 'model', level: /retry|обрыв|parse|валидац|расхожден|дамп|проверку/i.test(msg) ? 'warn' : 'info' }),
+      onNote: msg => note(msg, { step: /retry|rate limit|обрыв|parse|валидац|расхожден|дамп|проверку|правка|правим/i.test(msg) ? 'retry' : 'model', level: /retry|обрыв|parse|валидац|расхожден|дамп|проверку/i.test(msg) ? 'warn' : 'info' }),
     });
 
-    if (needs_review) {
+    const origin = {
+      ...(sourceUrl ? { source_url: sourceUrl } : {}),
+      ...(parserUsed ? { parser: true } : {}),
+      ...(corrected ? { corrected: true } : {}),
+    };
+
+    if (needs_review && !enriched) {
       note(`needs_review: ${(validation_issues || []).map(i => i.field).join(', ')}`, { step: 'validate', level: 'warn' });
-      // enriched оставляем: статус «на проверку», карточка видна; выгрузка v2 режет needs_review.
-      const preview = enriched ?? debug?.enriched_result ?? null;
+      const preview = debug?.enriched_result ?? null;
       return {
         enriched: preview,
         needs_review: true,
         validation_issues: validation_issues || [],
         schema: schema.slug,
         provider: prov.id,
-        ...(sourceUrl ? { source_url: sourceUrl } : {}),
+        ...origin,
         usage: { prompt_tokens: iT, completion_tokens: oT, cost, cost_source: costSource, attempts },
         detail: {
           product: productMeta,
@@ -1452,7 +1479,7 @@ async function enrichOne(product, { model, category, provider, onNote = () => {}
           model,
           status: 'needs_review',
           validation_issues: validation_issues || [],
-          ...(sourceUrl ? { source_url: sourceUrl } : {}),
+          ...origin,
           usage: { prompt_tokens: iT, completion_tokens: oT, cost, cost_source: costSource, attempts },
           ...detailTrace({
             ...debug,
@@ -1468,7 +1495,7 @@ async function enrichOne(product, { model, category, provider, onNote = () => {}
       enriched,
       schema: schema.slug,
       provider: prov.id,
-      ...(sourceUrl ? { source_url: sourceUrl } : {}),
+      ...origin,
       usage: { prompt_tokens: iT, completion_tokens: oT, cost, cost_source: costSource, attempts },
       detail: {
         product: productMeta,
@@ -1476,7 +1503,7 @@ async function enrichOne(product, { model, category, provider, onNote = () => {}
         provider: prov.id,
         model,
         status: 'ok',
-        ...(sourceUrl ? { source_url: sourceUrl } : {}),
+        ...origin,
         usage: { prompt_tokens: iT, completion_tokens: oT, cost, cost_source: costSource, attempts },
         ...detailTrace(debug, { enriched }),
       },

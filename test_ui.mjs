@@ -670,7 +670,25 @@ t('четыре состояния различаются', () => {
   st.items = [{ name: 'A' }, { name: 'B' }, { name: 'C' }, { name: 'D' }];
   st.quality = [];
   st.results = [ok(), warn(), err(), skip()];
-  assert.deepStrictEqual([0, 1, 2, 3].map(i => api.statusOf(i).cls), ['ok', 'wa', 'er', 'sk']);
+  assert.deepStrictEqual([0, 1, 2, 3].map(i => api.statusOf(i).cls), ['ok', 'ok', 'er', 'sk']);
+});
+t('готово с парсером и правкой видно в списке', () => {
+  st.items = [{ name: 'A' }, { name: 'B' }, { name: 'C' }, { name: 'D' }];
+  st.results = [
+    ok(),
+    { ...ok(), parser: true },
+    { ...ok(), corrected: true },
+    { ...ok(), parser: true, corrected: true, source: 'https://shop.example/card' },
+  ];
+  assert.strictEqual(api.statusOf(0).txt, 'готово');
+  assert.strictEqual(api.statusOf(1).txt, 'готово - парсер');
+  assert.strictEqual(api.statusOf(2).txt, 'готово - исправлен');
+  assert.strictEqual(api.statusOf(3).txt, 'готово - парсер, исправлен');
+  st.results = [{ ...ok(), source: 'https://shop.example/card' }];
+  st.items = [{ name: 'A' }];
+  assert.strictEqual(api.statusOf(0).txt, 'готово - парсер', 'старый прогон с source без флага parser');
+  st.items = [{ name: 'A' }, { name: 'B' }, { name: 'C' }, { name: 'D' }];
+  st.results = [ok(), warn(), err(), skip()];
 });
 t('необработанный товар — «в очереди»', () => {
   st.results = [ok(), null, null, null];
@@ -680,7 +698,8 @@ t('необработанный товар — «в очереди»', () => {
 t('счётчики на фильтрах считают верно', () => {
   api.renderList();
   assert.strictEqual(F('all').textContent, 'Все 4');
-  assert.strictEqual(F('warn').textContent, 'Расхождения 1');
+  assert.strictEqual(F('warn').textContent, 'Расхождения');
+  assert.strictEqual(F('warn').disabled, true);
   assert.strictEqual(F('err').textContent, 'Ошибки 1');
 });
 t('фильтр сужает список и переводит на первую проблему', () => {
@@ -710,7 +729,7 @@ console.log('\nИтоги прогона');
 t('суммы и разбивка по состояниям', () => {
   const s = api.sumRun();
   assert.strictEqual(s.ok, 2, 'успешные считают и товары с расхождениями');
-  assert.strictEqual(s.warn, 1);
+  assert.strictEqual(s.warn, 0);
   assert.strictEqual(s.err, 1);
   assert.strictEqual(s.skip, 1);
   assert.ok(Math.abs(s.tCost - 0.00115) < 1e-9, 'стоимость: ' + s.tCost);
@@ -719,7 +738,7 @@ t('суммы и разбивка по состояниям', () => {
 t('подвал показывает всё нужное', () => {
   api.renderFoot(api.sumRun(), 'за 12.3с');
   const h = G('foot').innerHTML;
-  for (const frag of ['Готово', 'Токены', 'Итого', 'Ошибок', 'Расхождений', 'Пропущено', 'за 12.3с']) {
+  for (const frag of ['Готово', 'Токены', 'Итого', 'Ошибок', 'Пропущено', 'за 12.3с']) {
     assert.ok(h.includes(frag), 'нет фрагмента: ' + frag);
   }
 });
@@ -746,10 +765,10 @@ t('ошибка показана как ошибка', () => {
   api.renderDetail();
   assert.match(G('detail').innerHTML, /errbox/);
 });
-t('расхождения выводятся первым блоком', () => {
+t('карточка с бывшими расхождениями показывается как готовая', () => {
   st.results = [warn()];
   api.renderDetail();
-  assert.match(G('detail').innerHTML, /warnbox/);
+  assert.doesNotMatch(G('detail').innerHTML, /На проверку|Расхождения с текстом источника/);
   assert.strictEqual(G('rtabs').style.display, 'flex');
 });
 t('описание, добранное из сети, показывает источник, а не выдаёт его за свой', () => {
@@ -1024,6 +1043,43 @@ await tAsync('три файла: категории, фасеты диапазо
   assert.ok(row.annotation_html);
   assert.ok('web_info' in row);
   assert.strictEqual(row.description_html, '<p>Холодильник A</p>');
+});
+
+await tAsync('окно — весь дамп, обработали 10 — в JSON v2 только они', async () => {
+  st.categories = [{ slug: 'stiralnye', name: 'Стиральные машины', id: 467, url: 'u' }];
+  st.schemas = { stiralnye: { id: 467, name: 'Стиральные машины' } };
+  const dump = Array.from({ length: 20 }, (_, i) => ({
+    id: 11000 + i, sku: String(11000 + i), name: `Стиральная машина ${i}`,
+    category: 'Стиральные машины',
+    annotation: '<ul><li>Тип: стиральная машина</li></ul>',
+  }));
+  api.setSource(dump);
+  st.runStore.clear();
+  dump.slice(0, 10).forEach(p => {
+    st.runStore.set(String(p.sku), {
+      original: p,
+      enriched: { specs: { цвет: 'белый' }, warnings: [] },
+    });
+  });
+  api.setCnt(CNT('500'));
+  assert.strictEqual(st.items.length, 20, 'окно раскрыто на весь дамп');
+  assert.strictEqual(st.results.filter(r => r?.enriched).length, 10);
+
+  let sent = null;
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (url, opts) => {
+    sent = JSON.parse(opts.body);
+    return customerOk(sent.products.map(p => customerProduct(Number(p.sku || p.id), p.name)));
+  };
+  let files;
+  try { files = await catchFiles(() => api.downloadV2()); }
+  finally { globalThis.fetch = realFetch; }
+
+  assert.strictEqual(sent.products.length, 10, 'необработанный остаток дампа в JSON v2 не идёт');
+  assert.ok(sent.products.every(p => p.enriched && p.enriched.specs), 'на сервер без сырого дампа');
+  assert.strictEqual(JSON.parse(files[2].body).length, 10);
+  api.setSource([]);
+  api.setCnt(CNT('10'));
 });
 
 await tAsync('без прогона выгрузка v2 не зовёт сервер', async () => {

@@ -34,7 +34,7 @@ import path from 'path';
 import {
   RateLimiter, enrichProduct, fetchModelPricing, rpmFor,
   schemaFor, isEnrichable, hydrateFromDump, MISMATCH_POLICY,
-  RUB_PER_USD, RUB_RATE_DATE,
+  RUB_PER_USD, RUB_RATE_DATE, doneStatusLabel,
 } from './lib.js';
 import {
   CATEGORIES, findCategory, crawlCategory, loadFeed,
@@ -297,7 +297,7 @@ async function main() {
     sourceUrl = found.source ?? null;
 
     try {
-      const { enriched, iT, oT, cost, costSource } = await enrichProduct(item, {
+      const { enriched, iT, oT, cost, costSource, corrected } = await enrichProduct(item, {
         model: MODEL, apiKey: API_KEY, limiter, pricing, schema,
         maxRetries: MAX_RETRIES,
         systemPrompt: SYSTEM_PROMPT,
@@ -307,12 +307,15 @@ async function main() {
       totalIn += iT; totalOut += oT; totalCost += cost ?? 0; ok++;
       if (enriched.warnings.length) warned++;
 
+      const parserUsed = Boolean(found.parser || sourceUrl);
       write({
         original: item,          // то, что реально ушло в модель: с добранным текстом
         enriched,
         _meta: {
           model:         MODEL,
           ...(sourceUrl ? { source_url: sourceUrl } : {}),
+          ...(parserUsed ? { parser: true } : {}),
+          ...(corrected ? { corrected: true } : {}),
           input_tokens:  iT,
           output_tokens: oT,
           cost_usd:      cost == null ? null : +cost.toFixed(6),
@@ -323,7 +326,9 @@ async function main() {
       });
 
       const flag = enriched.warnings.length ? ` ⚠${enriched.warnings.length}` : '';
-      console.log(` ✓  in=${String(iT).padStart(4)} out=${String(oT).padStart(4)}  ${cost == null ? '   —   ' : '$' + cost.toFixed(5)}${flag}`);
+      const mark = doneStatusLabel({ parser: parserUsed, corrected });
+      const tag = mark === 'готово' ? '' : `  ${mark}`;
+      console.log(` ✓  in=${String(iT).padStart(4)} out=${String(oT).padStart(4)}  ${cost == null ? '   —   ' : '$' + cost.toFixed(5)}${flag}${tag}`);
     } catch (e) {
       // Неудачные попытки оплачены. Списываем их отдельной строкой, а не в ноль.
       const u = e.usage || { iT: 0, oT: 0, cost: null };

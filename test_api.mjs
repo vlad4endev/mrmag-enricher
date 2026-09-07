@@ -407,7 +407,8 @@ try {
     ]);
     assert.strictEqual(d.products[0].id, 11391);
     assert.strictEqual(d.products[0].name, src.name);
-    assert.match(d.products[0].annotation_html, /ATLANT/);
+    assert.ok(!/Бренд:/i.test(d.products[0].annotation_html), 'бренд не строка характеристик');
+    assert.match(d.products[0].annotation_html, /Тип загрузки/);
     assert.ok(Array.isArray(d.products[0].filters['Высота, см']));
     assert.ok(!d.products[0].description_html.includes('<h1'));
   });
@@ -456,6 +457,17 @@ try {
     assert.ok(keys.includes('Скорость отжима, об/мин'), keys.join(', '));
     assert.ok(keys.includes('Вес, кг'), 'weight facet.enabled → filter');
     assert.ok(!keys.includes('Материал'), 'Материал бака не должен стать filters.Материал');
+  });
+  await t('обогатили часть дампа — в выгрузке только она, не весь data_*.json', async () => {
+    const dump = JSON.parse(fs.readFileSync(path.join(ROOT, 'data_467.json'), 'utf8')).slice(0, 4);
+    const products = dump.map((p, i) => i < 2
+      ? { ...p, sku: String(p.id), enriched: { specs: { цвет: 'белый' }, description: 'Стиральная машина для проверки состава выгрузки.' } }
+      : { ...p, sku: String(p.id), enriched: null });
+    const r = await postExport({ category: 467, products, filters_agent: 'heuristic' });
+    assert.strictEqual(r.status, 200);
+    const d = await r.json();
+    assert.strictEqual(d.products.length, 2, `ожидали 2 обработанных, получили ${d.products.length}`);
+    assert.deepStrictEqual(d.products.map(p => p.id), dump.slice(0, 2).map(p => p.id));
   });
   await t('export-v2 category 467 — тот же customer path, не silent gold', async () => {
     const src = JSON.parse(fs.readFileSync(path.join(ROOT, 'data_467.json'), 'utf8'))

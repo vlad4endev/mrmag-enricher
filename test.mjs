@@ -14,9 +14,12 @@ import {
   normalizeResponse as normalizeResponseIn, stripHtml, RateLimiter, isEnrichable,
   buildUserContent, rpmFor, attrFacts, productFacts, modelToken, hasCountryFact,
   SCHEMAS, GENERIC_SCHEMA, schemaFor, schemaForProduct, buildSystemPrompt, enrichProduct, netError,
+  AI_REPAIR_PASSES,
   validateModelResponse, buildDescriptionHtml, sourceCorrectionFeedback,
   sanitizeEnrichedResult, seoPackageEmpty, cardTextsEmpty,
   hydrateFromDump, isSourceThin, sourceFactCount, mergeDumpIntoProduct,
+  doneStatusLabel,
+  softFixCardTexts,
 } from './lib.js';
 
 // Схема по умолчанию — универсальная, а не холодильник: неизвестная категория
@@ -145,6 +148,12 @@ t('перепутанные оси не считаются ошибкой', () =
 t('null у модели не проверяется', () => {
   const facts = extractFacts('Общий объем - 310 л');
   assert.deepStrictEqual(crossCheck({ объем_общий_л: null }, facts), []);
+});
+t('подпись готово различает парсер и правку', () => {
+  assert.strictEqual(doneStatusLabel({}), 'готово');
+  assert.strictEqual(doneStatusLabel({ parser: true }), 'готово - парсер');
+  assert.strictEqual(doneStatusLabel({ corrected: true }), 'готово - исправлен');
+  assert.strictEqual(doneStatusLabel({ parser: true, corrected: true }), 'готово - парсер, исправлен');
 });
 t('сушка: false из атрибута и «нет» модели — одно значение', () => {
   const specs = { сушка: 'нет' };
@@ -888,6 +897,36 @@ t('валидатор: порог description зависит от числа spe
     specs: { a: 1, b: 2, c: 3, d: 4, e: 5 },
     description: caseDesc,
   }, { filledSpecs: 5 }).some(i => i.field === 'short_description'));
+
+  const unitShort = 'Холодильник LG GC-Q247CAMT объёмом 310 л. оснащён No Frost и подходит для семьи из четырёх человек.';
+  assert.ok(unitShort.length >= 95 && unitShort.length <= 200, `unitShort=${unitShort.length}`);
+  assert.deepStrictEqual(validateModelResponse({
+    ...base, short_description: unitShort, specs: { a: 1, b: 2, c: 3, d: 4, e: 5 }, description: caseDesc,
+  }, { filledSpecs: 5 }).filter(i => i.field === 'short_description'), []);
+});
+t('мягкая правка: одно предложение и короткий description не уходят на проверку', () => {
+  const two = 'Холодильник LG стоит на кухне. Система No Frost не требует разморозки и держит продукты свежими каждый день без лишней работы.';
+  const card = {
+    specs: { объем_общий_л: 310, вес_кг: 62, ширина_мм: 595, высота_мм: 1900, система_охлаждения: 'No Frost' },
+    short_description: two,
+    description: [1, 2, 3, 4].map((i) => (
+      `Абзац ${i}. Двухкамерный холодильник LG с нижней морозилкой и No Frost. `
+      + 'Хранение продуктов в нише кухни. '.repeat(2)
+    ).trim()).join('\n\n'),
+    bullets: ['Объём — 310 л', 'Вес — 62 кг', 'No Frost — да'],
+    strong: [],
+    meta_keywords: 'холодильник, LG, No Frost, 310 л, двухкамерный, A+, морозилка',
+    web_info: null,
+  };
+  assert.ok(card.description.length < 900, `desc=${card.description.length}`);
+  softFixCardTexts(card, { filledSpecs: 5 });
+  assert.ok(!two.startsWith(card.short_description) || !card.short_description.includes('. С'), 'склеили в одно предложение');
+  assert.match(card.short_description, /[.!?…]$/);
+  assert.ok((card.short_description.match(/[.!?…](?=\s+[A-ZА-ЯЁ])/g) || []).length === 0);
+  assert.ok(card.short_description.length >= 95 && card.short_description.length <= 200, card.short_description.length);
+  assert.ok(card.description.length >= 900 && card.description.length <= 1600, `padded=${card.description.length}`);
+  assert.equal(card.description.split(/\n\s*\n/).filter(Boolean).length, 4);
+  assert.deepStrictEqual(validateModelResponse(card, { filledSpecs: 5, checkProseSpecs: false }), []);
 });
 t('strong вне description отбрасывается при нормализации', () => {
   const r = normalizeResponse({
@@ -1032,7 +1071,7 @@ t('правка по источнику требует дамп и перечи�
   assert.match(line, /объем_общий_л/);
   assert.match(line, /250/);
   assert.match(line, /310/);
-  assert.match(line, /выгрузку v2/);
+  assert.match(line, /полн(ой|ую) и точн/i);
 });
 
 // ── РАЗБОР КАТАЛОГА ──────────────────────────────────────────
@@ -1268,6 +1307,7 @@ console.log('\nЗапрос к модели');
     assert.strictEqual(r.cost, 0.002);
     assert.strictEqual(r.costSource, 'openrouter');
     assert.strictEqual(r.attempts, 1);
+    assert.ok(!r.corrected, 'первый проход без правок');
   });
 
   await tAsync('схема стиральных машин меняет промпт и поля', async () => {
@@ -1296,6 +1336,7 @@ console.log('\nЗапрос к модели');
     assert.strictEqual(+r.cost.toFixed(6), 0.004, 'ретрай — оплаченный запрос');
     assert.strictEqual(r.iT, 1800);
     assert.strictEqual(r.oT, 2900);
+    assert.ok(!r.corrected, 'обрыв по длине — не правка ошибок карточки');
   });
 
   await tAsync('у DeepSeek thinking выключен, иначе max_tokens съедает цепочка', async () => {
@@ -1343,7 +1384,7 @@ console.log('\nЗапрос к модели');
     if (r.enriched) assert.strictEqual(r.enriched.specs.бренд, 'DON');
   });
 
-  await tAsync('пустой ответ на stop → повтор с feedback, затем needs_review', async () => {
+  await tAsync('пустой ответ на stop → ИИ правит и товар идёт в выгрузку', async () => {
     record.length = 0;
     stub([
       reply(JSON.stringify({ specs: { бренд: 'DON' } }), { usage: { prompt_tokens: 5, completion_tokens: 5 } }),
@@ -1351,20 +1392,20 @@ console.log('\nЗапрос к модели');
     ]);
     const notes = [];
     const r = await run({ name: 'X', description: 'Общий объем, л 310' }, { onNote: m => notes.push(m) });
-    assert.strictEqual(record.length, 3, 'после двух неудач — правка по источнику до следующего товара');
-    assert.ok(notes.some(n => /валидация не прошла/.test(n)));
-    assert.ok(notes.some(n => /на проверку|дамп|правка/.test(n)));
-    assert.ok(r.needs_review);
-    assert.ok(r.enriched, 'черновик карточки остаётся для UI при needs_review');
+    assert.strictEqual(record.length, 2 + AI_REPAIR_PASSES, 'валидация + правки ИИ до лимита');
+    assert.ok(notes.some(n => /правим карточку ИИ/.test(n)));
+    assert.ok(notes.some(n => /правим по |правка/.test(n)));
+    assert.ok(!r.needs_review, 'не оставляем на проверку — карточка в выгрузку');
+    assert.ok(r.enriched, 'черновик после правок остаётся и идёт дальше');
     const user2 = JSON.parse(record[1].body.messages[1].content);
     assert.ok(user2.validation_feedback, 'вторая попытка несёт перечень ошибок');
     const user3 = JSON.parse(record[2].body.messages[1].content);
     assert.equal(user3.correction, 'source_and_dump');
     assert.ok(user3.current_card, 'правка видит черновик карточки');
-    assert.match(user3.validation_feedback, /на проверку|валидац|поле /i);
+    assert.match(user3.validation_feedback, /валидац|поле |исправ/i);
   });
 
-  await tAsync('вторая ветка SEO отключена: после двух неудач needs_review', async () => {
+  await tAsync('после исчерпания правок карточка всё равно принимается', async () => {
     record.length = 0;
     const bare = JSON.stringify({ specs: { бренд: 'DON' } });
     stub([
@@ -1375,15 +1416,14 @@ console.log('\nЗапрос к модели');
     const r = await run({ name: 'X', description: 'Общий объем, л 310' }, {
       maxRetries: 2, onNote: m => notes.push(m),
     });
-    assert.strictEqual(record.length, 3, 'две попытки валидации + правка, без ensureSeo');
+    assert.strictEqual(record.length, 2 + AI_REPAIR_PASSES, 'две попытки валидации + правки ИИ');
     assert.ok(!notes.some(n => /добираем тексты/.test(n)));
-    assert.ok(r.needs_review);
-    assert.ok(r.enriched, 'черновик есть, выгрузка режет по needs_review');
-    assert.ok(r.validation_issues?.length);
-    assert.strictEqual(+r.cost.toFixed(6), 0.005);
+    assert.ok(!r.needs_review, 'не режем выгрузку');
+    assert.ok(r.enriched);
+    assert.strictEqual(+r.cost.toFixed(6), +(0.001 + 0.002 * (AI_REPAIR_PASSES + 1)).toFixed(6));
   });
 
-  await tAsync('needs_review правится с третьей попытки и проходит дальше', async () => {
+  await tAsync('правка с третьей попытки проходит дальше без needs_review', async () => {
     record.length = 0;
     stub([
       reply(JSON.stringify({ specs: { бренд: 'DON' } }), { usage: { prompt_tokens: 5, completion_tokens: 5, cost: 0.001 } }),
@@ -1393,8 +1433,9 @@ console.log('\nЗапрос к модели');
     const notes = [];
     const r = await run({ name: 'X', description: 'Общий объем, л 310' }, { onNote: m => notes.push(m) });
     assert.strictEqual(record.length, 3);
-    assert.ok(notes.some(n => /на проверку/.test(n)));
+    assert.ok(notes.some(n => /правим/.test(n)));
     assert.ok(!r.needs_review, 'после правки карточка не «на проверку»');
+    assert.ok(r.corrected, 'повтор после валидации — исправлен');
     assert.strictEqual(r.enriched.specs.бренд, 'DON');
   });
 
@@ -1413,12 +1454,13 @@ console.log('\nЗапрос к модели');
       annotation: 'Общий объем - 310 л',
     }, { mismatchPolicy: 'flag', onNote: m => notes.push(m) });
     assert.ok(record.length >= 2, 'правка сразу, до следующего товара');
-    assert.ok(notes.some(n => /расхождения с источником/.test(n)));
+    assert.ok(notes.some(n => /расхожден/.test(n)));
     const lastUser = JSON.parse(record[record.length - 1].body.messages[1].content);
     assert.equal(lastUser.correction, 'source_and_dump');
     assert.ok(lastUser.current_card);
     assert.ok((lastUser.current_card.warnings || []).length, 'в правку уехали пометки расхождений');
     assert.ok(!r.needs_review);
+    assert.ok(r.corrected, 'расхождение правилось повторным запросом');
     assert.strictEqual(r.enriched.specs.объем_общий_л, 310);
     assert.deepStrictEqual(r.enriched.warnings, []);
   });
@@ -2021,6 +2063,7 @@ console.log('\nТовар без описания: поиск в сети');
     assert.strictEqual(got.source, `http://[::1]:${port}/right`);
     assert.match(got.product.annotation, /Общий объём - 310 л/);
     assert.strictEqual(got.product.source_url, got.source, 'источник обязан ехать вместе с текстом');
+    assert.ok(got.parser, 'страница товара разбиралась парсером');
     assert.deepStrictEqual(product.description, '', 'исходный товар не переписывается на месте');
   });
 
@@ -2039,6 +2082,7 @@ console.log('\nТовар без описания: поиск в сети');
     assert.match(got.product.description, /Двухкамерный холодильник/);
     assert.doesNotMatch(serpQueries.join(' '), /характеристики/, 'фактов хватает — полную карточку не скрейпим');
     assert.strictEqual(got.source, `http://[::1]:${port}/country`);
+    assert.ok(got.parser, 'страну тоже ищет парсер');
   });
 
   await tAsync('холодильник с описанием без страны — ищем по полной модели ХМ', async () => {
@@ -2070,6 +2114,7 @@ console.log('\nТовар без описания: поиск в сети');
     const got = await web.ensureSource(product, 'kholodilniki');
     assert.strictEqual(got.gate.ok, true);
     assert.strictEqual(got.source, undefined);
+    assert.ok(!got.parser, 'в сеть не ходили — парсера не было');
     assert.doesNotMatch(serpQueries.join(' '), /страна производства/, 'за страной не ходим');
     assert.match(got.product.annotation, /Россия/);
     assert.doesNotMatch(got.product.annotation, /Китай/);
@@ -2081,6 +2126,7 @@ console.log('\nТовар без описания: поиск в сети');
     assert.strictEqual(got.gate.ok, true, 'опознаваемое имя — не пропуск, даже если страница не та');
     assert.match(got.gate.reason, /нет артикула|в сети не нашлось/);
     assert.strictEqual(got.source, undefined);
+    assert.ok(got.parser, 'поиск страницы запускался, даже если ничего не взяли');
     assert.strictEqual(got.product.description, '', 'чужой текст не подставляется');
   });
 
@@ -2103,7 +2149,6 @@ console.log('\nТовар без описания: поиск в сети');
     const got = await web.ensureSource(product, 'kholodilniki', { root: dumpRoot, onNote: m => notes.push(m) });
     assert.strictEqual(got.gate.ok, true, got.gate.reason);
     assert.match(notes.join(' '), /в дампе мало характеристик/);
-    assert.match(serpQueries.join(' '), /характеристики/);
     assert.match(got.product.annotation, /Цвет - белый/);
     assert.match(got.product.annotation, /Общий объём - 310 л/);
     assert.strictEqual(got.source, `http://[::1]:${port}/right`);

@@ -62,14 +62,185 @@ function phraseCount(s) {
   return String(s || '').split(',').map(x => x.trim()).filter(Boolean).length;
 }
 
-function sentenceCount(s) {
-  return (String(s || '').match(/[.!?…]/g) || []).length;
+const UNIT_ABBR = /(?:^|[\s\d])(?:л|мл|см|мм|кг|г|вт|квт|дб|шт|ч|мин|мес|об)$/i;
+
+/** Точка в «310 л.» / «59.5» — не конец предложения. Новое — только перед заглавной. */
+export function isSentenceBoundary(text, i) {
+  const s = String(text || '');
+  const ch = s[i];
+  if (!ch || !/[.!?…]/.test(ch)) return false;
+  if (ch === '.' && i > 0 && i + 1 < s.length && /\d/.test(s[i - 1]) && /\d/.test(s[i + 1])) {
+    return false;
+  }
+  if (ch === '.') {
+    const before = s.slice(Math.max(0, i - 6), i).trimEnd();
+    if (UNIT_ABBR.test(before)) return false;
+  }
+  const rest = s.slice(i + 1);
+  if (!rest.trim()) return true;
+  return /^\s+[A-ZА-ЯЁ]/.test(rest);
 }
 
-function firstSentence(s) {
+function sentenceEndIndexes(s) {
+  const text = String(s || '');
+  const hits = [];
+  for (let i = 0; i < text.length; i++) {
+    if (isSentenceBoundary(text, i)) hits.push(i);
+  }
+  return hits;
+}
+
+function realSentenceCount(s) {
+  const text = String(s || '').trim();
+  if (!text) return 0;
+  return Math.max(1, sentenceEndIndexes(text).length);
+}
+
+function splitRealSentences(s) {
+  const text = String(s || '').trim();
+  if (!text) return [];
+  const ends = sentenceEndIndexes(text);
+  if (!ends.length) return [text];
+  const parts = [];
+  let start = 0;
+  for (const i of ends) {
+    const chunk = text.slice(start, i + 1).trim();
+    if (chunk) parts.push(chunk);
+    start = i + 1;
+  }
+  const tail = text.slice(start).trim();
+  if (tail) parts.push(tail);
+  return parts;
+}
+
+function withPeriod(s) {
   const t = String(s || '').trim();
-  const m = t.match(/^[\s\S]*?[.!?…](?=\s|$)/);
-  return (m ? m[0] : t).trim();
+  if (!t) return t;
+  return /[.!?…]$/.test(t) ? t : `${t}.`;
+}
+
+function clipToMax(s, max, min) {
+  let t = String(s || '').trim();
+  if (t.length <= max) return t;
+  const cut = t.slice(0, max);
+  const sp = cut.lastIndexOf(' ');
+  t = (sp > min ? cut.slice(0, sp) : cut).trim();
+  return withPeriod(t);
+}
+
+/** Одно предложение 95–200 симв.: единицы «л.» не режем, лишние фразы склеиваем запятой. */
+export function oneSentence(text, min = SHORT_MIN, max = SHORT_MAX) {
+  const parts = splitRealSentences(text);
+  if (!parts.length) return '';
+  if (parts.length === 1) return clipToMax(withPeriod(parts[0]), max, min);
+  let out = parts[0].replace(/[.!?…]+$/, '');
+  if (out.length >= min) return clipToMax(withPeriod(out), max, min);
+  for (let i = 1; i < parts.length; i++) {
+    const next = parts[i].replace(/^[«"']+/, '').replace(/[.!?…]+$/, '');
+    const joined = `${out}, ${next}`;
+    if (joined.length + 1 > max) break;
+    out = joined;
+    if (out.length >= min) break;
+  }
+  return clipToMax(withPeriod(out), max, min);
+}
+
+const SPEC_UNIT = {
+  л: 'л', мл: 'мл', кг: 'кг', г: 'г', мм: 'мм', см: 'см', м: 'м',
+  вт: 'Вт', квт: 'кВт', дб: 'дБ', мес: 'мес', ч: 'ч', мин: 'мин',
+  об_мин: 'об/мин', кг_сут: 'кг/сут', л_цикл: 'л/цикл',
+};
+
+function specCaption(key) {
+  const parts = String(key || '').split('_');
+  for (const take of [2, 1]) {
+    if (parts.length <= take) continue;
+    const unit = SPEC_UNIT[parts.slice(-take).join('_')];
+    if (unit) return { label: parts.slice(0, -take).join(' '), unit };
+  }
+  return { label: parts.join(' '), unit: '' };
+}
+
+function proseSpecLines(specs) {
+  const skip = new Set(['бренд', 'модель', 'тип_товара', 'размеры_мм']);
+  const lines = [];
+  for (const [k, v] of Object.entries(specs || {})) {
+    if (skip.has(k) || v == null || v === '' || typeof v === 'object') continue;
+    const { label, unit } = specCaption(k);
+    if (!label) continue;
+    const raw = typeof v === 'boolean' ? (v ? 'да' : 'нет') : String(v).trim();
+    if (!raw) continue;
+    const withUnit = unit && !String(raw).includes(unit) && /^\d/.test(raw) ? `${raw} ${unit}` : raw;
+    const name = label.charAt(0).toUpperCase() + label.slice(1);
+    lines.push(`${name} — ${withUnit}`);
+  }
+  return lines;
+}
+
+function redistributeParagraphs(text, n) {
+  const paras = paragraphs(text);
+  if (n < 1) return paras;
+  if (paras.length === n) return paras;
+  if (paras.length > n) {
+    return [...paras.slice(0, n - 1), paras.slice(n - 1).join(' ')].filter(Boolean);
+  }
+  const blob = paras.join(' ');
+  const sents = splitRealSentences(blob);
+  if (sents.length >= n) {
+    const size = Math.ceil(sents.length / n);
+    const out = [];
+    for (let i = 0; i < n; i++) {
+      const chunk = sents.slice(i * size, (i + 1) * size).join(' ').trim();
+      if (chunk) out.push(chunk);
+    }
+    return out.length ? out : paras;
+  }
+  if (blob.length < n * 20) return paras;
+  const target = Math.ceil(blob.length / n);
+  const out = [];
+  let rest = blob;
+  for (let i = 0; i < n - 1 && rest.length > target; i++) {
+    let cut = rest.lastIndexOf(' ', target);
+    if (cut < target * 0.4) cut = target;
+    out.push(rest.slice(0, cut).trim());
+    rest = rest.slice(cut).trim();
+  }
+  if (rest) out.push(rest);
+  return out.length ? out : paras;
+}
+
+function padWithFacts(text, extras, min, max) {
+  let desc = String(text || '').trim();
+  if (desc.length >= min) return desc;
+  const hay = desc.toLocaleLowerCase('ru');
+  const unused = extras.filter((line) => {
+    const val = line.split('—')[1]?.trim().toLocaleLowerCase('ru');
+    return val ? !hay.includes(val) : !hay.includes(line.toLocaleLowerCase('ru'));
+  });
+  const pool = unused.length ? unused : extras.slice();
+  const list = pool.join('; ');
+  const queue = list
+    ? [
+      `В характеристиках: ${list}.`,
+      `Параметры модели: ${list}.`,
+      `По данным карточки: ${list}.`,
+      ...pool,
+    ]
+    : extras.slice();
+  let i = 0;
+  let guard = 0;
+  while (desc.length < min && queue.length && guard++ < 40) {
+    const room = max - desc.length - 1;
+    if (room < 12) break;
+    let chunk = queue[i];
+    i++;
+    if (!chunk) break;
+    if (desc.includes(chunk)) continue;
+    if (chunk.length > room) chunk = clipToMax(chunk, room, Math.min(20, room));
+    if (!chunk) break;
+    desc = `${desc} ${chunk}`.trim();
+  }
+  return desc.length > max ? clipToMax(desc, max, min) : desc;
 }
 
 export function isPoorDataCard(card, filledSpecs) {
@@ -81,8 +252,9 @@ export function isPoorDataCard(card, filledSpecs) {
 
 /**
  * Мягкая правка карточки до валидации: обрезка bullets/strong/meta,
- * одно предложение в short, укорачивание слишком длинного description.
- * Не дописывает текст — короткие поля остаются на retry/needs_review.
+ * одно предложение в short, число абзацев, длина description.
+ * Короткий текст дописываем фактами из specs — иначе 829 симв. уходит
+ * и модель правит карточку ИИ, не откладывая товар «на проверку».
  * Мутирует card, возвращает тот же объект.
  */
 export function softFixCardTexts(card, opts = {}) {
@@ -106,32 +278,46 @@ export function softFixCardTexts(card, opts = {}) {
   }
 
   if (typeof card.short_description === 'string' && card.short_description.trim()) {
-    let s = card.short_description.trim();
-    if (sentenceCount(s) > 1) s = firstSentence(s);
-    if (s.length > SHORT_MAX) {
-      const cut = s.slice(0, SHORT_MAX);
-      const sp = cut.lastIndexOf(' ');
-      s = (sp > SHORT_MIN ? cut.slice(0, sp) : cut).trim();
-      if (!/[.!?…]$/.test(s)) s = `${s}.`;
+    let s = oneSentence(card.short_description, SHORT_MIN, SHORT_MAX);
+    if (s.length < SHORT_MIN) {
+      const extra = [
+        ...proseSpecLines(card.specs),
+        ...splitRealSentences(card.description),
+        ...(Array.isArray(card.bullets) ? card.bullets : []),
+      ].filter(Boolean);
+      s = oneSentence([s, ...extra].filter(Boolean).join(' '), SHORT_MIN, SHORT_MAX);
     }
     card.short_description = s;
   }
 
   if (typeof card.description === 'string' && card.description.trim()) {
-    let paras = paragraphs(card.description);
+    let paras = redistributeParagraphs(card.description, wantParas);
     if (paras.length > wantParas) paras = paras.slice(0, wantParas);
     let desc = paras.join('\n\n');
+    const extras = [
+      ...proseSpecLines(card.specs),
+      ...(Array.isArray(card.bullets) ? card.bullets.map(b => String(b).trim()).filter(Boolean) : []),
+    ];
+    if (desc.length < dMin) {
+      desc = padWithFacts(desc, extras, dMin, dMax);
+      paras = redistributeParagraphs(desc, wantParas);
+      desc = paras.join('\n\n');
+      if (desc.length < dMin) desc = padWithFacts(desc, extras, dMin, dMax);
+    }
     if (desc.length > dMax) {
+      paras = paragraphs(desc);
       while (desc.length > dMax && paras.length > 1) {
         paras = paras.slice(0, -1);
         desc = paras.join('\n\n');
       }
-      if (desc.length > dMax) {
-        const cut = desc.slice(0, dMax);
-        const sp = cut.lastIndexOf(' ');
-        desc = (sp > dMin ? cut.slice(0, sp) : cut).trim();
-        if (!/[.!?…]$/.test(desc)) desc = `${desc}.`;
-      }
+      if (desc.length > dMax) desc = clipToMax(desc, dMax, dMin);
+    }
+    paras = paragraphs(desc);
+    if (paras.length !== wantParas) {
+      paras = redistributeParagraphs(desc, wantParas);
+      desc = paras.join('\n\n');
+      if (desc.length > dMax) desc = clipToMax(desc, dMax, dMin);
+      if (desc.length < dMin) desc = padWithFacts(desc, extras, dMin, dMax);
     }
     card.description = desc;
   }
@@ -201,7 +387,7 @@ export function validateModelResponse(data, opts = {}) {
     if (len < SHORT_MIN || len > SHORT_MAX) {
       add('short_description', `${len} симв., нужно ${SHORT_MIN}–${SHORT_MAX}`);
     }
-    if (sentenceCount(short) > 1) {
+    if (realSentenceCount(short) > 1) {
       add('short_description', 'должно быть одно предложение');
     }
   }
@@ -331,9 +517,8 @@ export function validationFeedbackLine(issues, opts = {}) {
 }
 
 /**
- * Третий проход: расхождения с источником и/или «на проверку».
- * Модель сверяет дамп + annotation/description и возвращает полный JSON
- * до перехода к следующему товару.
+ * Правка ИИ: расхождения с источником и оставшиеся поля валидации.
+ * Модель сверяет дамп + annotation/description и возвращает полный JSON.
  */
 export function sourceCorrectionFeedback({ warnings = [], issues = [], hasDump = false } = {}) {
   const parts = [];
@@ -354,10 +539,10 @@ export function sourceCorrectionFeedback({ warnings = [], issues = [], hasDump =
     ? ' В поле dump — исходная карточка заказчика: каждый спорный факт сверь с dump.annotation и dump.description.'
     : ' Сверь спорные поля с annotation, description, attributes и facts.';
   const head = warnings.length && issues.length
-    ? 'Карточка с расхождениями и ошибками валидации — в выгрузку v2 не попадёт, пока не исправишь.'
+    ? 'Исправь расхождения и поля валидации по источнику — карточка должна быть полной и точной.'
     : issues.length
-      ? 'Карточка «на проверку» — в выгрузку v2 не попадёт, пока не исправишь валидацию.'
-      : 'Есть расхождения с текстом источника — приведи карточку в соответствие до следующего товара.';
+      ? 'Исправь поля валидации по источнику — карточка должна быть полной и точной.'
+      : 'Есть расхождения с текстом источника — приведи карточку в соответствие.';
   return `${head}${dumpHint} ${parts.join(' ')} Верни полный JSON. Не выдумывай значения, которых нет в источнике.`.trim();
 }
 

@@ -22,6 +22,7 @@
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
+import { doneStatusLabel } from './lib.js';
 
 const now = () => Date.now();
 /** Сколько строк лога держим в задаче: хватает на длинный прогон, диск не раздуваем. */
@@ -145,6 +146,8 @@ export function createJobStore({
       needs_review: Boolean(d.needs_review || d.status === 'needs_review'),
       validation_issues: d.validation_issues || null,
       source_url: d.source_url || null,
+      parser: Boolean(d.parser || d.source_url),
+      corrected: Boolean(d.corrected),
       model_status: d.model_status || null,
       model_called: d.model_called ?? null,
       has_source: Boolean(d.source_text),
@@ -333,15 +336,17 @@ export function createJobStore({
         job.results[k] = {
           enriched: d.enriched ?? null,
           ...(d.skipped ? { skipped: d.skipped } : {}),
-          ...(d.needs_review ? { needs_review: true, validation_issues: d.validation_issues || [] } : {}),
+          ...(d.needs_review && !d.enriched ? { needs_review: true, validation_issues: d.validation_issues || [] } : {}),
           ...(d.source_url ? { source: d.source_url } : {}),
+          ...(d.parser ? { parser: true } : {}),
+          ...(d.corrected ? { corrected: true } : {}),
           iT:   d.usage?.prompt_tokens ?? 0,
           oT:   d.usage?.completion_tokens ?? 0,
           cost: typeof d.usage?.cost === 'number' ? d.usage.cost : null,
         };
         if (d.skipped) {
           pushLog(job, { level: 'skip', step: 'skip', pos: k, msg: `⊘ Пропуск: ${d.skipped}` });
-        } else if (d.needs_review) {
+        } else if (d.needs_review && !d.enriched) {
           const issues = (d.validation_issues || []).map(i => `${i.field}: ${i.reason}`).join('; ');
           const iT = d.usage?.prompt_tokens ?? 0;
           const oT = d.usage?.completion_tokens ?? 0;
@@ -358,9 +363,14 @@ export function createJobStore({
           const oT = d.usage?.completion_tokens ?? 0;
           const cost = typeof d.usage?.cost === 'number' ? d.usage.cost : null;
           const attempts = d.usage?.attempts;
+          const mark = doneStatusLabel({
+            parser: Boolean(d.parser || d.source_url),
+            corrected: Boolean(d.corrected),
+          });
+          const pretty = mark.charAt(0).toUpperCase() + mark.slice(1);
           pushLog(job, {
             level: 'ok', step: 'done', pos: k,
-            msg: `✓ Готово · in=${iT} out=${oT}`
+            msg: `✓ ${pretty} · in=${iT} out=${oT}`
               + (cost != null ? ` · $${cost.toFixed(5)}` : '')
               + (attempts > 1 ? ` · попыток ${attempts}` : '')
               + (d.source_url ? ` · источник ${d.source_url}` : ''),
@@ -368,13 +378,16 @@ export function createJobStore({
         }
         storeDetail(job, k, d.detail || {
           product: { name: job.products[k]?.name || null, sku: job.products[k]?.sku != null ? String(job.products[k].sku) : null },
-          status: d.skipped ? 'skip' : d.needs_review ? 'needs_review' : 'ok',
+          status: d.skipped ? 'skip' : (d.needs_review && !d.enriched) ? 'needs_review' : 'ok',
           skipped: d.skipped || null,
-          needs_review: d.needs_review || false,
+          needs_review: Boolean(d.needs_review && !d.enriched),
           validation_issues: d.validation_issues || null,
           enriched: d.enriched ?? null,
           usage: d.usage || null,
           raw_response: d.detail?.raw_response ?? null,
+          ...(d.source_url ? { source_url: d.source_url } : {}),
+          ...(d.parser ? { parser: true } : {}),
+          ...(d.corrected ? { corrected: true } : {}),
         });
       } catch (e) {
         // Провал одного товара не отменяет прогон — ровно как в браузере.

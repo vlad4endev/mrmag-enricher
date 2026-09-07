@@ -21,6 +21,7 @@ class El {
   constructor(id, cls) {
     this.id = id; this._cls = new Set(cls ? cls.split(' ') : []);
     this.style = {}; this._txt = ''; this._html = '';
+    this.value = '';
     this.dataset = {}; this.disabled = false; this.children = []; this.parent = null;
     this.classList = {
       add: c => this._cls.add(c),
@@ -148,6 +149,7 @@ export const api={syncSteps,setCnt,setCntFree,applyCnt,applySource,setSource,pic
   loadFile,classifyPayload,normalizeCatalogProduct,catIdFromFilename,catNameFromId,
   productsFromPayload,isFiltersPayload,filtersForExport,
   showPage,setTab,renderSettings,addProvider,removeProvider,addEngine,readSettingsPatch,
+  renderExportTemplates,applyExportTemplate,shapeProductsFile,shapeFiltersFile,exportPack,
   modelsFromSettings,pickDefaultModel,applyDefaultProviderModels,looksLikeModelId,catalogHint,
   addDumpSection,openDumpDest,cancelDumpDest,dumpBodyWithName};
 export const st={get items(){return items},set items(v){items=v},
@@ -330,12 +332,12 @@ t('1 / 2 / 5 / 11 / 21 / 104', () => {
 });
 
 console.log('\nОценка стоимости — для загруженного количества');
-t('показывает и всего, и за штуку, и допущение', () => {
+t('показывает итог и допущение', () => {
   st.items = [{ name: 'A' }, { name: 'B' }, { name: 'C' }];
   api.renderEstimate();
   const h = G('est').innerHTML;
   assert.match(h, /За 3 товара/);
-  assert.match(h, /За один товар/);
+  assert.doesNotMatch(h, /За один товар/);
   assert.match(h, /1200↑ 700↓/, 'допущение о токенах должно быть подписано');
   assert.match(h, /Курс 80/);
 });
@@ -434,6 +436,8 @@ t('собирает условия с формы в PATCH', () => {
   assert.strictEqual(patch.conditions.mismatch_policy, 'strict');
   assert.strictEqual(patch.conditions.min_attrs, 7);
   assert.ok(patch.providers.some(p => p.id === 'openrouter'));
+  assert.ok(patch.export_templates);
+  assert.equal(patch.export_templates.two.products, null, 'встроенный шаблон в PATCH не уезжает');
 });
 t('переключает разделы настроек', () => {
   api.setTab('parse');
@@ -458,6 +462,10 @@ t('переключает разделы настроек', () => {
   assert.strictEqual(wrapped.products[0].id, 1);
   api.cancelDumpDest();
   assert.strictEqual(dest.hidden, true);
+  api.setTab('prov');
+  api.setTab('export');
+  assert.ok(G('setExport').classList.contains('on'));
+  assert.ok(foot && foot.style.display !== 'none', 'на Выгрузке есть кнопка Сохранить');
   api.setTab('prov');
 });
 
@@ -1145,7 +1153,7 @@ t('после прогона строка и заливка гаснут', () =>
 t('в списке у активного товара своя разметка', () => {
   st.running = true; st.runIdx = 1;
   api.renderList();
-  assert.match(G('midList').innerHTML, /class="ri s-run/, 'нужен класс s-run для подсветки');
+  assert.match(G('midList').innerHTML, /og-beam[\s\S]*class="row"[\s\S]*class="ri s-run/, 'активный товар в радар-обводке');
   st.running = false; st.runIdx = -1;
 });
 

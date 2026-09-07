@@ -2,6 +2,42 @@
   "category_id": 523,
   "filters": [
     {
+      "code": "chambers",
+      "name": "Количество камер",
+      "status": "filter",
+      "type": "int_enum",
+      "round": "nearest",
+      "values": [1, 2, 3, 4]
+    },
+    {
+      "code": "noise",
+      "name": "Уровень шума, дБ",
+      "status": "filter",
+      "type": "range",
+      "bound_rule": "left_closed",
+      "open_last": false,
+      "buckets": [
+        {"label": "35-40", "min": 35, "max": 40},
+        {"label": "40-45", "min": 40, "max": 45},
+        {"label": "45-50", "min": 45, "max": 50}
+      ]
+    },
+    {
+      "code": "depth",
+      "name": "Глубина, см",
+      "status": "filter",
+      "type": "range",
+      "bound_rule": "left_closed",
+      "open_last": false,
+      "buckets": [
+        {"label": "45-50", "min": 45, "max": 50},
+        {"label": "50-55", "min": 50, "max": 55},
+        {"label": "55-60", "min": 55, "max": 60},
+        {"label": "60-65", "min": 60, "max": 65},
+        {"label": "65-70", "min": 65, "max": 70}
+      ]
+    },
+    {
       "code": "dims",
       "name": "Габариты (ШхВхГ)",
       "status": "not_a_filter",

@@ -15,13 +15,11 @@
       "status": "filter",
       "type": "range",
       "bound_rule": "left_closed",
-      "open_last": true,
+      "open_last": false,
       "buckets": [
-        {"label": "до 10", "min": null, "max": 10},
         {"label": "10-15", "min": 10, "max": 15},
         {"label": "15-20", "min": 15, "max": 20},
-        {"label": "20-25", "min": 20, "max": 25},
-        {"label": "25+", "min": 25, "max": null}
+        {"label": "20-25", "min": 20, "max": 25}
       ]
     },
     {
@@ -39,6 +37,66 @@
       ]
     },
     {
+      "code": "noise_wash",
+      "name": "Уровень шума, дБ",
+      "status": "filter",
+      "type": "range",
+      "bound_rule": "left_closed",
+      "open_last": false,
+      "buckets": [
+        {"label": "45-50", "min": 45, "max": 50},
+        {"label": "50-55", "min": 50, "max": 55},
+        {"label": "55-60", "min": 55, "max": 60},
+        {"label": "60-65", "min": 60, "max": 65}
+      ]
+    },
+    {
+      "code": "height",
+      "name": "Высота, см",
+      "status": "filter",
+      "type": "range",
+      "bound_rule": "left_closed",
+      "open_last": false,
+      "buckets": [
+        {"label": "70-75", "min": 70, "max": 75},
+        {"label": "75-80", "min": 75, "max": 80},
+        {"label": "80-85", "min": 80, "max": 85},
+        {"label": "85-90", "min": 85, "max": 90}
+      ]
+    },
+    {
+      "code": "width",
+      "name": "Ширина, см",
+      "status": "filter",
+      "type": "range",
+      "bound_rule": "left_closed",
+      "open_last": false,
+      "buckets": [
+        {"label": "40-45", "min": 40, "max": 45},
+        {"label": "45-50", "min": 45, "max": 50},
+        {"label": "50-55", "min": 50, "max": 55},
+        {"label": "55-60", "min": 55, "max": 60},
+        {"label": "60-65", "min": 60, "max": 65}
+      ]
+    },
+    {
+      "code": "depth",
+      "name": "Глубина, см",
+      "status": "filter",
+      "type": "range",
+      "bound_rule": "left_closed",
+      "open_last": false,
+      "buckets": [
+        {"label": "30-35", "min": 30, "max": 35},
+        {"label": "35-40", "min": 35, "max": 40},
+        {"label": "40-45", "min": 40, "max": 45},
+        {"label": "45-50", "min": 45, "max": 50},
+        {"label": "50-55", "min": 50, "max": 55},
+        {"label": "55-60", "min": 55, "max": 60},
+        {"label": "60-65", "min": 60, "max": 65}
+      ]
+    },
+    {
       "code": "display",
       "name": "Дисплей",
       "status": "filter",
@@ -49,7 +107,7 @@
       "name": "Габариты (ШхГхВ)",
       "status": "not_a_filter",
       "derives": ["height", "width", "depth"],
-      "reason": "Покупатель выбирает по ширине/глубине/высоте отдельно"
+      "reason": "Покупатель выбирает по ширине/глубине/высоте отдельно; в таблице значения «1-100» непригодны как пункты фильтра"
     }
   ]
 }

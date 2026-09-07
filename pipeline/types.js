@@ -419,26 +419,12 @@ export function normalizeValueAliases(attr) {
       if (a === b || drop.has(b)) continue;
       const bList = aliases[b] || [];
       const bFolds = new Set([valueFold(b), ...bList.map(valueFold)].filter(Boolean));
-      // a — синоним b → вливаем a в b
+      // a — синоним b → вливаем a в b.
+      // Не склеиваем по подстроке ключей: иначе A+++ поглотит A/A+/A++,
+      // а Full No Frost — отдельный пункт «No Frost».
       if (bFolds.has(valueFold(a))) {
         drop.add(a);
         aliases[b] = uniqueAliasList([...(aliases[b] || []), a, ...(aliases[a] || []), b]);
-        continue;
-      }
-      // Оба про No Frost / вложенные подписи — оставляем более длинный ключ
-      const fa = valueFold(a);
-      const fb = valueFold(b);
-      if (fa && fb && fa !== fb && (fa.includes(fb) || fb.includes(fa))) {
-        const preferB = b.length >= a.length;
-        const keep = preferB ? b : a;
-        const lose = preferB ? a : b;
-        drop.add(lose);
-        aliases[keep] = uniqueAliasList([
-          ...(aliases[keep] || []),
-          lose,
-          ...(aliases[lose] || []),
-          keep,
-        ]);
       }
     }
   }

@@ -998,14 +998,14 @@ console.log('golden tests passed');
   assert.ok(!('Хладагент' in p.filters), 'хладагент — характеристика, не фильтр');
   assert.ok(!('Вес, кг' in p.filters), 'вес холодильника — характеристика, не фильтр');
   assert.equal(p.filters['Уровень шума, дБ'], '40');
-  assert.equal(p.filters['Система охлаждения'], 'No Frost');
+  assert.equal(p.filters['Система охлаждения'], 'Full No Frost');
   assert.equal(p.filters['Тип управления'], 'Механическое');
-  assert.equal(p.filters['Расположение морозильной камеры'], 'Нижнее');
+  assert.equal(p.filters['Расположение морозильной камеры'], 'Снизу');
   assert.equal(p.filters['Количество камер'], '2', 'камеры — filter при facet.enabled');
   assert.match(p.description_html, /^<h1>Холодильник Pozis RK FNF-172 W<\/h1>/);
   assert.match(p.description_html, /<li>Тип товара: холодильник<\/li>/);
   assert.match(p.description_html, /<li>Общий объем: 344 л<\/li>/);
-  assert.match(p.description_html, /<li>Система охлаждения: No Frost<\/li>/);
+  assert.match(p.description_html, /<li>Система охлаждения: Full No Frost<\/li>/);
   assert.match(p.description_html, /<li>Хладагент: R600a<\/li>/);
   assert.match(p.description_html, /<li>Вес: 74 кг<\/li>/);
   console.log('ok products_v2 shape (260 Pozis)');
@@ -1540,7 +1540,7 @@ console.log('golden tests passed');
     assert.equal(n.ok, false, `junk must not normalize: ${v} → ${JSON.stringify(n)}`);
   }
   assert.equal(normalizeValue(ft, 'Двухкамерный').value, 'Двухкамерный');
-  assert.equal(normalizeValue(ft, 'Трехкамерный (3d)').value, 'Трехкамерный');
+  assert.equal(normalizeValue(ft, 'Трехкамерный (3d)').value, 'Трёхкамерный');
 
   const recs = [
     {
@@ -1696,7 +1696,7 @@ console.log('golden tests passed');
     const dirty = [
       {
         name: 'Система охлаждения',
-        value: ['капельная', 'ручная разморозка', 'No Frost'],
+        value: ['капельная', 'ручная разморозка', 'No Frost', 'Full No Frost', 'Total No Frost'],
       },
       {
         name: 'Размораживание холодильной камеры',
@@ -1725,10 +1725,14 @@ console.log('golden tests passed');
     assert.ok(cool.value.includes('Статическая'));
     assert.ok(cool.value.includes('Капельная'));
     assert.ok(cool.value.includes('No Frost'));
+    assert.ok(cool.value.includes('Full No Frost'));
+    assert.ok(!cool.value.includes('Total No Frost'));
     const defrost = cleaned.filters.find(f => f.name === 'Размораживание холодильной камеры');
     assert.deepEqual(defrost.value, ['Автоматическое (No Frost)', 'Капельная система', 'Ручное']);
     const comp = cleaned.filters.find(f => f.name === 'Тип компрессора');
-    assert.deepEqual(comp.value, ['Инверторный', 'Коллекторный']);
+    assert.deepEqual(comp.value, ['Инверторный']);
+    assert.ok(!comp.value.includes('Коллекторный'));
+    assert.ok(!comp.value.includes('Стандартный'));
     const ctrl = cleaned.filters.find(f => f.name === 'Тип управления');
     assert.deepEqual(ctrl.value, ['Механическое', 'Сенсорное', 'Электронное']);
     const color = cleaned.filters.find(f => f.name === 'Цвет корпуса');
@@ -1919,11 +1923,11 @@ console.log('golden tests passed');
   assert.equal(toIntEnum(7, loadFacet), '7');
 
   const progFacet = d467.byCode.get('programs_qty').facet;
-  assert.equal(matchBucket(3, progFacet), 'до 10');
+  assert.equal(matchBucket(3, progFacet), null);
   assert.equal(matchBucket(16, progFacet), '15-20');
   assert.equal(matchBucket(15, progFacet), '15-20');
   assert.equal(matchBucket(10, progFacet), '10-15');
-  assert.equal(matchBucket(90, progFacet), '25+');
+  assert.equal(matchBucket(90, progFacet), null);
 
   assert.equal(d467.byCode.get('dims').facet.status, 'not_a_filter');
   assert.equal(d467.byCode.get('dims').facet.enabled, false);
@@ -1933,8 +1937,25 @@ console.log('golden tests passed');
   assert.ok(!Object.keys(motor.value_aliases).includes('Стандартный'));
   assert.equal(aliasValue(motor, 'стандартный'), 'Коллекторный');
   assert.equal(aliasValue(d467.byCode.get('control_type'), 'поворотный механизм'), 'Механическое');
+  assert.equal(aliasValue(d467.byCode.get('control_type'), 'кнопочное'), null);
+  assert.ok(!Object.keys(d467.byCode.get('control_type').value_aliases).includes('Кнопочное'));
   assert.equal(aliasValue(d467.byCode.get('install'), 'отдельно стоящая'), 'Отдельностоящая');
   assert.equal(aliasValue(d523.byCode.get('cooling'), 'ручная разморозка'), 'Статическая');
+  assert.equal(aliasValue(d523.byCode.get('cooling'), 'full no frost'), 'Full No Frost');
+  assert.equal(aliasValue(d523.byCode.get('cooling'), 'No Frost'), 'No Frost');
+  assert.equal(aliasValue(d523.byCode.get('compressor_type'), 'линейный'), 'Линейный');
+  assert.ok(!Object.keys(d523.byCode.get('compressor_type').value_aliases).includes('Коллекторный'));
+  assert.equal(aliasValue(d467.byCode.get('color'), 'антрацит'), 'Серый');
+  assert.equal(aliasValue(d467.byCode.get('color'), 'инокс'), 'Серебристый');
+  assert.ok(!Object.keys(d467.byCode.get('color').value_aliases).includes('Антрацит'));
+  assert.equal(aliasValue(d523.byCode.get('fridge_type'), 'Трехкамерный'), 'Трёхкамерный');
+  assert.equal(aliasValue(d523.byCode.get('freezer_pos'), 'Верхнее'), 'Сверху');
+  assert.ok(!Object.keys(d523.byCode.get('freezer_pos').value_aliases).includes('Сбоку'));
+  assert.equal(matchBucket(92, d467.byCode.get('height').facet), null);
+  assert.equal(matchBucket(72, d523.byCode.get('depth').facet), null);
+  assert.ok(Object.keys(d467.byCode.get('energy_class').value_aliases).includes('C'));
+  assert.ok(!Object.keys(d467.byCode.get('energy_class').value_aliases).includes('D'));
+  assert.ok(!Object.keys(d523.byCode.get('energy_class').value_aliases).includes('E'));
 
   assert.equal(coerceFacetNumber(850, d467.byCode.get('height')), 85);
   assert.equal(coerceFacetNumber(60, d467.byCode.get('height')), 60);
@@ -1986,6 +2007,16 @@ console.log('golden tests passed');
   assert.ok(report.filters.every(f => Array.isArray(f.unmapped_values)));
   const ctrl = report.filters.find(f => f.name === 'Тип управления');
   assert.deepEqual(ctrl.unmapped_values, [{ value: 'поворотный механизм', count: 4 }]);
+
+  const { buildCustomerExport: bce2 } = await import('./pipeline/export.js');
+  const mixed = await bce2([
+    { id: 11391, name: 'Стиральная машина ATLANT 60С1010', annotation: p467[11391].annotation, description: p467[11391].description },
+    { id: 455270, name: 'Сушильная машина Pioneer DM-10701WH', annotation: '<p>Бренд: Pioneer<br/>Загрузка: 7 кг</p>' },
+  ], { dict: d467, config, root: '.', filtersAgent: { mode: 'heuristic' } });
+  const brandFacet = mixed.filters.find(f => f.name === 'Бренд');
+  assert.ok(brandFacet);
+  assert.ok(!brandFacet.value.includes('Pioneer'), 'dryer must not add Pioneer to washer catalog');
+  assert.ok(mixed.coverage.category_mismatch.includes(455270));
   console.log('ok filter spec overlays / S3→filters / mismatch / coverage');
 }
 

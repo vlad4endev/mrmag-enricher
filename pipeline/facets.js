@@ -198,6 +198,7 @@ function rangeLo(value, facet) {
 export function bucketLabel(value, facet, { isLast = false } = {}) {
   const fromSpec = matchBucket(value, facet);
   if (fromSpec) return fromSpec;
+  if (hasExplicitBuckets(facet) || hasBreaks(facet)) return null;
   if (facet.kind !== 'range') return String(value);
   const step = facet.step;
   if (!(step > 0)) throw new Error(`facet.step обязателен для range (${facet.label})`);
@@ -222,6 +223,16 @@ function numericOf(v) {
 
 function displayValue(attr, v) {
   return formatAttrValue(attr, v, { withUnit: false });
+}
+
+/** Пункты фильтра — только каноны value_aliases, в т.ч. class_scale (A+++…C). */
+function filterAllowedLabels(attr) {
+  const aliases = attr?.value_aliases;
+  if (!aliases || typeof aliases !== 'object') return null;
+  const keys = Object.keys(aliases);
+  if (!keys.length) return null;
+  if (!hasStrictEnum(attr) && attr.type !== 'class_scale') return null;
+  return new Set(keys.map(k => displayValue(attr, k)).filter(Boolean));
 }
 
 /** Значения атрибута как список: multi даёт несколько, single — одно. */
@@ -324,7 +335,8 @@ export function buildFilters(recs, dict, config) {
         counts.set(lab, (counts.get(lab) || 0) + 1);
       }
     } else {
-      const strict = hasStrictEnum(attr);
+      const allowed = filterAllowedLabels(attr);
+      const strict = allowed != null;
       if (!strict && (attr.type === 'enum' || attr.type === 'text')) {
         warnings.push({
           code: attr.code,
@@ -333,9 +345,6 @@ export function buildFilters(recs, dict, config) {
         });
         continue;
       }
-      const allowed = strict
-        ? new Set(Object.keys(attr.value_aliases).map(k => displayValue(attr, k)))
-        : null;
       for (const r of filled) {
         const seen = new Set();
         let any = false;

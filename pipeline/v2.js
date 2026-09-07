@@ -91,10 +91,11 @@ function singularProductType(name) {
 function snapCooling(v) {
   const t = String(v).toLowerCase().replace(/ё/g, 'е');
   if (/без\s*no\s*frost|капельн/.test(t)) return 'Капельная';
-  if (/no\s*frost|ноу\s*фрост|full\s*no|авторазмороз|автоматическ/.test(t)) {
+  if (/(?:full|total)\s*no\s*frost/.test(t)) return 'Full No Frost';
+  if (/no\s*frost|ноу\s*фрост|авторазмороз|автоматическ/.test(t)) {
     return 'No Frost';
   }
-  if (/ручн/.test(t)) return 'Ручная разморозка';
+  if (/ручн|статическ/.test(t)) return 'Статическая';
   return specText(v);
 }
 

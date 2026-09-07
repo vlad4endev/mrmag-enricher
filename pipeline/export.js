@@ -376,7 +376,9 @@ export async function buildCustomerExport(products, {
     ...agentOpts,
   });
 
-  let built = buildFilters(exported, dict, config);
+  // Сушилка в разделе стиральных машин не должна задавать пункты каталога.
+  const facetRecs = exported.filter(r => !r.category_mismatch);
+  let built = buildFilters(facetRecs.length ? facetRecs : exported, dict, config);
   // Финальный проход: схлопнуть синонимы (No Frost / Inverter / Электронная),
   // даже если сырой attrs или старый сервер пропустил unify.
   const { sanitizeFilterCatalog } = await import('./fix_filters.js');

@@ -182,11 +182,10 @@ async function writeOutputs({ recs, dict, config, catId, cov, covAfter, formats,
   for (const rec of recs) {
     if (!rec.card) rec.card = renderCard(rec, dict);
   }
-  // Товар с неполными характеристиками уходит в отчёт, а не в выгрузку:
-  // пустой annotation_html у заказчика — дефект, воспроизводить его не нужно.
+  // Неполные карточки остаются в выгрузке и дублируются в held:
+  // потеря SKU хуже пустого annotation_html.
   const held = recs.filter(r => annotationRows(r, dict).length < MIN_ANNOTATION_ROWS);
-  const heldIds = new Set(held.map(r => r.id));
-  const exported = recs.filter(r => !heldIds.has(r.id));
+  const exported = recs;
 
   const settings = loadSettings(ROOT);
   const prov = resolveProvider(settings);
@@ -211,7 +210,9 @@ async function writeOutputs({ recs, dict, config, catId, cov, covAfter, formats,
   });
   console.log(`filters_agent: mode=${agent.mode} map=${agent.mappings.length} skip_stats=${agent.stats.skipped}`);
 
-  let built = buildFilters(exported, dict, config);
+  for (const rec of exported) markCategoryMismatch(rec, catId);
+  const facetRecs = exported.filter(r => !r.category_mismatch);
+  let built = buildFilters(facetRecs.length ? facetRecs : exported, dict, config);
   const { sanitizeFilterCatalog } = await import('./pipeline/fix_filters.js');
   const sanitized = sanitizeFilterCatalog(built.filters, dict);
   built = {
@@ -231,7 +232,6 @@ async function writeOutputs({ recs, dict, config, catId, cov, covAfter, formats,
   }
 
   writeContractData(recs, dict, catId);
-  for (const rec of recs) markCategoryMismatch(rec, catId);
   const products = serializeProducts(exported, dict, built.debug, { root: ROOT });
   writeJson(path.join(OUT, `products_${catId}.json`), products, 4);
   if (clean.ok) {
@@ -453,7 +453,7 @@ async function exportCustomer(file) {
   writeJson(path.join(OUT, `filters_coverage_${catId}.json`), out.coverage, 2);
   writeJson(path.join(OUT, `held_${catId}.json`), out.held, 2);
   writeJson(path.join(OUT, `validate_${catId}.json`), out.validation, 2);
-  console.log(`export ${catId}: products=${out.products.length} filters=${out.filters.length} held=${out.held.length}`);
+  console.log(`export ${catId}: input=${products.length} products=${out.products.length} filters=${out.filters.length} held=${out.held.length}`);
   console.log(`  coverage → out/filters_coverage_${catId}.json`);
   if (out.coverage?.category_mismatch?.length) {
     console.log(`  category_mismatch: ${out.coverage.category_mismatch.join(', ')}`);

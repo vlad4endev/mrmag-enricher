@@ -323,7 +323,8 @@ export function applyEnrichedSpecs(rec, specs, dict, config) {
 }
 
 /**
- * Семь полей заказчика + фасеты. Неполные карточки (< 8 строк) — в held.
+ * Семь полей заказчика + фасеты. Неполные карточки (< 8 строк) остаются
+ * в products и дублируются в held: потеря SKU хуже неполного фильтра.
  * needs_review в products не попадает — уходит в отчёт.
  *
  * После finalize — отдельный category-level filters_agent (ИИ или эвристика),
@@ -360,8 +361,8 @@ export async function buildCustomerExport(products, {
     recs.push(rec);
   }
   const held = recs.filter(r => annotationRows(r, dict).length < MIN_ANNOTATION_ROWS);
-  const heldIds = new Set(held.map(r => r.id));
-  const exported = recs.filter(r => !heldIds.has(r.id));
+  // Состав выгрузки = состав исходника. held — отчёт, не отсев.
+  const exported = recs;
   // Сначала очистить неподтверждённые «нет», потом агент фасетов, потом buildFilters.
   for (const rec of exported) {
     finalizeRecord(rec, dict, { enriched: rec._enriched, assigned: null });

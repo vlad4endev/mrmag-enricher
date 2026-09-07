@@ -1128,10 +1128,38 @@ console.log('golden tests passed');
     [{ sku: '1', name: 'Стиральная машина X', annotation: '', description: '' }],
     { dict: d467, config, root: '.', filtersAgent: { mode: 'heuristic' } },
   );
-  assert.equal(thin.products.length, 0);
+  assert.equal(thin.products.length, 1);
+  assert.equal(thin.products[0].id, 1);
   assert.equal(thin.held.length, 1);
   assert.equal(thin.held[0].id, 1);
   console.log('ok buildCustomerExport sku→id / hold');
+}
+
+{
+  const src = loadProducts('data_467.json');
+  const out = await buildCustomerExport(src, {
+    dict: d467, config, root: '.',
+    filtersAgent: { mode: 'heuristic' },
+  });
+  assert.equal(out.products.length, src.length, `export dropped SKUs: ${src.length} → ${out.products.length}`);
+  assert.deepEqual(out.products.map(p => p.id), src.map(p => p.id));
+  assert.ok(out.products.some(p => p.id === 460989));
+  assert.ok(out.products.some(p => p.id === 263214));
+  assert.ok(out.held.some(h => h.id === 460989));
+  const fridgeSrc = [p523[260], p523[461138]].filter(Boolean);
+  const fridge = await buildCustomerExport(fridgeSrc, {
+    dict: d523, config, root: '.',
+    filtersAgent: { mode: 'heuristic' },
+  });
+  assert.equal(fridge.products.length, fridgeSrc.length);
+  assert.ok(fridge.products.some(p => p.id === 461138));
+  const std = await buildCustomerExport([{
+    id: 99,
+    name: 'Холодильник Test',
+    annotation: '<ul><li>Тип компрессора - Стандартный</li><li>Цвет - Белый</li><li>Тип - Двухкамерный</li></ul>',
+  }], { dict: d523, config, root: '.', filtersAgent: { mode: 'heuristic' } });
+  assert.deepEqual(std.products[0].filters['Тип компрессора'], ['Стандартный']);
+  console.log('ok export keeps every source SKU (460989 / 263214 / 461138)');
 }
 
 {
@@ -1730,9 +1758,9 @@ console.log('golden tests passed');
     const defrost = cleaned.filters.find(f => f.name === 'Размораживание холодильной камеры');
     assert.deepEqual(defrost.value, ['Автоматическое (No Frost)', 'Капельная система', 'Ручное']);
     const comp = cleaned.filters.find(f => f.name === 'Тип компрессора');
-    assert.deepEqual(comp.value, ['Инверторный']);
+    assert.deepEqual(comp.value, ['Инверторный', 'Стандартный']);
     assert.ok(!comp.value.includes('Коллекторный'));
-    assert.ok(!comp.value.includes('Стандартный'));
+    assert.ok(comp.value.includes('Стандартный'));
     const ctrl = cleaned.filters.find(f => f.name === 'Тип управления');
     assert.deepEqual(ctrl.value, ['Механическое', 'Сенсорное', 'Электронное']);
     const color = cleaned.filters.find(f => f.name === 'Цвет корпуса');
@@ -1944,6 +1972,9 @@ console.log('golden tests passed');
   assert.equal(aliasValue(d523.byCode.get('cooling'), 'full no frost'), 'Full No Frost');
   assert.equal(aliasValue(d523.byCode.get('cooling'), 'No Frost'), 'No Frost');
   assert.equal(aliasValue(d523.byCode.get('compressor_type'), 'линейный'), 'Линейный');
+  assert.equal(aliasValue(d523.byCode.get('compressor_type'), 'стандартный'), 'Стандартный');
+  assert.equal(aliasValue(d523.byCode.get('compressor_type'), 'коллекторный'), 'Стандартный');
+  assert.ok(Object.keys(d523.byCode.get('compressor_type').value_aliases).includes('Стандартный'));
   assert.ok(!Object.keys(d523.byCode.get('compressor_type').value_aliases).includes('Коллекторный'));
   assert.equal(aliasValue(d467.byCode.get('color'), 'антрацит'), 'Серый');
   assert.equal(aliasValue(d467.byCode.get('color'), 'инокс'), 'Серебристый');
@@ -2017,6 +2048,8 @@ console.log('golden tests passed');
   assert.ok(brandFacet);
   assert.ok(!brandFacet.value.includes('Pioneer'), 'dryer must not add Pioneer to washer catalog');
   assert.ok(mixed.coverage.category_mismatch.includes(455270));
+  assert.equal(mixed.products.length, 2);
+  assert.ok(mixed.products.some(p => p.id === 455270), 'mismatch SKU stays in products');
   console.log('ok filter spec overlays / S3→filters / mismatch / coverage');
 }
 

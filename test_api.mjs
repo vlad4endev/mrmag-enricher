@@ -378,13 +378,15 @@ try {
     assert.strictEqual((await postExport('{не json')).status, 400);
     assert.strictEqual((await postExport({ products: [] })).status, 400);
   });
-  await t('товар без характеристик — 400 и held', async () => {
+  await t('товар без характеристик — в выгрузке и в held', async () => {
     const r = await postExport({
       category: 467,
       products: [{ sku: '1', name: 'Стиральная машина X', annotation: '', description: '' }],
     });
-    assert.strictEqual(r.status, 400);
+    assert.strictEqual(r.status, 200);
     const d = await r.json();
+    assert.strictEqual(d.products.length, 1);
+    assert.strictEqual(d.products[0].id, 1);
     assert.ok(Array.isArray(d.held) && d.held.length === 1);
   });
   await t('ATLANT 11391 — семь полей и бакеты', async () => {

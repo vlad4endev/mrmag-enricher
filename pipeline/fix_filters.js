@@ -68,9 +68,18 @@ function isDefrostAttr(attr, filterName = '') {
   return /размораживани/i.test(filterName || attr?.name || attr?.facet?.label || '');
 }
 
+function isCompressorAttr(attr, filterName = '') {
+  if (attr?.code === 'compressor_type') return true;
+  return /тип компрессора/i.test(filterName || attr?.name || attr?.facet?.label || '');
+}
+
 function collapseExtra(raw, attr = null, filterName = '') {
   const s = String(raw || '').trim();
   if (!s) return null;
+  // В 523 «Стандартный» — согласованный канон, не синоним «Коллекторный».
+  if (isCompressorAttr(attr, filterName) && /^(стандартный|обычный|коллекторный)$/i.test(s)) {
+    return 'Стандартный';
+  }
   const rules = isDefrostAttr(attr, filterName) ? DEFROST_COLLAPSE : EXTRA_COLLAPSE;
   for (const [re, canon] of rules) {
     if (re.test(s)) return canon;

@@ -34,7 +34,7 @@ import path from 'path';
 import {
   RateLimiter, enrichProduct, fetchModelPricing, rpmFor,
   schemaFor, isEnrichable, hydrateFromDump, MISMATCH_POLICY,
-  RUB_PER_USD, RUB_RATE_DATE, doneStatusLabel,
+  RUB_PER_USD, RUB_RATE_DATE, doneStatusLabel, resolveSystemPrompt,
 } from './lib.js';
 import {
   CATEGORIES, findCategory, crawlCategory, loadFeed,
@@ -50,6 +50,7 @@ const FRESH      = process.env.FRESH === '1';
 const OUT_DIR    = process.env.OUT_DIR || '.';
 const SETTINGS   = (() => { try { return loadSettings(); } catch { return null; } })();
 const MAX_RETRIES = SETTINGS?.model?.max_retries || 3;
+const SYSTEM_PROMPTS = SETTINGS?.model?.system_prompts || [];
 const SYSTEM_PROMPT = SETTINGS?.model?.system_prompt || '';
 
 // Категория задаётся slug, id, названием или адресом раздела.
@@ -300,7 +301,7 @@ async function main() {
       const { enriched, iT, oT, cost, costSource, corrected } = await enrichProduct(item, {
         model: MODEL, apiKey: API_KEY, limiter, pricing, schema,
         maxRetries: MAX_RETRIES,
-        systemPrompt: SYSTEM_PROMPT,
+        systemPrompt: resolveSystemPrompt(schema, SYSTEM_PROMPTS, SYSTEM_PROMPT),
         onNote: n => process.stdout.write(` [${n}]`),
       });
 

@@ -1134,6 +1134,60 @@ export function buildSystemPrompt(schemaKey, template) {
   return applyPromptVars(tpl, promptVarsForSchema(schemaKey));
 }
 
+/** Ключи, по которым шаблон привязывается к разделу: slug, id, имя. */
+export function promptCategoryKeys(schemaKey) {
+  const s = schemaKey && typeof schemaKey === 'object' && (schemaKey.slug || schemaKey.id != null || schemaKey.specKeys)
+    ? schemaKey
+    : schemaFor(schemaKey);
+  const keys = [];
+  const raw = schemaKey && typeof schemaKey !== 'object' ? schemaKey : null;
+  for (const v of [s?.slug, s?.id, s?.name, raw]) {
+    if (v == null || v === '') continue;
+    const t = String(v).trim();
+    if (t) keys.push(t);
+  }
+  return keys;
+}
+
+function foldPromptKey(s) {
+  return String(s || '').trim().toLowerCase();
+}
+
+/**
+ * 'all' — шаблон на любой раздел, 'specific' — этот раздел в списке, false — нет.
+ * Пустой массив выбранных разделов не матчится никуда: это ещё не заполненная привязка.
+ */
+export function promptScopeKind(scope, schemaKey) {
+  if (scope == null || scope === '' || scope === 'all' || scope === true) return 'all';
+  const list = Array.isArray(scope) ? scope : [scope];
+  if (!list.length) return false;
+  const keys = new Set(promptCategoryKeys(schemaKey).map(foldPromptKey));
+  if (!keys.size) return false;
+  for (const item of list) {
+    if (keys.has(foldPromptKey(item))) return 'specific';
+  }
+  return false;
+}
+
+/**
+ * Какой шаблон уйдёт в модель для раздела. Свой для выбранных разделов
+ * перекрывает «все разделы»; пустой текст — встроенный defaultSystemPromptTemplate.
+ */
+export function resolveSystemPrompt(schemaKey, prompts, legacyPrompt = '') {
+  const list = Array.isArray(prompts) && prompts.length
+    ? prompts
+    : [{ scope: 'all', template: legacyPrompt }];
+  let allTpl = null;
+  for (const p of list) {
+    const kind = promptScopeKind(p?.scope, schemaKey);
+    const tpl = String(p?.template ?? '').trim();
+    if (kind === 'specific') return tpl;
+    if (kind === 'all' && allTpl == null) allTpl = tpl;
+  }
+  if (allTpl != null) return allTpl;
+  return String(legacyPrompt || '').trim();
+}
+
 
 // ── ФАКТЫ ────────────────────────────────────────────────────
 /**

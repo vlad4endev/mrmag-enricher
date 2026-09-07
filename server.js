@@ -73,7 +73,7 @@ import {
   RateLimiter, enrichProduct, rpmFor, schemaFor, schemaForProduct, SCHEMAS, netError,
   RUB_PER_USD, RUB_RATE_DATE, isEnrichable, productFacts, hydrateFromDump,
   buildSystemPrompt, defaultSystemPromptTemplate, PROMPT_PLACEHOLDERS,
-  modelNotCalledDebug,
+  resolveSystemPrompt, modelNotCalledDebug,
 } from './lib.js';
 import { CATEGORIES, findCategory, crawlCategory, loadFeed, buildFilters, ensureSource, WEB_LOOKUP, needsWebSpecs } from './catalog.js';
 import { buildV2 } from './export_v2.js';
@@ -761,16 +761,29 @@ function apiParser(res) {
 }
 
 function promptMeta(settings, category = null) {
-  const custom = String(settings?.model?.system_prompt || '').trim();
-  const template = custom || defaultSystemPromptTemplate();
+  const builtin = defaultSystemPromptTemplate();
+  const prompts = settings?.model?.system_prompts || [];
   const cat = category || CATEGORIES[0]?.slug || 'kholodilniki';
+  const resolved = resolveSystemPrompt(cat, prompts, settings?.model?.system_prompt);
+  const custom = String(resolved || '').trim();
+  const template = custom || builtin;
   return {
     template: custom,
-    default_template: defaultSystemPromptTemplate(),
+    default_template: builtin,
     custom: !!custom,
     placeholders: PROMPT_PLACEHOLDERS,
     preview: buildSystemPrompt(cat, template),
     preview_category: cat,
+    prompts: prompts.map(p => {
+      const tpl = String(p.template || '').trim();
+      return {
+        id: p.id,
+        name: p.name,
+        scope: p.scope,
+        template: p.template || '',
+        custom: !!tpl && tpl !== builtin,
+      };
+    }),
   };
 }
 
@@ -825,7 +838,8 @@ async function apiPromptPreview(req, res) {
   const settings = loadSettings(ROOT);
   const category = body?.category || CATEGORIES[0]?.slug || 'kholodilniki';
   const fromBody = body?.template != null ? String(body.template) : null;
-  const custom = String(settings.model?.system_prompt || '').trim();
+  const resolved = resolveSystemPrompt(category, settings.model?.system_prompts, settings.model?.system_prompt);
+  const custom = String(resolved || '').trim();
   const template = fromBody != null
     ? (String(fromBody).trim() ? fromBody : defaultSystemPromptTemplate())
     : (custom || defaultSystemPromptTemplate());
@@ -1454,7 +1468,7 @@ async function enrichOne(product, { model, category, provider, onNote = () => {}
       maxRetries: Math.min(2, settings.model.max_retries || 2),
       timeoutMs: settings.model.timeout_ms,
       maxTokens: settings.model.max_tokens,
-      systemPrompt: settings.model.system_prompt || '',
+      systemPrompt: resolveSystemPrompt(schema, settings.model.system_prompts, settings.model.system_prompt),
       referer: ep.headers['HTTP-Referer'] || 'https://mrmag.ru',
       title: ep.headers['X-Title'] || 'Ogran',
       onNote: msg => note(msg, { step: /retry|rate limit|обрыв|parse|валидац|расхожден|дамп|проверку|правка|правим/i.test(msg) ? 'retry' : 'model', level: /retry|обрыв|parse|валидац|расхожден|дамп|проверку/i.test(msg) ? 'warn' : 'info' }),

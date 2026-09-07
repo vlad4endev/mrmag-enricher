@@ -19,7 +19,7 @@ import {
   sanitizeEnrichedResult, seoPackageEmpty, cardTextsEmpty,
   hydrateFromDump, isSourceThin, sourceFactCount, mergeDumpIntoProduct,
   doneStatusLabel,
-  softFixCardTexts,
+  softFixCardTexts, resolveSystemPrompt,
 } from './lib.js';
 
 // Схема по умолчанию — универсальная, а не холодильник: неизвестная категория
@@ -826,6 +826,23 @@ t('промпт перечисляет значения фасетов и кон
     assert.ok(p.includes(k), `в промпте нет ${k}`);
   }
   assert.ok(!p.includes('seo_title'), 'старый seo_title убран');
+});
+t('шаблон на все разделы, если нет привязки', () => {
+  const prompts = [
+    { scope: 'all', template: 'ОБЩИЙ {{category_name}}' },
+    { scope: ['stiralnye_mashiny', '467'], template: 'СТИРКА {{category_name}}' },
+  ];
+  assert.match(resolveSystemPrompt('kholodilniki', prompts), /ОБЩИЙ/);
+  assert.match(resolveSystemPrompt('stiralnye_mashiny', prompts), /СТИРКА/);
+  assert.match(resolveSystemPrompt('467', prompts), /СТИРКА/);
+});
+t('пустой шаблон выбранных разделов перекрывает общий — берётся встроенный', () => {
+  const prompts = [
+    { scope: 'all', template: 'ОБЩИЙ' },
+    { scope: ['kholodilniki', '523'], template: '' },
+  ];
+  assert.equal(resolveSystemPrompt('kholodilniki', prompts), '');
+  assert.equal(resolveSystemPrompt('stiralnye_mashiny', prompts), 'ОБЩИЙ');
 });
 t('значение вне списка не попадает в фасет', () => {
   const r = normalizeResponse({ specs: { тип_загрузки: 'Фронтальная', сушка: 'есть', дисплей: 'иногда' } },
@@ -2385,6 +2402,37 @@ console.log('\nТовар без описания: поиск в сети');
     assert.ok(s.providers.some(p => p.id === 'deepseek' && p.base_url === 'https://api.deepseek.com'));
     assert.equal(resolveProvider(s, 'deepseek').name, 'DeepSeek');
   });
+  t('свой шаблон на выбранные разделы пишется в config и читается обратно', () => {
+    const cur = loadSettings();
+    const next = applySettingsPatch(cur, {
+      model: {
+        ...cur.model,
+        system_prompts: [
+          { id: 'default', name: 'Все разделы', scope: 'all', template: '' },
+          { id: 'wash', name: 'Стиралки', scope: ['stiralnye_mashiny', '467'], template: 'ТОЛЬКО СТИРКА {{category_name}}' },
+        ],
+      },
+    });
+    saveSettings(next);
+    const again = loadSettings();
+    assert.ok(again.model.system_prompts.some(p => p.scope === 'all'));
+    const wash = again.model.system_prompts.find(p => Array.isArray(p.scope) && p.scope.includes('stiralnye_mashiny'));
+    assert.ok(wash, 'нет шаблона для стиральных');
+    assert.match(wash.template, /ТОЛЬКО СТИРКА/);
+    assert.equal(again.model.system_prompt, '');
+    assert.match(resolveSystemPrompt('stiralnye_mashiny', again.model.system_prompts, again.model.system_prompt), /ТОЛЬКО СТИРКА/);
+    assert.equal(resolveSystemPrompt('kholodilniki', again.model.system_prompts, again.model.system_prompt), '');
+  });
+  t('старый system_prompt без списка становится шаблоном на все разделы', () => {
+    const cur = loadSettings();
+    const next = applySettingsPatch(cur, {
+      model: { ...cur.model, system_prompt: 'LEGACY {{category_name}}', system_prompts: undefined },
+    });
+    assert.equal(next.model.system_prompts[0].scope, 'all');
+    assert.match(next.model.system_prompts[0].template, /LEGACY/);
+    assert.match(resolveSystemPrompt('kholodilniki', next.model.system_prompts, next.model.system_prompt), /LEGACY/);
+  });
+
   t('пустой список моделей DeepSeek дополняется из заготовки', () => {
     const next = applySettingsPatch(loadSettings(), {
       providers: [{

@@ -318,12 +318,94 @@ function normalizeSearch(raw = {}, prev = {}) {
   };
 }
 
+/** 'all' или список slug/id разделов. Пустой список — ещё не выбранные, не «все». */
+export function normalizePromptScope(raw) {
+  if (raw === 'all' || raw === true || raw == null || raw === '') return 'all';
+  const list = Array.isArray(raw)
+    ? raw
+    : String(raw).split(/[,;]+/);
+  const keys = [...new Set(list.map(s => String(s).trim()).filter(Boolean))].slice(0, 80);
+  return keys;
+}
+
+function normalizeSystemPrompts(rawList, legacyPrompt = '') {
+  const taken = new Set();
+  const out = [];
+  const src = Array.isArray(rawList) ? rawList : [];
+  for (const item of src) {
+    if (!item || typeof item !== 'object') continue;
+    const id = uniqueId(item.id || item.name || `prompt-${out.length + 1}`, taken);
+    taken.add(id);
+    const scope = normalizePromptScope(item.scope);
+    const isAll = scope === 'all';
+    out.push({
+      id,
+      name: str(item.name, isAll ? 'Все разделы' : 'Выбранные').slice(0, 80),
+      scope,
+      template: String(item.template ?? '').slice(0, 80_000),
+    });
+  }
+  if (!out.some(p => p.scope === 'all')) {
+    out.unshift({
+      id: uniqueId('default', taken),
+      name: 'Все разделы',
+      scope: 'all',
+      template: String(legacyPrompt ?? '').slice(0, 80_000),
+    });
+  }
+  if (!out.length) {
+    out.push({
+      id: 'default',
+      name: 'Все разделы',
+      scope: 'all',
+      template: String(legacyPrompt ?? '').slice(0, 80_000),
+    });
+  }
+  return out;
+}
+
+function persistSystemPrompts(list) {
+  if (!Array.isArray(list) || !list.length) return undefined;
+  const slim = [];
+  for (const p of list) {
+    const tpl = String(p?.template || '');
+    const isAll = p.scope === 'all';
+    const selected = Array.isArray(p.scope) && p.scope.length;
+    if (isAll && !tpl.trim()) continue;
+    if (!isAll && !selected) continue;
+    slim.push({
+      id: p.id,
+      name: str(p.name).slice(0, 80),
+      scope: isAll ? 'all' : p.scope,
+      template: tpl.slice(0, 80_000),
+    });
+  }
+  return slim.length ? slim : undefined;
+}
+
+function persistModel(model) {
+  const out = { ...model };
+  const prompts = persistSystemPrompts(model.system_prompts);
+  if (prompts) out.system_prompts = prompts;
+  else delete out.system_prompts;
+  const all = (prompts || []).find(p => p.scope === 'all');
+  out.system_prompt = all ? all.template : '';
+  return out;
+}
+
 function normalizeModel(raw = {}) {
+  const legacy = String(raw.system_prompt ?? '').slice(0, 80_000);
+  const system_prompts = normalizeSystemPrompts(
+    Array.isArray(raw.system_prompts) ? raw.system_prompts : null,
+    legacy,
+  );
+  const all = system_prompts.find(p => p.scope === 'all');
   return {
     name: str(raw.name).slice(0, 120),
     prompt_version: str(raw.prompt_version, 'dict-v1').slice(0, 40),
     // Пустая строка — встроенный шаблон из lib.js. Иначе текст с {{плейсхолдерами}}.
-    system_prompt: String(raw.system_prompt ?? '').slice(0, 80_000),
+    system_prompt: all ? all.template : legacy,
+    system_prompts,
     max_retries: num(raw.max_retries, 2, { min: 1, max: 2 }),
     timeout_ms: num(raw.timeout_ms, 60_000, { min: 5000, max: 300_000 }),
     max_tokens: num(raw.max_tokens, 3200, { min: 256, max: 16_000 }),
@@ -510,7 +592,7 @@ function persistable(settings) {
     target_coverage: settings.target_coverage,
     description: { min_attrs: settings.description.min_attrs },
     fuzzy: { min_score: settings.fuzzy.min_score },
-    model: settings.model,
+    model: persistModel(settings.model),
     search: settings.search,
     providers: settings.providers,
     conditions: settings.conditions,

@@ -863,6 +863,21 @@ input[type=range]::-moz-range-thumb{
 .set-prompt-meta{display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:space-between;margin-bottom:8px}
 .set-prompt-meta .set-row{flex-direction:row;align-items:center;gap:8px}
 .set-prompt-meta select{min-width:180px}
+.set-prompt-tabs{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:12px}
+.set-prompt-tabs button.set-prompt-tab{
+  padding:7px 12px;border-radius:var(--r2);border:1px solid var(--b2);background:var(--bg2);
+  color:var(--t2);cursor:pointer;font-size:12px;font-family:var(--sans);font-weight:600;max-width:220px;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+}
+.set-prompt-tabs button.set-prompt-tab:hover{border-color:var(--ac-b);color:var(--t1)}
+.set-prompt-tabs button.set-prompt-tab.on{background:var(--ac-w);border-color:var(--ac-b);color:var(--ac)}
+.set-scope-row{display:flex;flex-wrap:wrap;gap:14px 18px;align-items:center;margin:4px 0 10px}
+.set-scope-cats{
+  display:flex;flex-wrap:wrap;gap:8px 14px;max-height:min(28vh,240px);overflow:auto;
+  padding:10px 12px;border:1px solid var(--b1);border-radius:var(--r2);background:var(--bg3);margin-bottom:10px;
+}
+.set-scope-cats[hidden]{display:none}
+.set-prompt-name{min-width:160px;flex:1}
 .dict-layout{display:flex;flex-direction:column;gap:12px}
 .dict-create{display:none;margin-top:12px;padding-top:12px;border-top:1px solid var(--b1)}
 .dict-create.open{display:block}
@@ -2015,21 +2030,32 @@ input[type=range]::-moz-range-thumb{
 
       <section class="set-panel" id="setPrompt">
         <div class="set-h">Промпт обогащения</div>
-        <p class="set-lead">Системный текст, который уходит в модель вместе с карточкой товара. Поля вида <code>{{category_name}}</code> подставляются из схемы раздела перед запросом. Сохраните — и следующий прогон пойдёт с этим шаблоном.</p>
+        <p class="set-lead">Системный текст уходит в модель вместе с карточкой. Один шаблон — на все разделы, или заведите несколько и отметьте, к каким разделам каждый относится. Поля вида <code>{{category_name}}</code> подставляются из схемы раздела перед запросом. Сохраните — следующий прогон пойдёт с этими шаблонами.</p>
+        <div class="set-prompt-tabs" id="setPromptTabs" role="tablist" aria-label="Шаблоны промпта"></div>
         <div class="set-card" style="margin-bottom:12px">
-          <div class="set-prompt-meta">
+          <div class="set-grid" style="margin-bottom:8px">
+            <div class="set-row set-prompt-name">
+              <label for="setPromptName">Название шаблона</label>
+              <input type="text" id="setPromptName" maxlength="80" placeholder="Все разделы" oninput="onPromptNameEdit()">
+            </div>
             <div class="set-row">
               <label for="setPromptCat">Превью для раздела</label>
               <select id="setPromptCat" onchange="refreshPromptPreview()"></select>
             </div>
-            <div class="set-actions">
+          </div>
+          <div class="set-scope-row">
+            <span class="flbl" style="margin:0">Применять к</span>
+            <label class="set-check"><input type="radio" name="promptScope" id="setPromptScopeAll" value="all" onchange="onPromptScopeChange()"> Все разделы</label>
+            <label class="set-check"><input type="radio" name="promptScope" id="setPromptScopeSel" value="selected" onchange="onPromptScopeChange()"> Выбрать несколько</label>
+            <div class="set-actions" style="margin-left:auto">
               <span class="set-badge" id="setPromptBadge">встроенный</span>
               <button type="button" class="sbtn ghost" onclick="resetPromptTemplate()">Сбросить к встроенному</button>
             </div>
           </div>
+          <div id="setPromptCats" class="set-scope-cats" hidden></div>
           <label for="setSystemPrompt" class="flbl" style="margin-bottom:6px">Шаблон (system)</label>
           <textarea id="setSystemPrompt" class="set-prompt" spellcheck="false" oninput="onPromptTemplateEdit()"></textarea>
-          <div class="hint" style="margin-top:8px">Клик по плейсхолдеру вставляет его в курсор. Если шаблон совпадает со встроенным, в файл ничего лишнего не пишется.</div>
+          <div class="hint" style="margin-top:8px">Клик по плейсхолдеру вставляет его в курсор. Если шаблон совпадает со встроенным, в файл ничего лишнего не пишется. При пересечении разделов у нескольких шаблонов берётся первый в списке.</div>
           <div class="set-ph" id="setPromptPh"></div>
         </div>
         <div class="set-card">
@@ -3359,23 +3385,44 @@ async function saveDictionary(){
 let setPayload=null;
 let promptDefault='';
 let promptPreviewTimer=null;
+let promptList=[];
+let promptIdx=0;
 const setV=(id,v)=>{ const el=document.getElementById(id); if(el) el.value=v==null?'':String(v); };
 const setC=(id,on)=>{ const el=document.getElementById(id); if(el) el.checked=!!on; };
 const getV=id=>document.getElementById(id)?.value??'';
 const getC=id=>!!document.getElementById(id)?.checked;
 
-/** Пусто или = встроенному → в файл не пишем кастом. */
-function effectiveSystemPromptForSave(){
-  const cur=getV('setSystemPrompt');
+function promptTplForSave(raw){
+  const cur=String(raw??'');
   if(!cur.trim()) return '';
   if(promptDefault && cur===promptDefault) return '';
   return cur;
 }
 
+/** Пусто или = встроенному → в файл не пишем кастом. */
+function effectiveSystemPromptForSave(){
+  syncPromptFromEditor();
+  const all=(promptList||[]).find(p=>p.scope==='all');
+  return promptTplForSave(all?all.template:getV('setSystemPrompt'));
+}
+
+function currentPrompt(){
+  return promptList[promptIdx]||promptList[0]||null;
+}
+
+function syncPromptFromEditor(){
+  const p=currentPrompt();
+  if(!p) return;
+  p.template=getV('setSystemPrompt');
+  const name=getV('setPromptName').trim();
+  if(name) p.name=name;
+  if(getC('setPromptScopeAll')) p.scope='all';
+}
+
 function updatePromptBadge(){
   const badge=document.getElementById('setPromptBadge');
   if(!badge) return;
-  const custom=!!effectiveSystemPromptForSave();
+  const custom=!!promptTplForSave(getV('setSystemPrompt'));
   badge.className='set-badge'+(custom?'':' off');
   badge.textContent=custom?'свой шаблон':'встроенный';
 }
@@ -3406,10 +3453,10 @@ function insertPromptPlaceholder(token){
 function fillPromptCategories(selected){
   const sel=document.getElementById('setPromptCat');
   if(!sel) return;
-  const opts=(categories||[]).map(c=>{
-    const key=c.slug||c.id;
-    return `<option value="${esc(key)}">${esc(c.name||key)}</option>`;
-  });
+  const secs=promptSectionList();
+  const opts=secs.map(c=>
+    `<option value="${esc(c.key)}">${esc(c.name||c.key)}${c.id?` (${esc(c.id)})`:''}</option>`
+  );
   if(!opts.length){
     const fromSchema=Object.entries(schemas||{}).map(([slug,s])=>
       `<option value="${esc(slug)}">${esc(s.name||slug)}</option>`);
@@ -3418,27 +3465,190 @@ function fillPromptCategories(selected){
   if(selected) sel.value=String(selected);
 }
 
+function promptSectionList(){
+  const seen=new Set();
+  const out=[];
+  const add=(id,slug,name)=>{
+    const key=String(slug||id||'').trim();
+    if(!key) return;
+    const fold=key.toLowerCase();
+    const idKey=id!=null && id!==''?String(id):'';
+    if(seen.has(fold)||(idKey && seen.has(idKey))) return;
+    seen.add(fold);
+    if(idKey) seen.add(idKey);
+    out.push({ id:idKey, slug:slug?String(slug):'', name:name||key, key });
+  };
+  for(const c of categories||[]) add(c.id, c.slug, c.name);
+  for(const d of dumpList||[]) add(d.id, d.slug, d.name);
+  for(const [slug,s] of Object.entries(schemas||{})) add(s.id, slug, s.name);
+  return out;
+}
+
+function sectionInScope(scope, sec){
+  if(scope==='all'||!Array.isArray(scope)) return false;
+  const keys=new Set(scope.map(s=>String(s).toLowerCase()));
+  return keys.has(String(sec.key).toLowerCase())
+    || (sec.id && keys.has(String(sec.id).toLowerCase()))
+    || (sec.slug && keys.has(String(sec.slug).toLowerCase()));
+}
+
+function renderPromptSectionChecks(){
+  const box=document.getElementById('setPromptCats');
+  if(!box) return;
+  const p=currentPrompt();
+  const selected=p && Array.isArray(p.scope);
+  box.hidden=!selected;
+  if(!selected){ box.innerHTML=''; return; }
+  const secs=promptSectionList();
+  if(!secs.length){
+    box.innerHTML='<span class="hint" style="margin:0">Разделы появятся после загрузки категорий или дампов.</span>';
+    return;
+  }
+  box.innerHTML=secs.map(c=>{
+    const on=sectionInScope(p.scope, c);
+    const label=c.id?`${c.id} — ${c.name}`:c.name;
+    return `<label class="set-check prompt-sec"><input type="checkbox" data-sec="${esc(c.key)}" ${on?'checked':''} onchange="onPromptSectionToggle(this)"> ${esc(label)}</label>`;
+  }).join('');
+}
+
+function renderPromptTabs(){
+  const box=document.getElementById('setPromptTabs');
+  if(!box) return;
+  const tabs=(promptList||[]).map((p,i)=>{
+    const label=p.name||(p.scope==='all'?'Все разделы':'Выбранные');
+    return `<button type="button" class="set-prompt-tab${i===promptIdx?' on':''}" role="tab" aria-selected="${i===promptIdx?'true':'false'}" onclick="selectPromptTab(${i})">${esc(label)}</button>`;
+  }).join('');
+  box.innerHTML=tabs
+    + `<button type="button" class="sbtn ghost" onclick="addPromptTemplate()"><i class="ti ti-plus"></i> Добавить шаблон</button>`
+    + (promptList.length>1?`<button type="button" class="sbtn ghost" onclick="removePromptTemplate()">Удалить</button>`:'');
+}
+
+function showCurrentPrompt(opts){
+  const p=currentPrompt();
+  if(!p) return;
+  const tpl=String(p.template||'').trim();
+  setV('setSystemPrompt', tpl||promptDefault);
+  setV('setPromptName', p.name||(p.scope==='all'?'Все разделы':'Выбранные'));
+  const isAll=p.scope==='all'||p.scope==null;
+  setC('setPromptScopeAll', isAll);
+  setC('setPromptScopeSel', !isAll);
+  renderPromptTabs();
+  renderPromptSectionChecks();
+  updatePromptBadge();
+  if((opts||{}).preview!==false) refreshPromptPreview();
+}
+
+function selectPromptTab(i){
+  syncPromptFromEditor();
+  if(i<0||i>=promptList.length) return;
+  promptIdx=i;
+  showCurrentPrompt();
+}
+
+function onPromptNameEdit(){
+  const p=currentPrompt();
+  if(!p) return;
+  p.name=getV('setPromptName').trim()||p.name;
+  renderPromptTabs();
+}
+
+function onPromptScopeChange(){
+  const p=currentPrompt();
+  if(!p) return;
+  if(getC('setPromptScopeAll')) p.scope='all';
+  else p.scope=Array.isArray(p.scope)?p.scope.slice():[];
+  if(!p.name || p.name==='Все разделы' || p.name==='Выбранные'){
+    p.name=p.scope==='all'?'Все разделы':'Выбранные';
+    setV('setPromptName', p.name);
+  }
+  renderPromptTabs();
+  renderPromptSectionChecks();
+}
+
+function onPromptSectionToggle(el){
+  const p=currentPrompt();
+  if(!p||!el) return;
+  const key=el.dataset.sec;
+  if(!key) return;
+  const cur=Array.isArray(p.scope)?p.scope.slice():[];
+  const fold=key.toLowerCase();
+  const has=cur.some(s=>String(s).toLowerCase()===fold);
+  if(el.checked && !has) cur.push(key);
+  if(!el.checked) p.scope=cur.filter(s=>String(s).toLowerCase()!==fold);
+  else p.scope=cur;
+}
+
+function addPromptTemplate(){
+  syncPromptFromEditor();
+  const taken=new Set(promptList.map(p=>p.id));
+  let id='prompt-2';
+  for(let n=2;n<200;n++){ id='prompt-'+n; if(!taken.has(id)) break; }
+  promptList.push({
+    id,
+    name:'Выбранные',
+    scope:[],
+    template:getV('setSystemPrompt')||promptDefault||'',
+  });
+  promptIdx=promptList.length-1;
+  showCurrentPrompt();
+}
+
+function removePromptTemplate(){
+  if(promptList.length<=1) return;
+  syncPromptFromEditor();
+  promptList.splice(promptIdx,1);
+  if(promptIdx>=promptList.length) promptIdx=promptList.length-1;
+  showCurrentPrompt();
+}
+
+function promptsFromPayload(d){
+  const p=d.prompt||{};
+  const list=Array.isArray(p.prompts)?p.prompts:[];
+  if(list.length){
+    return list.map((item,i)=>({
+      id:item.id||('prompt-'+(i+1)),
+      name:item.name||(item.scope==='all'?'Все разделы':'Выбранные'),
+      scope:item.scope==='all'||item.scope==null?'all':(Array.isArray(item.scope)?item.scope.slice():[]),
+      template:String(item.template||''),
+    }));
+  }
+  return [{
+    id:'default',
+    name:'Все разделы',
+    scope:'all',
+    template:String(p.template||''),
+  }];
+}
+
 function renderPromptEditor(d){
   const p=d.prompt||{};
   promptDefault=p.default_template||'';
-  const custom=String(p.template||'').trim();
-  setV('setSystemPrompt', custom||promptDefault);
+  promptList=promptsFromPayload(d);
+  if(!promptList.some(x=>x.scope==='all')){
+    promptList.unshift({ id:'default', name:'Все разделы', scope:'all', template:'' });
+  }
+  promptIdx=Math.min(promptIdx, promptList.length-1);
+  if(promptIdx<0) promptIdx=0;
   fillPromptCategories(p.preview_category);
   renderPromptPlaceholders(p.placeholders);
   const prev=document.getElementById('setPromptPreview');
   if(prev) prev.textContent=p.preview||'';
   const note=document.getElementById('setPromptPrevNote');
   if(note) note.textContent=p.preview_category?`раздел: ${p.preview_category}`:'';
-  updatePromptBadge();
+  showCurrentPrompt();
 }
 
 function resetPromptTemplate(){
   setV('setSystemPrompt', promptDefault||'');
+  const p=currentPrompt();
+  if(p) p.template='';
   updatePromptBadge();
   refreshPromptPreview();
 }
 
 function onPromptTemplateEdit(){
+  const p=currentPrompt();
+  if(p) p.template=getV('setSystemPrompt');
   updatePromptBadge();
   clearTimeout(promptPreviewTimer);
   promptPreviewTimer=setTimeout(refreshPromptPreview, 400);
@@ -3461,6 +3671,16 @@ async function refreshPromptPreview(){
   }catch(e){
     prev.textContent='Не удалось собрать превью: '+e.message;
   }
+}
+
+function promptsForSave(){
+  syncPromptFromEditor();
+  return (promptList||[]).map(p=>({
+    id:p.id,
+    name:p.name||'',
+    scope:p.scope==='all'?'all':(Array.isArray(p.scope)?p.scope:[]),
+    template:promptTplForSave(p.template),
+  }));
 }
 
 function renderSettings(d){
@@ -3699,7 +3919,7 @@ function readSettingsPatch(){
       max_retries:Number(getV('setRetries'))||3,
       timeout_ms:Number(getV('setAiTimeout'))||60000,
       max_tokens:Number(getV('setMaxTokens'))||3200,
-      system_prompt:effectiveSystemPromptForSave(),
+      system_prompts:promptsForSave(),
     },
     export_templates:readExportTemplatesPatch(),
   };

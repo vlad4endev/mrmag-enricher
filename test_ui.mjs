@@ -151,7 +151,8 @@ export const api={syncSteps,setCnt,setCntFree,applyCnt,applySource,setSource,pic
   showPage,setTab,renderSettings,addProvider,removeProvider,addEngine,readSettingsPatch,
   renderExportTemplates,applyExportTemplate,shapeProductsFile,shapeFiltersFile,exportPack,
   modelsFromSettings,pickDefaultModel,applyDefaultProviderModels,looksLikeModelId,catalogHint,
-  addDumpSection,openDumpDest,cancelDumpDest,dumpBodyWithName};
+  addDumpSection,openDumpDest,cancelDumpDest,dumpBodyWithName,
+  addPromptTemplate,selectPromptTab,onPromptScopeChange,onPromptSectionToggle,promptsForSave};
 export const st={get items(){return items},set items(v){items=v},
   get srcItems(){return srcItems},set srcItems(v){srcItems=v},
   get pickCat(){return pickCat},set pickCat(v){pickCat=v},get selCnt(){return selCnt},get results(){return results},
@@ -171,7 +172,9 @@ export const st={get items(){return items},set items(v){items=v},
   get runLog(){return runLog},set runLog(v){runLog=v},
   get logCursor(){return logCursor},set logCursor(v){logCursor=v},
   get dateKey(){return dateKey},
-  get srcFilters(){return srcFilters}};
+  get srcFilters(){return srcFilters},
+  get promptList(){return promptList},set promptList(v){promptList=v},
+  get promptIdx(){return promptIdx},set promptIdx(v){promptIdx=v}};
 `;
 const tmp = path.join(ROOT, '.ui_under_test.mjs');
 fs.writeFileSync(tmp, script + EXPORTS, 'utf-8');
@@ -438,6 +441,49 @@ t('собирает условия с формы в PATCH', () => {
   assert.ok(patch.providers.some(p => p.id === 'openrouter'));
   assert.ok(patch.export_templates);
   assert.equal(patch.export_templates.two.products, null, 'встроенный шаблон в PATCH не уезжает');
+  assert.ok(Array.isArray(patch.model.system_prompts), 'промпты уходят списком');
+  assert.equal(patch.model.system_prompts[0].scope, 'all');
+});
+t('промпт: все разделы или выбрать несколько', () => {
+  st.categories = [
+    { slug: 'kholodilniki', id: 523, name: 'Холодильники' },
+    { slug: 'stiralnye_mashiny', id: 467, name: 'Стиральные машины' },
+  ];
+  api.renderSettings({
+    settings: {
+      providers: [{ id: 'openrouter', name: 'OpenRouter', enabled: true, default: true, models: [] }],
+      search: { enabled: true, tries: 3, gap_ms: 3000, timeout_ms: 20000, query_suffix: 'характеристики', skip_hosts: ['mrmag.ru'], search_url: '', fallback_engines: [], engines: [], duckduckgo: { enabled: true, method: 'POST', endpoint: 'html', region: 'ru-ru' } },
+      conditions: { mismatch_policy: 'flag', min_source_chars: 100, min_attrs: 5, facet_min_coverage: 70, target_coverage: 90, fuzzy_min_score: 0.93 },
+      model: { name: '', prompt_version: 'dict-v1' },
+    },
+    prompt: {
+      template: '',
+      default_template: 'ВСТРОЕННЫЙ {{category_name}}',
+      placeholders: [{ key: '{{category_name}}', note: 'раздел' }],
+      preview: 'ВСТРОЕННЫЙ Холодильники',
+      preview_category: 'kholodilniki',
+      prompts: [{ id: 'default', name: 'Все разделы', scope: 'all', template: '' }],
+    },
+    presets: [],
+    overrides: [],
+  });
+  assert.equal(st.promptList.length, 1);
+  assert.equal(st.promptList[0].scope, 'all');
+  assert.match(G('setPromptTabs').innerHTML, /Все разделы/);
+  api.addPromptTemplate();
+  assert.equal(st.promptList.length, 2);
+  G('setPromptScopeSel').checked = true;
+  G('setPromptScopeAll').checked = false;
+  api.onPromptScopeChange();
+  assert.ok(Array.isArray(st.promptList[1].scope));
+  const el = { dataset: { sec: 'stiralnye_mashiny' }, checked: true };
+  api.onPromptSectionToggle(el);
+  assert.ok(st.promptList[1].scope.includes('stiralnye_mashiny'));
+  G('setSystemPrompt').value = 'ТОЛЬКО СТИРКА {{category_name}}';
+  const saved = api.promptsForSave();
+  const wash = saved.find(p => Array.isArray(p.scope));
+  assert.ok(wash.scope.includes('stiralnye_mashiny'));
+  assert.match(wash.template, /ТОЛЬКО СТИРКА/);
 });
 t('переключает разделы настроек', () => {
   api.setTab('parse');

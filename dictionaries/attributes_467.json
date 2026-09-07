@@ -136,9 +136,10 @@
       ]
     },
     "facet": {
-      "enabled": true,
+      "enabled": false,
       "label": "Бренд",
-      "kind": "enum"
+      "kind": "enum",
+      "reason": "Сопоставление товаров по id, бренд в выгрузке v2 не нужен"
     }
   },
   {

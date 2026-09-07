@@ -200,7 +200,8 @@ export function blankAttribute(partial = {}) {
   };
 }
 
-/** Минимальный старт: бренд как фасет — без него выгрузка фильтров почти бесполезна. */
+/** Минимальный старт: бренд как атрибут карточки, не как фасет выгрузки.
+ *  Заказчик сопоставляет товары по id — фильтр «Бренд» ему не нужен. */
 export function seedDictionaryAttrs() {
   return [
     blankAttribute({
@@ -210,7 +211,12 @@ export function seedDictionaryAttrs() {
       tier: 'A',
       highlight: true,
       synonyms: ['Бренд', 'Производитель', 'Марка', 'Торговая марка'],
-      facet: { enabled: true, label: 'Бренд', kind: 'enum' },
+      facet: {
+        enabled: false,
+        label: 'Бренд',
+        kind: 'enum',
+        reason: 'Сопоставление по id товара, бренд в выгрузке v2 не нужен',
+      },
     }),
   ];
 }

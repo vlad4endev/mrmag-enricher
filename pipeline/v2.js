@@ -11,20 +11,21 @@ import { attrLabel } from './types.js';
 import { CODE_TO_SPEC } from './schema.js';
 
 /** Всегда в filters_v2, даже если в справочнике нет таких code.
- *  Модель — паспорт, не фасет: у каждого товара своя, галочка «RK FNF-172 W»
- *  в каталоге никого не группирует. В description_html она остаётся. */
-const IDENTITY_SPEC_KEYS = ['тип_товара', 'бренд'];
+ *  Модель и бренд — паспорт, не фасет: заказчик сопоставляет товар по id.
+ *  В description_html / annotation они остаются. */
+const IDENTITY_SPEC_KEYS = ['тип_товара'];
 
 /**
  * Ключи specs, которые можно класть в filters_v2.
  * HTML-характеристики собираются из всех specs; сюда — только facet.enabled
- * и идентичность. Два ключа на атрибут: подпись справочника и CODE_TO_SPEC
+ * и тип товара. Два ключа на атрибут: подпись справочника и CODE_TO_SPEC
  * (ИИ пишет объём_общий_л, словарь — общий_объем_л).
  */
 export function v2FacetSpecKeys(dict) {
   const keys = new Set(IDENTITY_SPEC_KEYS);
   for (const attr of dict?.attrs || []) {
     if (attr.tier === 'X') continue;
+    if (attr.code === 'brand') continue;
     if (!attr.facet?.enabled) continue;
     keys.add(specKeyFromAttr(attr).key);
     const dest = CODE_TO_SPEC[attr.code];

@@ -50,8 +50,9 @@ const DISCRETE_MAX = 6;
 const TARGET_BUCKETS = 8;
 const NICE = [1, 2, 2.5, 5, 10];
 
-/** Ключи, которые выглядят как паспорт товара, а не как фасет каталога. */
-const SKIP_SPEC = new Set(['модель', 'комплектация', 'артикул', 'sku']);
+/** Ключи, которые выглядят как паспорт товара, а не как фасет каталога.
+ *  Бренд тоже паспорт: заказчик склеивает выгрузку с витриной по id товара. */
+const SKIP_SPEC = new Set(['модель', 'комплектация', 'артикул', 'sku', 'бренд', 'brand']);
 const MAX_ENUM = 24;
 const MAX_AVG_LEN = 48;
 
@@ -150,11 +151,12 @@ function unifyLabels(labels) {
 function skipSpecKey(key) {
   const k = String(key || '').toLowerCase();
   if (SKIP_SPEC.has(k)) return true;
-  return /(?:^|_)(?:модель|комплектация|артикул)$/.test(k);
+  return /(?:^|_)(?:модель|комплектация|артикул|бренд|brand)$/.test(k);
 }
 
 function keepStringFacet(name, values) {
-  if (/^(бренд|тип товара)$/i.test(String(name))) return true;
+  if (/^тип товара$/i.test(String(name))) return true;
+  if (/^(бренд|brand)$/i.test(String(name))) return false;
   if (values.length > MAX_ENUM) return false;
   const avg = values.reduce((s, x) => s + String(x).length, 0) / (values.length || 1);
   return avg <= MAX_AVG_LEN;

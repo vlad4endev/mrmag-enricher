@@ -1696,21 +1696,20 @@ t('без обогащения выгружать нечего', () => {
   assert.deepStrictEqual(buildV2([{ sku: '1', name: 'A', enriched: null }]), { filters: [], products: [] });
 });
 
-t('enum сводится к одному написанию, модель и комплектация не фасеты', () => {
+t('enum сводится к одному написанию, бренд/модель/комплектация не фасеты', () => {
   const rows = [
     v2row('1', { бренд: 'АТЛАНТ', цвет: 'чёрный', модель: 'X-1', комплектация: 'полки, ящики, лоток для яиц' }),
     v2row('2', { бренд: 'Атлант', цвет: 'черный', модель: 'X-2', комплектация: 'полки, ящики, подставка для яиц' }),
     v2row('3', { бренд: 'ATLANT', цвет: 'Черный', модель: 'X-3' }),
   ];
   const { filters, products } = buildV2(rows);
-  const brands = filters.find(f => f.name === 'Бренд').value;
-  assert.ok(brands.includes('Атлант'));
-  assert.ok(!brands.includes('АТЛАНТ'));
+  assert.ok(!filters.some(f => /бренд/i.test(f.name)), 'бренд не фасет: сопоставление по id');
   const colors = filters.find(f => f.name === 'Цвет').value;
   assert.equal(colors.length, 1);
   assert.ok(!filters.some(f => f.name === 'Модель'));
   assert.ok(!filters.some(f => f.name === 'Комплектация'));
   for (const p of products) {
+    assert.ok(!('Бренд' in p.filters));
     assert.ok(!('Модель' in p.filters));
     assert.ok(!('Комплектация' in p.filters));
     assert.equal(p.filters['Цвет'], colors[0]);

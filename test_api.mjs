@@ -468,6 +468,8 @@ try {
     const d = await r.json();
     const keys = Object.keys(d.products[0].filters);
     assert.ok(keys.includes('Загрузка белья, кг'), keys.join(', '));
+    assert.ok(!keys.includes('Бренд') && !keys.includes('бренд'), 'бренд не фасет v2: сопоставление по id');
+    assert.ok(!d.filters.some(f => /бренд/i.test(f.name)));
     assert.ok(!keys.includes('Материал'));
     assert.ok(!Array.isArray(d.needs_review) || d.needs_review.length === 0);
   });

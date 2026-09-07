@@ -1042,7 +1042,8 @@ console.log('golden tests passed');
 
 {
   const keys = v2FacetSpecKeys(d523);
-  assert.ok(keys.has('цвет') && keys.has('тип_товара') && keys.has('бренд'));
+  assert.ok(keys.has('цвет') && keys.has('тип_товара'));
+  assert.ok(!keys.has('бренд'), 'бренд не фасет v2: сопоставление по id');
   assert.ok(!keys.has('хладагент') && !keys.has('вес_кг'));
   const w = v2FacetSpecKeys(d467);
   assert.ok(w.has('вес_кг'), 'вес стиральной машины — фильтр (facet.enabled=true)');
@@ -1058,9 +1059,8 @@ console.log('golden tests passed');
   assert.equal(p.id, 260);
   assert.equal(p.name, 'Холодильник Pozis RK FNF-172 W');
   assert.ok(!('annotation_html' in p));
-  assert.equal(typeof p.filters['Бренд'], 'string');
+  assert.ok(!('Бренд' in p.filters), 'бренд не фасет: заказчик сопоставляет по id');
   assert.equal(p.filters['Тип товара'], 'Холодильник');
-  assert.equal(p.filters['Бренд'], 'Pozis');
   assert.ok(!('Модель' in p.filters), 'модель — паспорт, не фасет');
   // Подписи фасетов — из справочника (facet.label / name), не из CODE_TO_SPEC.
   assert.equal(p.filters['Общий объем, л'], '344');
@@ -1086,7 +1086,7 @@ console.log('golden tests passed');
   const [p] = buildV2(dictToV2Rows([r], d467), { dict: d467 }).products;
   assert.equal(p.filters['Тип товара'], 'Стиральная машина');
   assert.equal(p.filters['Тип загрузки'], 'Фронтальная');
-  assert.equal(p.filters['Бренд'], 'ATLANT');
+  assert.ok(!('Бренд' in p.filters), 'бренд не фасет: заказчик сопоставляет по id');
   assert.equal(p.filters['Загрузка белья, кг'], '6');
   assert.equal(p.filters['Высота, мм'], '846');
   assert.equal(typeof p.filters['Тип загрузки'], 'string');
@@ -1108,7 +1108,7 @@ console.log('golden tests passed');
       assert.deepEqual(Object.keys(p), Object.keys(g));
       // Эталон с прежними CODE_TO_SPEC-подписями и эвристиками extractFacts —
       // при расхождении значений не валим: источник истины теперь справочник.
-      assert.ok(p.filters['Бренд']);
+      assert.ok(!('Бренд' in p.filters), 'бренд не фасет v2');
       assert.ok(p.filters['Тип товара']);
     }
     console.log('ok products_v2 структура vs эталон заказчика (260, 805)');
@@ -1133,8 +1133,8 @@ console.log('golden tests passed');
   const all = loadProducts('data_467.json').map(p => normalizeProduct(p, d467, config));
   const exported = all.filter(r => annotationRows(r, d467).length >= MIN_ANNOTATION_ROWS);
   const built = buildFilters(exported, d467, config);
-  assert.equal(expectedFilters(d467).length, 18);
-  assert.equal(expectedFilters(d523).length, 20);
+  assert.equal(expectedFilters(d467).length, 17);
+  assert.equal(expectedFilters(d523).length, 19);
   const ids = [11391, 29921, 44772, 12957, 44773, 44782, 52904, 128925, 182681, 190925];
   const recs = ids.map(id => all.find(x => x.id === id)).filter(Boolean);
   const rows = recs.map(r => serializeProduct(r, d467, built.debug));
@@ -1177,7 +1177,7 @@ console.log('golden tests passed');
 
   const i = rows.find(r => r.id === 44772);
   assert.equal(i.name, 'Стиральная машина "Indesit" IWSB 5085 (CIS) (62908)');
-  assert.equal(i.filters.Бренд[0], 'Indesit');
+  assert.ok(!('Бренд' in i.filters), 'бренд не фасет: сопоставление по id');
   assert.ok(i.name.includes('"Indesit"'));
   console.log('ok checklist 10×467 (11391 / 29921 / 44772)');
 }
@@ -2183,8 +2183,8 @@ console.log('golden tests passed');
     { id: 455270, name: 'Сушильная машина Pioneer DM-10701WH', annotation: '<p>Бренд: Pioneer<br/>Загрузка: 7 кг</p>' },
   ], { dict: d467, config, root: '.', filtersAgent: { mode: 'heuristic' } });
   const brandFacet = mixed.filters.find(f => f.name === 'Бренд');
-  assert.ok(brandFacet);
-  assert.ok(!brandFacet.value.includes('Pioneer'), 'dryer must not add Pioneer to washer catalog');
+  assert.ok(!brandFacet, 'бренд не фасет выгрузки: сопоставление по id');
+  assert.ok(!mixed.filters.some(f => (f.value || []).includes('Pioneer')), 'dryer must not add Pioneer to washer catalog');
   assert.ok(mixed.coverage.category_mismatch.includes(455270));
   assert.equal(mixed.products.length, 2);
   assert.ok(mixed.products.some(p => p.id === 455270), 'mismatch SKU stays in products');

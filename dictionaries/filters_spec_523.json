@@ -1,0 +1,18 @@
+{
+  "category_id": 523,
+  "filters": [
+    {
+      "code": "dims",
+      "name": "Габариты (ШхВхГ)",
+      "status": "not_a_filter",
+      "derives": ["height", "width", "depth"],
+      "reason": "Покупатель выбирает по ширине/глубине/высоте отдельно"
+    },
+    {
+      "code": "display",
+      "name": "Дисплей",
+      "status": "filter",
+      "type": "boolean"
+    }
+  ]
+}

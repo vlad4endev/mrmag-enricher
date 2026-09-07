@@ -1,6 +1,6 @@
 {
   "facet_min_coverage": 70,
-  "filter_sources": ["S0", "S1", "S2"],
+  "filter_sources": ["S0", "S1", "S2", "S3", "source_json", "manufacturer", "official_product_page", "trusted_retailer", "major_retailer", "retailer"],
   "target_coverage": 90,
   "description": {
     "min_attrs": 5

@@ -1,0 +1,55 @@
+{
+  "category_id": 467,
+  "filters": [
+    {
+      "code": "load_max",
+      "name": "Загрузка белья, кг",
+      "status": "filter",
+      "type": "int_enum",
+      "round": "ceil",
+      "values": [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]
+    },
+    {
+      "code": "programs_qty",
+      "name": "Количество программ",
+      "status": "filter",
+      "type": "range",
+      "bound_rule": "left_closed",
+      "open_last": true,
+      "buckets": [
+        {"label": "до 10", "min": null, "max": 10},
+        {"label": "10-15", "min": 10, "max": 15},
+        {"label": "15-20", "min": 15, "max": 20},
+        {"label": "20-25", "min": 20, "max": 25},
+        {"label": "25+", "min": 25, "max": null}
+      ]
+    },
+    {
+      "code": "spin_max",
+      "name": "Скорость отжима, об/мин",
+      "status": "filter",
+      "type": "range",
+      "bound_rule": "left_closed",
+      "open_last": true,
+      "buckets": [
+        {"label": "800-1000", "min": 800, "max": 1000},
+        {"label": "1000-1200", "min": 1000, "max": 1200},
+        {"label": "1200-1400", "min": 1200, "max": 1400},
+        {"label": "1400+", "min": 1400, "max": null}
+      ]
+    },
+    {
+      "code": "display",
+      "name": "Дисплей",
+      "status": "filter",
+      "type": "boolean"
+    },
+    {
+      "code": "dims",
+      "name": "Габариты (ШхГхВ)",
+      "status": "not_a_filter",
+      "derives": ["height", "width", "depth"],
+      "reason": "Покупатель выбирает по ширине/глубине/высоте отдельно"
+    }
+  ]
+}

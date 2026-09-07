@@ -16,7 +16,8 @@
  *   node cli.mjs fix-filters --filters out/filters_523.json --cat 523
  *   node cli.mjs artifacts data_467.json data_523.json
  *     → dictionaries/attributes_*.json, categories.json
- *   node cli.mjs validate  out/products_467.json
+ *   node cli.mjs export    products_467.json
+ *     → пересбор products/filters/coverage из annotation_html
  *   node cli.mjs report    467
  */
 
@@ -33,7 +34,7 @@ import { normalizeProduct, coverage, formatCounts, unmappedFreq } from './pipeli
 import { buildFilters } from './pipeline/facets.js';
 import { buildReport } from './pipeline/report.js';
 import { renderCard, annotationRows, MIN_ANNOTATION_ROWS } from './pipeline/generate.js';
-import { serializeProducts, serializeFilters } from './pipeline/export.js';
+import { serializeProducts, serializeFilters, buildCustomerExport } from './pipeline/export.js';
 import { validateProducts } from './pipeline/validate.js';
 import { webInfoFrom } from './pipeline/reviews.js';
 import { enrichMissing } from './pipeline/external.js';
@@ -41,6 +42,8 @@ import { resolveSearchSettings } from './pipeline/search.js';
 import { runFiltersAgent, assertFiltersClean } from './pipeline/filters_agent.js';
 import { rebuildStorefrontFilters, sanitizeStorefrontFiltersFile } from './pipeline/fix_filters.js';
 import { loadSettings, resolveProvider, providerEndpoint, providerHasKey } from './settings.js';
+import { markCategoryMismatch, categoryMismatchOf } from './pipeline/category_mismatch.js';
+import { buildFilterCoverageReport } from './pipeline/filter_report.js';
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const OUT = process.env.OUT_DIR || path.join(ROOT, 'out');
 
@@ -219,6 +222,7 @@ async function writeOutputs({ recs, dict, config, catId, cov, covAfter, formats,
       return hit ? { ...f, value: hit.value } : f;
     }).filter(f => sanitized.filters.some(x => x.name === f.name)),
   };
+  const filterUnmapped = built.unmapped || {};
   const clean = assertFiltersClean(built.filters, dict);
   if (!clean.ok) {
     writeJson(path.join(OUT, `filters_reject_${catId}.json`), { errors: clean.errors, agent }, 2);
@@ -227,11 +231,20 @@ async function writeOutputs({ recs, dict, config, catId, cov, covAfter, formats,
   }
 
   writeContractData(recs, dict, catId);
+  for (const rec of recs) markCategoryMismatch(rec, catId);
   const products = serializeProducts(exported, dict, built.debug, { root: ROOT });
   writeJson(path.join(OUT, `products_${catId}.json`), products, 4);
   if (clean.ok) {
     writeJson(path.join(OUT, `filters_${catId}.json`), serializeFilters(built), 4);
   }
+  writeJson(path.join(OUT, `filters_coverage_${catId}.json`), buildFilterCoverageReport({
+    catId,
+    products,
+    recs,
+    dict,
+    unmapped: filterUnmapped,
+    threshold: config.facet_min_coverage ?? 70,
+  }), 2);
   const heldRows = held.map(r => ({
     id: r.id,
     name: r.name,
@@ -397,6 +410,61 @@ async function runEnrich(dataFile, { external = true, limit = null } = {}) {
   return r;
 }
 
+/**
+ * Пересборка products_{id}.json + filters_{id}.json из карточек заказчика
+ * (annotation_html = тот же источник, что и filters). SKU только из файла;
+ * data_{id}.json лишь дополняет category_mismatch в отчёте.
+ */
+async function exportCustomer(file) {
+  if (!file) {
+    console.error('укажите products_{id}.json или data_{id}.json');
+    process.exit(1);
+  }
+  const catId = catIdFromFile(file);
+  const dict = loadDictionary(catId, ROOT);
+  const config = loadConfig(ROOT);
+  const raw = JSON.parse(fs.readFileSync(file, 'utf-8'));
+  const products = Array.isArray(raw) ? raw : (raw.products || []);
+  const extraMismatch = [];
+  const dataFile = path.join(ROOT, `data_${catId}.json`);
+  if (fs.existsSync(dataFile) && path.resolve(file) !== path.resolve(dataFile)) {
+    const extra = loadProducts(dataFile);
+    const seen = new Set(products.map(p => String(p.id ?? p.sku)));
+    for (const d of extra) {
+      if (seen.has(String(d.id))) continue;
+      if (categoryMismatchOf(d.name, catId)) extraMismatch.push(d.id);
+    }
+  }
+  const out = await buildCustomerExport(products, {
+    dict,
+    config,
+    root: ROOT,
+    filtersAgent: { mode: 'heuristic' },
+  });
+  if (out.coverage && extraMismatch.length) {
+    out.coverage.category_mismatch = [...new Set([
+      ...(out.coverage.category_mismatch || []),
+      ...extraMismatch,
+    ])];
+  }
+  fs.mkdirSync(OUT, { recursive: true });
+  writeJson(path.join(OUT, `products_${catId}.json`), out.products, 4);
+  writeJson(path.join(OUT, `filters_${catId}.json`), serializeFilters({ filters: out.filters }), 4);
+  writeJson(path.join(OUT, `filters_coverage_${catId}.json`), out.coverage, 2);
+  writeJson(path.join(OUT, `held_${catId}.json`), out.held, 2);
+  writeJson(path.join(OUT, `validate_${catId}.json`), out.validation, 2);
+  console.log(`export ${catId}: products=${out.products.length} filters=${out.filters.length} held=${out.held.length}`);
+  console.log(`  coverage → out/filters_coverage_${catId}.json`);
+  if (out.coverage?.category_mismatch?.length) {
+    console.log(`  category_mismatch: ${out.coverage.category_mismatch.join(', ')}`);
+  }
+  if (!out.validation?.ok) {
+    console.error(`  validation: ${out.validation.errors.length} ошибок`);
+    process.exitCode = 1;
+  }
+  return out;
+}
+
 const cmd = process.argv[2];
 const files = process.argv.slice(3).filter(a => !a.startsWith('--'));
 
@@ -457,7 +525,8 @@ else if (cmd === 'fix-filters') {
 else if (cmd === 'config') showConfig();
 else if (cmd === 'validate') validateFile(files[0]);
 else if (cmd === 'report') reportCmd(files[0]);
+else if (cmd === 'export') await exportCustomer(files[0]);
 else {
-  console.error(`команды: inspect | normalize | enrich | lookup | config | facets | artifacts | validate | report | fix-filters`);
+  console.error(`команды: inspect | normalize | enrich | lookup | config | facets | artifacts | validate | report | fix-filters | export`);
   process.exit(1);
 }

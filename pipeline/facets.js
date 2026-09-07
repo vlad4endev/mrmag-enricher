@@ -6,11 +6,15 @@ import { formatAttrValue, hasStrictEnum, looksLikeEnumFragment, unifyEnumValues 
 const DOMINANT_SHARE = 95;
 
 /**
- * Источники значений для filters_*.json: только графа характеристик карточки.
- * S1 — annotation, S2 — description как замена пустой annotation, S0 — бренд из имени.
- * S3/model/retailer в фильтры сайта не едут (остаются в attrs/аннотации при необходимости).
+ * Источники значений для filters_*.json — те же, что для annotation_html:
+ * исходник (S0/S1/S2) и внешние страницы (S3/retailer). Вывод модели (model)
+ * в витрину не едет: это не факт из карточки и не факт с сайта.
  */
-export const DEFAULT_FILTER_SOURCES = Object.freeze(['S0', 'S1', 'S2']);
+export const DEFAULT_FILTER_SOURCES = Object.freeze([
+  'S0', 'S1', 'S2', 'S3',
+  'source_json', 'manufacturer', 'official_product_page',
+  'trusted_retailer', 'major_retailer', 'retailer', 'distributor',
+]);
 
 /**
  * Можно ли брать attrs[code] в каталожный фильтр.
@@ -41,16 +45,24 @@ function isDiscreteCount(attr) {
   return hi - lo <= 20 && lo >= 0 && Number.isInteger(lo) && Number.isInteger(hi);
 }
 
+function hasExplicitBuckets(facet) {
+  return Array.isArray(facet?.buckets) && facet.buckets.length > 0;
+}
+
 /**
  * Вид фильтра следует из типа атрибута, а не из разброса данных.
  * Счётная величина — перечень: «2, 3, 4 скорости», а не «2-2.2» и «2.8-3».
+ * Явные buckets / int_enum из filters_spec не схлопываются в enum.
  */
 export function facetKind(attr) {
   const kind = attr.facet?.kind;
+  if (kind === 'int_enum') return 'int_enum';
   if (attr.type === 'boolean') {
     if (kind === 'boolean' || kind === 'enum' || !kind) return 'boolean';
   }
   if (kind === 'boolean') return 'boolean';
+  if (kind === 'range' && hasExplicitBuckets(attr.facet)) return 'range';
+  if (kind === 'range' && hasBreaks(attr.facet)) return 'range';
   if (kind === 'range' && (attr.type === 'integer' || isDiscreteCount(attr))) return 'enum';
   return kind;
 }
@@ -61,6 +73,91 @@ function fmt(n) {
 
 function hasBreaks(facet) {
   return Array.isArray(facet?.breaks) && facet.breaks.length >= 2;
+}
+
+function fmtBucketNum(n) {
+  return Number.isInteger(n) ? String(n) : String(+n.toFixed(3));
+}
+
+/** Явные buckets spec → {label, min, max}; иначе из breaks. */
+export function facetBuckets(facet) {
+  if (hasExplicitBuckets(facet)) {
+    return facet.buckets.map(b => ({
+      label: b.label,
+      min: b.min == null || b.min === '' ? -Infinity : Number(b.min),
+      max: b.max == null || b.max === '' ? Infinity : Number(b.max),
+    }));
+  }
+  if (hasBreaks(facet)) {
+    const b = facet.breaks.map(Number);
+    const out = [];
+    for (let i = 0; i < b.length - 1; i++) {
+      out.push({
+        label: `${fmtBucketNum(b[i])}-${fmtBucketNum(b[i + 1])}`,
+        min: b[i],
+        max: b[i + 1],
+      });
+    }
+    if (facet.open_last) {
+      out.push({
+        label: `${fmtBucketNum(b[b.length - 1])}+`,
+        min: b[b.length - 1],
+        max: Infinity,
+      });
+    }
+    return out;
+  }
+  return null;
+}
+
+/**
+ * left_closed: интервал [min; max), значение на границе — в правый бакет.
+ * open_last / max=null — открытый последний.
+ */
+export function matchBucket(value, facet) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return null;
+  const buckets = facetBuckets(facet);
+  if (!buckets?.length) return null;
+  const leftClosed = (facet.bound_rule || 'left_closed') !== 'right_closed';
+  const hits = buckets.filter((b) => {
+    if (leftClosed) return n >= b.min && n < b.max;
+    return n > b.min && n <= b.max;
+  });
+  if (!hits.length) return null;
+  hits.sort((a, b) => b.min - a.min);
+  return hits[0].label;
+}
+
+export function toIntEnum(value, facet = {}) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return null;
+  const round = facet.round || 'ceil';
+  let i;
+  if (round === 'floor') i = Math.floor(n);
+  else if (round === 'nearest') i = Math.round(n);
+  else i = Math.ceil(n);
+  const allowed = facet.int_values;
+  if (Array.isArray(allowed) && allowed.length) {
+    if (!allowed.map(Number).includes(i)) return null;
+  }
+  return String(i);
+}
+
+/** 850 мм, записанные без единицы, не должны попадать в фильтр «…, см». */
+export function coerceFacetNumber(n, attr) {
+  if (!Number.isFinite(n)) return n;
+  if (attr?.unit === 'см' && n >= 400) return n / 10;
+  if (attr?.unit === 'кг' && n >= 400 && attr.code === 'load_max') return n;
+  return n;
+}
+
+function trackUnmapped(bag, name, raw) {
+  if (!bag || !name || raw == null || raw === '') return;
+  const s = String(raw).trim();
+  if (!s) return;
+  if (!bag[name]) bag[name] = new Map();
+  bag[name].set(s, (bag[name].get(s) || 0) + 1);
 }
 
 /**
@@ -99,10 +196,9 @@ function rangeLo(value, facet) {
 }
 
 export function bucketLabel(value, facet, { isLast = false } = {}) {
+  const fromSpec = matchBucket(value, facet);
+  if (fromSpec) return fromSpec;
   if (facet.kind !== 'range') return String(value);
-  if (hasBreaks(facet)) {
-    return labelFromBreaks(value, facet.breaks, !!facet.open_last && isLast);
-  }
   const step = facet.step;
   if (!(step > 0)) throw new Error(`facet.step обязателен для range (${facet.label})`);
   const lo = bucketLo(value, step, facet.origin);
@@ -111,9 +207,9 @@ export function bucketLabel(value, facet, { isLast = false } = {}) {
 }
 
 function assertRangeFacet(facet, name) {
-  if (hasBreaks(facet)) return;
+  if (hasExplicitBuckets(facet) || hasBreaks(facet)) return;
   if (!(facet.step > 0)) {
-    throw new Error(`facet.step или facet.breaks обязателен для range (${name})`);
+    throw new Error(`facet.step, facet.breaks или facet.buckets обязателен для range (${name})`);
   }
 }
 
@@ -136,11 +232,10 @@ function valueList(v) {
 
 /**
  * Строит filters.json из нормализованных attrs товаров.
- * Источник attrs — характеристики (annotation), не проза описания.
- * Состав — только facet.enabled справочника: универсальный набор
- * «тип товара, назначение» внутри категории ничего не различает.
- * Для range: [a; b); последний бакет открытый при facet.open_last.
- * Пустые бакеты не создаются.
+ * Источник — те же specs, что идут в annotation_html (S0–S3).
+ * Состав — только facet.enabled / не not_a_filter.
+ * Для range: [min; max) по buckets spec; пустые бакеты не создаются.
+ * Несопоставленные значения — в debug.unmapped, не на витрину.
  */
 export function buildFilters(recs, dict, config) {
   unifyEnumValues(recs, dict);
@@ -152,12 +247,17 @@ export function buildFilters(recs, dict, config) {
   const filters = [];
   const excluded = [];
   const warnings = [];
+  const unmapped = {};
 
   for (const attr of dict.attrs) {
     const facet = attr.facet || {};
-    if (!facet.enabled) {
-      if (facet.disabled_reason) {
-        excluded.push({ code: attr.code, name: attr.name, reason: facet.disabled_reason });
+    if (!facet.enabled || facet.status === 'not_a_filter') {
+      if (facet.disabled_reason || facet.status === 'not_a_filter') {
+        excluded.push({
+          code: attr.code,
+          name: attr.name,
+          reason: facet.reason || facet.disabled_reason || 'not_a_filter',
+        });
       }
       continue;
     }
@@ -168,52 +268,67 @@ export function buildFilters(recs, dict, config) {
 
     const counts = new Map();
     const kind = facetKind(attr);
+    const fname = facet.label || attr.name;
 
     if (kind === 'range') {
-      assertRangeFacet(facet, facet.label || attr.name);
-      const nums = filled.map(r => numericOf(r.attrs[attr.code])).filter(v => v != null);
-      if (!nums.length) continue;
-      const maxLo = Math.max(...nums.map(v => rangeLo(v, facet)));
-
-      for (const v of nums) {
-        const isLast = !!facet.open_last && rangeLo(v, facet) === maxLo;
-        const lab = bucketLabel(v, { ...facet, kind: 'range' }, { isLast });
+      assertRangeFacet(facet, fname);
+      const mapped = [];
+      for (const r of filled) {
+        const raw = numericOf(r.attrs[attr.code]);
+        if (raw == null) continue;
+        const n = coerceFacetNumber(raw, attr);
+        const lab = matchBucket(n, facet) || (
+          hasExplicitBuckets(facet) || hasBreaks(facet)
+            ? null
+            : bucketLabel(n, { ...facet, kind: 'range' })
+        );
+        if (!lab) {
+          trackUnmapped(unmapped, fname, r.attrs[attr.code]);
+          continue;
+        }
+        mapped.push(lab);
         counts.set(lab, (counts.get(lab) || 0) + 1);
       }
-
-      const sum = [...counts.values()].reduce((a, b) => a + b, 0);
-      if (sum !== nums.length) {
-        throw new Error(
-          `сумма counter фасета «${facet.label || attr.name}» = ${sum}, ` +
-          `числовых значений = ${nums.length} — выгрузка заблокирована`,
-        );
-      }
+      if (!mapped.length) continue;
       if (counts.size > 8) {
         warnings.push({
           code: attr.code,
-          name: facet.label || attr.name,
+          name: fname,
           occupied: counts.size,
           reason: `Занятых бакетов ${counts.size} > 8; шаг задан справочником, пересчёт запрещён`,
         });
       }
+    } else if (kind === 'int_enum') {
+      for (const r of filled) {
+        const raw = numericOf(r.attrs[attr.code]);
+        if (raw == null) {
+          trackUnmapped(unmapped, fname, r.attrs[attr.code]);
+          continue;
+        }
+        const n = coerceFacetNumber(raw, attr);
+        const lab = toIntEnum(n, facet);
+        if (!lab) {
+          trackUnmapped(unmapped, fname, r.attrs[attr.code]);
+          continue;
+        }
+        counts.set(lab, (counts.get(lab) || 0) + 1);
+      }
     } else if (kind === 'boolean') {
-      // Только true/false → «Есть»/«Нет». unknown не попадает в фильтр.
       for (const r of filled) {
         const v = r.attrs[attr.code];
-        if (v !== true && v !== false) continue;
+        if (v !== true && v !== false) {
+          trackUnmapped(unmapped, fname, v);
+          continue;
+        }
         const lab = displayValue(attr, v);
         counts.set(lab, (counts.get(lab) || 0) + 1);
       }
     } else {
-      // Мультизначный атрибут даёт товару несколько значений фильтра:
-      // «механическое, кнопочное» попадает и в «Механическое», и в «Кнопочное».
-      // Strict enum: значения вне value_aliases не создают filter value.
-      // Без aliases — не собираем произвольные строки (иначе «Белое стекло»/LED).
       const strict = hasStrictEnum(attr);
       if (!strict && (attr.type === 'enum' || attr.type === 'text')) {
         warnings.push({
           code: attr.code,
-          name: facet.label || attr.name,
+          name: fname,
           reason: 'facet.enabled без value_aliases — enum-фильтр пропущен, иначе сырой зоопарк значений',
         });
         continue;
@@ -223,16 +338,28 @@ export function buildFilters(recs, dict, config) {
         : null;
       for (const r of filled) {
         const seen = new Set();
+        let any = false;
         for (const p of valueList(r.attrs[attr.code])) {
-          // displayValue уже алиасит; пустая строка = вне словаря при strict.
           const lab = displayValue(attr, p);
           if (!lab || seen.has(lab)) continue;
-          if (allowed && !allowed.has(lab)) continue;
-          // Без канонов — всё равно не пускаем «Зоны свежести - нет» на витрину.
-          if (!allowed && looksLikeEnumFragment(lab)) continue;
-          if (!allowed && /^(?:нет|да|есть|имеется|yes|no)$/i.test(lab)) continue;
+          if (allowed && !allowed.has(lab)) {
+            trackUnmapped(unmapped, fname, p);
+            continue;
+          }
+          if (!allowed && looksLikeEnumFragment(lab)) {
+            trackUnmapped(unmapped, fname, p);
+            continue;
+          }
+          if (!allowed && /^(?:нет|да|есть|имеется|yes|no)$/i.test(lab)) {
+            trackUnmapped(unmapped, fname, p);
+            continue;
+          }
           seen.add(lab);
+          any = true;
           counts.set(lab, (counts.get(lab) || 0) + 1);
+        }
+        if (!any && valueList(r.attrs[attr.code]).length) {
+          /* already tracked per value */
         }
       }
     }
@@ -248,13 +375,11 @@ export function buildFilters(recs, dict, config) {
 
     if (!values.length) continue;
 
-    // Фильтр, где одно значение покрывает почти все товары каталога, не
-    // помогает выбирать: доля считается от всех товаров, а не от заполненных.
     const topShare = (Math.max(...counts.values()) / total) * 100;
     if (topShare > DOMINANT_SHARE) {
       warnings.push({
         code: attr.code,
-        name: facet.label || attr.name,
+        name: fname,
         share: Math.round(topShare * 10) / 10,
         reason: `Одно значение у ${Math.round(topShare)}% заполненных — фильтр не различает товары`,
       });
@@ -262,14 +387,14 @@ export function buildFilters(recs, dict, config) {
     if (cov < minCov) {
       warnings.push({
         code: attr.code,
-        name: facet.label || attr.name,
+        name: fname,
         coverage: Math.round(cov * 10) / 10,
         reason: `Заполненность ${Math.round(cov)}% ниже ориентира ${minCov}%; состав фильтров задан справочником`,
       });
     }
 
     filters.push({
-      name: facet.label || attr.name,
+      name: fname,
       value: values,
       _code: attr.code,
       _counts: Object.fromEntries(counts),
@@ -284,39 +409,67 @@ export function buildFilters(recs, dict, config) {
     debug: filters,
     excluded,
     warnings,
+    unmapped,
   };
 }
 
 /**
  * Значения фильтров одного товара. Всегда массив: мультизначный атрибут
  * ставит товар сразу в несколько значений фильтра.
- * Только графа характеристик (S0/S1/S2) — см. filterSourceAllowed.
  */
-export function assignFilterValues(rec, dict, debugFacets, config = {}) {
+export function assignFilterValues(rec, dict, debugFacets, config = {}, unmapped = null) {
   const out = {};
   for (const f of debugFacets) {
     const v = rec.attrs[f._code];
     if (v == null) continue;
     if (!filterSourceAllowed(rec, f._code, config)) continue;
     const attr = dict.byCode.get(f._code);
-    const facet = attr.facet;
-    if (facetKind(attr) === 'range') {
-      const n = numericOf(v);
-      if (n == null) continue;
-      const maxLo = Math.max(...f.value.map(x => parseFloat(x)));
-      const isLast = !!facet.open_last && rangeLo(n, facet) === maxLo;
-      out[f.name] = [bucketLabel(n, { ...facet, kind: 'range' }, { isLast })];
-    } else if (facetKind(attr) === 'boolean') {
-      if (v !== true && v !== false) continue;
+    if (!attr) continue;
+    const facet = attr.facet || {};
+    if (facet.status === 'not_a_filter') continue;
+    const kind = facetKind(attr);
+    if (kind === 'range') {
+      const raw = numericOf(v);
+      if (raw == null) continue;
+      const n = coerceFacetNumber(raw, attr);
+      const lab = matchBucket(n, facet) || (
+        hasExplicitBuckets(facet) || hasBreaks(facet)
+          ? null
+          : bucketLabel(n, { ...facet, kind: 'range' })
+      );
+      if (!lab || !f.value.includes(lab)) {
+        trackUnmapped(unmapped, f.name, v);
+        continue;
+      }
+      out[f.name] = [lab];
+    } else if (kind === 'int_enum') {
+      const raw = numericOf(v);
+      if (raw == null) {
+        trackUnmapped(unmapped, f.name, v);
+        continue;
+      }
+      const lab = toIntEnum(coerceFacetNumber(raw, attr), facet);
+      if (!lab || !f.value.includes(lab)) {
+        trackUnmapped(unmapped, f.name, v);
+        continue;
+      }
+      out[f.name] = [lab];
+    } else if (kind === 'boolean') {
+      if (v !== true && v !== false) {
+        trackUnmapped(unmapped, f.name, v);
+        continue;
+      }
       out[f.name] = [displayValue(attr, v)];
     } else {
-      // Только значения из каталожного фасета — иначе товар ссылается на пункт,
-      // которого нет в filters_*.json, и витрина разъезжается.
       const allowed = new Set(f.value);
       const labels = [];
       for (const p of valueList(v)) {
         const lab = displayValue(attr, p);
-        if (!lab || labels.includes(lab) || !allowed.has(lab)) continue;
+        if (!lab || labels.includes(lab)) continue;
+        if (!allowed.has(lab)) {
+          trackUnmapped(unmapped, f.name, p);
+          continue;
+        }
         labels.push(lab);
       }
       if (labels.length) out[f.name] = labels;

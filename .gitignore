@@ -21,6 +21,7 @@ node_modules/
 # Выгрузки по категориям
 products_*.json
 filters_*.json
+!dictionaries/filters_spec_*.json
 
 # Разметка: labelset.json и label.html генерируются, эталон храним
 labelset.json

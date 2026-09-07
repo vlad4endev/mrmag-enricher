@@ -5,6 +5,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { normKey } from './text.js';
 import { looksLikeEnumFragment, normalizeValueAliases } from './types.js';
+import { applyFilterOverlays, valuesObjectFromFile } from './filter_spec.js';
 
 /**
  * Корень репозитория (рядом с pipeline/), а не process.cwd().
@@ -81,7 +82,7 @@ export function bootstrapDictionariesDir(root) {
     return dest;
   }
   for (const name of fs.readdirSync(bundled)) {
-    if (!/^(attributes|benchmarks)_\d+\.json$/i.test(name)) continue;
+    if (!/^(attributes|benchmarks|filters_spec|values)_\d+\.json$/i.test(name)) continue;
     const to = path.join(dest, name);
     if (fs.existsSync(to)) continue;
     fs.copyFileSync(path.join(bundled, name), to);
@@ -368,6 +369,20 @@ export function loadBenchmarks(catId, root) {
   }
 }
 
+function readOverlayJson(file) {
+  if (!fs.existsSync(file)) return null;
+  const data = JSON.parse(fs.readFileSync(file, 'utf-8'));
+  return data && typeof data === 'object' ? data : null;
+}
+
+export function filtersSpecPath(catId, root) {
+  return path.join(dictionariesDir(root), `filters_spec_${catId}.json`);
+}
+
+export function valuesMapPath(catId, root) {
+  return path.join(dictionariesDir(root), `values_${catId}.json`);
+}
+
 export function loadDictionary(catId, root) {
   const file = dictionaryPath(catId, root);
   if (!fs.existsSync(file)) {
@@ -375,7 +390,13 @@ export function loadDictionary(catId, root) {
   }
   const attrs = JSON.parse(fs.readFileSync(file, 'utf-8'));
   if (!Array.isArray(attrs) || !attrs.length) throw new Error(`пустой справочник ${file}`);
-  return indexDictionary(attrs, String(catId));
+  const spec = readOverlayJson(filtersSpecPath(catId, root));
+  const values = valuesObjectFromFile(readOverlayJson(valuesMapPath(catId, root)));
+  applyFilterOverlays(attrs, spec, values);
+  const dict = indexDictionary(attrs, String(catId));
+  dict.valuesMap = values || null;
+  dict.filtersSpec = spec || null;
+  return dict;
 }
 
 export function indexDictionary(attrs, catId) {

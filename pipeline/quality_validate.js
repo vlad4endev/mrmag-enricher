@@ -7,7 +7,7 @@
  * Опасное авто-исправление без однозначного решения запрещено.
  */
 
-import { facetKind, bucketLabel } from './facets.js';
+import { facetKind, bucketLabel, matchBucket, toIntEnum, coerceFacetNumber } from './facets.js';
 import { annotationText, formatAttrValue } from './types.js';
 import { annotationRows, verifyDescription } from './generate.js';
 import { SOURCE_RANK } from './normalize.js';
@@ -112,8 +112,9 @@ export function stripUnconfirmedNegatives(rec, dict) {
 export function checkFilterConsistency(rec, dict, assigned) {
   const issues = [];
   if (!assigned || typeof assigned !== 'object') return issues;
+  if (rec?.category_mismatch) return issues;
   for (const a of dict.attrs) {
-    if (a.tier === 'X' || !a.facet?.enabled) continue;
+    if (a.tier === 'X' || !a.facet?.enabled || a.facet?.status === 'not_a_filter') continue;
     const exact = rec.attrs?.[a.code];
     if (exact == null) continue;
     const name = a.facet.label || a.name;
@@ -121,11 +122,14 @@ export function checkFilterConsistency(rec, dict, assigned) {
     if (filterVal == null) continue;
     const kind = facetKind(a);
     if (kind === 'range') {
-      const n = typeof exact === 'number' ? exact : Number(exact);
+      const n = coerceFacetNumber(
+        typeof exact === 'number' ? exact : Number(exact),
+        a,
+      );
       if (!Number.isFinite(n)) continue;
-      const expected = bucketLabel(n, { ...a.facet, kind: 'range' });
+      const expected = matchBucket(n, a.facet) || bucketLabel(n, { ...a.facet, kind: 'range' });
       const got = Array.isArray(filterVal) ? filterVal[0] : filterVal;
-      if (String(got) !== String(expected)) {
+      if (expected && String(got) !== String(expected)) {
         issues.push({
           code: a.code,
           kind: 'filter_mismatch',
@@ -133,7 +137,23 @@ export function checkFilterConsistency(rec, dict, assigned) {
           detail: `${name}: filter=${got}, expected=${expected}, exact=${n}`,
         });
       }
-    } else if (kind === 'enum' || a.type === 'integer') {
+    } else if (kind === 'int_enum') {
+      const n = coerceFacetNumber(
+        typeof exact === 'number' ? exact : Number(exact),
+        a,
+      );
+      if (!Number.isFinite(n)) continue;
+      const expected = toIntEnum(n, a.facet);
+      const got = Array.isArray(filterVal) ? filterVal[0] : filterVal;
+      if (expected && String(got) !== String(expected)) {
+        issues.push({
+          code: a.code,
+          kind: 'filter_mismatch',
+          action: 'needs_review',
+          detail: `${name}: filter=${got}, expected=${expected}, exact=${n}`,
+        });
+      }
+    } else if (kind === 'enum' || (a.type === 'integer' && kind !== 'range')) {
       // Дискретный атрибут: filter не должен быть бакетом «2-2.2».
       for (const v of (Array.isArray(filterVal) ? filterVal : [filterVal])) {
         if (/^\d+(?:\.\d+)?-\d/.test(String(v))) {
@@ -249,7 +269,10 @@ export function buildConfirmedAttributes(rec, dict, assigned = null) {
     if (assigned && assigned[name] != null) {
       filterValue = Array.isArray(assigned[name]) ? assigned[name][0] : assigned[name];
     } else if (a.facet?.enabled && facetKind(a) === 'range' && typeof rec.attrs[a.code] === 'number') {
-      filterValue = bucketLabel(rec.attrs[a.code], { ...a.facet, kind: 'range' });
+      filterValue = matchBucket(rec.attrs[a.code], a.facet)
+        || bucketLabel(rec.attrs[a.code], { ...a.facet, kind: 'range' });
+    } else if (a.facet?.enabled && facetKind(a) === 'int_enum' && rec.attrs[a.code] != null) {
+      filterValue = toIntEnum(coerceFacetNumber(Number(rec.attrs[a.code]), a), a.facet);
     } else if (a.facet?.enabled) {
       filterValue = formatAttrValue(a, rec.attrs[a.code], { withUnit: false });
     }

@@ -11,6 +11,8 @@ import { buildDescriptionHtml } from './model_validate.js';
 import { finalizeRecord, checkFilterConsistency, stripHallucinationClaims, checkDescriptionClaims } from './quality_validate.js';
 import { runFiltersAgent, assertFiltersClean } from './filters_agent.js';
 import { validateProducts } from './validate.js';
+import { markCategoryMismatch } from './category_mismatch.js';
+import { buildFilterCoverageReport } from './filter_report.js';
 
 function esc(s) {
   return String(s)
@@ -206,7 +208,7 @@ export function serializeProduct(rec, dict, debugFacets, opts = {}) {
     finalizeRecord(rec, dict, { enriched: enr, assigned: null });
   }
   const assigned = assignFilterValues(rec, dict, debugFacets, opts.config || {});
-  if (!opts.skipFinalize && assigned) {
+  if (!opts.skipFinalize && assigned && !rec.category_mismatch) {
     const filterIssues = checkFilterConsistency(rec, dict, assigned);
     if (filterIssues.length) {
       rec.validation_issues = [...(rec.validation_issues || []), ...filterIssues];
@@ -354,6 +356,7 @@ export async function buildCustomerExport(products, {
     rec.name = p.name;
     rec._enriched = p.enriched || null;
     applyEnrichedSpecs(rec, p.enriched?.specs, dict, config);
+    markCategoryMismatch(rec, dict.catId);
     recs.push(rec);
   }
   const held = recs.filter(r => annotationRows(r, dict).length < MIN_ANNOTATION_ROWS);
@@ -387,8 +390,10 @@ export async function buildCustomerExport(products, {
     }).filter(f => sanitized.filters.some(x => x.name === f.name)),
     sanitize_fixes: sanitized.fixes,
   };
+  const unmapped = built.unmapped || {};
   for (const rec of exported) {
-    const assigned = assignFilterValues(rec, dict, built.debug, config);
+    const assigned = assignFilterValues(rec, dict, built.debug, config, unmapped);
+    if (rec.category_mismatch) continue;
     const filterIssues = checkFilterConsistency(rec, dict, assigned);
     if (filterIssues.length) {
       rec.validation_issues = [...(rec.validation_issues || []), ...filterIssues];
@@ -396,6 +401,14 @@ export async function buildCustomerExport(products, {
   }
 
   const productsOut = serializeProducts(exported, dict, built.debug, { root, skipFinalize: true, config });
+  const coverage = buildFilterCoverageReport({
+    catId: dict.catId,
+    products: productsOut,
+    recs,
+    dict,
+    unmapped,
+    threshold: config.facet_min_coverage ?? 70,
+  });
   const clean = assertFiltersClean(built.filters, dict);
   const verdict = validateProducts(productsOut, dict, new Map(exported.map(r => [r.id, r])));
   // Gate только на грязь в значениях фасетов. filter_missing (фасет из schema
@@ -438,6 +451,7 @@ export async function buildCustomerExport(products, {
       sanitize_fixes: built.sanitize_fixes?.length || 0,
     },
     validation,
+    coverage,
     quality: exported.map(r => ({
       id: r.id,
       score: r.quality?.score,

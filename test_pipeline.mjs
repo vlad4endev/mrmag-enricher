@@ -160,7 +160,7 @@ console.log('golden tests passed');
   assert.equal(r.dump, true);
   assert.ok(r.pairs.length >= 8, r.pairs.length);
   assert.ok(r.pairs.every(x => x.source === 'S2'));
-  assert.equal(r.attrs.install, 'Отдельно стоящая');
+  assert.equal(r.attrs.install, 'Отдельностоящая');
   assert.equal(r.attrs.height, 85);
   assert.equal(r.attrs.width, 59.6);
   assert.equal(r.attrs.depth, 46.5);
@@ -1063,7 +1063,7 @@ console.log('golden tests passed');
   const all = loadProducts('data_467.json').map(p => normalizeProduct(p, d467, config));
   const exported = all.filter(r => annotationRows(r, d467).length >= MIN_ANNOTATION_ROWS);
   const built = buildFilters(exported, d467, config);
-  assert.equal(expectedFilters(d467).length, 17);
+  assert.equal(expectedFilters(d467).length, 18);
   assert.equal(expectedFilters(d523).length, 20);
   const ids = [11391, 29921, 44772, 12957, 44773, 44782, 52904, 128925, 182681, 190925];
   const recs = ids.map(id => all.find(x => x.id === id)).filter(Boolean);
@@ -1678,7 +1678,8 @@ console.log('golden tests passed');
   assert.ok(cool.value.includes('No Frost'));
   assert.equal(cool.value.filter(v => /no\s*frost/i.test(v)).length, 1);
   assert.ok(cool.value.includes('Капельная'));
-  assert.ok(cool.value.includes('Ручная разморозка'));
+  assert.ok(cool.value.includes('Статическая'));
+  assert.ok(!cool.value.includes('Ручная разморозка'));
   console.log('ok defrost/cooling: no duplicate No Frost / Ручное canons');
 }
 
@@ -1720,11 +1721,14 @@ console.log('golden tests passed');
     const cleaned = sanitizeFilterCatalog(dirty, d523);
     assert.ok(cleaned.validation.ok);
     const cool = cleaned.filters.find(f => f.name === 'Система охлаждения');
-    assert.deepEqual(cool.value, ['Капельная', 'Ручная разморозка', 'No Frost']);
+    assert.ok(!cool.value.includes('Ручная разморозка'));
+    assert.ok(cool.value.includes('Статическая'));
+    assert.ok(cool.value.includes('Капельная'));
+    assert.ok(cool.value.includes('No Frost'));
     const defrost = cleaned.filters.find(f => f.name === 'Размораживание холодильной камеры');
     assert.deepEqual(defrost.value, ['Автоматическое (No Frost)', 'Капельная система', 'Ручное']);
     const comp = cleaned.filters.find(f => f.name === 'Тип компрессора');
-    assert.deepEqual(comp.value, ['Инверторный', 'Коллекторный', 'Стандартный']);
+    assert.deepEqual(comp.value, ['Инверторный', 'Коллекторный']);
     const ctrl = cleaned.filters.find(f => f.name === 'Тип управления');
     assert.deepEqual(ctrl.value, ['Механическое', 'Сенсорное', 'Электронное']);
     const color = cleaned.filters.find(f => f.name === 'Цвет корпуса');
@@ -1743,7 +1747,7 @@ console.log('golden tests passed');
 }
 
 {
-  // Фильтры сайта — только графа характеристик (S1), не S3/AI
+  // Фильтры витрины — тот же источник, что annotation_html: S0–S3
   const { buildFilters, assignFilterValues, filterSourceAllowed } = await import('./pipeline/facets.js');
   const cooling = d523.byCode.get('cooling');
   assert.ok(cooling?.facet?.enabled);
@@ -1767,19 +1771,19 @@ console.log('golden tests passed');
   recS3.provenance.cooling = { level: 'S3', raw: 'specs' };
 
   assert.equal(filterSourceAllowed(recS1, 'cooling', config), true);
-  assert.equal(filterSourceAllowed(recS3, 'cooling', config), false);
+  assert.equal(filterSourceAllowed(recS3, 'cooling', config), true);
 
   const built = buildFilters([recS1, recS3], d523, config);
   const cool = built.filters.find(f => f.name === 'Система охлаждения');
-  assert.ok(cool, 'S1 must create cooling facet');
-  assert.deepEqual(cool.value, ['No Frost']);
-  assert.ok(!cool.value.includes('Капельная'), 'S3 must not enter catalog filters');
+  assert.ok(cool, 'S1+S3 must create cooling facet');
+  assert.ok(cool.value.includes('No Frost'));
+  assert.ok(cool.value.includes('Капельная'), 'S3 must enter catalog filters');
 
   const assignedS3 = assignFilterValues(recS3, d523, built.debug, config);
-  assert.equal(assignedS3['Система охлаждения'], undefined);
+  assert.deepEqual(assignedS3['Система охлаждения'], ['Капельная']);
   const assignedS1 = assignFilterValues(recS1, d523, built.debug, config);
   assert.deepEqual(assignedS1['Система охлаждения'], ['No Frost']);
-  console.log('ok filters from characteristics only (S1), S3 excluded');
+  console.log('ok filters from specs (S1+S3)');
 }
 
 {
@@ -1899,5 +1903,89 @@ console.log('golden tests passed');
   }
 
   console.log('ok filters_agent mock-LLM + heuristic (467/523/929)');
+}
+
+{
+  const { matchBucket, toIntEnum, coerceFacetNumber, assignFilterValues } = await import('./pipeline/facets.js');
+  const { applyEnrichedSpecs } = await import('./pipeline/export.js');
+  const { markCategoryMismatch } = await import('./pipeline/category_mismatch.js');
+  const { buildFilterCoverageReport } = await import('./pipeline/filter_report.js');
+  const { aliasValue } = await import('./pipeline/types.js');
+
+  const loadFacet = d467.byCode.get('load_max').facet;
+  assert.equal(loadFacet.kind, 'int_enum');
+  assert.equal(toIntEnum(5.5, loadFacet), '6');
+  assert.equal(toIntEnum(3.5, loadFacet), '4');
+  assert.equal(toIntEnum(7, loadFacet), '7');
+
+  const progFacet = d467.byCode.get('programs_qty').facet;
+  assert.equal(matchBucket(3, progFacet), 'до 10');
+  assert.equal(matchBucket(16, progFacet), '15-20');
+  assert.equal(matchBucket(15, progFacet), '15-20');
+  assert.equal(matchBucket(10, progFacet), '10-15');
+  assert.equal(matchBucket(90, progFacet), '25+');
+
+  assert.equal(d467.byCode.get('dims').facet.status, 'not_a_filter');
+  assert.equal(d467.byCode.get('dims').facet.enabled, false);
+  assert.equal(d467.byCode.get('display').facet.enabled, true);
+
+  const motor = d467.byCode.get('motor_type');
+  assert.ok(!Object.keys(motor.value_aliases).includes('Стандартный'));
+  assert.equal(aliasValue(motor, 'стандартный'), 'Коллекторный');
+  assert.equal(aliasValue(d467.byCode.get('control_type'), 'поворотный механизм'), 'Механическое');
+  assert.equal(aliasValue(d467.byCode.get('install'), 'отдельно стоящая'), 'Отдельностоящая');
+  assert.equal(aliasValue(d523.byCode.get('cooling'), 'ручная разморозка'), 'Статическая');
+
+  assert.equal(coerceFacetNumber(850, d467.byCode.get('height')), 85);
+  assert.equal(coerceFacetNumber(60, d467.byCode.get('height')), 60);
+
+  const empty = normalizeProduct(p467[460989], d467, config);
+  applyEnrichedSpecs(empty, {
+    максимальная_загрузка_кг: 7,
+    скорость_отжима_об_мин: 1200,
+    класс_энергоэффективности: 'A+++',
+    уровень_шума_стирки_дб: 59,
+    высота_мм: 850,
+    ширина_мм: 600,
+    глубина_мм: 540,
+    количество_программ: 16,
+    тип_загрузки: 'фронтальная',
+    тип_управления: 'поворотный механизм',
+    установка: 'отдельно стоящая',
+    дисплей: 'есть',
+    бренд: 'Indesit',
+  }, d467, config);
+  assert.equal(empty.attrs.load_max, 7);
+  assert.equal(empty.provenance.load_max.level, 'S3');
+  const builtS3 = buildFilters([empty], d467, config);
+  const assignedS3 = assignFilterValues(empty, d467, builtS3.debug, config);
+  assert.ok(Object.keys(assignedS3).length >= 8, Object.keys(assignedS3).join(','));
+  assert.deepEqual(assignedS3['Загрузка белья, кг'], ['7']);
+  assert.deepEqual(assignedS3['Количество программ'], ['15-20']);
+  assert.ok(!('Габариты (ШхГхВ)' in assignedS3));
+
+  const dryer = { id: 455270, name: 'Сушильная машина Pioneer DM-10701WH' };
+  assert.ok(markCategoryMismatch(dryer, '467'));
+  const acc = { id: 436864, name: 'Соединительный элемент CK-3' };
+  assert.ok(markCategoryMismatch(acc, '467'));
+  const washerOk = { id: 1, name: 'Стиральная машина ATLANT 60С1010' };
+  assert.equal(markCategoryMismatch(washerOk, '467'), null);
+
+  const report = buildFilterCoverageReport({
+    catId: 467,
+    dict: d467,
+    products: [
+      { id: 1, filters: { Бренд: ['A'] } },
+      { id: 455270, filters: { Бренд: ['Pioneer'] } },
+    ],
+    recs: [washerOk, dryer],
+    unmapped: { 'Тип управления': new Map([['поворотный механизм', 4]]) },
+  });
+  assert.equal(report.products_total, 2);
+  assert.deepEqual(report.category_mismatch, [455270]);
+  assert.ok(report.filters.every(f => Array.isArray(f.unmapped_values)));
+  const ctrl = report.filters.find(f => f.name === 'Тип управления');
+  assert.deepEqual(ctrl.unmapped_values, [{ value: 'поворотный механизм', count: 4 }]);
+  console.log('ok filter spec overlays / S3→filters / mismatch / coverage');
 }
 

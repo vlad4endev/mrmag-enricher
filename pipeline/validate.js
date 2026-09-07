@@ -55,6 +55,13 @@ export function validateMarkup(html, allowed = DESC_TAGS) {
   return errors;
 }
 
+/** «800-1000», «1400+», «до 10». */
+export function isRangeBucketLabel(v) {
+  const s = String(v).trim();
+  if (/^до\s+-?\d+(?:\.\d+)?$/i.test(s)) return true;
+  return /^-?\d+(?:\.\d+)?(?:-\d+(?:\.\d+)?|\+)$/.test(s);
+}
+
 const textLen = html => String(html || '').replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim().length;
 const countTag = (html, tag) => (String(html || '').match(new RegExp(`<${tag}\\b`, 'gi')) || []).length;
 
@@ -103,7 +110,7 @@ export function validateAnnotation(html) {
 /** Ожидаемый состав и порядок фильтров — из справочника, а не из данных. */
 export function expectedFilters(dict) {
   return dict.attrs
-    .filter(a => a.tier !== 'X' && a.facet?.enabled)
+    .filter(a => a.tier !== 'X' && a.facet?.enabled && a.facet?.status !== 'not_a_filter')
     .sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
     .map(a => ({ code: a.code, name: a.facet.label || a.name, kind: facetKind(a), unit: a.unit }));
 }
@@ -182,7 +189,7 @@ export function validateProducts(rows, dict, sourceById = new Map()) {
       // Числовой фильтр обязан быть бакетирован: точное значение живёт в аннотации.
       if (spec.kind === 'range') {
         for (const v of (Array.isArray(val) ? val : [val])) {
-          if (!/^-?\d+(?:\.\d+)?(?:-\d+(?:\.\d+)?|\+)$/.test(String(v))) {
+          if (!isRangeBucketLabel(v)) {
             add(r.id, 'filter_not_bucketed', `${name}=${v}`);
           }
         }

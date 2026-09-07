@@ -32,7 +32,7 @@
  *   GET  /api/dumps            исходники data_{id}.json (товары заказчика)
  *   GET  /api/dumps/:id        дамп целиком {products, …}
  *   GET  /api/dumps/:id/preview  таблица: id, name, есть ли характеристики
- *   PUT  /api/dumps/:id        загрузить/заменить массив товаров
+ *   PUT  /api/dumps/:id        загрузить/заменить массив или {products, name}
  *   DELETE /api/dumps/:id      убрать текущий файл (копия в archive/)
  *   POST /api/dumps/:id/restore  вернуть из archive { file }
  *   GET  /api/catalog?category=kholodilniki[&limit=N]
@@ -89,7 +89,7 @@ import {
 import {
   bootstrapDumpsDir, listDumps, getDump, previewDump,
   parseDumpPayload, saveDump, deleteDump, restoreDumpArchive,
-  dumpsDir, DUMP_LIMITS,
+  listShopCategories, dumpsDir, DUMP_LIMITS,
 } from './pipeline/dumps.js';
 import { normalizeProduct } from './pipeline/normalize.js';
 import { buildFilters as buildDictFilters } from './pipeline/facets.js';
@@ -425,7 +425,7 @@ function dumpHttpError(res, e) {
 
 function apiDumpsList(res) {
   try {
-    json(res, 200, { dumps: listDumps(ROOT) });
+    json(res, 200, { dumps: listDumps(ROOT), catalog: listShopCategories(ROOT) });
   } catch (e) {
     dumpHttpError(res, e);
   }
@@ -454,8 +454,8 @@ function apiDumpPreview(res, id, params) {
 async function apiDumpPut(req, res, id) {
   try {
     const raw = await readBody(req, DUMP_LIMITS.MAX_DUMP_BYTES);
-    const { products } = parseDumpPayload(raw, `data_${id}.json`);
-    json(res, 200, saveDump(id, products, ROOT));
+    const parsed = parseDumpPayload(raw, `data_${id}.json`);
+    json(res, 200, saveDump(id, parsed.products, ROOT, { name: parsed.name }));
   } catch (e) {
     dumpHttpError(res, e);
   }

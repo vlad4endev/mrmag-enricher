@@ -148,7 +148,8 @@ export const api={syncSteps,setCnt,setCntFree,applyCnt,applySource,setSource,pic
   loadFile,classifyPayload,normalizeCatalogProduct,catIdFromFilename,catNameFromId,
   productsFromPayload,isFiltersPayload,filtersForExport,
   showPage,setTab,renderSettings,addProvider,removeProvider,addEngine,readSettingsPatch,
-  modelsFromSettings,pickDefaultModel,applyDefaultProviderModels,looksLikeModelId,catalogHint};
+  modelsFromSettings,pickDefaultModel,applyDefaultProviderModels,looksLikeModelId,catalogHint,
+  addDumpSection,openDumpDest,cancelDumpDest,dumpBodyWithName};
 export const st={get items(){return items},set items(v){items=v},
   get srcItems(){return srcItems},set srcItems(v){srcItems=v},
   get pickCat(){return pickCat},set pickCat(v){pickCat=v},get selCnt(){return selCnt},get results(){return results},
@@ -448,6 +449,15 @@ t('переключает разделы настроек', () => {
   assert.ok(G('setDumps').classList.contains('on'));
   assert.ok(G('snDumps').classList.contains('on'));
   assert.ok(foot && foot.style.display === 'none', 'на Дампах нет кнопки Сохранить');
+  const dest = G('dumpDest');
+  dest.hidden = true;
+  api.addDumpSection();
+  assert.strictEqual(dest.hidden, false, '«Добавить раздел» открывает форму');
+  const wrapped = JSON.parse(api.dumpBodyWithName('[{"id":1,"name":"A"}]', 'Герметики'));
+  assert.strictEqual(wrapped.name, 'Герметики');
+  assert.strictEqual(wrapped.products[0].id, 1);
+  api.cancelDumpDest();
+  assert.strictEqual(dest.hidden, true);
   api.setTab('prov');
 });
 

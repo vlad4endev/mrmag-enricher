@@ -600,6 +600,9 @@ try {
     assert.strictEqual(empty.status, 200);
     const listed = await empty.json();
     assert.ok(Array.isArray(listed.dumps));
+    assert.ok(Array.isArray(listed.catalog));
+    assert.ok(listed.catalog.some(c => c.id === '467'));
+    assert.ok(listed.catalog.some(c => c.id === '800'), 'в каталоге должны быть разделы магазина кроме словаря');
 
     const body = JSON.stringify([
       { id: 101, name: 'Тестовая мойка', description: '<p>d</p>', annotation: '<li>Тип</li>' },
@@ -663,6 +666,26 @@ try {
     });
     assert.strictEqual(bad.status, 400);
     assert.strictEqual((await fetch(url('/api/dumps'))).status, 401);
+  });
+  await t('новый раздел с названием не из словаря', async () => {
+    const put = await fetch(url('/api/dumps/800'), {
+      method: 'PUT',
+      headers: { authorization: auth, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        name: 'Герметики тест',
+        products: [{ id: 1, name: 'Герметик', description: '', annotation: 'x' }],
+      }),
+    });
+    const text = await put.text();
+    assert.strictEqual(put.status, 200, text);
+    const saved = JSON.parse(text);
+    assert.strictEqual(saved.id, '800');
+    assert.strictEqual(saved.name, 'Герметики тест');
+    const listed = await (await fetch(url('/api/dumps'), { headers: { authorization: auth } })).json();
+    const card = listed.dumps.find(d => d.id === '800');
+    assert.ok(card);
+    assert.strictEqual(card.name, 'Герметики тест');
+    assert.strictEqual((await fetch(url('/api/dumps/800'), { method: 'DELETE', headers: { authorization: auth } })).status, 200);
   });
 
   console.log('\nМаршрутизация');

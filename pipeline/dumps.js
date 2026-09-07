@@ -5,7 +5,7 @@
 
 import fs from 'fs';
 import path from 'path';
-import { resolveDictRoot, categoryName, listDictionaries } from './dict.js';
+import { resolveDictRoot, categoryName, listDictionaries, loadCategories } from './dict.js';
 
 const DATA_FILE_RE = /^data_(\d+)\.json$/i;
 const MAX_DUMP_BYTES = 32 * 1024 * 1024;
@@ -27,6 +27,54 @@ export function dumpPath(catId, root) {
 
 export function dumpsArchiveDir(root) {
   return path.join(dumpsDir(root), 'archive');
+}
+
+function dumpNamesPath(root) {
+  return path.join(dumpsDir(root), 'names.json');
+}
+
+export function loadDumpNames(root) {
+  const file = dumpNamesPath(root);
+  if (!fs.existsSync(file)) return {};
+  try {
+    const raw = JSON.parse(fs.readFileSync(file, 'utf-8'));
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+    const out = {};
+    for (const [id, name] of Object.entries(raw)) {
+      if (!/^\d+$/.test(id)) continue;
+      const label = String(name || '').trim();
+      if (label) out[id] = label;
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+export function writeDumpName(catId, name, root) {
+  const label = String(name || '').trim();
+  if (!/^\d+$/.test(String(catId)) || !label) return;
+  bootstrapDumpsDir(root);
+  const names = loadDumpNames(root);
+  names[String(catId)] = label;
+  fs.writeFileSync(dumpNamesPath(root), `${JSON.stringify(names, null, 2)}\n`, 'utf-8');
+}
+
+export function dumpDisplayName(catId, root) {
+  const custom = loadDumpNames(root)[String(catId)];
+  if (custom) return custom;
+  return categoryName(catId, root);
+}
+
+export function listShopCategories(root) {
+  try {
+    return loadCategories(root)
+      .filter((c) => c && c.id != null && String(c.name || '').trim())
+      .map((c) => ({ id: String(c.id), name: String(c.name).trim() }))
+      .sort((a, b) => Number(a.id) - Number(b.id));
+  } catch {
+    return [];
+  }
 }
 
 export function catIdFromDumpName(name) {
@@ -132,9 +180,15 @@ export function parseDumpPayload(raw, filename = '') {
     if (seen.has(k)) throw httpError(400, `повторный id ${p.id}`);
     seen.add(k);
   }
+  let name = null;
+  if (parsed && !Array.isArray(parsed) && typeof parsed === 'object') {
+    const label = parsed.name ?? parsed.category_name;
+    if (label != null && String(label).trim()) name = String(label).trim();
+  }
   return {
     catId: catIdFromDumpName(filename),
     products,
+    name,
   };
 }
 
@@ -196,7 +250,7 @@ function publicDump(catId, root, products, extra = {}) {
   const stats = summarizeDump(products || []);
   return {
     id: String(catId),
-    name: categoryName(catId, root),
+    name: dumpDisplayName(catId, root),
     file: exists ? `data_${catId}.json` : null,
     has_file: exists,
     ...stats,
@@ -307,7 +361,7 @@ function writeDumpFile(catId, products, root) {
   return file;
 }
 
-export function saveDump(catId, products, root) {
+export function saveDump(catId, products, root, { name } = {}) {
   if (!/^\d+$/.test(String(catId))) throw httpError(400, 'id раздела — только цифры');
   if (!Array.isArray(products) || !products.length) {
     throw httpError(400, 'передан пустой список товаров');
@@ -323,6 +377,7 @@ export function saveDump(catId, products, root) {
     }
   });
   writeDumpFile(catId, rows, root);
+  if (name) writeDumpName(catId, name, root);
   return publicDump(catId, root, rows);
 }
 

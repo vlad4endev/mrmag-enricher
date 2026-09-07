@@ -10,7 +10,7 @@ import { buildV2 } from './export_v2.js';
 import { dictToV2Rows, v2FacetSpecKeys } from './pipeline/v2.js';
 import {
   parseDumpPayload, normalizeDumpRow, saveDump, getDump, listDumps, deleteDump,
-  restoreDumpArchive, catIdFromDumpName, previewDump, dumpsDir,
+  restoreDumpArchive, catIdFromDumpName, previewDump, dumpsDir, listShopCategories,
 } from './pipeline/dumps.js';
 import { displayEnum, valueFold } from './pipeline/types.js';
 import { identityMatches, nameKeyTokens, parseIdentity } from './pipeline/identity.js';
@@ -2069,12 +2069,14 @@ console.log('golden tests passed');
     assert.equal(catIdFromDumpName('catalog.json'), null);
 
     const wrapped = parseDumpPayload(JSON.stringify({
+      name: 'Герметики',
       products: [
         { sku: '10', title: 'Мойка', annotation_html: '<li>Тип</li>' },
         { id: 11, name: 'Мойка 2', description_html: '<p>x</p>', annotation: '' },
       ],
     }), 'data_467.json');
     assert.equal(wrapped.catId, '467');
+    assert.equal(wrapped.name, 'Герметики');
     assert.equal(wrapped.products.length, 2);
     assert.equal(wrapped.products[0].id, 10);
     assert.match(wrapped.products[0].annotation, /Тип/);
@@ -2117,6 +2119,19 @@ console.log('golden tests passed');
 
     deleteDump('42', '.');
     assert.equal(fs.existsSync(path.join(dumpsDir('.'), 'data_42.json')), false);
+
+    saveDump('999001', [{ id: 1, name: 'X', description: '', annotation: '' }], '.', { name: 'Тестовая' });
+    const named = listDumps('.').find(d => d.id === '999001');
+    assert.ok(named);
+    assert.equal(named.name, 'Тестовая');
+    const namesFile = JSON.parse(fs.readFileSync(path.join(dir, 'names.json'), 'utf8'));
+    assert.equal(namesFile['999001'], 'Тестовая');
+    deleteDump('999001', '.');
+
+    const shop = listShopCategories('.');
+    assert.ok(shop.some(c => c.id === '467'));
+    assert.ok(shop.some(c => c.id === '800'));
+    assert.ok(shop.length > 100, 'каталог магазина, не только слоты словаря');
     console.log('ok dumps store / archive / preview');
   } finally {
     if (prevDir === undefined) delete process.env.DUMPS_DIR;

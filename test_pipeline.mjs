@@ -864,7 +864,7 @@ console.log('golden tests passed');
   const row = serializeProduct(r, d467, built.debug);
   assert.deepEqual(Object.keys(row), PRODUCT_FIELDS);
   assert.equal(row.id, p.id);
-  assert.equal(row.name, p.name);
+  assert.ok(!('name' in row), 'name не в выгрузке: сопоставление по id');
   assert.match(row.meta_keywords, /стиральная машина ATLANT/);
   assert.match(row.description_html, /^<p>/);
   assert.equal(row.description_html.includes('\n'), false);
@@ -1094,9 +1094,9 @@ console.log('golden tests passed');
 {
   const r = normalizeProduct(p523[260], d523, config);
   const [p] = buildV2(dictToV2Rows([r], d523), { dict: d523 }).products;
-  assert.deepEqual(Object.keys(p), ['id', 'name', 'meta_keywords', 'description_html', 'filters']);
+  assert.deepEqual(Object.keys(p), ['id', 'meta_keywords', 'description_html', 'filters']);
   assert.equal(p.id, 260);
-  assert.equal(p.name, 'Холодильник Pozis RK FNF-172 W');
+  assert.ok(!('name' in p), 'name не в выгрузке: сопоставление по id');
   assert.ok(!('annotation_html' in p));
   assert.ok(!('Бренд' in p.filters), 'бренд не фасет: заказчик сопоставляет по id');
   assert.equal(p.filters['Тип товара'], 'Холодильник');
@@ -1127,6 +1127,7 @@ console.log('golden tests passed');
   assert.equal(p.filters['Тип товара'], 'Стиральная машина');
   assert.equal(p.filters['Тип загрузки'], 'Фронтальная');
   assert.ok(!('Бренд' in p.filters), 'бренд не фасет: заказчик сопоставляет по id');
+  assert.ok(!('name' in p), 'name не в выгрузке v2');
   assert.equal(p.filters['Загрузка белья, кг'], '6');
   assert.equal(p.filters['Высота, мм'], '846');
   assert.equal(typeof p.filters['Тип загрузки'], 'string');
@@ -1170,9 +1171,7 @@ console.log('golden tests passed');
     for (const g of gold) {
       const p = products.find(x => x.id === g.id);
       assert.ok(p, `нет товара ${g.id}`);
-      assert.deepEqual(Object.keys(p), Object.keys(g));
-      // Эталон с прежними CODE_TO_SPEC-подписями и эвристиками extractFacts —
-      // при расхождении значений не валим: источник истины теперь справочник.
+      assert.ok(!('name' in p), 'name не в выгрузке v2');
       assert.ok(!('Бренд' in p.filters), 'бренд не фасет v2');
       assert.ok(p.filters['Тип товара']);
     }
@@ -1235,15 +1234,15 @@ console.log('golden tests passed');
   assert.equal(validateDescription(a.description_html).length, 0);
 
   const c = rows.find(r => r.id === 29921);
-  assert.equal(c.name, p467[29921].name);
+  assert.ok(!('name' in c), 'name не в выгрузке: сопоставление по id');
   assert.match(c.annotation_html, /Вес: 47 кг/);
   assert.ok(!c.annotation_html.includes('49'));
   assert.ok(!('Материал' in c.filters));
 
   const i = rows.find(r => r.id === 44772);
-  assert.equal(i.name, 'Стиральная машина "Indesit" IWSB 5085 (CIS) (62908)');
+  assert.ok(!('name' in i), 'name не в выгрузке: сопоставление по id');
   assert.ok(!('Бренд' in i.filters), 'бренд не фасет: сопоставление по id');
-  assert.ok(i.name.includes('"Indesit"'));
+  assert.ok(p467[44772].name.includes('"Indesit"'), 'исходник по-прежнему с кавычками; в выгрузке name нет');
   console.log('ok checklist 10×467 (11391 / 29921 / 44772)');
 }
 
@@ -1256,9 +1255,8 @@ console.log('golden tests passed');
   });
   assert.equal(out.products.length, 1);
   assert.equal(out.products[0].id, 11391);
-  assert.equal(out.products[0].name, p467[11391].name);
+  assert.ok(!('name' in out.products[0]), 'name не в выгрузке: сопоставление по id');
   assert.deepEqual(Object.keys(out.products[0]), PRODUCT_FIELDS);
-  assert.match(out.products[0].name, /ATLANT/);
   assert.ok(!/Бренд:/i.test(out.products[0].annotation_html), 'бренд не строка характеристик');
   assert.match(out.products[0].annotation_html, /Тип загрузки: фронтальная/);
   const thin = await buildCustomerExport(
@@ -1323,7 +1321,7 @@ console.log('golden tests passed');
   assert.match(hood.products[0].annotation_html, /производительность/i);
   assert.ok(!hood.products[0].description_html.includes('<h1'));
   assert.deepEqual(hood.products[0].filters, {});
-  console.log('ok buildGoldShapeExport keeps 7 fields, empty filters, needs_review');
+  console.log('ok buildGoldShapeExport keeps 6 fields, empty filters, needs_review');
 }
 
 {
@@ -1478,7 +1476,7 @@ console.log('golden tests passed');
   assert.ok(Array.isArray(hood.confirmed));
   assert.ok(hood.confirmed.some(c => c.attribute === 'width' && c.normalized_value === 50));
   assert.ok(hood.provenance.speeds?.evidence?.normalized_value === 3);
-  assert.equal(PRODUCT_FIELDS.length, 7);
+  assert.equal(PRODUCT_FIELDS.length, 6);
   console.log('ok enrichment P0/P1: speeds/width/boolean/warranty/conflict/identity/description/quality');
 }
 

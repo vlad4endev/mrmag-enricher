@@ -1921,7 +1921,7 @@ input[type=range]::-moz-range-thumb{
 
       <section class="set-panel" id="setExport">
         <div class="set-h">Шаблон выгрузки</div>
-        <p class="set-lead">Кнопки «JSON v2» и «2 файла» после прогона отдают один и тот же формат заказчика: семь полей в карточке и checkbox-фасеты. «JSON v2» дополнительно кладёт <code>categories_v2.json</code>. Ниже — схема файлов, не живые данные прогона.</p>
+        <p class="set-lead">Кнопки «JSON v2» и «2 файла» после прогона отдают один и тот же формат заказчика: шесть полей в карточке и checkbox-фасеты. «JSON v2» дополнительно кладёт <code>categories_v2.json</code>. Ниже — схема файлов, не живые данные прогона.</p>
         <div class="set-tpl-tabs" role="tablist" aria-label="Тип выгрузки">
           <button type="button" class="on" id="tplTabTwo" onclick="setExportTpl('two')">2 файла</button>
           <button type="button" id="tplTabV2" onclick="setExportTpl('v2')">JSON v2</button>
@@ -1935,8 +1935,7 @@ input[type=range]::-moz-range-thumb{
           <div class="set-card" style="margin-bottom:12px">
             <div class="set-card-h"><b>Поля товара</b></div>
             <dl class="set-field-list">
-              <div><dt>id</dt><dd>SKU магазина; чисто цифровой — числом</dd></div>
-              <div><dt>name</dt><dd>Название как в каталоге, без правок</dd></div>
+              <div><dt>id</dt><dd>SKU магазина; чисто цифровой — числом. Название в выгрузке не дублируется: сопоставление по id</dd></div>
               <div><dt>meta_keywords</dt><dd>7–9 фраз через запятую</dd></div>
               <div><dt>description_html</dt><dd>4 абзаца, один список плюсов, 1–3 &lt;strong&gt;, без &lt;h1&gt;</dd></div>
               <div><dt>annotation_html</dt><dd>Список точных характеристик: «Подпись: значение»</dd></div>
@@ -2102,11 +2101,10 @@ function setTab(id){
   if(id==='dumps') loadDumps();
 }
 
-/** Эталон выгрузки заказчика — семь полей + checkbox-фасеты. Живые данные сюда не подмешиваются. */
+/** Эталон выгрузки заказчика — шесть полей + checkbox-фасеты. Живые данные сюда не подмешиваются. */
 const EXPORT_TPL={
   product:{
     id:21670,
-    name:'Кухонная вытяжка Elikor Врезной блок 52H-400-ПЗД …',
     meta_keywords:'вытяжка Elikor, полновстраиваемая вытяжка, вытяжка 50 см, …',
     description_html:'<p>Полновстраиваемая кухонная вытяжка <strong>Elikor …</strong> — …</p><p>…</p><p>…</p><ul><li>…</li><li>…</li><li>…</li></ul><p>…</p>',
     annotation_html:'<ul><li>Тип: вытяжка</li><li>Конструкция: полновстраиваемая</li><li>Цвет: нержавеющая сталь</li><li>Ширина: 52 см</li></ul>',
@@ -5275,7 +5273,7 @@ function saveFile(content,filename,type='application/json'){
 // ── ВЫГРУЗКА ВИТРИНЫ ─────────────────────────────────────────
 /**
  * Две выгрузки после прогона. Обе собирают карточку и фильтры из
- * нормализованных атрибутов (/api/export): семь полей, annotation_html,
+ * нормализованных атрибутов (/api/export): шесть полей, annotation_html,
  * бакеты. «JSON v2» дополнительно кладёт categories_v2.json.
  *
  * Без прогона кнопки скрыты: необработанные позиции пропускаются,

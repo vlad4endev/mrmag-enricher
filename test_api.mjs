@@ -340,7 +340,7 @@ try {
     assert.strictEqual(d.products[0].id, 1);
     assert.ok(d.filters.find(f => f.name === 'Цвет').value.includes(d.products[0].filters['Цвет']));
   });
-  await t('категория 523 — семь полей, хладагент и вес не в filters', async () => {
+  await t('категория 523 — шесть полей, хладагент и вес не в filters', async () => {
     const src = JSON.parse(fs.readFileSync(path.join(ROOT, 'data_523.json'), 'utf8'))
       .find(p => p.id === 260);
     assert.ok(src, 'в data_523.json нет 260');
@@ -348,7 +348,7 @@ try {
     assert.strictEqual(r.status, 200);
     const d = await r.json();
     assert.deepStrictEqual(Object.keys(d.products[0]), [
-      'id', 'name', 'meta_keywords', 'description_html', 'annotation_html', 'filters', 'web_info',
+      'id', 'meta_keywords', 'description_html', 'annotation_html', 'filters', 'web_info',
     ]);
     assert.ok(!('Хладагент' in d.products[0].filters));
     assert.ok(!('Вес, кг' in d.products[0].filters));
@@ -394,7 +394,7 @@ try {
     assert.strictEqual(d.products[0].id, 1);
     assert.ok(Array.isArray(d.held) && d.held.length === 1);
   });
-  await t('ATLANT 11391 — семь полей и бакеты', async () => {
+  await t('ATLANT 11391 — шесть полей и бакеты', async () => {
     const src = JSON.parse(fs.readFileSync(path.join(ROOT, 'data_467.json'), 'utf8'))
       .find(p => p.id === 11391);
     assert.ok(src, 'в data_467.json нет 11391');
@@ -403,10 +403,10 @@ try {
     const d = await r.json();
     assert.strictEqual(d.products.length, 1);
     assert.deepStrictEqual(Object.keys(d.products[0]), [
-      'id', 'name', 'meta_keywords', 'description_html', 'annotation_html', 'filters', 'web_info',
+      'id', 'meta_keywords', 'description_html', 'annotation_html', 'filters', 'web_info',
     ]);
     assert.strictEqual(d.products[0].id, 11391);
-    assert.strictEqual(d.products[0].name, src.name);
+    assert.ok(!('name' in d.products[0]), 'name не в выгрузке: сопоставление по id');
     assert.ok(!/Бренд:/i.test(d.products[0].annotation_html), 'бренд не строка характеристик');
     assert.match(d.products[0].annotation_html, /Тип загрузки/);
     assert.ok(Array.isArray(d.products[0].filters['Высота, см']));
@@ -437,7 +437,7 @@ try {
     const d = await r.json();
     assert.ok(d.products.length);
     assert.deepStrictEqual(Object.keys(d.products[0]), [
-      'id', 'name', 'meta_keywords', 'description_html', 'annotation_html', 'filters', 'web_info',
+      'id', 'meta_keywords', 'description_html', 'annotation_html', 'filters', 'web_info',
     ]);
     assert.deepStrictEqual(d.products[0].filters, {});
     assert.deepStrictEqual(d.filters, []);

@@ -298,7 +298,7 @@ async function writeOutputs({ recs, dict, config, catId, cov, covAfter, formats,
   writeJson(path.join(OUT, `provenance_${catId}.json`), provenance);
 
   if (customer) writeCustomerDeliverables({ recs, dict, catId, cov: after });
-  console.log(`выгрузка: products_${catId}.json и products_v2_${catId}.json — семь полей заказчика`);
+  console.log(`выгрузка: products_${catId}.json и products_v2_${catId}.json — шесть полей заказчика`);
   return built;
 }
 

@@ -1848,6 +1848,7 @@ t('enum сводится к одному написанию, бренд/моде
   assert.ok(!filters.some(f => f.name === 'Модель'));
   assert.ok(!filters.some(f => f.name === 'Комплектация'));
   for (const p of products) {
+    assert.ok(!('name' in p), 'name не в выгрузке v2');
     assert.ok(!('Бренд' in p.filters));
     assert.ok(!('Модель' in p.filters));
     assert.ok(!('Комплектация' in p.filters));

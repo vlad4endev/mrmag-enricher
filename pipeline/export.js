@@ -198,9 +198,9 @@ function reviewSource(rec) {
 }
 
 /**
- * Одна запись products_{id}.json — ровно семь полей в порядке эталона:
- * id, name, meta_keywords, description_html, annotation_html, filters, web_info.
- * name переносится побайтово. description_html — из ответа модели.
+ * Одна запись products_{id}.json — шесть полей в порядке эталона:
+ * id, meta_keywords, description_html, annotation_html, filters, web_info.
+ * name не выгружается: заказчик сопоставляет по id. description_html — из ответа модели.
  */
 export function serializeProduct(rec, dict, debugFacets, opts = {}) {
   const enr = opts.enriched || null;
@@ -235,7 +235,6 @@ export function serializeProduct(rec, dict, debugFacets, opts = {}) {
     : webInfoFrom(reviewSource(rec));
   return {
     id: rec.id,
-    name: rec.name,
     meta_keywords: meta,
     description_html: descHtml,
     annotation_html: renderAnnotation(rec, dict),
@@ -324,7 +323,7 @@ export function applyEnrichedSpecs(rec, specs, dict, config) {
 }
 
 /**
- * Семь полей заказчика + фасеты. Неполные карточки (< 8 строк) остаются
+ * Шесть полей заказчика + фасеты. Неполные карточки (< 8 строк) остаются
  * в products и дублируются в held: потеря SKU хуже неполного фильтра.
  * Карточки с пометкой needs_review тоже в products: ИИ уже правил,
  * дыра в выгрузке хуже черновика. Отчёт needs_review — только аудит.
@@ -533,7 +532,7 @@ function keywordsFrom(p) {
 }
 
 /**
- * Семь полей эталона без справочника. Аннотация — все строки источника
+ * Шесть полей эталона без справочника. Аннотация — все строки источника
  * (или specs). description_html — из ответа модели. filters всегда [].
  */
 export function serializeLooseProduct(p) {
@@ -569,7 +568,6 @@ export function serializeLooseProduct(p) {
     : webInfoFrom(reviewSource({ ...src, ...p }));
   return {
     id: src.id,
-    name: p?.name ?? src.name,
     meta_keywords: keywordsFrom(p),
     description_html: desc,
     annotation_html: annotation,
@@ -577,6 +575,7 @@ export function serializeLooseProduct(p) {
     web_info: web,
     _gold_needs_review: true,
     _gold_issues: descIssues,
+    _gold_name: p?.name ?? src.name,
   };
 }
 
@@ -586,11 +585,11 @@ export function buildGoldShapeExport(products) {
     .filter(p => p.annotation_html || p.description_html);
   const review = rows.map(p => ({
     id: p.id,
-    name: p.name,
+    name: p._gold_name,
     reason: 'gold_export_no_category_dict',
     validation_issues: p._gold_issues || [],
   }));
-  const productsOut = rows.map(({ _gold_needs_review, _gold_issues, ...rest }) => rest);
+  const productsOut = rows.map(({ _gold_needs_review, _gold_issues, _gold_name, ...rest }) => rest);
   return {
     products: productsOut,
     filters: [],

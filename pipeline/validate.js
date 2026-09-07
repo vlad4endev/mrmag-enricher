@@ -9,9 +9,9 @@ import { WEB_INFO } from './reviews.js';
 import { KEYWORDS } from './export.js';
 import { isBrandAttr, valueFold } from './types.js';
 
-/** Порядок и состав полей записи — ровно семь, как в схеме заказчика. */
+/** Порядок и состав полей записи — без name: заказчик сопоставляет по id. */
 export const PRODUCT_FIELDS = [
-  'id', 'name', 'meta_keywords', 'description_html', 'annotation_html', 'filters', 'web_info',
+  'id', 'meta_keywords', 'description_html', 'annotation_html', 'filters', 'web_info',
 ];
 
 const DESC_TAGS = ['p', 'ul', 'li', 'strong'];
@@ -136,7 +136,6 @@ export function validateProducts(rows, dict, sourceById = new Map()) {
     if (keys.join() !== PRODUCT_FIELDS.join()) add(r.id, 'fields', keys.join());
 
     const src = sourceById.get(r.id);
-    if (src && r.name !== src.name) add(r.id, 'name_changed', r.name);
 
     for (const e of validateDescription(r.description_html)) add(r.id, `description.${e.kind}`, e.detail);
     for (const e of validateAnnotation(r.annotation_html)) add(r.id, `annotation.${e.kind}`, e.detail);

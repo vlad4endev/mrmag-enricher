@@ -29,6 +29,7 @@
  *   POST /api/dictionaries/:id/probe  атрибуция на одном товаре
  *   POST /api/dictionaries/:id/import-suggest  AI/эвристика: список → proposals
  *   POST /api/dictionaries/:id/import-apply    применить proposals к attrs
+ *   GET  /api/dictionaries/:id/from-dump       ключи характеристик из дампа (для импорта)
  *   GET  /api/dumps            исходники data_{id}.json (товары заказчика)
  *   GET  /api/dumps/:id        дамп целиком {products, …}
  *   GET  /api/dumps/:id/preview  таблица: id, name, есть ли характеристики
@@ -99,6 +100,7 @@ import {
 import {
   parseImportLines, buildImportSuggestPrompt, buildImportUserContent,
   heuristicSuggest, parseModelSuggestions, applySuggestions,
+  harvestDumpAttrLines,
 } from './pipeline/schema_import.js';
 import { publicParserStatus } from './pipeline/search.js';
 import {
@@ -107,6 +109,7 @@ import {
   bootstrapSettingsFile, PROVIDER_PRESETS, envOverrides,
   parsersView, conditionsView,
 } from './settings.js';
+import { exportTemplatesView } from './pipeline/export_template.js';
 const API_KEY = process.env.OPENROUTER_API_KEY || '';
 const PORT    = Number(process.env.PORT || 3000);
 const HOST    = process.env.HOST || '0.0.0.0';
@@ -780,6 +783,7 @@ function apiSettingsGet(res) {
     presets: PROVIDER_PRESETS,
     overrides: envOverrides(),
     prompt: promptMeta(settings),
+    export_templates: exportTemplatesView(settings.export_templates),
   });
 }
 
@@ -802,6 +806,7 @@ async function apiSettingsPut(req, res) {
       presets: PROVIDER_PRESETS,
       overrides: envOverrides(),
       prompt: promptMeta(settings),
+      export_templates: exportTemplatesView(settings.export_templates),
     });
   } catch (e) {
     json(res, e.status || 400, { error: e.message, details: e.details });

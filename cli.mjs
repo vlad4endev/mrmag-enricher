@@ -34,7 +34,8 @@ import { normalizeProduct, coverage, formatCounts, unmappedFreq } from './pipeli
 import { buildFilters } from './pipeline/facets.js';
 import { buildReport } from './pipeline/report.js';
 import { renderCard, annotationRows, MIN_ANNOTATION_ROWS } from './pipeline/generate.js';
-import { serializeProducts, serializeFilters, buildCustomerExport } from './pipeline/export.js';
+import { serializeProducts, buildCustomerExport } from './pipeline/export.js';
+import { resolveExportPack, shapeProductsFile, shapeFiltersFile, shapeCategoriesFile } from './pipeline/export_template.js';
 import { validateProducts } from './pipeline/validate.js';
 import { webInfoFrom } from './pipeline/reviews.js';
 import { enrichMissing } from './pipeline/external.js';
@@ -59,6 +60,24 @@ function loadAll(dataFile) {
   const dict = loadDictionary(catId, ROOT);
   const products = loadProducts(path.resolve(dataFile));
   return { catId, config, dict, products };
+}
+
+function exportPack(kind) {
+  try { return resolveExportPack(loadSettings(ROOT).export_templates, kind); }
+  catch { return resolveExportPack(null, kind); }
+}
+
+function storefrontProducts(products, kind, sources) {
+  return shapeProductsFile(products, exportPack(kind).products, sources);
+}
+
+function storefrontFilters(filters, kind) {
+  const list = Array.isArray(filters) ? filters : filters?.filters;
+  return shapeFiltersFile(list, exportPack(kind).filters);
+}
+
+function storefrontCategories(categories, kind = 'v2') {
+  return shapeCategoriesFile(categories, exportPack(kind).categories);
 }
 
 function inspect(dataFile) {
@@ -233,9 +252,9 @@ async function writeOutputs({ recs, dict, config, catId, cov, covAfter, formats,
 
   writeContractData(recs, dict, catId);
   const products = serializeProducts(exported, dict, built.debug, { root: ROOT });
-  writeJson(path.join(OUT, `products_${catId}.json`), products, 4);
+  writeJson(path.join(OUT, `products_${catId}.json`), storefrontProducts(products, 'two', exported), 4);
   if (clean.ok) {
-    writeJson(path.join(OUT, `filters_${catId}.json`), serializeFilters(built), 4);
+    writeJson(path.join(OUT, `filters_${catId}.json`), storefrontFilters(built.filters, 'two'), 4);
   }
   writeJson(path.join(OUT, `filters_coverage_${catId}.json`), buildFilterCoverageReport({
     catId,
@@ -262,14 +281,14 @@ async function writeOutputs({ recs, dict, config, catId, cov, covAfter, formats,
     console.log(`validate ${catId}: ${verdict.errors.length} нарушений`);
   }
 
-  writeJson(path.join(OUT, `products_v2_${catId}.json`), products, 4);
+  writeJson(path.join(OUT, `products_v2_${catId}.json`), storefrontProducts(products, 'v2', exported), 4);
   if (clean.ok) {
-    writeJson(path.join(OUT, `filters_v2_${catId}.json`), serializeFilters(built), 4);
+    writeJson(path.join(OUT, `filters_v2_${catId}.json`), storefrontFilters(built.filters, 'v2'), 4);
   }
   const cat = loadCategories(ROOT).find(c => Number(c.id) === Number(catId));
-  writeJson(path.join(OUT, 'categories_v2.json'), {
-    categories: [{ id: Number(catId), name: cat?.name || String(catId) }],
-  }, 2);
+  writeJson(path.join(OUT, 'categories_v2.json'), storefrontCategories([
+    { id: Number(catId), name: cat?.name || String(catId), slug: cat?.slug, url: cat?.url },
+  ]), 2);
 
   const attrsOut = attrsWithCoverage(dict, coverageMap(after, dict));
   writeJson(path.join(OUT, `attributes_${catId}.json`), attrsOut);
@@ -448,8 +467,8 @@ async function exportCustomer(file) {
     ])];
   }
   fs.mkdirSync(OUT, { recursive: true });
-  writeJson(path.join(OUT, `products_${catId}.json`), out.products, 4);
-  writeJson(path.join(OUT, `filters_${catId}.json`), serializeFilters({ filters: out.filters }), 4);
+  writeJson(path.join(OUT, `products_${catId}.json`), storefrontProducts(out.products, 'two', products), 4);
+  writeJson(path.join(OUT, `filters_${catId}.json`), storefrontFilters(out.filters, 'two'), 4);
   writeJson(path.join(OUT, `filters_coverage_${catId}.json`), out.coverage, 2);
   writeJson(path.join(OUT, `held_${catId}.json`), out.held, 2);
   writeJson(path.join(OUT, `validate_${catId}.json`), out.validation, 2);

@@ -15,6 +15,7 @@ import path from 'path';
 import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 import { configPath, loadConfig } from './pipeline/dict.js';
+import { normalizeExportTemplates, persistExportTemplates } from './pipeline/export_template.js';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 
@@ -377,6 +378,7 @@ export function normalizeSettings(raw = {}, prev = null) {
     search: normalizeSearch(raw.search, prev?.search),
     providers: normalizeProviders(raw.providers, prev?.providers),
     conditions,
+    export_templates: normalizeExportTemplates(raw.export_templates),
   };
 }
 
@@ -502,6 +504,7 @@ export function validateSettings(cfg) {
 }
 
 function persistable(settings) {
+  const export_templates = persistExportTemplates(settings.export_templates);
   return {
     facet_min_coverage: settings.facet_min_coverage,
     target_coverage: settings.target_coverage,
@@ -511,6 +514,7 @@ function persistable(settings) {
     search: settings.search,
     providers: settings.providers,
     conditions: settings.conditions,
+    ...(export_templates ? { export_templates } : {}),
   };
 }
 
@@ -552,6 +556,15 @@ export function applySettingsPatch(current, patch = {}) {
   if (patch.model) next.model = { ...current.model, ...patch.model };
   if (patch.conditions) next.conditions = { ...current.conditions, ...patch.conditions };
   if (Array.isArray(patch.providers)) next.providers = patch.providers;
+  if (patch.export_templates && typeof patch.export_templates === 'object') {
+    const prev = current.export_templates || {};
+    const two = patch.export_templates.two;
+    const v2 = patch.export_templates.v2;
+    next.export_templates = {
+      two: two && typeof two === 'object' ? { ...(prev.two || {}), ...two } : prev.two,
+      v2: v2 && typeof v2 === 'object' ? { ...(prev.v2 || {}), ...v2 } : prev.v2,
+    };
+  }
   return normalizeSettings(next, current);
 }
 

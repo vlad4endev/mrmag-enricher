@@ -2193,6 +2193,89 @@ console.log('\nТовар без описания: поиск в сети');
 }
 
 {
+  const {
+    applyExportTemplate, shapeProductsFile, shapeFiltersFile, shapeCategoriesFile,
+    defaultExportTemplates, jsonEqual, normalizeExportTemplates, persistExportTemplates,
+  } = await import('./pipeline/export_template.js');
+
+  console.log('\nШаблоны выгрузки');
+  const sample = {
+    id: 11391,
+    name: 'ATLANT',
+    meta_keywords: 'стиральная машина ATLANT, …',
+    description_html: '<p>Текст</p>',
+    annotation_html: '<ul><li>Тип: стиральная машина</li></ul>',
+    filters: { Цвет: ['белый'], 'Класс энергии': ['A'] },
+    web_info: '',
+  };
+  t('встроенный шаблон карточки сохраняет шесть полей и живые фасеты', () => {
+    const tpl = defaultExportTemplates().two.products;
+    const row = applyExportTemplate([sample], tpl)[0];
+    assert.deepStrictEqual(Object.keys(row), [
+      'id', 'meta_keywords', 'description_html', 'annotation_html', 'filters', 'web_info',
+    ]);
+    assert.strictEqual(row.id, 11391);
+    assert.deepStrictEqual(row.filters, sample.filters);
+    assert.ok(!('name' in row));
+  });
+  t('ключ name и {{name}} добавляют название из исходника', () => {
+    const shaped = shapeProductsFile(
+      [{ id: 1, meta_keywords: '', description_html: '', annotation_html: '', filters: {}, web_info: '' }],
+      [{ id: '{{id}}', name: '{{name}}', web_info: '' }],
+      [{ id: 1, name: 'Вытяжка Elikor' }],
+    );
+    assert.strictEqual(shaped[0].id, 1);
+    assert.strictEqual(shaped[0].name, 'Вытяжка Elikor');
+  });
+  t('статическое поле и переименование sku', () => {
+    const shaped = applyExportTemplate([sample], [{ sku: '{{id}}', type: 'checkbox' }]);
+    assert.strictEqual(shaped[0].sku, 11391);
+    assert.strictEqual(shaped[0].type, 'checkbox');
+  });
+  t('filters_*.json проецирует name/value и может добавить type', () => {
+    const file = shapeFiltersFile(
+      [{ name: 'Цвет', value: ['белый', 'чёрный'] }],
+      { filters: [{ name: 'x', value: ['y'], type: 'checkbox' }] },
+    );
+    assert.deepStrictEqual(file, {
+      filters: [{ name: 'Цвет', value: ['белый', 'чёрный'], type: 'checkbox' }],
+    });
+  });
+  t('categories_v2.json берёт id и name из прогона', () => {
+    const file = shapeCategoriesFile(
+      [{ id: 523, name: 'Холодильники', slug: 'kholodilniki' }],
+      { categories: [{ id: 0, name: 'x' }] },
+    );
+    assert.deepStrictEqual(file.categories, [{ id: 523, name: 'Холодильники' }]);
+  });
+  t('совпадение со встроенным шаблоном в файл не пишется', () => {
+    const d = defaultExportTemplates();
+    const n = normalizeExportTemplates({
+      two: { products: d.two.products, filters: d.two.filters },
+      v2: { products: d.v2.products, filters: d.v2.filters, categories: d.v2.categories },
+    });
+    assert.equal(n.two.products, null);
+    assert.equal(n.v2.categories, null);
+    assert.equal(persistExportTemplates(n), undefined);
+  });
+  t('свой шаблон сохраняется, битый JSON отклоняется', () => {
+    const n = normalizeExportTemplates({
+      two: { products: [{ id: '{{id}}', name: '{{name}}' }] },
+    });
+    assert.ok(Array.isArray(n.two.products));
+    assert.ok(persistExportTemplates(n).two.products);
+    assert.throws(() => normalizeExportTemplates({ two: { products: '{nope' } }), /JSON/);
+  });
+  t('jsonEqual отличает свой шаблон от эталона', () => {
+    const d = defaultExportTemplates();
+    const custom = JSON.parse(JSON.stringify(d.two.products));
+    custom[0].name = '{{name}}';
+    assert.equal(jsonEqual(d.two.products, d.two.products), true);
+    assert.equal(jsonEqual(custom, d.two.products), false);
+  });
+}
+
+{
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'enricher-settings-'));
   const prev = process.env.SETTINGS_PATH;
   process.env.SETTINGS_PATH = path.join(dir, 'config.json');
@@ -2208,6 +2291,18 @@ console.log('\nТовар без описания: поиск в сети');
     assert.ok(s.providers.some(p => p.id === 'openrouter' && p.default));
     assert.strictEqual(s.conditions.mismatch_policy, 'prefer_source');
     assert.ok(Array.isArray(s.search.engines));
+  });
+  t('свой шаблон выгрузки пишется в config и читается обратно', () => {
+    const cur = loadSettings();
+    const next = applySettingsPatch(cur, {
+      export_templates: {
+        two: { products: [{ id: '{{id}}', name: '{{name}}' }] },
+      },
+    });
+    saveSettings(next);
+    const again = loadSettings();
+    assert.deepStrictEqual(again.export_templates.two.products, [{ id: '{{id}}', name: '{{name}}' }]);
+    assert.equal(again.export_templates.two.filters, null);
   });
   t('публичное представление скрывает ключ', () => {
     const s = loadSettings();

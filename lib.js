@@ -23,13 +23,14 @@
  */
 
 import { nameKeyTokens } from './pipeline/identity.js';
-import { tryLoadDictSchema, extractFactsFromDictionary, loadConfigSafe, CRAWL_SLUGS, specDest, expectedDictCatId } from './pipeline/schema.js';
+import { tryLoadDictSchema, extractFactsFromDictionary, loadConfigSafe, CRAWL_SLUGS, specDest, expectedDictCatId, resolveCatId } from './pipeline/schema.js';
 import { alignCardTextsToSpecs } from './pipeline/prose_align.js';
 import { matchKey } from './pipeline/match.js';
 import { normalizeValue, aliasValue, enumValuesEqual, isGluedFactDump, displayEnum, valueFold, hasStrictEnum } from './pipeline/types.js';
 import { loadBenchmarks, dictDebugInfo, formatDictDebug, resolveDictRoot } from './pipeline/dict.js';
+import { findDumpProduct } from './pipeline/dumps.js';
 import {
-  validateModelResponse, validationFeedbackLine, softFixCardTexts, MODEL_KEYS,
+  validateModelResponse, validationFeedbackLine, sourceCorrectionFeedback, softFixCardTexts, MODEL_KEYS,
   buildDescriptionHtml, matchLiteral,
   SHORT_MIN, SHORT_MAX, DESCR_RICH_MIN, DESCR_RICH_MAX,
 } from './pipeline/model_validate.js';
@@ -1632,7 +1633,7 @@ function snapEnum(value, allowed) {
 
 // Контракт ответа модели. Старые seo_title/h1/… — лишний ключ = ошибка схемы.
 export {
-  MODEL_KEYS, validateModelResponse, validationFeedbackLine, softFixCardTexts,
+  MODEL_KEYS, validateModelResponse, validationFeedbackLine, sourceCorrectionFeedback, softFixCardTexts,
   buildDescriptionHtml,
 };
 
@@ -2017,11 +2018,47 @@ function retryAfterMs(res) {
   return null;
 }
 
+function overlayDump(product, dump) {
+  if (!product || !dump) return product;
+  const next = { ...product };
+  if (String(dump.annotation || '').trim()) next.annotation = dump.annotation;
+  if (String(dump.description || '').trim()) next.description = dump.description;
+  return next;
+}
+
+function slimCard(enriched) {
+  if (!enriched || typeof enriched !== 'object') return null;
+  return {
+    specs: enriched.specs,
+    short_description: enriched.short_description,
+    description: enriched.description,
+    bullets: enriched.bullets,
+    strong: enriched.strong,
+    meta_keywords: enriched.meta_keywords,
+    web_info: enriched.web_info,
+    warnings: enriched.warnings || [],
+  };
+}
+
+function productDumpKey(product) {
+  const v = product?.sku ?? product?.id ?? product?.article;
+  return v == null ? null : String(v).trim() || null;
+}
+
+function schemaCatId(schema, product, root) {
+  if (schema?.id != null) return String(schema.id);
+  if (schema?.dict?.catId != null) return String(schema.dict.catId);
+  if (product?.category_id != null) return String(product.category_id);
+  return resolveCatId(product?.category, root);
+}
+
 /**
  * Один товар → обогащённая запись.
- * Максимум 2 попытки: 1) исходный промпт, 2) промпт + перечень непройденных
- * проверок. После второй неудачи — needs_review (не done, не в выгрузку).
- * Токены и стоимость суммируются. Сеть/HTTP ретраятся в пределах тех же двух.
+ * До двух попыток на валидацию: 1) исходный промпт, 2) перечень ошибок.
+ * Если остались расхождения с источником или карточка «на проверку» —
+ * ещё один проход: сверка с дампом и текстом, сразу, до следующего товара.
+ * После неудачи правки — needs_review (не done, не в выгрузку v2).
+ * Токены и стоимость суммируются. Сеть/HTTP ретраятся в пределах тех же попыток.
  */
 export async function enrichProduct(product, opts) {
   const {

@@ -331,6 +331,37 @@ export function validationFeedbackLine(issues, opts = {}) {
 }
 
 /**
+ * Третий проход: расхождения с источником и/или «на проверку».
+ * Модель сверяет дамп + annotation/description и возвращает полный JSON
+ * до перехода к следующему товару.
+ */
+export function sourceCorrectionFeedback({ warnings = [], issues = [], hasDump = false } = {}) {
+  const parts = [];
+  if (warnings.length) {
+    const list = warnings.map((w) => {
+      const src = w.source != null ? `, в источнике должно быть ${JSON.stringify(w.source)}` : '';
+      return `${w.field}: модель дала ${JSON.stringify(w.model)}${src} (${w.note || 'не совпало с текстом'})`;
+    }).join('; ');
+    parts.push(
+      `Расхождения с текстом источника: ${list}. Возьми значение из дампа/annotation/description/facts, поправь specs И те же цифры в short_description, description и bullets.`,
+    );
+  }
+  if (issues.length) {
+    const line = validationFeedbackLine(issues);
+    if (line) parts.push(line);
+  }
+  const dumpHint = hasDump
+    ? ' В поле dump — исходная карточка заказчика: каждый спорный факт сверь с dump.annotation и dump.description.'
+    : ' Сверь спорные поля с annotation, description, attributes и facts.';
+  const head = warnings.length && issues.length
+    ? 'Карточка с расхождениями и ошибками валидации — в выгрузку v2 не попадёт, пока не исправишь.'
+    : issues.length
+      ? 'Карточка «на проверку» — в выгрузку v2 не попадёт, пока не исправишь валидацию.'
+      : 'Есть расхождения с текстом источника — приведи карточку в соответствие до следующего товара.';
+  return `${head}${dumpHint} ${parts.join(' ')} Верни полный JSON. Не выдумывай значения, которых нет в источнике.`.trim();
+}
+
+/**
  * description + bullets + strong → description_html эталона.
  * Порядок: p1, p2, p3, <ul>, p4. Без <h1>.
  */

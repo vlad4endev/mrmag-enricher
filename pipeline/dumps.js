@@ -390,6 +390,68 @@ export function deleteDump(catId, root) {
   return { ok: true, id: String(catId), archived: true };
 }
 
+const dumpIndexCache = new Map();
+
+function dumpFileCandidates(catId, root) {
+  const resolved = resolveDictRoot(root);
+  const id = String(catId ?? '').replace(/^cat_/, '');
+  return [...new Set([
+    dumpPath(id, resolved),
+    path.join(resolved, `data_${id}.json`),
+  ])];
+}
+
+function indexDumpFile(file) {
+  if (!fs.existsSync(file)) return null;
+  const mtime = fs.statSync(file).mtimeMs;
+  const cached = dumpIndexCache.get(file);
+  if (cached && cached.mtime === mtime) return cached.byKey;
+  let parsed;
+  try {
+    parsed = JSON.parse(fs.readFileSync(file, 'utf-8'));
+  } catch {
+    return null;
+  }
+  const rows = productsFromDumpPayload(parsed);
+  const byKey = new Map();
+  if (Array.isArray(rows)) {
+    for (const p of rows) {
+      try {
+        const row = normalizeDumpRow(p);
+        for (const k of [row.id, p.id, p.sku, p.article]) {
+          if (k == null || String(k).trim() === '') continue;
+          const key = String(k).trim();
+          if (!byKey.has(key)) byKey.set(key, row);
+        }
+      } catch {
+        /* битая строка дампа — пропускаем */
+      }
+    }
+  }
+  dumpIndexCache.set(file, { mtime, byKey });
+  return byKey;
+}
+
+/**
+ * Карточка заказчика из data_{catId}.json по id/sku.
+ * Сначала каталог дампов, затем bundled-файл в корне проекта.
+ */
+export function findDumpProduct(catId, sku, root) {
+  if (catId == null || sku == null) return null;
+  const key = String(sku).trim();
+  const id = String(catId).replace(/^cat_/, '').trim();
+  if (!key || !id) return null;
+  for (const file of dumpFileCandidates(id, root)) {
+    try {
+      const idx = indexDumpFile(file);
+      if (idx?.has(key)) return idx.get(key);
+    } catch {
+      /* нет файла / не JSON */
+    }
+  }
+  return null;
+}
+
 export function restoreDumpArchive(catId, archiveName, root) {
   if (!/^\d+$/.test(String(catId))) throw httpError(400, 'id раздела — только цифры');
   const base = path.basename(String(archiveName || ''));

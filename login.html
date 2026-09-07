@@ -6,106 +6,114 @@
 <title>Вход — Ogran</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 :root{
-  --ink:#0a0e14; --ink-2:#121820; --paper:#ffffff; --wash:#e6eaef;
-  --teal:#0d7377; --teal-l:#2dd4bf; --line:rgba(45,212,191,.18);
-  --mute:#7b8799; --err:#c0392b; --t2:#4a5568;
-  --sans:"Sora",system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+  --ink:#08090b; --ink-2:#101215; --paper:#ffffff; --wash:#f2f4f3;
+  --teal:#14e0b4; --teal-2:#0b9c81; --teal-l:#5eead4; --line:rgba(20,224,180,.22);
+  --mute:#6d7681; --err:#d24a5c; --t2:#5a6461;
+  --sans:"Onest",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --grad:linear-gradient(135deg,#14e0b4,#0ea5a4 55%,#5eead4);
+  --glow:0 8px 28px -8px rgba(20,224,180,.45);
+  --ink-on-mint:#04120f;
 }
 html,body{height:100%}
 body{
-  font-family:var(--sans);background:var(--ink);color:#e8eef6;
-  -webkit-font-smoothing:antialiased;min-height:100%;letter-spacing:-.015em;
+  font-family:var(--sans);background:var(--ink);color:#f2f4f6;
+  -webkit-font-smoothing:antialiased;min-height:100%;letter-spacing:-.011em;
 }
-.wrap{display:grid;grid-template-columns:1.1fr .9fr;min-height:100%}
+body::before{
+  content:"";position:fixed;inset:-20% 40% 55% -10%;pointer-events:none;
+  background:radial-gradient(ellipse at 20% 0%,rgba(20,224,180,.12),transparent 62%);
+  filter:blur(30px);
+}
+.wrap{display:grid;grid-template-columns:1.1fr .9fr;min-height:100%;position:relative;z-index:1}
 .stage{
   position:relative;overflow:hidden;padding:44px 52px 36px;
   display:flex;flex-direction:column;justify-content:space-between;
   background:
-    linear-gradient(180deg,rgba(45,212,191,.07),transparent 42%),
-    radial-gradient(900px 520px at 100% 0%, rgba(13,115,119,.22), transparent 55%),
-    linear-gradient(165deg, #121820 0%, #0a0e14 100%);
+    linear-gradient(180deg,rgba(20,224,180,.07),transparent 42%),
+    radial-gradient(900px 520px at 100% 0%, rgba(14,165,164,.18), transparent 55%),
+    linear-gradient(165deg, #101215 0%, #08090b 100%);
 }
 .stage::after{
-  content:"";position:absolute;inset:0;pointer-events:none;opacity:.35;
+  content:"";position:absolute;inset:0;pointer-events:none;opacity:.28;
   background-image:
-    linear-gradient(rgba(45,212,191,.06) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(45,212,191,.06) 1px, transparent 1px);
+    linear-gradient(rgba(20,224,180,.06) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(20,224,180,.06) 1px, transparent 1px);
   background-size:48px 48px;
   mask-image:linear-gradient(180deg,#000 0%,transparent 78%);
 }
 .mark{display:flex;align-items:center;gap:12px;position:relative;z-index:1}
 .gem{
-  width:32px;height:32px;flex-shrink:0;border-radius:4px;
-  background:var(--teal);display:flex;align-items:center;justify-content:center;
-  color:#fff;
+  width:34px;height:34px;flex-shrink:0;border-radius:11px;
+  background:var(--grad);display:grid;place-items:center;
+  color:var(--ink-on-mint);box-shadow:var(--glow);
 }
-.gem svg{width:18px;height:18px;display:block}
-.brand{font-size:16px;font-weight:700;letter-spacing:-.04em;line-height:1.15}
+.gem svg{width:19px;height:19px;display:block}
+.brand{font-size:16px;font-weight:600;letter-spacing:-.03em;line-height:1.15}
 .brand small{
   display:block;font-size:9px;font-weight:600;letter-spacing:.14em;
-  text-transform:uppercase;color:var(--teal-l);margin-top:3px;opacity:.85;
+  text-transform:uppercase;color:var(--teal);margin-top:3px;opacity:.85;
 }
 .hero{position:relative;z-index:1;max-width:520px;margin:48px 0}
 .kicker{
-  font-size:10px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;
-  color:var(--teal-l);margin-bottom:16px;
+  font-size:10px;font-weight:600;letter-spacing:.16em;text-transform:uppercase;
+  color:var(--teal);margin-bottom:16px;
 }
 .hero h1{
-  font-weight:700;font-size:clamp(32px,4.6vw,48px);
+  font-weight:600;font-size:clamp(32px,4.6vw,48px);
   line-height:1.08;letter-spacing:-.045em;margin-bottom:18px;
 }
-.hero h1 em{font-style:normal;color:var(--teal-l)}
-.lede{font-size:14.5px;line-height:1.6;color:rgba(232,238,246,.68);max-width:400px}
+.hero h1 em{font-style:normal;color:var(--teal)}
+.lede{font-size:14.5px;line-height:1.6;color:#a2abb5;max-width:400px}
 .proof{position:relative;z-index:1;display:flex;gap:28px;flex-wrap:wrap;padding-top:8px}
-.proof b{display:block;font-size:20px;font-weight:700;color:#e8eef6;letter-spacing:-.03em}
+.proof b{display:block;font-size:20px;font-weight:600;color:#f2f4f6;letter-spacing:-.03em}
 .proof span{font-size:11px;color:var(--mute);letter-spacing:.02em}
 .panel{
   background:var(--wash);color:var(--ink);display:flex;align-items:center;justify-content:center;
   padding:48px 40px;position:relative;
 }
 .card{
-  width:100%;max-width:380px;background:var(--paper);border:1px solid #d0d7e2;
-  border-radius:6px;padding:32px 28px;box-shadow:0 16px 40px rgba(11,18,32,.08);
+  width:100%;max-width:380px;background:var(--paper);border:1px solid #e6e9e8;
+  border-radius:18px;padding:32px 28px;box-shadow:0 24px 60px -22px rgba(12,18,16,.3);
 }
-.card h2{font-size:24px;font-weight:700;letter-spacing:-.04em;line-height:1.15}
+.card h2{font-size:22px;font-weight:600;letter-spacing:-.035em;line-height:1.15}
 .card .sub{margin:8px 0 28px;color:var(--mute);font-size:13px;line-height:1.55}
-label{display:block;font-size:11px;font-weight:650;letter-spacing:.06em;text-transform:uppercase;color:var(--t2);margin:0 0 7px}
+label{display:block;font-size:11.5px;font-weight:500;letter-spacing:0;text-transform:none;color:var(--t2);margin:0 0 7px}
 .field{margin-bottom:16px;position:relative}
 input[type=text],input[type=password]{
-  width:100%;height:46px;padding:0 42px 0 14px;border:1px solid #b8c2d0;border-radius:4px;
-  background:#fff;color:var(--ink);font:500 14px/1 var(--sans);outline:none;letter-spacing:-.01em;
-  transition:border-color .15s, box-shadow .15s;
+  width:100%;height:34px;padding:0 42px 0 11px;border:1px solid #d6dbd9;border-radius:9px;
+  background:#fafbfb;color:var(--ink);font:500 14px/1 var(--sans);outline:none;letter-spacing:-.01em;
+  transition:border-color .16s, box-shadow .16s, background .16s;
 }
-input:hover{border-color:#7b8799}
-input:focus{border-color:var(--teal);box-shadow:0 0 0 3px rgba(13,115,119,.18)}
+input:hover{border-color:#8b9490}
+input:focus{border-color:rgba(11,156,129,.32);background:#fff;box-shadow:0 0 0 3px rgba(11,156,129,.22)}
 .eye{
   position:absolute;right:6px;top:50%;transform:translateY(-50%);
-  width:32px;height:32px;border:0;background:transparent;color:var(--mute);cursor:pointer;border-radius:4px;
+  width:32px;height:32px;border:0;background:transparent;color:var(--mute);cursor:pointer;border-radius:9px;
 }
-.eye:hover{color:var(--ink);background:rgba(11,18,32,.04)}
+.eye:hover{color:var(--ink);background:rgba(12,18,16,.04)}
 .btn{
-  width:100%;height:48px;margin-top:6px;border:0;border-radius:4px;cursor:pointer;
-  background:var(--teal);color:#fff;
-  font:700 13.5px/1 var(--sans);letter-spacing:.01em;
-  box-shadow:0 8px 20px rgba(13,115,119,.22);transition:filter .15s, transform .1s;
+  width:100%;height:34px;margin-top:6px;border:0;border-radius:9px;cursor:pointer;
+  background:var(--grad);color:var(--ink-on-mint);
+  font:600 13.5px/1 var(--sans);letter-spacing:.01em;
+  box-shadow:var(--glow);transition:filter .15s, transform .1s;
 }
-.btn:hover:not(:disabled){filter:brightness(1.08)}
+.btn:hover:not(:disabled){filter:brightness(1.06)}
 .btn:active:not(:disabled){transform:translateY(1px)}
 .btn:disabled{opacity:.55;cursor:progress;box-shadow:none}
 .err{
-  display:none;margin:0 0 14px;padding:10px 12px;border-radius:4px;
-  background:#fdecea;color:var(--err);font-size:12.5px;line-height:1.45;
+  display:none;margin:0 0 14px;padding:12px 14px;border-radius:13px;
+  background:rgba(210,74,92,.1);color:var(--err);font-size:12.5px;line-height:1.45;
 }
 .err.on{display:block}
 .foot{margin-top:20px;font-size:12px;color:var(--mute);line-height:1.5}
 .shake{animation:shake .38s ease-in-out}
 @keyframes shake{25%{transform:translateX(-4px)}75%{transform:translateX(4px)}}
 .watermark{
-  position:absolute;right:-60px;bottom:-70px;width:340px;height:340px;opacity:.08;pointer-events:none;color:var(--teal-l);
+  position:absolute;right:-60px;bottom:-70px;width:340px;height:340px;opacity:.08;pointer-events:none;color:var(--teal);
 }
 @media(max-width:900px){
   .wrap{grid-template-columns:1fr}
@@ -124,10 +132,9 @@ input:focus{border-color:var(--teal);box-shadow:0 0 0 3px rgba(13,115,119,.18)}
   <section class="stage" aria-hidden="false">
     <div class="mark">
       <div class="gem" aria-hidden="true">
-        <svg viewBox="0 0 36 36" fill="none">
-          <circle cx="15.5" cy="15.5" r="9" stroke="currentColor" stroke-width="2.2"/>
-          <path d="M22.2 22.2 30.5 30.5" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"/>
-          <path d="M12 15.5h7M15.5 12v7" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" opacity=".9"/>
+        <svg viewBox="0 0 24 24" fill="none">
+          <path d="M12 2 3 9l9 13 9-13-9-7Z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/>
+          <path d="M3 9h18M12 2 8 9l4 13M12 2l4 7-4 13" stroke="currentColor" stroke-width="1.2" opacity=".5"/>
         </svg>
       </div>
       <div class="brand">Ogran<small>каталог · модель · витрина</small></div>
@@ -166,7 +173,7 @@ input:focus{border-color:var(--teal);box-shadow:0 0 0 3px rgba(13,115,119,.18)}
         </button>
       </div>
       <button class="btn" id="btn" type="submit">Войти</button>
-      <p class="foot">Сессия живёт неделю и переживает закрытие вкладки. Выйти можно из шапки сервиса.</p>
+      <p class="foot">Сессия живёт неделю и переживает закрытие вкладки. Выйти можно из рельса слева.</p>
     </form>
   </section>
 </div>

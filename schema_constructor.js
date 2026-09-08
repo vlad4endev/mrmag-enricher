@@ -828,6 +828,27 @@
     $('aeModalBg')?.addEventListener('click', e => { if (e.target.id === 'aeModalBg') close(); });
   }
 
+  window.fillSchemaImportFromDump = async function fillSchemaImportFromDump() {
+    if (!dictCurrent?.id) return;
+    const ta = $('schImportText');
+    const meta = $('schImportMeta');
+    if (meta) meta.textContent = 'читаю дамп…';
+    try {
+      const data = await apiJson('/api/dictionaries/' + encodeURIComponent(dictCurrent.id) + '/from-dump');
+      const text = String(data.text || (data.lines || []).join('\n'));
+      if (ta) ta.value = text;
+      const details = ta?.closest('details');
+      if (details) details.open = true;
+      if (meta) {
+        meta.textContent = text
+          ? `${data.lines?.length || 0} ключей из ${data.products} товаров — разберите с ИИ или без`
+          : 'в дампе нет пар «ключ — значение»';
+      }
+    } catch (e) {
+      if (meta) meta.textContent = e.message || 'нет дампа';
+    }
+  };
+
   window.runSchemaImport = async function runSchemaImport(mode) {
     if (!dictCurrent?.id) return;
     const text = $('schImportText')?.value || '';

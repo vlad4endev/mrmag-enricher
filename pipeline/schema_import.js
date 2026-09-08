@@ -4,7 +4,11 @@
  * Ничего не пишет на диск — только proposals для UI.
  */
 
-import { blankAttribute, indexDictionary } from './dict.js';
+import fs from 'fs';
+import path from 'path';
+import { blankAttribute, indexDictionary, loadDictionary, loadProducts, categoryName, resolveDictRoot } from './dict.js';
+import { getDump } from './dumps.js';
+import { extractPairs } from './parse.js';
 import { matchKey } from './match.js';
 import { valueFold, displayEnum, aliasValue } from './types.js';
 import { normKey } from './text.js';
@@ -484,4 +488,76 @@ export function applySuggestions(attrs, suggestions) {
   }
 
   return { attrs: list, applied, created, skipped };
+}
+
+function emptyDict(catId) {
+  return { catId: String(catId), attrs: [], byCode: new Map(), synonymIndex: new Map(), blacklistIndex: [] };
+}
+
+/** Частотные «ключ — пример» из annotation/description — вход для import-suggest. */
+export function harvestAttrLinesFromProducts(products, dict, { limit = 80 } = {}) {
+  const freq = new Map();
+  for (const p of products || []) {
+    const text = [p.annotation, p.annotation_html, p.description].filter(Boolean).join('\n');
+    if (!String(text).trim()) continue;
+    let pairs = [];
+    try {
+      pairs = extractPairs(text, dict);
+    } catch {
+      continue;
+    }
+    for (const pair of pairs) {
+      const key = String(pair?.key || '').replace(/\s+/g, ' ').trim();
+      if (key.length < 2 || key.length > 80) continue;
+      const folded = valueFold(key);
+      if (!folded) continue;
+      const cur = freq.get(folded) || { key, count: 0, sample: '' };
+      cur.count++;
+      if (!cur.sample && pair.value) cur.sample = String(pair.value).replace(/\s+/g, ' ').trim().slice(0, 80);
+      freq.set(folded, cur);
+    }
+  }
+  return [...freq.values()]
+    .sort((a, b) => b.count - a.count || a.key.localeCompare(b.key, 'ru'))
+    .slice(0, Math.max(1, Math.min(400, Number(limit) || 80)))
+    .map(x => (x.sample ? `${x.key} — ${x.sample}` : x.key));
+}
+
+/**
+ * Строки характеристик из дампа раздела (dumps/data_{id}.json или bundled data_{id}.json).
+ * На диск не пишет — UI вставляет в «Импорт списка».
+ */
+export function harvestDumpAttrLines(catId, root, opts = {}) {
+  if (!/^\d+$/.test(String(catId))) {
+    throw Object.assign(new Error('id раздела — только цифры'), { status: 400 });
+  }
+  const resolved = resolveDictRoot(root);
+  let products;
+  try {
+    products = getDump(catId, resolved).products;
+  } catch (e) {
+    if (e.status !== 404) throw e;
+    const bundled = path.join(resolved, `data_${catId}.json`);
+    if (!fs.existsSync(bundled)) {
+      throw Object.assign(
+        new Error(`нет дампа data_${catId}.json — загрузите во вкладке «Дампы»`),
+        { status: 404 },
+      );
+    }
+    products = loadProducts(bundled);
+  }
+  let dict;
+  try {
+    dict = loadDictionary(catId, resolved);
+  } catch {
+    dict = emptyDict(catId);
+  }
+  const lines = harvestAttrLinesFromProducts(products, dict, opts);
+  return {
+    id: String(catId),
+    name: categoryName(catId, resolved),
+    products: products.length,
+    lines,
+    text: lines.join('\n'),
+  };
 }

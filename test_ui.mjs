@@ -151,7 +151,7 @@ export const api={syncSteps,setCnt,setCntFree,applyCnt,applySource,setSource,pic
   showPage,setTab,renderSettings,addProvider,removeProvider,addEngine,readSettingsPatch,
   renderExportTemplates,applyExportTemplate,shapeProductsFile,shapeFiltersFile,exportPack,
   modelsFromSettings,pickDefaultModel,applyDefaultProviderModels,looksLikeModelId,catalogHint,
-  addDumpSection,openDumpDest,cancelDumpDest,dumpBodyWithName,
+  addDumpSection,openDumpDest,cancelDumpDest,dumpBodyWithName,matchDictCatalog,
   addPromptTemplate,selectPromptTab,onPromptScopeChange,onPromptSectionToggle,promptsForSave};
 export const st={get items(){return items},set items(v){items=v},
   get srcItems(){return srcItems},set srcItems(v){srcItems=v},
@@ -174,7 +174,9 @@ export const st={get items(){return items},set items(v){items=v},
   get dateKey(){return dateKey},
   get srcFilters(){return srcFilters},
   get promptList(){return promptList},set promptList(v){promptList=v},
-  get promptIdx(){return promptIdx},set promptIdx(v){promptIdx=v}};
+  get promptIdx(){return promptIdx},set promptIdx(v){promptIdx=v},
+  get dictCatalog(){return dictCatalog}, set dictCatalog(v){dictCatalog=v},
+  get dictList(){return dictList}, set dictList(v){dictList=v}};
 `;
 const tmp = path.join(ROOT, '.ui_under_test.mjs');
 fs.writeFileSync(tmp, script + EXPORTS, 'utf-8');
@@ -513,6 +515,16 @@ t('переключает разделы настроек', () => {
   assert.ok(G('setExport').classList.contains('on'));
   assert.ok(foot && foot.style.display !== 'none', 'на Выгрузке есть кнопка Сохранить');
   api.setTab('prov');
+});
+t('новый справочник ищется по названию раздела, а не только по цифрам', () => {
+  st.dictCatalog = [
+    { id: '514', name: 'Микроволновые печи' },
+    { id: '467', name: 'Стиральные машины' },
+  ];
+  st.dictList = [];
+  assert.equal(api.matchDictCatalog('514').id, '514');
+  assert.equal(api.matchDictCatalog('микроволн').id, '514');
+  assert.equal(api.matchDictCatalog('514 — Микроволновые печи').name, 'Микроволновые печи');
 });
 
 console.log('\n«Сколько обработать» — одна настройка с одним смыслом');

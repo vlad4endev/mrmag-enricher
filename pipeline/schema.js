@@ -5,6 +5,7 @@
 
 import {
   hasDictionary, loadDictionary, loadCategories, loadConfig,
+  listDictionaries, categoryName,
   PROJECT_ROOT, resolveDictRoot,
 } from './dict.js';
 import { extractPairs } from './parse.js';
@@ -189,20 +190,93 @@ export function tryLoadDictSchema(key, root) {
 
 const SKIP_CAT_HINT = new Set(['', 'all', 'без раздела', 'bez_razdela', 'все разделы']);
 
-/** Известные справочники: отсутствие файла при таком id — ошибка, не gold.
- * TODO: сейчас hardcoded (467/523/929 + DICT_FALLBACK); при новых attributes_{id}.json
- * список нужно расширять или строить из dictionaries/ + categories.json. */
-const KNOWN_DICT_IDS = new Set([
+/**
+ * Эти три файла обязаны быть: пропажа — ошибка, не _generic.
+ * Любой другой attributes_{id}.json подхватывается с диска сам.
+ */
+const MUST_HAVE_DICT_IDS = new Set([
   '467', '523', '929',
   ...Object.keys(DICT_FALLBACK).map(String),
   ...Object.values(DICT_FALLBACK).map(String),
 ]);
 
+/** Синонимы числа/падежа, которых нет в categories.json («стиральная» ≠ «Стиральные машины»). */
+const NAME_ALIASES = [
+  { re: /стиральн/, id: '467' },
+  { re: /холодильник/, id: '523' },
+  { re: /вытяжк|воздухоочистител/, id: '929' },
+];
+
+export function isMustHaveDict(id) {
+  return MUST_HAVE_DICT_IDS.has(String(id));
+}
+
+function dictIdsOnDisk(root) {
+  try {
+    return listDictionaries(root).map(d => String(d.id));
+  } catch {
+    return [];
+  }
+}
+
+function foldRu(s) {
+  return String(s || '').toLowerCase().replace(/ё/g, 'е');
+}
+
+/** Укороченное слово: «холодильники» и «холодильник» сходятся в «холодиль». */
+function wordStem(w) {
+  const s = foldRu(w).replace(/[^a-zа-я0-9]/g, '');
+  if (s.length <= 4) return s;
+  return s.slice(0, -1).slice(0, 7);
+}
+
+function nameScore(text, catName) {
+  const t = foldRu(text);
+  const cn = foldRu(catName);
+  if (!t || !cn || cn.length < 5) return 0;
+  if (t.includes(cn)) return 1000 + cn.length;
+  const words = cn.split(/[\s,/]+/).map(w => w.trim())
+    .filter(w => w.length >= 5 && !/^(для|или|при|без)$/i.test(w));
+  if (!words.length) return 0;
+  let hit = 0;
+  for (const w of words) {
+    const st = wordStem(w);
+    if (st.length >= 4 && t.includes(st)) hit++;
+  }
+  return hit === words.length ? 100 + cn.length + hit * 5 : 0;
+}
+
 /**
- * Справочник для выгрузки: id, slug, путь «…/Стиральные машины», имя товара.
- * Иначе UI шлёт «без раздела» / «all» и /api/export падает, хотя в пачке
- * стиральные машины со справочником 467.
+ * cat_id справочника по тексту (имя товара, название раздела).
+ * Сначала файлы attributes_*.json + имена из categories.json (длиннее побеждает),
+ * затем алиасы 467/523/929 — даже если файла нет (чтобы отдать DICT_UNAVAILABLE).
  */
+export function dictIdFromText(text, root) {
+  const resolved = resolveDictRoot(root);
+  const n = foldRu(text).trim();
+  if (!n || SKIP_CAT_HINT.has(n)) return null;
+
+  const scored = [];
+  for (const id of dictIdsOnDisk(resolved)) {
+    const score = nameScore(n, categoryName(id, resolved));
+    if (score > 0) scored.push({ id, score });
+  }
+  scored.sort((a, b) => b.score - a.score);
+  if (scored[0] && (scored.length === 1 || scored[0].score > scored[1].score)) {
+    return scored[0].id;
+  }
+
+  for (const a of NAME_ALIASES) {
+    if (a.re.test(n)) return a.id;
+  }
+  return null;
+}
+
+function withFallbackId(id) {
+  const s = String(id);
+  return DICT_FALLBACK[s] != null ? String(DICT_FALLBACK[s]) : s;
+}
+
 /** Подсказки категории из выгрузки / товара (без «без раздела»). */
 function categoryHints(products, category) {
   const hints = [category];
@@ -215,6 +289,7 @@ function categoryHints(products, category) {
 /**
  * Ожидаемый cat_id справочника, даже если файл сейчас недоступен.
  * Нужен, чтобы apiExport не уходил в gold при «467» без attributes_467.json.
+ * Новый attributes_{id}.json сам попадает в список через hasDictionary.
  */
 export function expectedDictCatId(products, category, root) {
   const resolved = resolveDictRoot(root);
@@ -224,16 +299,13 @@ export function expectedDictCatId(products, category, root) {
     if (!s || SKIP_CAT_HINT.has(s.toLowerCase())) continue;
     const byId = resolveCatId(s, resolved);
     if (byId) {
-      const fb = DICT_FALLBACK[byId] != null ? String(DICT_FALLBACK[byId]) : null;
-      const target = fb || String(byId);
-      if (KNOWN_DICT_IDS.has(String(byId)) || KNOWN_DICT_IDS.has(target) || hasDictionary(target, resolved)) {
+      const target = withFallbackId(byId);
+      if (isMustHaveDict(byId) || isMustHaveDict(target) || hasDictionary(target, resolved)) {
         return target;
       }
     }
-    const n = s.toLowerCase().replace(/ё/g, 'е');
-    if (/стиральн/.test(n)) return '467';
-    if (/холодильник/.test(n)) return '523';
-    if (/вытяжк|воздухоочистител/.test(n)) return '929';
+    const fromText = dictIdFromText(s, resolved);
+    if (fromText) return withFallbackId(fromText);
   }
   return null;
 }
@@ -246,19 +318,10 @@ export function dictForProducts(products, category, root) {
     if (!s || SKIP_CAT_HINT.has(s.toLowerCase())) continue;
     const loaded = tryLoadDictSchema(s, resolved);
     if (loaded?.dict) return loaded.dict;
-    const n = s.toLowerCase().replace(/ё/g, 'е');
-    if (/стиральн/.test(n)) {
-      const d = tryLoadDictSchema(467, resolved);
-      if (d?.dict) return d.dict;
-    }
-    if (/холодильник/.test(n)) {
-      const d = tryLoadDictSchema(523, resolved);
-      if (d?.dict) return d.dict;
-    }
-    if (/вытяжк|воздухоочистител/.test(n)) {
-      const d = tryLoadDictSchema(929, resolved);
-      if (d?.dict) return d.dict;
-    }
+    const fromText = dictIdFromText(s, resolved);
+    if (!fromText) continue;
+    const d = tryLoadDictSchema(fromText, resolved);
+    if (d?.dict) return d.dict;
   }
   return null;
 }

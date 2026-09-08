@@ -19,7 +19,7 @@
  *   GET  /api/parser          статус и настройки поиска пустых карточек
  *   GET  /api/product?url=... прокси к каталогу, только по разрешённым хостам
  *   GET  /api/categories      разделы из требований и схемы полей
- *   GET  /api/dictionaries      список справочников attributes_{id}.json
+ *   GET  /api/dictionaries      список + catalog + pending (дампы без справочника)
  *   POST /api/dictionaries      создать { id, copyFrom? }
  *   GET  /api/dictionaries/:id  атрибуты справочника
  *   PUT  /api/dictionaries/:id  сохранить атрибуты справочника
@@ -354,9 +354,27 @@ async function apiModels(res) {
   }
 }
 
+function dictionariesPayload() {
+  const dictionaries = listDictionaries(ROOT);
+  const dumps = listDumps(ROOT).filter(d => d.has_file);
+  const dictIds = new Set(dictionaries.map(d => String(d.id)));
+  return {
+    dictionaries: dictionaries.map(d => ({
+      ...d,
+      has_dump: dumps.some(x => String(x.id) === String(d.id)),
+    })),
+    catalog: listShopCategories(ROOT),
+    pending: dumps.filter(d => !dictIds.has(String(d.id))).map(d => ({
+      id: String(d.id),
+      name: d.name,
+      products: d.products || 0,
+    })),
+  };
+}
+
 function apiDictionariesList(res) {
   try {
-    json(res, 200, { dictionaries: listDictionaries(ROOT) });
+    json(res, 200, dictionariesPayload());
   } catch (e) {
     json(res, 500, { error: e.message });
   }
@@ -542,6 +560,15 @@ async function apiDictionaryProbe(req, res, id) {
       id: String(id),
       ...probeProductAttribution(attrs, product),
     });
+  } catch (e) {
+    json(res, e.status || 500, { error: e.message });
+  }
+}
+
+/** Ключи из дампа раздела — для textarea «Импорт списка». Ничего не пишет. */
+function apiDictionaryFromDump(res, id) {
+  try {
+    json(res, 200, harvestDumpAttrLines(id, ROOT));
   } catch (e) {
     json(res, e.status || 500, { error: e.message });
   }
@@ -1625,11 +1652,24 @@ function sendHtml(res, code, file, extra = {}) {
 }
 
 function serveStatic(res, urlPath) {
-  if (urlPath !== '/' && urlPath !== '/' + PAGE) {
-    res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
-    return res.end('Не найдено');
+  if (urlPath === '/' || urlPath === '/' + PAGE) {
+    return sendHtml(res, 200, path.join(ROOT, PAGE));
   }
-  sendHtml(res, 200, path.join(ROOT, PAGE));
+  if (urlPath === '/schema_constructor.js') {
+    const file = path.join(ROOT, 'schema_constructor.js');
+    if (!fs.existsSync(file)) {
+      res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
+      return res.end('Не найдено');
+    }
+    res.writeHead(200, {
+      'Content-Type': 'text/javascript; charset=utf-8',
+      'Cache-Control': 'no-cache',
+      'X-Content-Type-Options': 'nosniff',
+    });
+    return fs.createReadStream(file).pipe(res);
+  }
+  res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
+  return res.end('Не найдено');
 }
 
 function serveLogin(res, code = 401) {
@@ -1875,6 +1915,8 @@ const server = http.createServer(async (req, res) => {
     }
     const dictProbe = u.pathname.match(/^\/api\/dictionaries\/(\d+)\/probe$/);
     if (dictProbe && req.method === 'POST') return await apiDictionaryProbe(req, res, dictProbe[1]);
+    const dictFromDump = u.pathname.match(/^\/api\/dictionaries\/(\d+)\/from-dump$/);
+    if (dictFromDump && req.method === 'GET') return apiDictionaryFromDump(res, dictFromDump[1]);
     const dictImportSuggest = u.pathname.match(/^\/api\/dictionaries\/(\d+)\/import-suggest$/);
     if (dictImportSuggest && req.method === 'POST') {
       return await apiDictionaryImportSuggest(req, res, dictImportSuggest[1]);

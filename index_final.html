@@ -794,7 +794,7 @@ input[type=range]::-moz-range-thumb{
 .dump-ann.empty{color:var(--amber)}
 .dump-empty{padding:18px;color:var(--t3);text-align:center;font-size:13px}
 .dump-search{width:100%;min-height:var(--ctrl-h);margin:8px 0}
-#dumpPending[hidden],#dumpDest[hidden],#dumpFile[hidden],[id^="dumpPrev"][hidden]{display:none!important}
+#dumpPending[hidden],#dumpDest[hidden],#dumpFile[hidden],[id^="dumpPrev"][hidden],#dictPending[hidden]{display:none!important}
 .set-tpl-pane{display:none}
 .set-tpl-pane.on{display:block}
 .set-file{
@@ -1847,7 +1847,7 @@ input[type=range]::-moz-range-thumb{
 
       <section class="set-panel" id="setDict">
         <div class="set-h" id="schConstructor">Атрибуты и фильтры</div>
-        <p class="set-lead">Schema (<code>attributes_{id}.json</code>) — источник истины для фильтров. Каноны и фасеты задаются здесь; AI только извлекает значение.</p>
+        <p class="set-lead">Schema (<code>attributes_{id}.json</code>) — источник истины для фильтров. Новый раздел: дамп → «Справочник из дампа» → разобрать ключи → включить фасеты. 467/523/929 уже заполнены — не копируйте их в другую категорию.</p>
         <div class="dict-layout ae-root">
           <div class="ae-bar">
             <div class="ae-bar-left">
@@ -1869,25 +1869,33 @@ input[type=range]::-moz-range-thumb{
             </div>
           </div>
           <input type="file" id="dictImportFile" accept=".json,application/json" hidden>
+          <div id="dictPending" class="set-card" hidden></div>
           <div class="dict-create set-card" id="dictCreateBox">
-            <div class="set-grid">
-              <div class="set-row">
-                <label for="dictNewId">ID раздела (из categories.json)</label>
-                <input type="number" id="dictNewId" min="1" step="1" placeholder="например 929">
-              </div>
-              <div class="set-row">
-                <label for="dictCopyFrom">Скопировать атрибуты из</label>
+            <div class="set-row">
+              <label for="dictNewSearch">Раздел из каталога</label>
+              <input id="dictNewSearch" list="dictCatList" placeholder="Название или id — 514 Микроволновые печи" autocomplete="off" oninput="onDictNewSearch()">
+              <datalist id="dictCatList"></datalist>
+            </div>
+            <div class="set-row">
+              <label for="dictNewId">Id раздела</label>
+              <input type="number" id="dictNewId" min="1" step="1" inputmode="numeric" oninput="onDictNewId()">
+            </div>
+            <details style="margin-top:8px">
+              <summary style="cursor:pointer;font-size:12.5px;color:var(--t2)">Скопировать атрибуты из другого раздела (редко нужно)</summary>
+              <div class="set-row" style="margin-top:8px">
+                <label for="dictCopyFrom">Источник</label>
                 <select id="dictCopyFrom">
                   <option value="">пусто — только Бренд</option>
                 </select>
               </div>
-            </div>
+              <div class="hint">Поля стиралок и холодильников не подходят СВЧ, плитам, пылесосам. Обычный путь — пустой файл (Бренд) и ключи из дампа.</div>
+            </details>
             <div class="set-actions" style="margin-top:10px">
               <button type="button" class="sbtn primary" onclick="createDictionaryUi()">Создать файл справочника</button>
               <button type="button" class="sbtn ghost" onclick="dictImportPick()">Импорт из JSON…</button>
               <button type="button" class="sbtn ghost" onclick="toggleDictCreate(false)">Отмена</button>
             </div>
-            <div class="hint" style="margin-top:8px">ID — числовой код раздела. Импорт: массив или <code>{"id":929,"attrs":[...]}</code>.</div>
+            <div class="hint" style="margin-top:8px">Пустой файл — только Бренд. Если дамп уже есть, ключи подставятся сами — разберите и примените, в файл они не пишутся без подтверждения.</div>
           </div>
 
           <div class="ae-work">
@@ -1956,6 +1964,7 @@ input[type=range]::-moz-range-thumb{
             <p class="hint">Вставьте названия или «ключ — значение». Применение только после подтверждения.</p>
             <textarea id="schImportText" rows="5" placeholder="Тип загрузки&#10;Загрузка белья — 7 кг"></textarea>
             <div class="set-actions" style="margin-top:8px">
+              <button type="button" class="sbtn ghost" onclick="window.fillSchemaImportFromDump && window.fillSchemaImportFromDump()"><i class="ti ti-database"></i> Из дампа</button>
               <button type="button" class="sbtn primary" onclick="runSchemaImport('ai')"><i class="ti ti-sparkles"></i> Разобрать с ИИ</button>
               <button type="button" class="sbtn ghost" onclick="runSchemaImport('heuristic')">Без ИИ</button>
               <button type="button" class="sbtn ghost" id="schImportApplyBtn" onclick="applySchemaImport()" disabled>Применить выбранные</button>
@@ -1974,7 +1983,7 @@ input[type=range]::-moz-range-thumb{
 
       <section class="set-panel" id="setDumps">
         <div class="set-h">Дампы исходников</div>
-        <p class="set-lead">Один файл <code>data_{id}.json</code> на раздел: товары заказчика с описанием и характеристиками. Раздел может быть любым из каталога магазина или своим номером. Замена кладёт предыдущую копию в архив.</p>
+        <p class="set-lead">Один файл <code>data_{id}.json</code> на раздел: товары заказчика с описанием и характеристиками. Раздел — любой из каталога магазина. Если справочника ещё нет — «Справочник из дампа»: пустой Бренд и ключи на разбор, без копирования 467/523/929.</p>
         <div class="dump-drop" id="dumpZone" tabindex="0" role="button" aria-label="Загрузить JSON дампа">
           <i class="ti ti-cloud-upload" aria-hidden="true"></i>
           <b>Перетащите JSON или выберите файл</b>
@@ -2686,6 +2695,11 @@ function renderDumpList(){
     const badge=d.has_file
       ? `<span class="set-badge">${esc(d.file)}</span>`
       : `<span class="set-badge off">нет файла</span>`;
+    const dictBadge=d.has_file
+      ? (d.has_dictionary
+        ? `<span class="set-badge">справочник</span>`
+        : `<span class="set-badge off">нет справочника</span>`)
+      : '';
     const stats=d.has_file
       ? `<div class="dump-stats">
           <span><b>${d.products}</b> ${plural(d.products,'товар','товара','товаров')}</span>
@@ -2708,11 +2722,14 @@ function renderDumpList(){
           <span class="dump-kicker">${esc(d.id)}</span>
           <strong>${esc(d.name)}</strong>
         </div>
-        ${badge}
+        <div style="display:flex;gap:6px;flex-wrap:wrap">${badge}${dictBadge}</div>
       </div>
       ${stats}${err}
       <div class="set-actions">
         ${d.has_file?`<button type="button" class="sbtn primary" onclick="openDumpInEnricher('${esc(d.id)}')"><i class="ti ti-player-play"></i> Открыть в обогащении</button>`:''}
+        ${d.has_file && !d.has_dictionary?`<button type="button" class="sbtn primary" onclick="bootstrapDictFromDump('${esc(d.id)}')"><i class="ti ti-adjustments-horizontal"></i> Справочник из дампа</button>`:''}
+        ${d.has_file && d.has_dictionary?`<button type="button" class="sbtn ghost" onclick="openDictForCat('${esc(d.id)}')"><i class="ti ti-adjustments-horizontal"></i> Открыть справочник</button>`:''}
+        ${d.has_file && d.has_dictionary?`<button type="button" class="sbtn ghost" onclick="openDictForCat('${esc(d.id)}',{harvest:true})"><i class="ti ti-database"></i> Ключи из дампа</button>`:''}
         <button type="button" class="sbtn ghost" onclick="pickDumpForCat('${esc(d.id)}')"><i class="ti ti-upload"></i> ${d.has_file?'Заменить':'Загрузить'}</button>
         ${d.has_file?`<button type="button" class="sbtn ghost" onclick="downloadDump('${esc(d.id)}')"><i class="ti ti-download"></i> Скачать</button>`:''}
         ${d.has_file?`<button type="button" class="sbtn ghost" onclick="toggleDumpPreview('${esc(d.id)}')"><i class="ti ti-list"></i> Товары</button>`:''}
@@ -2802,8 +2819,11 @@ async function putDump(catId, text, filename, name){
       body:dumpBodyWithName(text, name),
     });
     cancelDumpDest();
-    dumpStatus('Сохранён data_'+catId+'.json', true);
     await loadDumps();
+    const after=dumpList.find(d=>String(d.id)===String(catId));
+    dumpStatus(after && after.has_file && !after.has_dictionary
+      ? 'Сохранён data_'+catId+'.json — соберите справочник кнопкой «Справочник из дампа»'
+      : 'Сохранён data_'+catId+'.json', true);
   }catch(e){
     dumpStatus(e.message||'не удалось сохранить', false);
   }
@@ -2897,8 +2917,11 @@ async function loadDumpPreview(id){
 
 /* ── Справочник attributes_{id}.json ───────────────────────── */
 let dictList=[];
+let dictCatalog=[];
+let dictPending=[];
 let dictCurrent=null;   // { id, name, file, attrs }
 let dictDirty=false;
+let dictListSeq=0;
 
 function dictStatus(msg, ok){
   if(typeof window.refreshSchemaMeta==='function' && document.getElementById('schConstructor')){
@@ -2947,33 +2970,100 @@ function fillDictCopySelect(){
   if([...sel.options].some(o=>o.value===keep)) sel.value=keep;
 }
 
+function fillDictCatList(){
+  const list=document.getElementById('dictCatList');
+  if(!list) return;
+  const catalog=dictCatalog.length?dictCatalog:dumpCatalog;
+  list.innerHTML=catalog.map(c=>`<option value="${esc(c.id)} — ${esc(c.name)}"></option>`).join('');
+}
+
+function matchDictCatalog(raw){
+  const catalog=dictCatalog.length?dictCatalog:dumpCatalog;
+  const s=String(raw||'').trim();
+  if(!s) return null;
+  const idMatch=s.match(/^(\d+)/);
+  if(idMatch){
+    const hit=catalog.find(c=>c.id===idMatch[1]);
+    if(hit) return hit;
+    const extra=dictList.find(d=>d.id===idMatch[1])||dumpList.find(d=>d.id===idMatch[1]);
+    return { id:idMatch[1], name: extra?.name || '' };
+  }
+  const low=s.toLowerCase();
+  return catalog.find(c=>c.name.toLowerCase()===low)
+    || catalog.find(c=>c.name.toLowerCase().includes(low))
+    || null;
+}
+
+function onDictNewSearch(){
+  const hit=matchDictCatalog(document.getElementById('dictNewSearch')?.value);
+  const idEl=document.getElementById('dictNewId');
+  if(hit && idEl) idEl.value=hit.id;
+}
+
+function onDictNewId(){
+  const id=String(document.getElementById('dictNewId')?.value||'').trim();
+  if(!/^\d+$/.test(id)) return;
+  const hit=matchDictCatalog(id);
+  const search=document.getElementById('dictNewSearch');
+  if(hit?.name && search && !String(search.value||'').trim()) search.value=id+' — '+hit.name;
+}
+
+function renderDictPending(){
+  const box=document.getElementById('dictPending');
+  if(!box) return;
+  const pending=dictPending||[];
+  if(!pending.length){
+    box.hidden=true;
+    box.innerHTML='';
+    return;
+  }
+  box.hidden=false;
+  box.innerHTML=`<div class="set-card-h"><b>Дампы без справочника</b></div>
+    <p class="hint" style="margin:0 0 8px">Пустой файл (только Бренд) и ключи из дампа. Не копируйте 467/523/929.</p>
+    <div class="set-actions">${pending.map(p=>
+      `<button type="button" class="sbtn primary" onclick="bootstrapDictFromDump('${esc(p.id)}')">${esc(p.id)} — ${esc(p.name||'раздел')}${p.products?` · ${p.products}`:''}</button>`
+    ).join('')}</div>`;
+}
+
 function toggleDictCreate(force){
   const box=document.getElementById('dictCreateBox');
   if(!box) return;
   const open=force===false?false:force===true?true:!box.classList.contains('open');
   box.classList.toggle('open', open);
   if(open){
+    fillDictCatList();
     fillDictCopySelect();
-    document.getElementById('dictNewId')?.focus();
+    document.getElementById('dictNewSearch')?.focus();
   }
 }
 
-async function loadDictList(){
+async function loadDictList(preferId){
   const sel=document.getElementById('dictCat');
   if(!sel) return;
-  const keep=sel.value||dictCurrent?.id||'';
+  const seq=++dictListSeq;
+  const keep=preferId||sel.value||dictCurrent?.id||'';
   try{
     const data=await apiJson('/api/dictionaries');
+    if(seq!==dictListSeq) return;
     dictList=data.dictionaries||[];
+    dictCatalog=data.catalog||[];
+    dictPending=data.pending||[];
   }catch(e){
+    if(seq!==dictListSeq) return;
     dictList=[];
+    dictCatalog=[];
+    dictPending=[];
     dictStatus(e.message||'не удалось загрузить список', false);
     sel.innerHTML='<option value="">нет справочников</option>';
     setDictButtons({save:false, del:false, add:false});
     fillDictCopySelect();
+    fillDictCatList();
+    renderDictPending();
     return;
   }
   fillDictCopySelect();
+  fillDictCatList();
+  renderDictPending();
   if(!dictList.length){
     sel.innerHTML='<option value="">нет файлов — нажмите «Создать»</option>';
     dictCurrent=null;
@@ -2984,11 +3074,44 @@ async function loadDictList(){
     return;
   }
   sel.innerHTML=dictList.map(d=>
-    `<option value="${esc(d.id)}">${esc(d.id)} — ${esc(d.name)} (${d.facets} фасетов)</option>`
+    `<option value="${esc(d.id)}">${esc(d.id)} — ${esc(d.name)} (${d.facets} фасетов${d.has_dump?' · дамп':''})</option>`
   ).join('');
   const pick=dictList.some(d=>d.id===keep)?keep:dictList[0].id;
   sel.value=pick;
   await loadDictionary(pick);
+}
+
+async function openDictForCat(id, { harvest=false }={}){
+  id=String(id||'').trim();
+  if(!/^\d+$/.test(id)) return;
+  if(dictDirty && dictCurrent?.id!==id && !confirm('Есть несохранённые правки. Открыть другой справочник?')) return;
+  dictDirty=false;
+  setTab('dict');
+  await loadDictList(id);
+  if(harvest && typeof window.fillSchemaImportFromDump==='function') await window.fillSchemaImportFromDump();
+}
+
+async function bootstrapDictFromDump(id){
+  id=String(id||'').trim();
+  if(!/^\d+$/.test(id)) return;
+  const exists=(dictList||[]).some(d=>d.id===id) || (dumpList||[]).some(d=>d.id===id && d.has_dictionary);
+  if(!exists){
+    try{
+      await apiJson('/api/dictionaries',{
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({id}),
+      });
+    }catch(e){
+      if(!/уже есть/.test(e.message||'')){
+        dumpStatus(e.message||'не удалось создать справочник', false);
+        dictStatus(e.message||'не удалось создать справочник', false);
+        return;
+      }
+    }
+  }
+  await openDictForCat(id, { harvest:true });
+  dictStatus('ключи из дампа — разберите и примените выбранные');
 }
 
 async function onDictCatChange(){
@@ -3186,11 +3309,16 @@ function addDictAttr(){
 async function createDictionaryUi(){
   const id=String(getV('dictNewId')||'').trim();
   if(!/^\d+$/.test(id)){
-    dictStatus('укажите числовой ID раздела', false);
+    dictStatus('укажите раздел из каталога или числовой ID', false);
     return;
   }
   if(dictDirty && !confirm('Есть несохранённые правки текущего справочника. Создать новый?')) return;
   const copyFrom=getV('dictCopyFrom')||'';
+  if(copyFrom && copyFrom!==id){
+    const src=dictList.find(d=>d.id===copyFrom);
+    const srcName=src?`${copyFrom} (${src.name})`:copyFrom;
+    if(!confirm(`Скопировать атрибуты из ${srcName} в раздел ${id}?\nДля другой категории обычно лучше пустой справочник (только Бренд) и ключи из дампа.`)) return;
+  }
   try{
     const created=await apiJson('/api/dictionaries',{
       method:'POST',
@@ -3200,8 +3328,9 @@ async function createDictionaryUi(){
     dictDirty=false;
     dictCurrent=created;
     toggleDictCreate(false);
-    await loadDictList();
-    dictStatus('создан');
+    await loadDictList(id);
+    if(typeof window.fillSchemaImportFromDump==='function') await window.fillSchemaImportFromDump();
+    dictStatus('создан — ключи из дампа, если он есть, разберите и примените');
     setDictButtons({save:true, del:true, add:true});
   }catch(e){
     dictStatus(e.message||'не удалось создать', false);
@@ -3368,7 +3497,7 @@ async function saveDictionary(){
     if(sel){
       const v=sel.value;
       sel.innerHTML=dictList.map(d=>
-        `<option value="${esc(d.id)}">${esc(d.id)} — ${esc(d.name)} (${d.facets} фасетов)</option>`
+        `<option value="${esc(d.id)}">${esc(d.id)} — ${esc(d.name)} (${d.facets} фасетов${d.has_dump?' · дамп':''})</option>`
       ).join('');
       sel.value=v;
     }

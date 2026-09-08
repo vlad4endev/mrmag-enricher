@@ -5,7 +5,7 @@
 
 import fs from 'fs';
 import path from 'path';
-import { resolveDictRoot, categoryName, listDictionaries, loadCategories } from './dict.js';
+import { resolveDictRoot, categoryName, listDictionaries, loadCategories, hasDictionary } from './dict.js';
 
 const DATA_FILE_RE = /^data_(\d+)\.json$/i;
 const MAX_DUMP_BYTES = 32 * 1024 * 1024;
@@ -253,6 +253,7 @@ function publicDump(catId, root, products, extra = {}) {
     name: dumpDisplayName(catId, root),
     file: exists ? `data_${catId}.json` : null,
     has_file: exists,
+    has_dictionary: hasDictionary(catId, root),
     ...stats,
     ...(exists ? fileMeta(file) : { bytes: 0, mtime: null }),
     archives: listArchives(catId, root),

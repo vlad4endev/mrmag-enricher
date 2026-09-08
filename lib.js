@@ -23,7 +23,7 @@
  */
 
 import { nameKeyTokens } from './pipeline/identity.js';
-import { tryLoadDictSchema, extractFactsFromDictionary, loadConfigSafe, CRAWL_SLUGS, specDest, expectedDictCatId, resolveCatId } from './pipeline/schema.js';
+import { tryLoadDictSchema, extractFactsFromDictionary, loadConfigSafe, CRAWL_SLUGS, specDest, expectedDictCatId, resolveCatId, dictIdFromText, isMustHaveDict } from './pipeline/schema.js';
 import { alignCardTextsToSpecs } from './pipeline/prose_align.js';
 import { matchKey } from './pipeline/match.js';
 import { normalizeValue, aliasValue, enumValuesEqual, isGluedFactDump, displayEnum, valueFold, hasStrictEnum } from './pipeline/types.js';
@@ -826,15 +826,11 @@ export function dictUnavailableError(catId, root, extra = {}) {
 
 /** По имени: «Холодильник Pozis…» не должен уезжать в универсальные 16 полей. */
 function schemaFromProductName(name, root) {
-  const n = String(name || '').toLowerCase().replace(/ё/g, 'е');
-  const load = (id) => {
-    const s = tryLoadDictSchema(id, root);
-    if (s) return s;
-    throw dictUnavailableError(id, root);
-  };
-  if (/стиральн/.test(n)) return load(467);
-  if (/холодильник/.test(n)) return load(523);
-  if (/вытяжк|воздухоочистител/.test(n)) return load(929);
+  const id = dictIdFromText(name, root);
+  if (!id) return null;
+  const loaded = tryLoadDictSchema(id, root);
+  if (loaded) return loaded;
+  if (isMustHaveDict(id)) throw dictUnavailableError(id, root);
   return null;
 }
 
@@ -854,9 +850,13 @@ export function schemaForProduct(product, category, root) {
   if (fromName) return fromName;
   const expected = expectedDictCatId([product].filter(Boolean), catKey, resolved);
   if (expected) {
-    throw dictUnavailableError(expected, resolved, {
-      productId: product?.id != null ? String(product.id) : (product?.sku != null ? String(product.sku) : null),
-    });
+    const loaded = tryLoadDictSchema(expected, resolved);
+    if (loaded) return loaded;
+    if (isMustHaveDict(expected)) {
+      throw dictUnavailableError(expected, resolved, {
+        productId: product?.id != null ? String(product.id) : (product?.sku != null ? String(product.sku) : null),
+      });
+    }
   }
   return hinted;
 }

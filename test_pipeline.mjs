@@ -1343,6 +1343,43 @@ console.log('golden tests passed');
 }
 
 {
+  const { dictIdFromText, expectedDictCatId, tryLoadDictSchema } = await import('./pipeline/schema.js');
+  const { schemaForProduct } = await import('./lib.js');
+  const { seedDictionaryAttrs, writeJson } = await import('./pipeline/dict.js');
+  const { harvestAttrLinesFromProducts, harvestDumpAttrLines } = await import('./pipeline/schema_import.js');
+
+  const harvested = harvestAttrLinesFromProducts(loadProducts('data_467.json'), d467);
+  assert.ok(harvested.length >= 10, `harvest 467 keys ${harvested.length}`);
+  assert.ok(harvested.some(l => /загрузк/i.test(l)), harvested.slice(0, 8).join(' | '));
+  const dumpLines = harvestDumpAttrLines('467', '.');
+  assert.equal(dumpLines.id, '467');
+  assert.ok(dumpLines.lines.length >= 10);
+
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'dict-514-'));
+  try {
+    fs.mkdirSync(path.join(tmp, 'dictionaries'));
+    writeJson(path.join(tmp, 'categories.json'), [
+      { id: 514, name: 'Микроволновые печи' },
+      { id: 467, name: 'Стиральные машины' },
+    ]);
+    writeJson(path.join(tmp, 'dictionaries', 'attributes_514.json'), seedDictionaryAttrs());
+    assert.equal(dictIdFromText('Микроволновая печь Samsung', tmp), '514');
+    assert.equal(dictForProducts([{ name: 'Микроволновая печь LG' }], 'без раздела', tmp)?.catId, '514');
+    const schema = schemaForProduct({ name: 'Микроволновая печь Samsung' }, 'без раздела', tmp);
+    assert.equal(schema.id, 514);
+    assert.equal(schema.fromDictionary, true);
+    assert.ok(tryLoadDictSchema(514, tmp)?.fromDictionary);
+    assert.equal(expectedDictCatId([{ name: 'Микроволновая печь' }], 'без раздела', tmp), '514');
+    assert.equal(schemaForProduct({ name: 'Носки хлопковые' }, 'без раздела', tmp).slug, '_generic');
+    assert.equal(dictIdFromText('Носки хлопковые', tmp), null);
+    assert.equal(expectedDictCatId([{ name: 'Стиральная машина ATLANT' }], 'без раздела', tmp), '467');
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+  console.log('ok 4th dictionary from dump-shaped file + harvest');
+}
+
+{
   const { facetKind, assignFilterValues, buildFilters, bucketLabel } = await import('./pipeline/facets.js');
   const { normalizeValue } = await import('./pipeline/types.js');
   const { setAttr } = await import('./pipeline/normalize.js');
@@ -2291,6 +2328,7 @@ console.log('golden tests passed');
 
     const saved = saveDump('42', [{ id: 7, name: 'Первый', description: '', annotation: 'есть' }], '.');
     assert.equal(saved.has_file, true);
+    assert.equal(saved.has_dictionary, false);
     assert.equal(saved.products, 1);
     assert.equal(saved.with_annotation, 1);
     assert.ok(fs.existsSync(path.join(dumpsDir('.'), 'data_42.json')));
@@ -2299,6 +2337,10 @@ console.log('golden tests passed');
     const listed = listDumps('.');
     const card = listed.find(d => d.id === '42');
     assert.ok(card);
+    assert.equal(card.has_dictionary, false);
+    const washerDump = listed.find(d => d.id === '467');
+    assert.ok(washerDump, 'карточка 467 остаётся из справочника');
+    assert.equal(washerDump.has_dictionary, true);
     assert.equal(card.products, 1);
     assert.equal(card.empty_annotation, 1);
     assert.ok(card.archives.length >= 1, 'замена кладёт предыдущий в архив');

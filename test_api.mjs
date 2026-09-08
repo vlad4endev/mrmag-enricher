@@ -67,7 +67,7 @@ try {
     assert.strictEqual((await r.json()).ok, true);
   });
   await t('без пароля закрыты и страница, и API', async () => {
-    for (const p of ['/', '/api/categories', '/api/models', '/api/parser', '/api/settings', '/api/dumps', '/api/catalog?category=523']) {
+    for (const p of ['/', '/api/categories', '/api/models', '/api/parser', '/api/settings', '/api/dumps', '/api/dictionaries', '/schema_constructor.js', '/api/catalog?category=523']) {
       assert.strictEqual((await fetch(url(p))).status, 401, `${p} должен требовать вход`);
     }
     const r = await fetch(url('/api/enrich'), { method: 'POST', body: '{}' });
@@ -634,6 +634,29 @@ try {
     assert.strictEqual(saved.products, 2);
     assert.strictEqual(saved.with_annotation, 1);
     assert.ok(saved.has_file);
+    assert.strictEqual(saved.has_dictionary, false);
+
+    const dicts = await (await fetch(url('/api/dictionaries'), { headers: { authorization: auth } })).json();
+    assert.ok(Array.isArray(dicts.dictionaries));
+    assert.ok(dicts.dictionaries.some(d => d.id === '467'));
+    assert.ok(Array.isArray(dicts.catalog));
+    assert.ok(dicts.catalog.some(c => c.id === '467'));
+    assert.ok(Array.isArray(dicts.pending));
+    assert.ok(dicts.pending.some(p => p.id === '42'), 'дамп без attributes_{id}.json — в очереди на справочник');
+    assert.strictEqual(typeof dicts.dictionaries.find(d => d.id === '467').has_dump, 'boolean');
+  });
+  await t('конструктор атрибутов отдаётся как JS', async () => {
+    const r = await fetch(url('/schema_constructor.js'), { headers: { authorization: auth } });
+    assert.strictEqual(r.status, 200, await r.clone().text());
+    assert.match(r.headers.get('content-type') || '', /javascript/);
+    assert.match(await r.text(), /fillSchemaImportFromDump/);
+  });
+  await t('ключи из дампа не создают attributes_{id}.json', async () => {
+    const r = await fetch(url('/api/dictionaries/42/from-dump'), { headers: { authorization: auth } });
+    assert.strictEqual(r.status, 200, await r.clone().text());
+    const harvested = await r.json();
+    assert.ok(Array.isArray(harvested.lines));
+    assert.ok(!fs.existsSync(path.join(ROOT, 'dictionaries', 'attributes_42.json')), 'harvest не должен писать справочник');
   });
   await t('чтение, превью, замена с архивом и удаление', async () => {
     const got = await fetch(url('/api/dumps/42'), { headers: { authorization: auth } });

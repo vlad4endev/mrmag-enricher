@@ -44,7 +44,10 @@ export function applyOneFilterSpec(attr, item) {
     else if (!facet.reason) facet.reason = 'not_a_filter';
     return;
   }
-  if (item.status === 'filter') facet.enabled = true;
+  if (item.status === 'filter') {
+    facet.enabled = true;
+    if (facet.status === 'not_a_filter') delete facet.status;
+  }
   if (item.type === 'int_enum') {
     facet.kind = 'int_enum';
     facet.round = item.round || facet.round || 'ceil';

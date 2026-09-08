@@ -29,7 +29,7 @@ const TYPE_FACET_OK = {
   enum: new Set(['none', 'enum']),
   multi_enum: new Set(['none', 'enum']),
   class_scale: new Set(['none', 'enum']),
-  dimensions: new Set(['none']),
+  dimensions: new Set(['none', 'enum']),
 };
 
 function fold(s) {

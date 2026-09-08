@@ -26,6 +26,7 @@ export function v2FacetSpecKeys(dict) {
   for (const attr of dict?.attrs || []) {
     if (attr.tier === 'X') continue;
     if (isBrandAttr(attr)) continue;
+    if (attr.type === 'dimensions') continue;
     if (!attr.facet?.enabled) continue;
     keys.add(specKeyFromAttr(attr).key);
     const dest = CODE_TO_SPEC[attr.code];

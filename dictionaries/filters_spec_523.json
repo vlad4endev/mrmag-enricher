@@ -46,9 +46,8 @@
     {
       "code": "dims",
       "name": "Габариты (ШхВхГ)",
-      "status": "not_a_filter",
-      "derives": ["height", "width", "depth"],
-      "reason": "Покупатель выбирает по ширине/глубине/высоте отдельно"
+      "status": "filter",
+      "type": "enum"
     },
     {
       "code": "display",

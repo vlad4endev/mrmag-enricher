@@ -1,6 +1,6 @@
 import { loadConfig, loadDictionary, loadProducts, attrsWithCoverage, loadCategories } from './pipeline/dict.js';
 import { normalizeProduct, formatCounts } from './pipeline/normalize.js';
-import { bucketLabel, buildFilters } from './pipeline/facets.js';
+import { bucketLabel, buildFilters, facetKind } from './pipeline/facets.js';
 import { renderCard, annotationRows, MIN_ANNOTATION_ROWS, verifyDescription } from './pipeline/generate.js';
 import { compactAnnotation, compactHtml, serializeProduct, metaKeywords, buildCustomerExport, buildGoldShapeExport } from './pipeline/export.js';
 import { validateProducts, validateDescription, expectedFilters, PRODUCT_FIELDS } from './pipeline/validate.js';
@@ -1086,6 +1086,7 @@ console.log('golden tests passed');
   assert.ok(!keys.has('хладагент') && !keys.has('вес_кг'));
   const w = v2FacetSpecKeys(d467);
   assert.ok(w.has('вес_кг'), 'вес стиральной машины — фильтр (facet.enabled=true)');
+  assert.ok(![...w].some(k => /габарит/.test(k)), 'составной WxHxH — в filters_*.json списком, не в v2 product.filters');
   assert.ok(![...w].some(k => /расход_воды/.test(k)));
   assert.ok(![...w].some(k => /шум.*отжим|отжима.*дб/.test(k)));
   console.log('ok v2FacetSpecKeys vs таблица заказчика');
@@ -1197,8 +1198,8 @@ console.log('golden tests passed');
   const all = loadProducts('data_467.json').map(p => normalizeProduct(p, d467, config));
   const exported = all.filter(r => annotationRows(r, d467).length >= MIN_ANNOTATION_ROWS);
   const built = buildFilters(exported, d467, config);
-  assert.equal(expectedFilters(d467).length, 17);
-  assert.equal(expectedFilters(d523).length, 19);
+  assert.equal(expectedFilters(d467).length, 18);
+  assert.equal(expectedFilters(d523).length, 20);
   const ids = [11391, 29921, 44772, 12957, 44773, 44782, 52904, 128925, 182681, 190925];
   const recs = ids.map(id => all.find(x => x.id === id)).filter(Boolean);
   const rows = recs.map(r => serializeProduct(r, d467, built.debug));
@@ -1635,9 +1636,8 @@ console.log('golden tests passed');
   const dimsAttr = d467.byCode.get('dims');
   assert.equal(dimsAttr.type, 'dimensions');
   assert.equal(dimsAttr.unit, 'см');
-  // Фасет выключен: покупатель выбирает по ширине/глубине/высоте отдельно.
-  assert.equal(dimsAttr.facet?.enabled, false);
-  assert.ok(dimsAttr.facet?.reason || dimsAttr.name);
+  assert.equal(dimsAttr.facet?.enabled, true);
+  assert.equal(facetKind(dimsAttr), 'enum');
 
   const parsed = parseDimensions('Габариты (ШхГхВ)', '59.5×42×85 см');
   assert.ok(parsed?.dims);
@@ -1669,17 +1669,19 @@ console.log('golden tests passed');
   const built = buildFilters([r], d467, config);
   const assigned = assignFilterValues(r, d467, built.debug);
   const lab = 'Габариты (ШхГхВ)';
-  // dims не в фасетах — в filters товара ключа нет; формат значения всё равно валиден.
-  assert.ok(!(lab in assigned) || !assigned[lab]?.length);
+  const dimsFacet = built.filters.find(f => f.name === lab);
+  assert.ok(dimsFacet, 'габариты — список в filters_*.json');
+  assert.ok(Array.isArray(dimsFacet.value) && dimsFacet.value.length >= 1);
+  assert.match(dimsFacet.value[0], /^\d+(?:\.\d+)?×\d+(?:\.\d+)?×\d+(?:\.\d+)?$/);
+  assert.deepEqual(assigned[lab], [asFilter]);
   assert.ok(!JSON.stringify(assigned).includes('[object Object]'));
 
   const row = serializeProduct(r, d467, built.debug);
-  assert.ok(!(lab in (row.filters || {})));
+  assert.deepEqual(row.filters[lab], [asFilter]);
   assert.ok(!JSON.stringify(row.filters).includes('[object Object]'));
 
-  // Unit from schema: dims хранится, но не в expectedFilters пока facet.enabled=false
   const exp = expectedFilters(d467).find(f => f.name === lab);
-  assert.equal(exp, undefined);
+  assert.equal(exp?.kind, 'enum');
   const { errors } = validateProducts([row], d467, new Map([[r.id, r]]));
   assert.ok(!errors.some(e => e.kind === 'filter_unit_not_cm'), JSON.stringify(errors));
   assert.ok(!errors.some(e => e.kind === 'filter_object_stringified'));
@@ -2197,8 +2199,9 @@ console.log('golden tests passed');
   assert.equal(matchBucket(10, progFacet), '10-15');
   assert.equal(matchBucket(90, progFacet), null);
 
-  assert.equal(d467.byCode.get('dims').facet.status, 'not_a_filter');
-  assert.equal(d467.byCode.get('dims').facet.enabled, false);
+  assert.equal(d467.byCode.get('dims').facet.enabled, true);
+  assert.notEqual(d467.byCode.get('dims').facet.status, 'not_a_filter');
+  assert.equal(facetKind(d467.byCode.get('dims')), 'enum');
   assert.equal(d467.byCode.get('display').facet.enabled, true);
 
   const motor = d467.byCode.get('motor_type');

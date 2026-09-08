@@ -342,6 +342,7 @@ export function buildV2(rows, opts = {}) {
     }
     return {
       id: idOf(r),
+      name: r.name || r.title || null,
       meta_keywords: keywords(e),
       description_html: descHtml(e),
       filters,

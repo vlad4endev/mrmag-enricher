@@ -180,6 +180,20 @@ function defaultProduct() {
   };
 }
 
+/** JSON v2 — те же поля витрины плюс name из каталога. «2 файла» name не тащат. */
+function defaultProductV2() {
+  const p = defaultProduct();
+  return {
+    id: p.id,
+    name: 'Вытяжка Elikor Integra 50 нержавеющая сталь',
+    meta_keywords: p.meta_keywords,
+    description_html: p.description_html,
+    annotation_html: p.annotation_html,
+    filters: p.filters,
+    web_info: p.web_info,
+  };
+}
+
 function defaultFilters() {
   return {
     filters: [
@@ -196,12 +210,11 @@ function defaultCategories() {
 }
 
 export function defaultExportTemplates() {
-  const products = [defaultProduct()];
   const filters = defaultFilters();
   return {
-    two: { products: cloneJson(products), filters: cloneJson(filters) },
+    two: { products: [cloneJson(defaultProduct())], filters: cloneJson(filters) },
     v2: {
-      products: cloneJson(products),
+      products: [cloneJson(defaultProductV2())],
       filters: cloneJson(filters),
       categories: cloneJson(defaultCategories()),
     },

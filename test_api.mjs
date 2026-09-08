@@ -338,9 +338,10 @@ try {
     assert.deepStrictEqual(d.filters.map(f => f.name), ['Цвет', 'Объем, л']);
     assert.strictEqual(d.products.length, 2);
     assert.strictEqual(d.products[0].id, 1);
+    assert.strictEqual(d.products[0].name, 'A');
     assert.ok(d.filters.find(f => f.name === 'Цвет').value.includes(d.products[0].filters['Цвет']));
   });
-  await t('категория 523 — шесть полей, хладагент и вес не в filters', async () => {
+  await t('категория 523 — name и поля витрины, хладагент и вес не в filters', async () => {
     const src = JSON.parse(fs.readFileSync(path.join(ROOT, 'data_523.json'), 'utf8'))
       .find(p => p.id === 260);
     assert.ok(src, 'в data_523.json нет 260');
@@ -348,8 +349,9 @@ try {
     assert.strictEqual(r.status, 200);
     const d = await r.json();
     assert.deepStrictEqual(Object.keys(d.products[0]), [
-      'id', 'meta_keywords', 'description_html', 'annotation_html', 'filters', 'web_info',
+      'id', 'name', 'meta_keywords', 'description_html', 'annotation_html', 'filters', 'web_info',
     ]);
+    assert.strictEqual(d.products[0].name, src.name);
     assert.ok(!('Хладагент' in d.products[0].filters));
     assert.ok(!('Вес, кг' in d.products[0].filters));
     assert.ok(d.products[0].annotation_html);
@@ -496,6 +498,7 @@ try {
     assert.strictEqual(r.status, 200);
     const d = await r.json();
     assert.ok(d.products.length);
+    assert.strictEqual(d.products[0].name, 'Гаджет без раздела');
   });
 
   console.log('\nВалидация обогащения');

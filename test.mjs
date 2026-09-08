@@ -1865,7 +1865,7 @@ t('enum сводится к одному написанию, бренд/моде
   assert.ok(!filters.some(f => f.name === 'Модель'));
   assert.ok(!filters.some(f => f.name === 'Комплектация'));
   for (const p of products) {
-    assert.ok(!('name' in p), 'name не в выгрузке v2');
+    assert.equal(p.name, 'Товар ' + p.id);
     assert.ok(!('Бренд' in p.filters));
     assert.ok(!('Модель' in p.filters));
     assert.ok(!('Комплектация' in p.filters));
@@ -2234,6 +2234,13 @@ console.log('\nТовар без описания: поиск в сети');
     assert.strictEqual(row.id, 11391);
     assert.deepStrictEqual(row.filters, sample.filters);
     assert.ok(!('name' in row));
+  });
+  t('встроенный шаблон v2 включает name из исходника', () => {
+    const tpl = defaultExportTemplates().v2.products;
+    const row = applyExportTemplate([sample], tpl)[0];
+    assert.strictEqual(row.name, 'ATLANT');
+    assert.ok(Object.keys(row).includes('name'));
+    assert.strictEqual(row.id, 11391);
   });
   t('ключ name и {{name}} добавляют название из исходника', () => {
     const shaped = shapeProductsFile(

@@ -1106,6 +1106,7 @@ await tAsync('три файла: категории, фасеты диапазо
   assert.deepStrictEqual(JSON.parse(files[1].body).filters[0].name, 'Цвет');
   assert.ok(!('generated_at' in JSON.parse(files[1].body)));
   const row = JSON.parse(files[2].body)[0];
+  assert.strictEqual(row.name, 'Холодильник A');
   assert.ok(row.annotation_html);
   assert.ok('web_info' in row);
   assert.strictEqual(row.description_html, '<p>Холодильник A</p>');

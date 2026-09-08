@@ -1115,6 +1115,21 @@ function publicExportPayload(out) {
   return pub;
 }
 
+/** name в JSON v2: serializeProduct его не отдаёт, каталог склеивает по id. */
+function withCatalogNames(productsOut, sources) {
+  const names = new Map();
+  for (const s of sources || []) {
+    const id = s?.id ?? s?.sku;
+    if (id == null) continue;
+    const name = s.name || s.title;
+    if (name) names.set(String(id), name);
+  }
+  return (productsOut || []).map((row) => {
+    const { id, name: existing, ...rest } = row;
+    return { id, name: existing ?? names.get(String(id)) ?? null, ...rest };
+  });
+}
+
 /**
  * JSON v2 / витрина заказчика: если в пакете есть ответ модели, дамп без ИИ
  * в файл не примешиваем. Карточки дампа уже с annotation — иначе buildCustomerExport
@@ -1172,7 +1187,8 @@ async function apiExportV2(req, res) {
     if (!out.products.length) {
       return json(res, 400, { error: 'нет товаров с полными характеристиками', held: out.held });
     }
-    return json(res, 200, publicExportPayload(out));
+    const pub = publicExportPayload(out);
+    return json(res, 200, { ...pub, products: withCatalogNames(pub.products, products) });
   }
   if (expectedId) {
     return json(res, 422, {
@@ -1183,7 +1199,7 @@ async function apiExportV2(req, res) {
   }
   const out = buildV2(products, {});
   if (!out.products.length) return json(res, 400, { error: 'Нет обогащённых товаров — в v2 нечего выгружать' });
-  json(res, 200, out);
+  json(res, 200, { ...out, products: withCatalogNames(out.products, products) });
 }
 
 /**

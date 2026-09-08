@@ -1094,9 +1094,9 @@ console.log('golden tests passed');
 {
   const r = normalizeProduct(p523[260], d523, config);
   const [p] = buildV2(dictToV2Rows([r], d523), { dict: d523 }).products;
-  assert.deepEqual(Object.keys(p), ['id', 'meta_keywords', 'description_html', 'filters']);
+  assert.deepEqual(Object.keys(p), ['id', 'name', 'meta_keywords', 'description_html', 'filters']);
   assert.equal(p.id, 260);
-  assert.ok(!('name' in p), 'name не в выгрузке: сопоставление по id');
+  assert.equal(p.name, p523[260].name);
   assert.ok(!('annotation_html' in p));
   assert.ok(!('Бренд' in p.filters), 'бренд не фасет: заказчик сопоставляет по id');
   assert.equal(p.filters['Тип товара'], 'Холодильник');
@@ -1127,7 +1127,7 @@ console.log('golden tests passed');
   assert.equal(p.filters['Тип товара'], 'Стиральная машина');
   assert.equal(p.filters['Тип загрузки'], 'Фронтальная');
   assert.ok(!('Бренд' in p.filters), 'бренд не фасет: заказчик сопоставляет по id');
-  assert.ok(!('name' in p), 'name не в выгрузке v2');
+  assert.equal(p.name, p467[11391].name);
   assert.equal(p.filters['Загрузка белья, кг'], '6');
   assert.equal(p.filters['Высота, мм'], '846');
   assert.equal(typeof p.filters['Тип загрузки'], 'string');
@@ -1171,7 +1171,7 @@ console.log('golden tests passed');
     for (const g of gold) {
       const p = products.find(x => x.id === g.id);
       assert.ok(p, `нет товара ${g.id}`);
-      assert.ok(!('name' in p), 'name не в выгрузке v2');
+      assert.equal(p.name, p523[g.id].name);
       assert.ok(!('Бренд' in p.filters), 'бренд не фасет v2');
       assert.ok(p.filters['Тип товара']);
     }

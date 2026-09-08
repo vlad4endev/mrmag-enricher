@@ -2289,10 +2289,24 @@ function setTab(id){
   if(id==='dumps') loadDumps();
 }
 
-/** Эталон выгрузки заказчика — шесть полей + checkbox-фасеты. Живые данные сюда не подмешиваются. */
+/** Эталон: «2 файла» — шесть полей; JSON v2 — плюс name из каталога. */
 const EXPORT_TPL={
   product:{
     id:21670,
+    meta_keywords:'вытяжка Elikor, полновстраиваемая вытяжка, вытяжка 50 см, …',
+    description_html:'<p>Полновстраиваемая кухонная вытяжка <strong>Elikor …</strong> — …</p><p>…</p><p>…</p><ul><li>…</li><li>…</li><li>…</li></ul><p>…</p>',
+    annotation_html:'<ul><li>Тип: вытяжка</li><li>Конструкция: полновстраиваемая</li><li>Цвет: нержавеющая сталь</li><li>Ширина: 52 см</li></ul>',
+    filters:{
+      'Тип товара':['Вытяжка'],
+      'Конструкция':['Полновстраиваемая'],
+      'Ширина, см':['50-55'],
+      'Цвет':['Нержавеющая сталь'],
+    },
+    web_info:'Купила месяц назад. Достоинства: тихая, простота монтажа. …',
+  },
+  productV2:{
+    id:21670,
+    name:'Вытяжка Elikor Integra 50 нержавеющая сталь',
     meta_keywords:'вытяжка Elikor, полновстраиваемая вытяжка, вытяжка 50 см, …',
     description_html:'<p>Полновстраиваемая кухонная вытяжка <strong>Elikor …</strong> — …</p><p>…</p><p>…</p><ul><li>…</li><li>…</li><li>…</li></ul><p>…</p>',
     annotation_html:'<ul><li>Тип: вытяжка</li><li>Конструкция: полновстраиваемая</li><li>Цвет: нержавеющая сталь</li><li>Ширина: 52 см</li></ul>',
@@ -2337,10 +2351,9 @@ let exportTplFocusEl=null;
 let exportTplView=null;
 
 function exportTplDefaults(){
-  const products=[EXPORT_TPL.product];
   return {
-    two:{products,filters:EXPORT_TPL.filters},
-    v2:{products,filters:EXPORT_TPL.filters,categories:EXPORT_TPL.categories},
+    two:{products:[EXPORT_TPL.product],filters:EXPORT_TPL.filters},
+    v2:{products:[EXPORT_TPL.productV2],filters:EXPORT_TPL.filters,categories:EXPORT_TPL.categories},
   };
 }
 function exportTplPretty(o){ return JSON.stringify(o,null,2); }

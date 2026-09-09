@@ -368,10 +368,52 @@ export function needDescriptionParse(fromAnn, dict, { format, dumpDesc } = {}) {
   return Boolean(dumpDesc) || (fromAnn?.length || 0) < 3 || mappedAnn < 3;
 }
 
+/** Две колонки Bootstrap/Bitrix: col-sm-5 + col-sm-7 на карточке магазина. */
+function columnPairRe() {
+  const col = String.raw`<div[^>]*class="[^"]*\bcol(?:-(?:sm|md|lg|xl))?-\d+\b[^"]*"[^>]*>([\s\S]*?)</div>`;
+  return new RegExp(`${col}\\s*${col}`, 'gi');
+}
+
+function namedBlockRe() {
+  const name = String.raw`-name|_name|__name|-title|_title|__title|-label|_label|__label|-key|_key|__key`;
+  const value = String.raw`-value|_value|__value|-val|_val|__val|-text|_text|__text`;
+  return new RegExp(
+    String.raw`<(div|span|dt|th)[^>]*class="[^"]*(?:${name})[^"]*"[^>]*>([\s\S]*?)</\1>\s*`
+    + String.raw`<(div|span|dd|td)[^>]*class="[^"]*(?:${value})[^"]*"[^>]*>([\s\S]*?)</\3>`,
+    'gi',
+  );
+}
+
+function pairsFromColumnRows(body, add) {
+  for (const m of body.matchAll(columnPairRe())) {
+    add(stripHtml(m[1]), stripHtml(m[2]), 'div');
+  }
+}
+
+/** <li><span>Ключ</span><span>значение</span></li> без table/dl. */
+function pairsFromListItems(body, add) {
+  for (const li of body.matchAll(/<li\b[^>]*>([\s\S]*?)<\/li>/gi)) {
+    const inner = li[1];
+    if (/<a\b|<ul\b|<ol\b/i.test(inner)) continue;
+    const parts = [...inner.matchAll(/<(div|span|p|strong|b|dt|dd|em)[^>]*>([\s\S]*?)<\/\1>/gi)]
+      .map(m => stripHtml(m[2]))
+      .filter(Boolean);
+    if (parts.length === 2) add(parts[0], parts[1], 'dl');
+  }
+}
+
+function pairsFromItemprop(body, add) {
+  const re = /itemprop=["']name["'][^>]*>([\s\S]*?)<\/(?:span|div|dt|td|th)>\s*<[^>]+itemprop=["']value["']([^>]*)>([\s\S]*?)<\//gi;
+  for (const m of body.matchAll(re)) {
+    const fromAttr = String(m[2] || '').match(/content=["']([^"']*)["']/i)?.[1];
+    add(stripHtml(m[1]), stripHtml(fromAttr || m[3] || ''), 'jsonld');
+  }
+}
+
 /**
  * Таблица характеристик с произвольной HTML-страницы: JSON-LD, tr/td,
- * dt/dd, блоки name/value магазинов, затем обычный разбор текста.
- * Для товаров без своих annotation/description и для добора пустых осей.
+ * dt/dd, колонки Bootstrap, блоки name/value магазинов, затем текст.
+ * Дамп заказчика — «ключ - значение<br>»; страница из поиска — вёрстка магазина.
  */
 export function extractPairsFromPage(html, dict) {
   const raw = String(html || '');
@@ -398,14 +440,19 @@ export function extractPairsFromPage(html, dict) {
   for (const pair of body.matchAll(/<dt[^>]*>([\s\S]*?)<\/dt>\s*<dd[^>]*>([\s\S]*?)<\/dd>/gi)) {
     add(stripHtml(pair[1]), stripHtml(pair[2]), 'dl');
   }
-  const divPair = /<(div|span|dt|th)[^>]*class="[^"]*(?:-name|_name|__name)[^"]*"[^>]*>([\s\S]*?)<\/\1>\s*<(div|span|dd|td)[^>]*class="[^"]*(?:-value|_value|__value)[^"]*"[^>]*>([\s\S]*?)<\/\3>/gi;
+  const divPair = namedBlockRe();
   for (const m of body.matchAll(divPair)) {
     add(stripHtml(m[2]), stripHtml(m[4]), 'div');
   }
-  // Текст вне таблиц и dl: иначе stripHtml(table) склеивает ячейки в ложные пары.
+  pairsFromColumnRows(body, add);
+  pairsFromListItems(body, add);
+  pairsFromItemprop(body, add);
+  // Текст вне уже разобранной вёрстки: иначе колонки склеиваются в ложные пары.
   const rest = body
     .replace(/<table\b[\s\S]*?<\/table>/gi, ' ')
-    .replace(/<dl\b[\s\S]*?<\/dl>/gi, ' ');
+    .replace(/<dl\b[\s\S]*?<\/dl>/gi, ' ')
+    .replace(columnPairRe(), ' ')
+    .replace(namedBlockRe(), ' ');
   if (stripHtml(rest).length > 20) {
     for (const p of extractPairs(rest, dict)) add(p.key, p.value, p.via || 'text');
   }

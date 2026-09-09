@@ -278,6 +278,19 @@ console.log('golden tests passed');
 }
 
 {
+  const shop = `<h3>Характеристики</h3>
+    <div class="row"><div class="col-sm-5 text-muted">Тип загрузки</div><div class="col-sm-7">фронтальная</div></div>
+    <div class="row"><div class="col-sm-5">Макс. загрузка</div><div class="col-sm-7">6 кг</div></div>
+    <ul><li><span>Скорость отжима</span><span>1200 об/мин</span></li></ul>`;
+  const pairs = extractPairsFromPage(shop, d467);
+  const byKey = Object.fromEntries(pairs.map(p => [p.key, p.value]));
+  assert.equal(byKey['Тип загрузки'], 'фронтальная');
+  assert.match(String(byKey['Макс. загрузка'] || ''), /6/);
+  assert.match(String(byKey['Скорость отжима'] || ''), /1200/);
+  console.log('ok page parser: bootstrap columns + list from search result');
+}
+
+{
   const parsed = collectParseHits({
     annotation: 'Макс. загрузка - 6 кг<br>Скорость отжима - 1000 об/мин',
     description: 'Цвет - белый<br>Тип загрузки - фронтальная<br>Установка - отдельно стоящая<br>Дисплей - есть',
@@ -565,14 +578,46 @@ console.log('golden tests passed');
     ['https://shop.example/card', 'https://other.example/tovar?a=1&b=2'],
   );
   assert.deepEqual(parseYandexSearchXml('<response><error code="15">not found</error></response>'), []);
+  assert.deepEqual(parseYandexSearchXml('<response><error code="15"/></response>'), []);
   assert.throws(
     () => parseYandexSearchXml('<response><error code="32">quota</error></response>'),
     /Yandex Search API: 32/,
+  );
+  assert.throws(
+    () => parseYandexSearchXml('<yandexsearch><response><error code=\'42\'>ключ</error></response></yandexsearch>'),
+    /Yandex Search API: 42/,
   );
   const encoded = Buffer.from(xml, 'utf8').toString('base64');
   assert.deepEqual(
     parseYandexSearchResponse({ rawData: encoded }),
     ['https://shop.example/card', 'https://other.example/tovar?a=1&b=2'],
+  );
+  assert.deepEqual(
+    parseYandexSearchResponse({ response: { rawData: `  ${encoded}  ` } }),
+    ['https://shop.example/card', 'https://other.example/tovar?a=1&b=2'],
+  );
+  assert.deepEqual(
+    parseYandexSearchResponse({ rawData: xml }),
+    ['https://shop.example/card', 'https://other.example/tovar?a=1&b=2'],
+  );
+  const withCopy = `<?xml version="1.0"?><yandexsearch><response><results><grouping>
+    <group><doc>
+      <url><![CDATA[https://vendor.example/p?a=1&b=2]]></url>
+      <title>A <hlword>model</hlword></title>
+      <saved-copy-url>https://hghltd.yandex.net/yandbtm?url=https%3A%2F%2Fvendor.example%2Fp</saved-copy-url>
+    </doc></group>
+    <group><doc><url>https://vendor.example/p?a=1&amp;b=2&apos;x</url></doc></group>
+  </grouping></results></response></yandexsearch>`;
+  assert.deepEqual(parseYandexSearchXml(withCopy), ['https://vendor.example/p?a=1&b=2']);
+  const info = JSON.stringify({
+    docs: [
+      { Num: 1, DocumentTitle: 'A', FullUrl: 'https://info.example/card' },
+      { Num: 2, FullUrl: 'https://mastodon.social/@x' },
+    ],
+  });
+  assert.deepEqual(
+    parseYandexSearchResponse({ rawData: Buffer.from(info, 'utf8').toString('base64') }),
+    ['https://info.example/card'],
   );
   console.log('ok Yandex Search API XML: organic links, ads and junk skipped');
 }
@@ -637,6 +682,7 @@ console.log('golden tests passed');
     assert.equal(withYa.yandex.apiKey, 'ya-key');
     assert.equal(withYa.yandex.folderId, 'b1gfolder');
     assert.equal(withYa.yandex.searchType, 'com');
+    assert.equal(withYa.yandex.l10n, 'en');
 
     delete process.env.WEB_LOOKUP;
     const fileOff = resolveSearchSettings({ search: { enabled: false } });

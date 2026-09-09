@@ -579,11 +579,20 @@ textarea{
 .spec-title.mt{margin-top:26px}
 .parse-card{margin:0 0 22px}
 .parse-card .spec-title a{font-family:var(--mono);letter-spacing:0;text-transform:none;color:var(--ac);font-weight:600}
+.parse-origin{
+  font-family:var(--mono);font-size:12px;color:var(--t1);font-weight:600;
+  margin:0 0 10px;display:flex;align-items:baseline;justify-content:space-between;gap:10px;
+}
+.parse-origin a{color:var(--ac)}
+.parse-origin i{font-family:var(--mono);letter-spacing:0;font-weight:400;font-style:normal;color:var(--t3)}
+.parse-file{color:var(--t2)}
 .parse-src{
   font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;
   color:var(--t3);margin:4px 0 8px;
 }
 .parse-card .parse-specs{margin-bottom:14px}
+.parse-card .parse-block{margin-bottom:16px}
+.parse-card .parse-block:last-child{margin-bottom:0}
 .parse-card .parse-specs:last-child{margin-bottom:0}
 
 /* Страница товара во вкладке «Поля»: как эталон, а не простыня JSON. */
@@ -5167,6 +5176,7 @@ function parseTraces(r){
   if(p.card?.hits?.length){
     out.push({
       label:p.card.origin||(p.card.dump?'дамп':'карточка'),
+      file:p.card.file||null,
       url:null,
       hits:p.card.hits,
     });
@@ -5174,6 +5184,7 @@ function parseTraces(r){
   if(p.web?.hits?.length){
     out.push({
       label:p.web.origin||'сеть',
+      file:null,
       url:p.web.url||r.source||null,
       hits:p.web.hits,
     });
@@ -5181,28 +5192,39 @@ function parseTraces(r){
   return out;
 }
 
-/** Источник и пары на карточке товара — как спецификация, не как лог. */
+function parseOriginHtml(t){
+  const bits=[];
+  if(t.label) bits.push(esc(t.label));
+  if(t.file) bits.push(`<span class="parse-file">${esc(t.file)}</span>`);
+  if(t.url) bits.push(`<a href="${esc(t.url)}" target="_blank" rel="noopener noreferrer">${esc(hostOf(t.url))}</a>`);
+  return bits.join(' · ')||'источник';
+}
+
+/** Источник данных при парсинге — откуда сняли пары, затем сами пары. */
 function renderParseCard(r){
   const traces=parseTraces(r);
   if(!traces.length) return '';
-  return `<section class="parse-card">${traces.map((t,i)=>{
-    const groups=new Map();
-    for(const h of t.hits){
-      const g=h.where||'источник';
-      if(!groups.has(g)) groups.set(g,[]);
-      groups.get(g).push(h);
-    }
-    const link=t.url
-      ? ` · <a href="${esc(t.url)}" target="_blank" rel="noopener noreferrer">${esc(hostOf(t.url))}</a>`
-      : '';
-    return `<div class="spec-title${i?' mt':''}">Парсинг · ${esc(t.label)}${link} <i>${t.hits.length}</i></div>`
-      +[...groups.entries()].map(([g,list])=>
-        `<div class="parse-src">${esc(g)}</div>`
-        +`<div class="specs parse-specs">${list.map(h=>
-          `<div class="sp"><span class="sp-k">${esc(h.key)}</span><span class="sp-d"></span><span class="sp-v">${esc(h.value)}</span></div>`
-        ).join('')}</div>`
-      ).join('');
-  }).join('')}</section>`;
+  const n=traces.reduce((s,t)=>s+t.hits.length,0);
+  return `<section class="parse-card">`
+    +`<div class="spec-title">Источник данных при парсинге <i>${n}</i></div>`
+    +traces.map(t=>{
+      const groups=new Map();
+      for(const h of t.hits){
+        const g=h.where||'источник';
+        if(!groups.has(g)) groups.set(g,[]);
+        groups.get(g).push(h);
+      }
+      return `<div class="parse-block">`
+        +`<div class="parse-origin"><span>${parseOriginHtml(t)}</span><i>${t.hits.length}</i></div>`
+        +[...groups.entries()].map(([g,list])=>
+          `<div class="parse-src">${esc(g)}</div>`
+          +`<div class="specs parse-specs">${list.map(h=>
+            `<div class="sp"><span class="sp-k">${esc(h.key)}</span><span class="sp-d"></span><span class="sp-v">${esc(h.value)}</span></div>`
+          ).join('')}</div>`
+        ).join('')
+        +`</div>`;
+    }).join('')
+    +`</section>`;
 }
 
 // ── ДЕТАЛИ ОДНОГО ТОВАРА ─────────────────────────────────────
@@ -5754,7 +5776,7 @@ function parseHitsText(parse){
 
 function parseHitsHtml(parse){
   const text=parseHitsText(parse);
-  if(!text) return logsBlock('Парсинг — что нашли и откуда', '', 'logsParse');
+  if(!text) return logsBlock('Источник данных при парсинге', '', 'logsParse');
   const blocks=[['карточка / дамп', parse.card],['страница в сети', parse.web]]
     .filter(([,t])=>t?.hits?.length)
     .map(([,t])=>{
@@ -5769,7 +5791,7 @@ function parseHitsHtml(parse){
         +`<ul class="parse-hits">${rows}</ul>`;
     }).join('');
   return `<div class="set-card logs-block">`
-    +`<div class="logs-block-h"><b>Парсинг — что нашли и откуда</b>`
+    +`<div class="logs-block-h"><b>Источник данных при парсинге</b>`
     +`<button type="button" class="sbtn ghost" onclick="copyLogsBlock('logsParse')">Копировать</button></div>`
     +blocks
     +`<pre class="set-pre" id="logsParse" hidden>${esc(text)}</pre>`

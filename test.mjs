@@ -2026,6 +2026,25 @@ console.log('\nТовар без описания: поиск в сети');
     assert.equal(viaOf['Загрузка'], 'div');
   });
 
+  t('страница из поиска в вёрстке магазина разбирается как дамп', () => {
+    const got = parseAnyProductPage(PRODUCT);
+    const byName = Object.fromEntries(got.attributes.map(a => [a.name, a.value]));
+    assert.equal(byName['Тип загрузки'], 'фронтальная');
+    assert.equal(byName['Мax загрузка белья, (кг)'], '6');
+  });
+
+  t('список из двух колонок на странице из поиска', () => {
+    const page = `<h1>Холодильник LG GC-Q247CAMT</h1>
+      <ul>
+        <li><span>Общий объём</span><span>310 л</span></li>
+        <li><span>Цвет</span><span>белый</span></li>
+      </ul>`;
+    const got = parseAnyProductPage(page);
+    const byName = Object.fromEntries(got.attributes.map(a => [a.name, a.value]));
+    assert.equal(byName['Общий объём'], '310 л');
+    assert.equal(byName['Цвет'], 'белый');
+  });
+
   t('модель в JSON-LD принимается, соседний артикул без границы токена — нет', () => {
     const ld = `<script type="application/ld+json">{"@type":"Product","name":"LG GC-Q247CAMT","sku":"GC-Q247CAMT"}</script>`;
     assert.strictEqual(pageDescribesProduct(ld, { name: 'Холодильник LG GC-Q247CAMT' }).ok, true);
@@ -2216,6 +2235,7 @@ console.log('\nТовар без описания: поиск в сети');
     assert.match(got.product.annotation, /Цвет - белый/);
     assert.match(got.product.annotation, /Общий объём - 310 л/);
     assert.strictEqual(got.source, `http://[::1]:${port}/right`);
+    assert.ok(got.page_parse?.hits?.length, 'разбор страницы из сети виден в Парсинге');
   });
 
   await tAsync('полный дамп — карточку не скрейпим целиком, страну и дыры фильтров добираем', async () => {
@@ -2227,6 +2247,7 @@ console.log('\nТовар без описания: поиск в сети');
     assert.match(got.product.annotation, /Страна производства - Китай/);
     assert.match(got.product.description, /Двухкамерный холодильник/);
     assert.ok(got.source, 'страна или недостающий фильтр взяты со страницы модели');
+    assert.ok(got.page_parse?.hits?.length, 'добор из сети тоже в Парсинге, не только дамп');
   });
 
   await tAsync('нет об/мин в тексте — ищем по модели, артикул 5109 не считаем', async () => {

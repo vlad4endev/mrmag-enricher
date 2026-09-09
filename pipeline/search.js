@@ -44,6 +44,35 @@ const YANDEX_FAMILY = {
   moderate: 'FAMILY_MODE_MODERATE',
   strict: 'FAMILY_MODE_STRICT',
 };
+/** l10n зависит от searchType: RU → ru/uk/be/kk, TR → tr, COM → en. */
+const YANDEX_L10N_BY_TYPE = {
+  ru: ['ru', 'uk', 'be', 'kk'],
+  tr: ['tr'],
+  com: ['en'],
+  kk: ['kk', 'ru'],
+  be: ['be', 'ru'],
+  uz: ['ru', 'en'],
+};
+const YANDEX_REGION_TYPES = new Set(['ru', 'tr']);
+/** Код 15 — пустая выдача, не ошибка. Остальные — сбой запроса. */
+const YANDEX_XML_EMPTY = '15';
+const YANDEX_XML_ERROR_HINT = {
+  1: 'синтаксическая ошибка в запросе',
+  2: 'пустой запрос',
+  18: 'некорректные параметры запроса',
+  19: 'несовместимые параметры группировки',
+  20: 'неизвестная ошибка',
+  31: 'каталог не зарегистрирован в Search API',
+  32: 'превышена суточная квота',
+  33: 'IP не совпадает с зарегистрированным',
+  37: 'ошибка в параметрах запроса',
+  42: 'ключ не прошёл аутентификацию',
+  44: 'адрес API больше не поддерживается',
+  48: 'тип поиска не совпадает с зарегистрированным',
+  55: 'превышен лимит запросов в секунду',
+  100: 'запрос похож на робота',
+  10002: 'слишком много слов в запросе',
+};
 
 function num(...vals) {
   for (const v of vals) {
@@ -119,6 +148,13 @@ function yandexL10n(raw) {
   return YANDEX_L10N.has(code) ? code : 'ru';
 }
 
+function yandexL10nForType(searchType, raw) {
+  const requested = yandexL10n(raw);
+  const allowed = YANDEX_L10N_BY_TYPE[searchType];
+  if (!allowed) return requested;
+  return allowed.includes(requested) ? requested : allowed[0];
+}
+
 function yandexFamily(raw) {
   const code = shortCode(raw, 'family_mode_');
   return YANDEX_FAMILY[code] ? code : 'none';
@@ -153,6 +189,7 @@ export function resolveSearchSettings(config = {}) {
   const ddg = s.duckduckgo || {};
   const ya = s.yandex || {};
   const envOff = process.env.WEB_LOOKUP === '0';
+  const searchType = yandexSearchType(process.env.YANDEX_SEARCH_TYPE || ya.search_type || 'ru');
   return {
     enabled: !envOff && s.enabled !== false,
     tries: num(process.env.WEB_LOOKUP_TRIES, s.tries, 3),
@@ -174,8 +211,8 @@ export function resolveSearchSettings(config = {}) {
       apiKeyEnv: ya.api_key_env || 'YANDEX_SEARCH_API_KEY',
       folderId: resolveYandexFolder(ya),
       folderIdEnv: ya.folder_id_env || 'YANDEX_FOLDER_ID',
-      searchType: yandexSearchType(process.env.YANDEX_SEARCH_TYPE || ya.search_type || 'ru'),
-      l10n: yandexL10n(ya.l10n || 'ru'),
+      searchType,
+      l10n: yandexL10nForType(searchType, ya.l10n || 'ru'),
       familyMode: yandexFamily(ya.family_mode || 'none'),
       region: String(process.env.YANDEX_REGION ?? (ya.region == null ? '225' : ya.region)).trim(),
       num: num(ya.num, 10),
@@ -317,6 +354,9 @@ function jsonApiError(data, status) {
   if (typeof err === 'string' && err.trim()) return err;
   if (err && typeof err === 'object' && err.message) return String(err.message);
   if (typeof data?.message === 'string' && data.message.trim()) return data.message;
+  if (data?.code != null && data.code !== 0 && data.rawData == null) {
+    return `код ${data.code}`;
+  }
   return `HTTP ${status}`;
 }
 
@@ -351,7 +391,7 @@ async function fetchJson(url, { timeoutMs = 20_000, cacheKey, gapMs, method = 'G
       forget(file);
       throw new Error(`ответ не JSON (HTTP ${res.status})`);
     }
-    if (!res.ok || data.error) {
+    if (!res.ok || data.error || (data?.code != null && data.code !== 0 && data.rawData == null && !data.response)) {
       forget(file);
       throw new Error(jsonApiError(data, res.status));
     }
@@ -470,45 +510,153 @@ function yandexSiteFilter(settings) {
 function decodeXmlText(s) {
   return String(s || '')
     .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&apos;/g, "'")
+    .replace(/&#39;/g, "'")
     .replace(/&amp;/g, '&')
     .replace(/&lt;/g, '<')
     .replace(/&gt;/g, '>')
     .replace(/&quot;/g, '"')
-    .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)))
-    .replace(/&#x([0-9a-f]+);/gi, (_, h) => String.fromCharCode(parseInt(h, 16)))
+    .replace(/&#(\d+);/g, (_, n) => {
+      const code = Number(n);
+      return Number.isFinite(code) && code >= 0 && code <= 0x10ffff
+        ? String.fromCodePoint(code)
+        : '';
+    })
+    .replace(/&#x([0-9a-f]+);/gi, (_, h) => {
+      const code = parseInt(h, 16);
+      return Number.isFinite(code) && code >= 0 && code <= 0x10ffff
+        ? String.fromCodePoint(code)
+        : '';
+    })
+    .replace(/\s+/g, ' ')
     .trim();
 }
 
-/**
- * Organic-ссылки из XML Yandex Search API v2.
- * Код 15 — пустая выдача, не ошибка.
- */
-export function parseYandexSearchXml(xml, settings = resolveSearchSettings()) {
+function xmlAttr(attrs, name) {
+  const m = String(attrs || '').match(new RegExp(`\\b${name}\\s*=\\s*["']([^"']*)["']`, 'i'));
+  return m ? decodeXmlText(m[1]) : '';
+}
+
+function xmlSections(xml, tag) {
+  const out = [];
+  const re = new RegExp(`<${tag}\\b([^>]*)(?:/>|>([\\s\\S]*?)</${tag}>)`, 'gi');
+  let m;
+  while ((m = re.exec(String(xml || '')))) {
+    out.push({ attrs: m[1] || '', inner: m[2] || '' });
+  }
+  return out;
+}
+
+function yandexResponseXml(xml) {
+  const responses = xmlSections(xml, 'response');
+  return responses.length ? responses[responses.length - 1].inner : String(xml || '');
+}
+
+function yandexXmlError(xml) {
+  const errors = xmlSections(xml, 'error');
+  if (!errors.length) return null;
+  const err = errors[0];
+  const code = xmlAttr(err.attrs, 'code') || '';
+  const text = decodeXmlText(err.inner);
+  return { code, text };
+}
+
+function yandexDocUrl(docXml) {
+  const urls = xmlSections(docXml, 'url');
+  for (const node of urls) {
+    const href = decodeXmlText(node.inner);
+    if (href) return href;
+  }
+  return '';
+}
+
+function yandexOrganicDocs(xml) {
+  const groups = xmlSections(xml, 'group');
+  if (groups.length) {
+    const docs = [];
+    for (const group of groups) docs.push(...xmlSections(group.inner, 'doc'));
+    return docs;
+  }
+  return xmlSections(xml, 'doc');
+}
+
+function looksLikeHtmlSearch(s) {
+  return /<html[\s>]|<ol\b[^>]*class="[^"]*serp|class="[^"]*serp-item|class="[^"]*OrganicTitle/i.test(s);
+}
+
+function decodeYandexRawData(raw) {
+  if (typeof raw !== 'string') return '';
+  const trimmed = raw.trim().replace(/^\uFEFF/, '');
+  if (!trimmed) return '';
+  if (trimmed.startsWith('<') || trimmed.startsWith('{') || trimmed.startsWith('[')) return trimmed;
+  const compact = trimmed.replace(/\s+/g, '');
+  try {
+    return Buffer.from(compact, 'base64').toString('utf8').replace(/^\uFEFF/, '').trim();
+  } catch {
+    return '';
+  }
+}
+
+function unwrapYandexRawData(data) {
+  if (data == null) return '';
+  if (typeof data === 'string') return data;
+  return data.rawData
+    ?? data.raw_data
+    ?? data.response?.rawData
+    ?? data.response?.raw_data
+    ?? '';
+}
+
+function parseYandexInfoContext(data, settings) {
+  const docs = Array.isArray(data?.docs) ? data.docs : [];
   const urls = [];
   const hosts = new Set();
-  const body = String(xml || '');
-  const err = body.match(/<error\b([^>]*)>([\s\S]*?)<\/error>/i);
-  if (err) {
-    const code = (err[1].match(/\bcode="(\d+)"/) || [])[1];
-    if (code && code !== '15') {
-      const text = decodeXmlText(err[2].replace(/<[^>]+>/g, ' '));
-      throw new Error(`Yandex Search API: ${code}${text ? ` ${text}` : ''}`);
-    }
-  }
-  for (const block of body.matchAll(/<doc\b[\s\S]*?<\/doc>/gi)) {
-    const urlMatch = block[0].match(/<url\b[^>]*>([\s\S]*?)<\/url>/i);
-    if (!urlMatch) continue;
-    const href = decodeXmlText(urlMatch[1]);
+  for (const doc of docs) {
+    const href = String(doc?.FullUrl || doc?.fullUrl || doc?.url || '').trim();
     if (href) pushUrl(urls, hosts, href, settings, '');
   }
   return urls;
 }
 
-/** JSON-конверт `/v2/web/search`: `{ rawData: "<base64 XML>" }`. */
+/**
+ * Organic-ссылки из XML Yandex Search API v2.
+ * Код 15 — пустая выдача, не ошибка. URL только из <doc><url>, не из saved-copy-url.
+ */
+export function parseYandexSearchXml(xml, settings = resolveSearchSettings()) {
+  const body = String(xml || '');
+  const payload = yandexResponseXml(body);
+  const err = yandexXmlError(payload) || yandexXmlError(body);
+  if (err && err.code && err.code !== YANDEX_XML_EMPTY) {
+    const hint = YANDEX_XML_ERROR_HINT[err.code];
+    const text = err.text || hint || '';
+    throw new Error(`Yandex Search API: ${err.code}${text ? ` ${text}` : ''}`);
+  }
+  if (err?.code === YANDEX_XML_EMPTY) return [];
+
+  const urls = [];
+  const hosts = new Set();
+  for (const doc of yandexOrganicDocs(payload)) {
+    const href = yandexDocUrl(doc.inner);
+    if (href) pushUrl(urls, hosts, href, settings, '');
+  }
+  return urls;
+}
+
+/** JSON-конверт `/v2/web/search`: `{ rawData: "<base64 XML>" }` или async `{ response.rawData }`. */
 export function parseYandexSearchResponse(data, settings = resolveSearchSettings()) {
-  const raw = data?.rawData ?? data?.raw_data;
-  if (typeof raw !== 'string' || !raw) return [];
-  return parseYandexSearchXml(Buffer.from(raw, 'base64').toString('utf8'), settings);
+  const decoded = decodeYandexRawData(unwrapYandexRawData(data));
+  if (!decoded) return [];
+  if (decoded.startsWith('{') || decoded.startsWith('[')) {
+    try {
+      return parseYandexInfoContext(JSON.parse(decoded), settings);
+    } catch {
+      return [];
+    }
+  }
+  if (looksLikeHtmlSearch(decoded)) return parseSearchResults(decoded, '', settings);
+  return parseYandexSearchXml(decoded, settings);
 }
 
 /** Поиск через Yandex Cloud Search API v2. Ключ + folder id. */
@@ -542,25 +690,33 @@ export async function searchYandex(query, config = {}) {
       docsInGroup: '1',
     },
     l10n,
-    folderId: ya.folderId,
+    folderId: String(ya.folderId).slice(0, 50),
     responseFormat: 'FORMAT_XML',
   };
-  if (ya.region && searchType === 'SEARCH_TYPE_RU') body.region = ya.region;
+  if (ya.region && YANDEX_REGION_TYPES.has(ya.searchType)) {
+    body.region = String(ya.region).slice(0, 100);
+  }
 
-  const data = await fetchJson(endpoint.toString(), {
-    timeoutMs: settings.timeoutMs,
-    gapMs: settings.gapMs,
-    cacheKey: `yandex:${searchType}:${ya.region}:${queryText}`,
-    method: 'POST',
-    headers: {
-      Authorization: `Api-Key ${ya.apiKey}`,
-      'Content-Type': 'application/json',
-    },
-    body,
-  });
-  const urls = parseYandexSearchResponse(data, settings);
-  if (!urls.length) throw new Error('Yandex Search API: выдача без ссылок');
-  return urls;
+  const cacheKey = `yandex:${searchType}:${ya.region}:${queryText}`;
+  try {
+    const data = await fetchJson(endpoint.toString(), {
+      timeoutMs: settings.timeoutMs,
+      gapMs: settings.gapMs,
+      cacheKey,
+      method: 'POST',
+      headers: {
+        Authorization: `Api-Key ${ya.apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body,
+    });
+    const urls = parseYandexSearchResponse(data, settings);
+    if (!urls.length) throw new Error('Yandex Search API: выдача без ссылок');
+    return urls;
+  } catch (e) {
+    if (!/выдача без ссылок/.test(e.message)) forget(cachePath(cacheKey));
+    throw e instanceof Error ? e : new Error(String(e));
+  }
 }
 
 /** Поиск в DuckDuckGo HTML/lite. Без ключа API. */

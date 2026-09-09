@@ -889,6 +889,7 @@ t('готовая карточка показывает разобранные �
     parse: {
       card: {
         origin: 'дамп',
+        file: 'data_467.json',
         hits: [
           { key: 'Макс. загрузка', value: '6 кг', where: 'аннотация' },
           { key: 'Цвет', value: 'белый', where: 'описание' },
@@ -904,7 +905,9 @@ t('готовая карточка показывает разобранные �
   api.renderDetail();
   const h = G('detail').innerHTML;
   assert.match(h, /parse-card/);
-  assert.match(h, /Парсинг · дамп/);
+  assert.match(h, /Источник данных при парсинге/);
+  assert.match(h, /дамп/);
+  assert.match(h, /data_467\.json/);
   assert.match(h, /Макс\. загрузка/);
   assert.match(h, /6 кг/);
   assert.match(h, /аннотация/);
@@ -922,6 +925,8 @@ t('пропуск всё равно показывает, что нашёл па
   api.renderDetail();
   const h = G('detail').innerHTML;
   assert.match(h, /Пропущен без обращения/);
+  assert.match(h, /Источник данных при парсинге/);
+  assert.match(h, /карточка/);
   assert.match(h, /Цвет/);
   assert.match(h, /белый/);
 });
@@ -946,7 +951,8 @@ t('пока модель думает, на карточке уже видны �
   api.renderDetail();
   const h = G('detail').innerHTML;
   assert.match(h, /parse-card/);
-  assert.match(h, /Парсинг · дамп/);
+  assert.match(h, /Источник данных при парсинге/);
+  assert.match(h, /дамп/);
   assert.match(h, /Макс\. загрузка/);
   assert.match(h, /6 кг/);
   st.running = false;

@@ -374,24 +374,65 @@ export function pageDescribesProduct(html, product, dict) {
 /** Реклама чужого магазина: в описание нашей карточки такие фразы не идут. */
 const SALES_RE = /куп(и|ить|лю)|цена|руб|₽|достав|магазин|заказ|скидк|акци|кредит|рассрочк|отзыв|корзин|самовывоз/i;
 
+function pageHitsFromPairs(pairs) {
+  return collectPageHits((pairs || []).map(p => ({
+    name: p.key || p.name,
+    value: p.value,
+    via: p.via || 'text',
+  })));
+}
+
+function mergePageParse(prev, next) {
+  if (!next?.hits?.length) return prev;
+  if (!prev?.hits?.length) return next;
+  const seen = new Set(prev.hits.map(h => String(h.key || '').toLowerCase()));
+  const extra = next.hits.filter(h => !seen.has(String(h.key || '').toLowerCase()));
+  if (!extra.length) return prev;
+  const hits = prev.hits.concat(extra);
+  const counts = {};
+  for (const h of hits) counts[h.via] = (counts[h.via] || 0) + 1;
+  return { hits, counts };
+}
+
+function hostOfUrl(url) {
+  try { return new URL(url).hostname.replace(/^www\./, ''); }
+  catch { return 'сеть'; }
+}
+
+function rememberPageParse(pageParse, next, origin, onNote) {
+  const merged = mergePageParse(pageParse, next);
+  if (next?.hits?.length && !pageParse?.hits?.length) {
+    for (const msg of formatParseNotes(next, { origin })) {
+      onNote(msg, { step: 'parse' });
+    }
+  }
+  return merged;
+}
+
 /**
  * Характеристики и проза с произвольной страницы товара.
  * Таблица «подпись / значение» есть почти у всех — она же самая ценная часть,
  * потому что из неё extractFacts достаёт факты так же, как из annotation.
+ * Дамп и страница из Yandex Search API идут через один разбор.
  */
 export function parseAnyProductPage(html, dict) {
+  // Своя карточка магазина (col-sm-5/7) и чужая страница из Yandex —
+  // один разбор: иначе «Парсинг» видит только дамп.
+  const shop = parseProductPage(html);
   const pairs = extractPairsFromPage(html, dict);
   const attributes = [];
   const seen = new Set();
-  for (const p of pairs) {
-    const name = String(p.key || '').replace(/\s+/g, ' ').trim();
-    const value = String(p.value || '').replace(/\s+/g, ' ').trim();
-    if (!name || !value) continue;
-    const key = name.toLowerCase();
-    if (seen.has(key)) continue;
+  const push = (name, value, via) => {
+    const n = String(name || '').replace(/\s+/g, ' ').trim();
+    const v = String(value || '').replace(/\s+/g, ' ').trim();
+    if (!n || !v) return;
+    const key = n.toLowerCase();
+    if (seen.has(key)) return;
     seen.add(key);
-    attributes.push({ name, value, via: p.via || 'text' });
-  }
+    attributes.push({ name: n, value: v, via: via || 'text' });
+  };
+  for (const a of shop.attributes || []) push(a.name, a.value, 'div');
+  for (const p of pairs) push(p.key, p.value, p.via);
 
   const body = String(html || '').replace(/<(script|style|noscript|svg|template)[\s\S]*?<\/\1>/gi, ' ');
   const meta = body.match(/<meta[^>]+(?:name|property)="(?:og:)?description"[^>]*content="([^"]*)"/i)?.[1] ?? '';
@@ -623,7 +664,13 @@ async function fillCountryFromWeb(product, schema, { onNote = () => {} } = {}) {
       continue;
     }
     onNote(`страна из сети: ${country} (${host})`);
-    return { ok: true, product: withCountryLine(product, country, url), source: url, parser: true };
+    return {
+      ok: true,
+      product: withCountryLine(product, country, url),
+      source: url,
+      parser: true,
+      pairs: [{ key: 'Страна производства', value: country, via: 'table' }],
+    };
   }
   if (tried.length) onNote(`страну в сети не нашли: ${tried.join('; ')}`);
   return { ok: false, product, parser: true };
@@ -656,6 +703,7 @@ async function fillMissingFiltersFromWeb(product, schema, { onNote = () => {} } 
     product: withSpecLines(product, got.pairs, got.url),
     source: got.url,
     parser: true,
+    pairs: got.pairs,
   };
 }
 
@@ -758,10 +806,7 @@ export async function ensureSource(product, schema, { onNote = () => {}, root = 
         };
         const after = isEnrichable(merged, schema);
         if (!after.ok && !gate.ok) { tried.push(`${host}: ${after.reason}`); continue; }
-        pageParse = collectPageHits(found.attributes);
-        for (const msg of formatParseNotes(pageParse, { origin: host })) {
-          onNote(msg, { step: 'parse' });
-        }
+        pageParse = rememberPageParse(pageParse, collectPageHits(found.attributes), host, onNote);
         onNote(`описание из сети: ${host}`);
         current = merged;
         source = url;
@@ -785,6 +830,7 @@ export async function ensureSource(product, schema, { onNote = () => {}, root = 
     current = missing.product;
     source = source || missing.source;
     currentGate = isEnrichable(current, schema);
+    pageParse = rememberPageParse(pageParse, pageHitsFromPairs(missing.pairs), hostOfUrl(missing.source), onNote);
   }
 
   const country = await fillCountryFromWeb(current, schema, { onNote });
@@ -793,6 +839,7 @@ export async function ensureSource(product, schema, { onNote = () => {}, root = 
     current = country.product;
     source = source || country.source;
     currentGate = isEnrichable(current, schema);
+    pageParse = rememberPageParse(pageParse, pageHitsFromPairs(country.pairs), hostOfUrl(country.source), onNote);
   }
   if (source) parser = true;
 

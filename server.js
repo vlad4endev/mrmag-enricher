@@ -1340,13 +1340,19 @@ async function enrichOne(product, { model, category, provider, onNote = () => {}
     category: product?.category || category || null,
   };
 
-  const parseTrace = { card: null, web: null, cardOrigin: null, webOrigin: null, webUrl: null };
+  const parseTrace = { card: null, web: null, cardOrigin: null, webOrigin: null, webUrl: null, cardFile: null };
   const parseBundle = () => {
     const card = slimParseTrace(parseTrace.card);
     const web = slimParseTrace(parseTrace.web);
     if (!card && !web) return null;
     return {
-      ...(card ? { card: { ...card, origin: parseTrace.cardOrigin || 'карточка' } } : {}),
+      ...(card ? {
+        card: {
+          ...card,
+          origin: parseTrace.cardOrigin || 'карточка',
+          ...(parseTrace.cardFile ? { file: parseTrace.cardFile } : {}),
+        },
+      } : {}),
       ...(web ? {
         web: {
           ...web,
@@ -1454,6 +1460,7 @@ async function enrichOne(product, { model, category, provider, onNote = () => {}
 
   parseTrace.card = collectParseHits(prepared, schema.dict);
   parseTrace.cardOrigin = fromDump.dump ? 'дамп' : 'карточка';
+  parseTrace.cardFile = fromDump.dump && schema.id != null ? `data_${schema.id}.json` : null;
   publishParse(formatParseNotes(parseTrace.card, { origin: parseTrace.cardOrigin }));
 
   // Дешёвый вердикт без сети: своего текста нет и в названии не за что

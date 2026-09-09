@@ -12,6 +12,10 @@
  */
 
 import net from 'net';
+import http from 'node:http';
+import https from 'node:https';
+import zlib from 'node:zlib';
+import { promisify } from 'node:util';
 
 /**
  * Разбирает адрес прокси. Понимает socks5://user:pass@host:port и ссылку
@@ -168,7 +172,9 @@ export function startBridge(cfg, port = 0, host = '127.0.0.1') {
  * Хосты, которые не гоняем через прокси OpenRouter. Каталог — российский,
  * DeepSeek и Yandex Cloud Search API — отдельные API: телеграм-SOCKS часто
  * рвёт CONNECT до чужих хостов (таймаут / «Request was cancelled»), а с
- * этого IP они доступны. Search API ещё и сверяет IP с кабинетом (код 33) —
+ * этого IP они доступны. Карточки dns-shop / atlant-online из выдачи Yandex
+ * fetch'ем через SOCKS не качаем: для них fetchDirect (свой Agent, без прокси).
+ * Search API ещё и сверяет IP с кабинетом (код 33) —
  * через заграничный SOCKS ключ не примется. Дописываем даже если NO_PROXY
  * уже стоит в .env.
  */
@@ -177,6 +183,99 @@ export const DIRECT_HOSTS = [
   'api.deepseek.com', '.deepseek.com',
   'searchapi.api.cloud.yandex.net', '.api.cloud.yandex.net',
 ];
+
+const gunzip = promisify(zlib.gunzip);
+const inflate = promisify(zlib.inflate);
+const brotli = promisify(zlib.brotliDecompress);
+
+const directAgents = {
+  'http:': new http.Agent({ keepAlive: true, maxSockets: 8 }),
+  'https:': new https.Agent({ keepAlive: true, maxSockets: 8 }),
+};
+
+const MAX_DIRECT_BODY = 8 * 1024 * 1024;
+
+async function decodeHttpBody(buf, encoding) {
+  const enc = String(encoding || '').toLowerCase();
+  try {
+    if (enc.includes('br')) return (await brotli(buf)).toString('utf8');
+    if (enc.includes('gzip')) return (await gunzip(buf)).toString('utf8');
+    if (enc.includes('deflate')) return (await inflate(buf)).toString('utf8');
+  } catch {
+    return buf.toString('utf8');
+  }
+  return buf.toString('utf8');
+}
+
+/**
+ * GET HTML мимо HTTPS_PROXY / SOCKS OpenRouter.
+ *
+ * global fetch при NODE_USE_ENV_PROXY=1 гоняет dns-shop и atlant-online
+ * в тот же заграничный SOCKS, что и Cloudflare: CONNECT висит, в логе
+ * «не открылась». https.request со своим Agent идёт с этого IP.
+ */
+export function fetchDirect(url, {
+  headers = {},
+  timeoutMs = 20_000,
+  method = 'GET',
+  maxRedirects = 5,
+} = {}, hops = 0) {
+  return new Promise((resolve, reject) => {
+    let u;
+    try { u = new URL(url); }
+    catch { return reject(new Error(`не URL: ${url}`)); }
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') {
+      return reject(new Error(`схема ${u.protocol} не поддерживается`));
+    }
+    const lib = u.protocol === 'https:' ? https : http;
+    const req = lib.request(u, {
+      method,
+      headers,
+      agent: directAgents[u.protocol],
+      timeout: timeoutMs,
+    }, res => {
+      const loc = res.headers.location;
+      if (loc && [301, 302, 303, 307, 308].includes(res.statusCode) && hops < maxRedirects) {
+        res.resume();
+        const next = new URL(loc, u).href;
+        const hopMethod = [307, 308].includes(res.statusCode) ? method : 'GET';
+        return resolve(fetchDirect(next, { headers, timeoutMs, method: hopMethod, maxRedirects }, hops + 1));
+      }
+      const chunks = [];
+      let size = 0;
+      res.on('data', c => {
+        size += c.length;
+        if (size > MAX_DIRECT_BODY) {
+          req.destroy();
+          reject(new Error(`ответ больше ${MAX_DIRECT_BODY} байт`));
+          return;
+        }
+        chunks.push(c);
+      });
+      res.on('end', () => {
+        const buf = Buffer.concat(chunks);
+        resolve({
+          ok: res.statusCode >= 200 && res.statusCode < 300,
+          status: res.statusCode,
+          url: u.href,
+          headers: res.headers,
+          async text() {
+            return decodeHttpBody(buf, res.headers['content-encoding']);
+          },
+        });
+      });
+      res.on('error', reject);
+    });
+    req.on('timeout', () => {
+      req.destroy();
+      const e = new Error(`таймаут ${timeoutMs}ms (${u.hostname})`);
+      e.name = 'TimeoutError';
+      reject(e);
+    });
+    req.on('error', reject);
+    req.end();
+  });
+}
 
 export function mergeNoProxy(...hosts) {
   const hasUpper = process.env.NO_PROXY != null;

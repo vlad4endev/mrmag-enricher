@@ -416,9 +416,19 @@ console.log('golden tests passed');
   assert.equal(found.url, 'https://b.test/fast-right');
   assert.ok(order.includes('fast'));
   assert.ok(order.includes('slow'), 'первая ссылка должна дочитаться, иначе порядок выдачи сломается');
-  const empty = await firstMatchingPage([], { fetchHtml: async () => '', match: () => ({ ok: true }) });
-  assert.equal(empty.ok, false);
-  console.log('ok firstMatchingPage keeps SERP order and fetches in parallel');
+    const empty = await firstMatchingPage([], { fetchHtml: async () => '', match: () => ({ ok: true }) });
+    assert.equal(empty.ok, false);
+    const failed = await firstMatchingPage(['https://a.test/down', 'https://b.test/ok'], {
+      fetchHtml: async url => {
+        if (url.includes('down')) throw new Error('HTTP 403 на https://a.test/down');
+        return '<p>ok</p>';
+      },
+      match: html => ({ ok: /ok/.test(html) }),
+    });
+    assert.equal(failed.ok, true);
+    assert.equal(failed.url, 'https://b.test/ok');
+    assert.match(failed.tried.join(' '), /не открылась \(HTTP 403/);
+    console.log('ok firstMatchingPage keeps SERP order and fetches in parallel');
 }
 
 {

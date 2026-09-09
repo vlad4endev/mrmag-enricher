@@ -23,6 +23,7 @@ import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 import { fileURLToPath } from 'url';
+import { fetchDirect } from './socks.js';
 import { netError, isEnrichable, modelToken, MIN_SOURCE_CHARS, extractFacts, hasCountryFact, canSearchWeb, schemaFor, hydrateFromDump, isSourceThin } from './lib.js';
 import { specFacets, enrichedRows } from './export_v2.js';
 import { loadConfig, loadCategories, hasDictionary } from './pipeline/dict.js';
@@ -104,12 +105,15 @@ export async function fetchPage(url, { noCache = false, ua = UA, timeoutMs = 45_
 
   let res, html;
   try {
-    res = await fetch(url, {
-      headers: { 'User-Agent': ua, 'Accept-Language': 'ru,en;q=0.8' },
-      signal: AbortSignal.timeout(timeoutMs),
+    res = await fetchDirect(url, {
+      headers: {
+        'User-Agent': ua,
+        'Accept-Language': 'ru,en;q=0.8',
+        Accept: 'text/html,application/xhtml+xml;q=0.9,*/*;q=0.8',
+      },
+      timeoutMs,
     });
     if (!res.ok) throw new Error(`HTTP ${res.status} на ${url}`);
-    // Тело читаем внутри try: таймаут прерывает и его.
     html = await res.text();
   } catch (e) {
     throw new Error(/^HTTP /.test(e.message) ? e.message : `${url} — ${netError(e)}`);
@@ -333,7 +337,7 @@ export async function crawlCategory(url, { limit = Infinity, offset = 0, feed = 
 const WEB_UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 '
              + '(KHTML, like Gecko) Chrome/126.0 Safari/537.36';
 const WEB_TRIES = Number(process.env.WEB_LOOKUP_TRIES || 3);   // страниц на товар
-const WEB_PAGE_TIMEOUT = Number(process.env.WEB_PAGE_TIMEOUT_MS || 10_000);
+const WEB_PAGE_TIMEOUT = Number(process.env.WEB_PAGE_TIMEOUT_MS || 20_000);
 export const WEB_LOOKUP = process.env.WEB_LOOKUP !== '0';
 
 const htmlText = h => decode(String(h || '')

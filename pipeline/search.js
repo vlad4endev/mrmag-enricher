@@ -327,6 +327,11 @@ function hostLabel(url) {
   catch { return String(url || ''); }
 }
 
+function fetchFailReason(err) {
+  const raw = String(err?.message || err || 'нет ответа').replace(/\s+/g, ' ').trim();
+  return raw.replace(/^https?:\/\/\S+\s+—\s+/, '').slice(0, 160) || 'нет ответа';
+}
+
 /**
  * Читает до maxPages адресов сразу, принимает первую подходящую в порядке
  * выдачи. Качество то же, что у последовательного обхода: чужая страница
@@ -363,13 +368,13 @@ export async function firstMatchingPage(urls, {
         const host = hostLabel(cur.url);
         next += 1;
         if (!cur.html) {
-          tried.push(`${host}: не открылась`);
+          tried.push(`${host}: не открылась (${fetchFailReason(cur.error)})`);
           continue;
         }
         let got;
         try { got = match(cur.html, cur.url); }
         catch {
-          tried.push(`${host}: не открылась`);
+          tried.push(`${host}: разбор не удался`);
           continue;
         }
         if (got && got.ok) {
@@ -386,8 +391,8 @@ export async function firstMatchingPage(urls, {
         .then(html => {
           results[i] = { url, html: html == null ? null : html };
         })
-        .catch(() => {
-          results[i] = { url, html: null };
+        .catch(error => {
+          results[i] = { url, html: null, error };
         })
         .finally(() => {
           inflight -= 1;

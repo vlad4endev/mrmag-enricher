@@ -27,13 +27,14 @@ import { netError, isEnrichable, modelToken, MIN_SOURCE_CHARS, extractFacts, has
 import { specFacets, enrichedRows } from './export_v2.js';
 import { loadConfig, loadCategories, hasDictionary } from './pipeline/dict.js';
 import { normalizeProduct } from './pipeline/normalize.js';
-import { lookupMissing, needsMissingLookup, parseMissingFromPage } from './pipeline/external.js';
+import { lookupMissing, needsMissingLookup, parseMissingFromPage, missingRequiredCodes } from './pipeline/external.js';
 import { CRAWL_SLUGS } from './pipeline/schema.js';
 import { containsTokenSequence, identityMatches, nameKeyTokens, parseIdentity } from './pipeline/identity.js';
 import { extractPairsFromPage, visibleText, collectPageHits, formatParseNotes } from './pipeline/parse.js';
 import {
   isDuckDuckGoBlocked, isJunkHost, parseDuckDuckGoResults,
-  searchWeb as pipelineSearchWeb, countryQuery, searchQuery, firstMatchingPage,
+  searchWeb as pipelineSearchWeb, countryQuery, missingQuery, searchQuery,
+  firstMatchingPage, publicParserStatus,
 } from './pipeline/search.js';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
@@ -383,16 +384,33 @@ function pageHitsFromPairs(pairs) {
   })));
 }
 
+function joinParseMeta(a, b) {
+  return [...new Set([a, b].map(s => String(s || '').trim()).filter(Boolean))].join(' · ') || null;
+}
+
 function mergePageParse(prev, next) {
-  if (!next?.hits?.length) return prev;
-  if (!prev?.hits?.length) return next;
-  const seen = new Set(prev.hits.map(h => String(h.key || '').toLowerCase()));
-  const extra = next.hits.filter(h => !seen.has(String(h.key || '').toLowerCase()));
-  if (!extra.length) return prev;
-  const hits = prev.hits.concat(extra);
+  if (!next) return prev;
+  const hitsPrev = prev?.hits || [];
+  const hitsNext = next.hits || [];
+  let hits = hitsPrev;
+  if (hitsNext.length) {
+    if (!hitsPrev.length) hits = hitsNext;
+    else {
+      const seen = new Set(hitsPrev.map(h => String(h.key || '').toLowerCase()));
+      const extra = hitsNext.filter(h => !seen.has(String(h.key || '').toLowerCase()));
+      hits = extra.length ? hitsPrev.concat(extra) : hitsPrev;
+    }
+  }
   const counts = {};
   for (const h of hits) counts[h.via] = (counts[h.via] || 0) + 1;
-  return { hits, counts };
+  return {
+    hits,
+    counts,
+    query: joinParseMeta(prev?.query, next.query),
+    error: hits.length ? null : joinParseMeta(prev?.error, next.error),
+    origin: next.origin || prev?.origin || null,
+    engine: next.engine || prev?.engine || null,
+  };
 }
 
 function hostOfUrl(url) {
@@ -402,12 +420,31 @@ function hostOfUrl(url) {
 
 function rememberPageParse(pageParse, next, origin, onNote) {
   const merged = mergePageParse(pageParse, next);
+  const label = next?.origin || origin || 'сеть';
   if (next?.hits?.length && !pageParse?.hits?.length) {
-    for (const msg of formatParseNotes(next, { origin })) {
+    for (const msg of formatParseNotes(next, { origin: label })) {
       onNote(msg, { step: 'parse' });
     }
+  } else if (next && !next.hits?.length && (next.query || next.error)) {
+    const q = next.query ? ` · ${next.query}` : '';
+    onNote(`Поиск (${label}): ${next.error || 'без характеристик'}${q}`, { step: 'parse' });
   }
   return merged;
+}
+
+function searchEngineLabel() {
+  try { return publicParserStatus(loadConfig(ROOT)).label || 'поиск в сети'; }
+  catch { return 'поиск в сети'; }
+}
+
+function emptyWebParse({ query, error, origin } = {}) {
+  return {
+    hits: [],
+    counts: {},
+    query: query || null,
+    error: error || null,
+    origin: origin || searchEngineLabel(),
+  };
 }
 
 /**
@@ -518,6 +555,11 @@ export function parseSearchResults(html, engineHost = '') {
 // поисковиков — это десятки минут ожидания ни за чем.
 const SEARCH_GIVE_UP = Number(process.env.SEARCH_GIVE_UP || 3);
 let searchFails = 0;
+
+/** Новый прогон — снова пробуем сеть. Счётчик жил в процессе и глушил Yandex. */
+export function resetWebSearch() {
+  searchFails = 0;
+}
 
 /** После SEARCH_GIVE_UP таймаутов подряд сеть не дергаем до перезапуска прогона. */
 export function isWebSearchDisabled() {
@@ -658,25 +700,28 @@ async function fillCountryFromWeb(product, schema, { onNote = () => {} } = {}) {
   if (hasCountryFact(product, schema) || !canSearchWeb(product)) {
     return { ok: false, product };
   }
-  // Не логируем «ищем страну», если контур уже закрыт — иначе в логе сотни
-  // ложных стартов поиска после трёх таймаутов.
-  if (isWebSearchDisabled()) {
-    onNote(`страну в сети не нашли: ${webSearchSkippedReason()}`);
-    return { ok: false, product };
-  }
+  const origin = searchEngineLabel();
   const dict = dictOf(schema);
   const query = countryQuery({
     name: product.name,
     brand: product.brand,
     identity: countrySearchIdentity(product, schema),
   });
+  // Не логируем «ищем страну», если контур уже закрыт — иначе в логе сотни
+  // ложных стартов поиска после трёх таймаутов. Саму попытку в Парсинге оставляем:
+  // иначе кажется, что искали только дамп.
+  if (isWebSearchDisabled()) {
+    const why = webSearchSkippedReason();
+    onNote(`страну в сети не нашли: ${why}`);
+    return { ok: false, product, parser: true, pageParse: emptyWebParse({ query, error: why, origin }) };
+  }
   let urls = [];
   try {
     onNote(`ищем страну: ${query}`);
     urls = await searchWeb(query);
   } catch (e) {
     onNote(`страну в сети не нашли: ${e.message}`);
-    return { ok: false, product, parser: true };
+    return { ok: false, product, parser: true, pageParse: emptyWebParse({ query, error: e.message, origin }) };
   }
 
   const found = await firstMatchingPage(urls, {
@@ -691,8 +736,9 @@ async function fillCountryFromWeb(product, schema, { onNote = () => {} } = {}) {
     },
   });
   if (!found.ok) {
-    if (found.tried.length) onNote(`страну в сети не нашли: ${found.tried.join('; ')}`);
-    return { ok: false, product, parser: true };
+    const why = found.tried.length ? found.tried.join('; ') : 'выдача пуста';
+    onNote(`страну в сети не нашли: ${why}`);
+    return { ok: false, product, parser: true, pageParse: emptyWebParse({ query, error: why, origin }) };
   }
   const host = hostOfUrl(found.url);
   onNote(`страна из сети: ${found.country} (${host})`);
@@ -702,6 +748,11 @@ async function fillCountryFromWeb(product, schema, { onNote = () => {} } = {}) {
     source: found.url,
     parser: true,
     pairs: [{ key: 'Страна производства', value: found.country, via: 'table' }],
+    pageParse: {
+      ...pageHitsFromPairs([{ key: 'Страна производства', value: found.country, via: 'table' }]),
+      query,
+      origin: host || origin,
+    },
   };
 }
 
@@ -717,22 +768,39 @@ async function fillMissingFiltersFromWeb(product, schema, { onNote = () => {} } 
   try { rec = normalizeProduct(product, dict, loadConfig(ROOT)); }
   catch { return { ok: false, product }; }
   if (!needsMissingLookup(rec, dict)) return { ok: false, product };
+  const origin = searchEngineLabel();
+  const codes = missingRequiredCodes(rec, dict);
+  const query = missingQuery(rec, dict, codes);
   if (isWebSearchDisabled()) {
-    onNote(`недостающие фильтры в сети не искали: ${webSearchSkippedReason()}`);
-    return { ok: false, product };
+    const why = webSearchSkippedReason();
+    onNote(`недостающие фильтры в сети не искали: ${why}`);
+    return { ok: false, product, parser: true, pageParse: emptyWebParse({ query, error: why, origin }) };
   }
   const got = await lookupMissing(rec, dict, loadConfig(ROOT), {
     onNote,
     search: searchWeb,
     fetchHtml: pageFetch,
   });
-  if (!got.ok) return { ok: false, product, parser: true };
+  if (!got.ok) {
+    const why = got.reason || 'не нашли';
+    return {
+      ok: false,
+      product,
+      parser: true,
+      pageParse: emptyWebParse({ query: got.query || query, error: why, origin }),
+    };
+  }
   return {
     ok: true,
     product: withSpecLines(product, got.pairs, got.url),
     source: got.url,
     parser: true,
     pairs: got.pairs,
+    pageParse: {
+      ...pageHitsFromPairs(got.pairs),
+      query: got.query || query,
+      origin: hostOfUrl(got.url) || origin,
+    },
   };
 }
 
@@ -782,11 +850,12 @@ export async function ensureSource(product, schema, { onNote = () => {}, root = 
 
     let urls = [];
     let searchFailed = false;
+    let searchWhy = null;
     if (isWebSearchDisabled()) {
-      const why = webSearchSkippedReason();
-      onNote(`поиск не удался, отправляем как есть: ${why}`);
+      searchWhy = webSearchSkippedReason();
+      onNote(`поиск не удался, отправляем как есть: ${searchWhy}`);
       if (!gate.ok) {
-        currentGate = { ...gate, ok: true, reason: `${gate.reason}; поиск в сети не удался: ${why}` };
+        currentGate = { ...gate, ok: true, reason: `${gate.reason}; поиск в сети не удался: ${searchWhy}` };
       }
       searchFailed = true;
     } else {
@@ -800,6 +869,7 @@ export async function ensureSource(product, schema, { onNote = () => {}, root = 
         parser = true;
       } catch (e) {
         parser = true;
+        searchWhy = e.message;
         onNote(`поиск не удался, отправляем как есть: ${e.message}`);
         if (!gate.ok) {
           currentGate = { ...gate, ok: true, reason: `${gate.reason}; поиск в сети не удался: ${e.message}` };
@@ -808,7 +878,14 @@ export async function ensureSource(product, schema, { onNote = () => {}, root = 
       }
     }
 
-    if (!searchFailed) {
+    if (searchFailed) {
+      pageParse = rememberPageParse(
+        pageParse,
+        emptyWebParse({ query, error: searchWhy, origin: searchEngineLabel() }),
+        searchEngineLabel(),
+        onNote,
+      );
+    } else {
       const foundPage = await firstMatchingPage(urls, {
         fetchHtml: pageFetch,
         maxPages: WEB_TRIES,
@@ -832,7 +909,12 @@ export async function ensureSource(product, schema, { onNote = () => {}, root = 
       });
       if (foundPage.ok) {
         const host = hostOfUrl(foundPage.url);
-        pageParse = rememberPageParse(pageParse, collectPageHits(foundPage.found.attributes), host, onNote);
+        pageParse = rememberPageParse(
+          pageParse,
+          { ...collectPageHits(foundPage.found.attributes), query, origin: host },
+          host,
+          onNote,
+        );
         onNote(`описание из сети: ${host}`);
         const harvested = harvestGapsFromHtml(foundPage.merged, foundPage.html, foundPage.url, schema);
         current = harvested.product;
@@ -851,6 +933,12 @@ export async function ensureSource(product, schema, { onNote = () => {}, root = 
       } else {
         const why = foundPage.tried.length ? foundPage.tried.join('; ') : 'выдача пуста';
         onNote(`в сети не нашлось, отправляем как есть: ${why}`);
+        pageParse = rememberPageParse(
+          pageParse,
+          emptyWebParse({ query, error: why, origin: searchEngineLabel() }),
+          searchEngineLabel(),
+          onNote,
+        );
         if (!gate.ok) {
           currentGate = { ...gate, ok: true, reason: `${gate.reason}; в сети не нашлось (${why})` };
         }
@@ -866,7 +954,9 @@ export async function ensureSource(product, schema, { onNote = () => {}, root = 
   if (missing.ok) {
     current = withSpecLines(current, missing.pairs, missing.source);
     source = source || missing.source;
-    pageParse = rememberPageParse(pageParse, pageHitsFromPairs(missing.pairs), hostOfUrl(missing.source), onNote);
+  }
+  if (missing.pageParse) {
+    pageParse = rememberPageParse(pageParse, missing.pageParse, missing.pageParse.origin, onNote);
   }
   if (country.ok) {
     const value = country.pairs?.[0]?.value;
@@ -874,12 +964,14 @@ export async function ensureSource(product, schema, { onNote = () => {}, root = 
       current = withCountryLine(current, value, country.source);
     }
     source = source || country.source;
-    pageParse = rememberPageParse(pageParse, pageHitsFromPairs(country.pairs), hostOfUrl(country.source), onNote);
+  }
+  if (country.pageParse) {
+    pageParse = rememberPageParse(pageParse, country.pageParse, country.pageParse.origin, onNote);
   }
   if (missing.ok || country.ok) {
     currentGate = isEnrichable(current, schema);
   }
-  if (source) parser = true;
+  if (source || pageParse?.query || pageParse?.error || pageParse?.hits?.length) parser = true;
 
   return {
     product: current,

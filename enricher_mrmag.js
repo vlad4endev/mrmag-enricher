@@ -38,7 +38,7 @@ import {
 } from './lib.js';
 import {
   CATEGORIES, findCategory, crawlCategory, loadFeed,
-  buildFilters, writeCategoryFiles, ensureSource,
+  buildFilters, writeCategoryFiles, ensureSource, resetWebSearch,
 } from './catalog.js';
 import { setupProxy } from './socks.js';
 import { loadSettings } from './settings.js';
@@ -270,6 +270,7 @@ async function main() {
   let failed = 0, wastedCost = 0;
   const t0 = Date.now();
 
+  resetWebSearch();
   for (const [i, p] of todo.entries()) {
     const name = String(p.name || p.sku || '—').slice(0, 48);
     process.stdout.write(`  [${String(i + 1).padStart(4)}/${todo.length}] ${name.padEnd(48)}...`);

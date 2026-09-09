@@ -39,6 +39,15 @@ class El {
   _all() { return this.children.flatMap(c => [c, ...c._all()]); }
   querySelectorAll(sel) { const c = sel.replace(/^\./, ''); return this._all().filter(e => e._cls.has(c)); }
   querySelector(sel) { return this.querySelectorAll(sel)[0] || null; }
+  closest(sel) {
+    let n = this;
+    const cls = sel.startsWith('.') ? sel.slice(1) : sel;
+    while (n) {
+      if (n._cls?.has(cls) || n.id === sel.replace(/^#/, '')) return n;
+      n = n.parent;
+    }
+    return null;
+  }
   appendChild(c) { c.parent = this; this.children.push(c); return c; }
   remove() { if (this.parent) this.parent.children = this.parent.children.filter(x => x !== this); }
   addEventListener() {}
@@ -957,6 +966,52 @@ t('пропуск всё равно показывает, что нашёл па
   assert.match(h, /карточка/);
   assert.match(h, /Цвет/);
   assert.match(h, /белый/);
+});
+t('поиск без характеристик всё равно показывает Yandex и запрос', () => {
+  st.results = [{
+    ...ok(),
+    parse: {
+      card: {
+        origin: 'дамп',
+        hits: [{ key: 'Тип', value: 'стиральная машина', where: 'аннотация' }],
+      },
+      web: {
+        origin: 'Yandex Search API SEARCH_TYPE_RU',
+        query: 'ATLANT 60С1010 Тип двигателя',
+        error: 'выдача пуста',
+        hits: [],
+      },
+    },
+  }];
+  api.renderDetail();
+  const h = G('detail').innerHTML;
+  assert.match(h, /Yandex Search API/);
+  assert.match(h, /ATLANT 60С1010 Тип двигателя/);
+  assert.match(h, /выдача пуста/);
+});
+await tAsync('копия лога включает шаги и запрос поиска, даже если характеристик нет', async () => {
+  let copied = '';
+  const clip = globalThis.navigator?.clipboard;
+  const orig = clip && Object.getOwnPropertyDescriptor(clip, 'writeText');
+  if (!clip) {
+    assert.fail('в тесте нет navigator.clipboard');
+    return;
+  }
+  Object.defineProperty(clip, 'writeText', {
+    configurable: true,
+    writable: true,
+    value: async t => { copied = t; },
+  });
+  G('logsSteps').textContent = '[web] ищем недостающие характеристики: ATLANT 60С1010 Тип двигателя';
+  G('logsParse').textContent = '## Yandex Search API SEARCH_TYPE_RU · 0\nзапрос: ATLANT 60С1010 Тип двигателя\nошибка: выдача пуста';
+  try {
+    await api.copyLogsAll();
+    assert.match(copied, /ищем недостающие характеристики/);
+    assert.match(copied, /Yandex Search API/);
+    assert.match(copied, /выдача пуста/);
+  } finally {
+    if (orig) Object.defineProperty(clip, 'writeText', orig);
+  }
 });
 t('пока модель думает, на карточке уже видны пары парсера', () => {
   st.items = [{ name: 'Холодильник' }];

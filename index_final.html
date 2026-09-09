@@ -5253,12 +5253,14 @@ function parseTraces(r){
       hits:p.card.hits,
     });
   }
-  if(p.web?.hits?.length){
+  if(p.web && (p.web.hits?.length || p.web.query || p.web.error)){
     out.push({
       label:p.web.origin||'сеть',
       file:null,
       url:p.web.url||r.source||null,
-      hits:p.web.hits,
+      hits:p.web.hits||[],
+      query:p.web.query||null,
+      error:p.web.error||null,
     });
   }
   return out;
@@ -5269,6 +5271,8 @@ function parseOriginHtml(t){
   if(t.label) bits.push(esc(t.label));
   if(t.file) bits.push(`<span class="parse-file">${esc(t.file)}</span>`);
   if(t.url) bits.push(`<a href="${esc(t.url)}" target="_blank" rel="noopener noreferrer">${esc(hostOf(t.url))}</a>`);
+  if(t.query) bits.push(`<span class="parse-file">запрос: ${esc(t.query)}</span>`);
+  if(t.error) bits.push(`<span class="parse-file">ошибка: ${esc(t.error)}</span>`);
   return bits.join(' · ')||'источник';
 }
 
@@ -5850,10 +5854,15 @@ function parseHitsText(parse){
   if(!parse) return '';
   const parts=[];
   for(const [fallback,trace] of [['карточка / дамп', parse.card],['страница в сети', parse.web]]){
-    if(!trace?.hits?.length) continue;
+    if(!trace) continue;
+    const hits=Array.isArray(trace.hits)?trace.hits:[];
+    if(!hits.length && !trace.query && !trace.error) continue;
     const origin=trace.origin||fallback;
-    parts.push(`## ${origin} · ${trace.hits.length}`);
-    for(const h of trace.hits){
+    parts.push(`## ${origin} · ${hits.length}`);
+    if(trace.query) parts.push(`запрос: ${trace.query}`);
+    if(trace.error) parts.push(`ошибка: ${trace.error}`);
+    if(trace.url) parts.push(`url: ${trace.url}`);
+    for(const h of hits){
       const how=h.how&&h.how!==h.where&&h.how!=='разделитель'?` [${h.how}]`:'';
       parts.push(`${h.where||'?'}${how}: ${h.key} = ${h.value}`);
     }
@@ -5866,17 +5875,21 @@ function parseHitsHtml(parse){
   const text=parseHitsText(parse);
   if(!text) return logsBlock('Источник данных при парсинге', '', 'logsParse');
   const blocks=[['карточка / дамп', parse.card],['страница в сети', parse.web]]
-    .filter(([,t])=>t?.hits?.length)
+    .filter(([,t])=>t && (t.hits?.length || t.query || t.error))
     .map(([,t])=>{
       const label=t.origin||'источник';
-      const rows=t.hits.map(h=>{
+      const hits=Array.isArray(t.hits)?t.hits:[];
+      const rows=hits.map(h=>{
         const how=h.how&&h.how!==h.where&&h.how!=='разделитель'?` · ${esc(h.how)}`:'';
         return `<li><span class="ph-src">${esc(h.where||'?')}${how}</span>`
           +`<span class="ph-kv">${esc(h.key)} = <b>${esc(h.value)}</b></span></li>`;
       }).join('');
       const url=t.url?` · ${esc(t.url)}`:'';
-      return `<div class="hint" style="margin:6px 0 2px">${esc(label)}${url} · ${t.hits.length}</div>`
-        +`<ul class="parse-hits">${rows}</ul>`;
+      const q=t.query?`<div class="hint" style="margin:0 0 4px">запрос: ${esc(t.query)}</div>`:'';
+      const err=t.error?`<div class="hint" style="margin:0 0 4px;color:var(--warn,#b45309)">ошибка: ${esc(t.error)}</div>`:'';
+      return `<div class="hint" style="margin:6px 0 2px">${esc(label)}${url} · ${hits.length}</div>`
+        +q+err
+        +(rows?`<ul class="parse-hits">${rows}</ul>`:'');
     }).join('');
   return `<div class="set-card logs-block">`
     +`<div class="logs-block-h"><b>Источник данных при парсинге</b>`
@@ -5909,6 +5922,7 @@ async function loadLogsDetail(pos){
       typeof x.usage?.cost==='number'?`$${x.usage.cost.toFixed(5)}`:null,
     ].filter(Boolean).join(' · ');
     const steps=Array.isArray(x.steps)?x.steps:[];
+    const stepsText=steps.map(e=>`${fmtLogTs(e.t)} [${e.step||''}] ${e.msg||''}`).join('\n');
     const stepsHtml=steps.length
       ? `<ul class="logs-steps">${steps.map(e=>{
           const lc=e.level==='ok'?'ls-ok':e.level==='err'?'ls-err':e.level==='warn'?'ls-warn':e.level==='skip'?'ls-skip':'';
@@ -5925,7 +5939,8 @@ async function loadLogsDetail(pos){
         ?`<div class="hint" style="color:var(--warn, #b45309);margin:0">Валидация: ${esc(x.validation_issues.map(i=>`${i.field}: ${i.reason}`).join('; '))}</div>`
         :'')
       +`<div class="set-actions" style="margin-top:8px"><button type="button" class="sbtn" onclick="copyLogsAll()">Скопировать всё</button></div></div>`
-      +`<div class="set-card logs-block"><div class="logs-block-h"><b>Шаги обработки</b></div>${stepsHtml}</div>`
+      +`<div class="set-card logs-block"><div class="logs-block-h"><b>Шаги обработки</b></div>${stepsHtml}`
+      +`<pre class="set-pre" id="logsSteps" hidden>${esc(stepsText||'—')}</pre></div>`
       +parseHitsHtml(x.parse)
       +logsBlock('1. Исходный текст для модели', x.source_text, 'logsSrc')
       +logsBlock('2. System prompt', x.system_prompt, 'logsSys')
@@ -5947,10 +5962,10 @@ async function copyLogsBlock(id){
 
 async function copyLogsAll(){
   const parts=['# Лог обогащения',`Прогон: ${logsJobId||'—'}`,`Позиция: ${logsPos==null?'—':logsPos+1}`,''];
-  for(const id of ['logsParse','logsSrc','logsSys','logsUser','logsRaw','logsEnr']){
+  for(const id of ['logsSteps','logsParse','logsSrc','logsSys','logsUser','logsRaw','logsEnr']){
     const el=document.getElementById(id);
     if(!el) continue;
-    const title=el.closest('.logs-block')?.querySelector('b')?.textContent||id;
+    const title=el.closest?.('.logs-block')?.querySelector('b')?.textContent||id;
     parts.push('## '+title,'',el.textContent||'—','');
   }
   try{ await navigator.clipboard.writeText(parts.join('\n')); }catch{ /* ignore */ }

@@ -169,7 +169,7 @@ export function parseMissingFromPage(html, rec, dict, config) {
   return { ok: true, pairs: useful };
 }
 
-async function walkSerp(rec, dict, config, io, { query, parsePage, noteStart, noteHit }) {
+async function walkSerp(rec, dict, config, io, { query, parsePage, noteStart, noteHit, noteFail }) {
   const settings = resolveSearchSettings(config);
   const search = io.search || (q => searchWeb(q, config));
   const pageTimeout = settings.pageTimeoutMs || settings.timeoutMs;
@@ -182,7 +182,9 @@ async function walkSerp(rec, dict, config, io, { query, parsePage, noteStart, no
     onNote(noteStart(query));
     urls = await search(query);
   } catch (e) {
-    return { rec, ok: false, reason: `поиск не удался: ${e.message}`, query };
+    const why = `поиск не удался: ${e.message}`;
+    onNote(noteFail ? noteFail(why, query) : why);
+    return { rec, ok: false, reason: why, query };
   }
 
   const found = await firstMatchingPage(urls, {
@@ -191,11 +193,13 @@ async function walkSerp(rec, dict, config, io, { query, parsePage, noteStart, no
     match: (html, url) => parsePage(html, url),
   });
   if (!found.ok) {
+    const why = found.tried.length ? found.tried.join('; ') : 'выдача пуста';
+    onNote(noteFail ? noteFail(why, query) : why);
     return {
       rec,
       ok: false,
       query,
-      reason: found.tried.length ? found.tried.join('; ') : 'выдача пуста',
+      reason: why,
     };
   }
   const page_data = found.html ? visibleText(found.html) : '';
@@ -225,6 +229,7 @@ export async function lookupCountry(rec, dict, config, io = {}) {
     parsePage: html => parseCountryFromPage(html, rec.identity, dict, config),
     noteStart: q => `ищем страну: ${q}`,
     noteHit: (host, rec) => `страна с ${host}: ${rec.attrs.country}`,
+    noteFail: why => `страну в сети не нашли: ${why}`,
   });
 }
 
@@ -248,6 +253,7 @@ export async function lookupMissing(rec, dict, config, io = {}) {
     parsePage: html => parseMissingFromPage(html, rec, dict, config),
     noteStart: q => `ищем недостающие характеристики: ${q}`,
     noteHit: (host, _rec, got) => `недостающие характеристики с ${host}: ${got.pairs.length}`,
+    noteFail: why => `недостающие характеристики не нашли: ${why}`,
   });
 }
 
@@ -270,6 +276,7 @@ export async function lookupExternal(rec, dict, config, io = {}) {
     parsePage: html => parseExternalSpecs(html, rec.identity, dict),
     noteStart: q => `ищем: ${q}`,
     noteHit: (host, _rec, got) => `взяли ${got.pairs.length} характеристик с ${host}`,
+    noteFail: why => `в сети не нашлось: ${why}`,
   });
 }
 

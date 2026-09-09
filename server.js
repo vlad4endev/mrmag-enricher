@@ -1388,8 +1388,10 @@ async function enrichOne(product, { model, category, provider, onNote = () => {}
       ...(web ? {
         web: {
           ...web,
-          origin: parseTrace.webOrigin || 'сеть',
-          url: parseTrace.webUrl || null,
+          origin: parseTrace.webOrigin || web.origin || 'сеть',
+          url: parseTrace.webUrl || web.url || null,
+          ...(web.query ? { query: web.query } : {}),
+          ...(web.error ? { error: web.error } : {}),
         },
       } : {}),
     };
@@ -1567,12 +1569,12 @@ async function enrichOne(product, { model, category, provider, onNote = () => {}
   });
   if (found.page_parse) {
     parseTrace.web = found.page_parse;
-    parseTrace.webUrl = found.source || null;
+    parseTrace.webUrl = found.source || found.page_parse.url || null;
     if (found.source) {
       try { parseTrace.webOrigin = new URL(found.source).hostname.replace(/^www\./, ''); }
-      catch { parseTrace.webOrigin = 'сеть'; }
+      catch { parseTrace.webOrigin = found.page_parse.origin || 'сеть'; }
     } else {
-      parseTrace.webOrigin = 'сеть';
+      parseTrace.webOrigin = found.page_parse.origin || 'сеть';
     }
     publishParse();
   }

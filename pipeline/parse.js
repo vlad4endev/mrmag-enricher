@@ -616,20 +616,29 @@ export function formatParseNotes(trace, { origin = 'карточка', maxPerGro
 /** Полный список пар для раздела «Логи». */
 export function parseHitsText(trace) {
   const hits = Array.isArray(trace?.hits) ? trace.hits : [];
-  if (!hits.length) return '— ничего не разобрали —';
-  return hits.map(h => {
+  const lines = [];
+  if (trace?.query) lines.push(`запрос: ${trace.query}`);
+  if (trace?.error) lines.push(`ошибка: ${trace.error}`);
+  if (!hits.length && !lines.length) return '— ничего не разобрали —';
+  if (!hits.length) return lines.join('\n');
+  return lines.concat(hits.map(h => {
     const how = h.how && h.how !== h.where ? ` [${h.how}]` : '';
     return `${h.where || '?'}${how}: ${h.key} = ${h.value}`;
-  }).join('\n');
+  })).join('\n');
 }
 
 export function slimParseTrace(trace, cap = 80) {
-  if (!trace || !Array.isArray(trace.hits)) return null;
+  if (!trace) return null;
+  const hits = Array.isArray(trace.hits) ? trace.hits : [];
+  if (!hits.length && !trace.query && !trace.error) return null;
   return {
     format: trace.format ?? null,
     dump: Boolean(trace.dump),
     counts: trace.counts || null,
-    hits: trace.hits.slice(0, cap).map(h => ({
+    query: trace.query || null,
+    error: trace.error || null,
+    engine: trace.engine || null,
+    hits: hits.slice(0, cap).map(h => ({
       key: String(h.key || '').slice(0, 80),
       value: String(h.value || '').slice(0, 160),
       where: h.where || null,

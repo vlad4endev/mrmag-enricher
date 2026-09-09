@@ -2213,6 +2213,7 @@ console.log('\nТовар без описания: поиск в сети');
     assert.match(got.gate.reason, /нет артикула|в сети не нашлось/);
     assert.strictEqual(got.source, undefined);
     assert.ok(got.parser, 'поиск страницы запускался, даже если ничего не взяли');
+    assert.ok(got.page_parse?.query || got.page_parse?.error, 'неудачный поиск виден в Парсинге, не только дамп');
     assert.strictEqual(got.product.description, '', 'чужой текст не подставляется');
   });
 
@@ -2266,6 +2267,48 @@ console.log('\nТовар без описания: поиск в сети');
     assert.match(got.product.annotation, /1000/);
     assert.ok(serpQueries.some(q => /5109|отжим/i.test(q)), serpQueries.join(' | '));
     assert.doesNotMatch(got.product.annotation, /5109\s*об/);
+  });
+
+  await tAsync('полный дамп стиралки — добор без характеристик всё равно пишет запрос поиска', async () => {
+    serpQueries.length = 0;
+    const notes = [];
+    const product = {
+      name: 'Стиральная машина ATLANT 60С1010',
+      brand: 'ATLANT',
+      sku: 11391,
+      description: 'Стиральные машины серии SMART ACTION отличаются новой концепцией дизайна.',
+      annotation: [
+        'Тип загрузки - фронтальная',
+        'Максимальная загрузка белья - 6 кг',
+        'Установка - отдельно стоящая',
+        'Тип управления - электронное',
+        'Высота - 84.6 см',
+        'Глубина - 55 см',
+        'Ширина - 59.6 см',
+        'Вес - 62 кг',
+        'Расход воды за стирку - 50 л',
+        'Количество программ стирки - 16',
+        'Уровень шума при стирке - 59 дБ',
+        'Максимальная скорость отжима - 1000 об/мин',
+        'Класс энергопотребления - A++',
+        'Класс стирки - A',
+        'Класс отжима - C',
+        'Материал бака - пластик',
+      ].join('<br>'),
+    };
+    const got = await web.ensureSource(product, 'stiralnye_mashiny', { onNote: m => notes.push(m) });
+    assert.strictEqual(got.gate.ok, true, got.gate.reason);
+    assert.ok(!got.source, 'чужую карточку холодильника не подставляем');
+    assert.ok(got.page_parse?.query, 'запрос поиска должен быть в Парсинге');
+    assert.ok(got.page_parse?.error, 'ошибка поиска должна быть в Парсинге');
+    assert.match(got.page_parse.query, /60С1010/);
+    assert.ok(
+      serpQueries.some(q => /двигател/i.test(q)) || /двигател/i.test(got.page_parse.query),
+      `ждали поиск по типу двигателя, выдача: ${serpQueries.join(' | ')}`,
+    );
+    assert.match(notes.join('\n'), /двигател|стран/i);
+    web.resetWebSearch();
+    assert.equal(web.isWebSearchDisabled(), false);
   });
 
   await tAsync('WEB_LOOKUP=0 возвращает прежний пропуск без единого запроса', async () => {

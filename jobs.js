@@ -23,6 +23,7 @@ import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 import { doneStatusLabel } from './lib.js';
+import { resetWebSearch } from './catalog.js';
 
 const now = () => Date.now();
 /** Сколько строк лога держим в задаче: хватает на длинный прогон, диск не раздуваем. */
@@ -439,6 +440,7 @@ export function createJobStore({
   }
 
   async function runJob(job) {
+    resetWebSearch();
     job.status = 'running';
     job.stopping = false;
     job.error = null;

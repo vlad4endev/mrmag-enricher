@@ -105,9 +105,28 @@ export function isTimeoutError(e) {
     || /таймаут|aborted due to timeout|ETIMEDOUT|UND_ERR_CONNECT_TIMEOUT/i.test(text);
 }
 
-function timedError(e, timeoutMs) {
-  if (isTimeoutError(e)) return new Error(`таймаут ${timeoutMs}ms`);
+function hostOf(url) {
+  try { return new URL(url).hostname; } catch { return ''; }
+}
+
+function timedError(e, timeoutMs, url) {
+  if (isTimeoutError(e)) {
+    const host = hostOf(url);
+    return new Error(host ? `таймаут ${timeoutMs}ms (${host})` : `таймаут ${timeoutMs}ms`);
+  }
   return e instanceof Error ? e : new Error(String(e));
+}
+
+function noProxyBypasses(host) {
+  const h = String(host || '').toLowerCase();
+  if (!h) return false;
+  return String(process.env.NO_PROXY || process.env.no_proxy || '').split(/[\s,]+/).some(raw => {
+    const x = String(raw || '').trim().toLowerCase();
+    if (!x) return false;
+    if (x === '*') return true;
+    if (x.startsWith('.')) return h === x.slice(1) || h.endsWith(x);
+    return h === x || h.endsWith('.' + x);
+  });
 }
 
 let lastFetch = 0;
@@ -309,7 +328,7 @@ export async function fetchPage(url, { timeoutMs = 20_000 } = {}) {
     return html;
   } catch (e) {
     if (/^HTTP /.test(e.message)) throw e;
-    throw timedError(e, timeoutMs);
+    throw timedError(e, timeoutMs, url);
   }
 }
 
@@ -345,7 +364,7 @@ async function fetchForm(url, body, { timeoutMs = 20_000, cacheKey, gapMs } = {}
     return html;
   } catch (e) {
     if (/^HTTP |заглушка|капча/.test(e.message)) throw e;
-    throw timedError(e, timeoutMs);
+    throw timedError(e, timeoutMs, url);
   }
 }
 
@@ -402,7 +421,7 @@ async function fetchJson(url, { timeoutMs = 20_000, cacheKey, gapMs, method = 'G
     return data;
   } catch (e) {
     if (/^HTTP |ответ не JSON/.test(e.message)) throw e;
-    throw timedError(e, timeoutMs);
+    throw timedError(e, timeoutMs, url);
   }
 }
 
@@ -826,7 +845,24 @@ export function explainSearchError(msg, engine = 'yandex') {
     return { code: 'captcha', text: 'DuckDuckGo вернул капчу вместо выдачи — запасной поиск сейчас недоступен.' };
   }
   if (/таймаут/i.test(s)) {
-    return { code: 'timeout', text: 'Нет ответа: превышен таймаут. Проверьте сеть и endpoint.' };
+    const ms = Number(s.match(/таймаут\s+(\d+)\s*ms/i)?.[1]);
+    const host = s.match(/\(([^)\s]+)\)/)?.[1]
+      || (engine === 'yandex' || /yandex/i.test(s) ? 'searchapi.api.cloud.yandex.net' : '');
+    const wait = Number.isFinite(ms) && ms > 0 ? ` за ${Math.round(ms / 1000)} с` : '';
+    const where = host ? ` (${host})` : '';
+    const yandex = engine === 'yandex' || /yandex/i.test(s);
+    let text = yandex
+      ? `Yandex Search API не ответил${wait}${where}.`
+      : `Нет ответа${wait}${where}.`;
+    const proxied = process.env.HTTPS_PROXY || process.env.https_proxy || process.env.SOCKS_PROXY;
+    if (proxied && host && !noProxyBypasses(host)) {
+      text += ' Запрос идёт через SOCKS OpenRouter — этот хост должен быть в NO_PROXY, как DeepSeek.';
+    } else if (yandex) {
+      text += ' Проверьте сеть до Cloud и что ключ с Folder ID заданы.';
+    } else {
+      text += ' Проверьте сеть и endpoint.';
+    }
+    return { code: 'timeout', text };
   }
   if (/поиск выключен/i.test(s)) {
     return { code: 'search_off', text: 'Поиск в сети выключен. Включите «Искать описания пустых карточек в сети».' };
@@ -837,7 +873,9 @@ export function explainSearchError(msg, engine = 'yandex') {
 function probeCfg(config) {
   const search = { ...(config?.search || {}), gap_ms: 0 };
   const t = Number(search.timeout_ms);
-  search.timeout_ms = Number.isFinite(t) ? Math.min(15_000, Math.max(3_000, t)) : 12_000;
+  // Не короче CONNECT SOCKS (20 с): иначе AbortSignal срабатывает, пока
+  // туннель ещё открывается, и проверка врёт «таймаут» вместо ответа API.
+  search.timeout_ms = Number.isFinite(t) ? Math.min(20_000, Math.max(8_000, t)) : 20_000;
   return { ...config, search };
 }
 

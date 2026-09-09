@@ -793,6 +793,33 @@ console.log('golden tests passed');
   assert.equal(auth.code, '42');
   assert.match(auth.text, /не принят/);
 
+  const to = explainSearchError('таймаут 15000ms (searchapi.api.cloud.yandex.net)', 'yandex');
+  assert.equal(to.code, 'timeout');
+  assert.match(to.text, /15 с/);
+  assert.match(to.text, /searchapi\.api\.cloud\.yandex\.net/);
+  assert.doesNotMatch(to.text, /превышен таймаут/);
+
+  const prevProxy = {
+    HTTPS_PROXY: process.env.HTTPS_PROXY,
+    https_proxy: process.env.https_proxy,
+    NO_PROXY: process.env.NO_PROXY,
+    no_proxy: process.env.no_proxy,
+  };
+  process.env.HTTPS_PROXY = 'http://127.0.0.1:18080';
+  delete process.env.https_proxy;
+  delete process.env.NO_PROXY;
+  delete process.env.no_proxy;
+  try {
+    const viaSocks = explainSearchError('таймаут 20000ms (searchapi.api.cloud.yandex.net)', 'yandex');
+    assert.match(viaSocks.text, /SOCKS/);
+    assert.match(viaSocks.text, /NO_PROXY/);
+  } finally {
+    for (const [k, v] of Object.entries(prevProxy)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  }
+
   const live = await probeParser({
     search: {
       enabled: true,

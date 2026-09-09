@@ -166,12 +166,17 @@ export function startBridge(cfg, port = 0, host = '127.0.0.1') {
 
 /**
  * Хосты, которые не гоняем через прокси OpenRouter. Каталог — российский,
- * DeepSeek — отдельный API: телеграм-SOCKS часто рвёт CONNECT до чужих
- * хостов («Request was cancelled»), а api.deepseek.com с этого IP доступен.
- * Дописываем даже если NO_PROXY уже стоит в .env — иначе DeepSeek так и
- * остаётся в туннеле.
+ * DeepSeek и Yandex Cloud Search API — отдельные API: телеграм-SOCKS часто
+ * рвёт CONNECT до чужих хостов (таймаут / «Request was cancelled»), а с
+ * этого IP они доступны. Search API ещё и сверяет IP с кабинетом (код 33) —
+ * через заграничный SOCKS ключ не примется. Дописываем даже если NO_PROXY
+ * уже стоит в .env.
  */
-export const DIRECT_HOSTS = ['mrmag.ru', 'localhost', '127.0.0.1', 'api.deepseek.com', '.deepseek.com'];
+export const DIRECT_HOSTS = [
+  'mrmag.ru', 'localhost', '127.0.0.1',
+  'api.deepseek.com', '.deepseek.com',
+  'searchapi.api.cloud.yandex.net', '.api.cloud.yandex.net',
+];
 
 export function mergeNoProxy(...hosts) {
   const hasUpper = process.env.NO_PROXY != null;

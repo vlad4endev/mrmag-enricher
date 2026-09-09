@@ -1435,6 +1435,8 @@ console.log('golden tests passed');
   assert.deepEqual(a.filters['Ширина, см'], ['55-60']);
   assert.deepEqual(a.filters['Глубина, см'], ['55-60']);
   assert.deepEqual(a.filters['Высота, см'], ['80-85']);
+  assert.deepEqual(a.filters['Габариты (ШхГхВ)'], ['59.6×55×84.6']);
+  assert.match(a.annotation_html, /Габариты \(ШхГхВ\): 59\.6×55×84\.6 см/);
   assert.ok(Object.keys(a.filters).length >= 8, Object.keys(a.filters).join(','));
   assert.ok(!/экономи[яи]|гарант/i.test(a.description_html));
   assert.ok(!/узк(?:ая|ий|ое|ие|ой)\b/i.test(a.meta_keywords));
@@ -1447,12 +1449,17 @@ console.log('golden tests passed');
   const c = rows.find(r => r.id === 29921);
   assert.ok(!('name' in c), 'name не в выгрузке: сопоставление по id');
   assert.match(c.annotation_html, /Вес: 47 кг/);
+  assert.deepEqual(c.filters['Габариты (ШхГхВ)'], ['51×43×70']);
   assert.ok(!c.annotation_html.includes('49'));
   assert.ok(!('Материал' in c.filters));
 
   const i = rows.find(r => r.id === 44772);
   assert.ok(!('name' in i), 'name не в выгрузке: сопоставление по id');
   assert.ok(!('Бренд' in i.filters), 'бренд не фасет: сопоставление по id');
+  assert.deepEqual(i.filters['Габариты (ШхГхВ)'], ['59.5×42×85']);
+
+  const lg = rows.find(r => r.id === 12957);
+  assert.deepEqual(lg.filters['Габариты (ШхГхВ)'], ['60×56×85']);
   assert.ok(p467[44772].name.includes('"Indesit"'), 'исходник по-прежнему с кавычками; в выгрузке name нет');
   console.log('ok checklist 10×467 (11391 / 29921 / 44772)');
 }
@@ -1788,6 +1795,7 @@ console.log('golden tests passed');
   }
   assert.ok(d467.byCode.get('weight').facet.enabled);
   assert.ok('Вес, кг' in row.filters, 'вес — filter при facet.enabled');
+  assert.deepEqual(row.filters['Габариты (ШхГхВ)'], ['59.6×55×84.6']);
   assert.ok(!('Материал' in row.filters));
   assert.equal(
     normalizeValue(
@@ -2474,7 +2482,7 @@ console.log('golden tests passed');
   assert.ok(Object.keys(assignedS3).length >= 8, Object.keys(assignedS3).join(','));
   assert.deepEqual(assignedS3['Загрузка белья, кг'], ['7']);
   assert.deepEqual(assignedS3['Количество программ'], ['15-20']);
-  assert.ok(!('Габариты (ШхГхВ)' in assignedS3));
+  assert.deepEqual(assignedS3['Габариты (ШхГхВ)'], ['60×54×85']);
 
   const dryer = { id: 455270, name: 'Сушильная машина Pioneer DM-10701WH' };
   assert.ok(markCategoryMismatch(dryer, '467'));

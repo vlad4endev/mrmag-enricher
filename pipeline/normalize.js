@@ -374,6 +374,40 @@ function setDerived(rec, dict, code, rawLabel, how, level) {
 }
 
 /**
+ * Составные габариты для filters_*.json: если в источнике нет строки Ш×Г×В,
+ * но есть все три оси, склеиваем тот же объект, что пишет аннотация.
+ */
+export function deriveDimsFromAxes(rec, dict) {
+  if (!dict?.byCode?.has('dims') || rec.attrs?.dims != null) return false;
+  const attr = dict.byCode.get('dims');
+  if (attr.tier === 'X') return false;
+  const width = rec.attrs.width;
+  const height = rec.attrs.height;
+  const depth = rec.attrs.depth;
+  if (typeof width !== 'number' || typeof height !== 'number' || typeof depth !== 'number') {
+    return false;
+  }
+  const levels = ['width', 'height', 'depth']
+    .map(code => rec.provenance?.[code]?.level)
+    .filter(Boolean);
+  let level = 'S0';
+  if (levels.length) {
+    level = levels[0];
+    for (const lv of levels) {
+      if (sourceRank(lv) < sourceRank(level)) level = lv;
+    }
+  }
+  return setAttr(rec, 'dims', { width, height, depth }, {
+    level,
+    raw: `${width}×${depth}×${height}`,
+    model: null,
+    prompt: null,
+    how: 'derived_dims_from_axes',
+    from: 'axes',
+  });
+}
+
+/**
  * Связанные факты из уже разобранного текста: тип холодильника → камеры
  * и сторона морозилки; стиралка без «установки» → отдельностоящая.
  * level не 'model': иначе filterSourceAllowed выкинет значение с витрины.
@@ -417,6 +451,8 @@ function deriveLinkedAttrs(rec, dict, product) {
       setDerived(rec, dict, 'chambers', String(n), 'derived_chambers', derivedLevel(rec, 'fridge_type'));
     }
   }
+
+  deriveDimsFromAxes(rec, dict);
 }
 
 export function ingestPairs(rec, pairs, dict, config) {

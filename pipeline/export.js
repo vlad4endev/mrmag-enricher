@@ -5,7 +5,7 @@ import { assignFilterValues, buildFilters } from './facets.js';
 import { renderCard, renderAnnotation, renderDescription, productTypeFor, annotationRows, MIN_ANNOTATION_ROWS } from './generate.js';
 import { annotationText, annotationCase, isBrandFilterKey } from './types.js';
 import { webInfoFrom } from './reviews.js';
-import { normalizeProduct, ingestPairs } from './normalize.js';
+import { normalizeProduct, ingestPairs, deriveDimsFromAxes } from './normalize.js';
 import { specDest } from './schema.js';
 import { buildDescriptionHtml } from './model_validate.js';
 import { finalizeRecord, checkFilterConsistency, stripHallucinationClaims, checkDescriptionClaims } from './quality_validate.js';
@@ -320,6 +320,7 @@ export function applyEnrichedSpecs(rec, specs, dict, config) {
     });
   }
   if (pairs.length) ingestPairs(rec, pairs, dict, config);
+  deriveDimsFromAxes(rec, dict);
 }
 
 /**

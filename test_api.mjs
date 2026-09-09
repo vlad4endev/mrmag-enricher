@@ -39,6 +39,12 @@ const srvEnv = {
   SETTINGS_PATH,
   DUMPS_DIR,
   DUMP_SEED: '0',
+  YANDEX_SEARCH_API_KEY: '',
+  YANDEX_FOLDER_ID: '',
+  YC_API_KEY: '',
+  YC_FOLDER_ID: '',
+  FOLDER_ID: '',
+  SEARCH_API_KEY: '',
 };
 
 const srv = spawn(process.execPath, ['server.js'], {
@@ -70,6 +76,8 @@ try {
     for (const p of ['/', '/api/categories', '/api/models', '/api/parser', '/api/settings', '/api/dumps', '/api/dictionaries', '/schema_constructor.js', '/api/catalog?category=523']) {
       assert.strictEqual((await fetch(url(p))).status, 401, `${p} должен требовать вход`);
     }
+    const probe = await fetch(url('/api/parser/probe'), { method: 'POST', body: '{}' });
+    assert.strictEqual(probe.status, 401, 'проба парсера тоже за паролем');
     const r = await fetch(url('/api/enrich'), { method: 'POST', body: '{}' });
     assert.strictEqual(r.status, 401, 'тратящий деньги маршрут — тем более');
   });
@@ -140,6 +148,33 @@ try {
     assert.strictEqual(d.yandex.search_type, 'ru');
     if (d.yandex.has_key && d.yandex.has_folder) assert.match(d.label, /Yandex/i);
     else assert.match(d.label, /DuckDuckGo/i);
+  });
+  await t('/api/parser/probe без ключа ясно говорит, что не так', async () => {
+    const r = await fetch(url('/api/parser/probe'), {
+      method: 'POST',
+      headers: { authorization: auth, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        search: {
+          enabled: true,
+          yandex: {
+            enabled: true,
+            api_key: null,
+            folder_id: '',
+            api_key_env: '__missing_ya_key__',
+            folder_id_env: '__missing_ya_folder__',
+          },
+          duckduckgo: { enabled: false },
+          fallback_engines: [],
+          search_url: '',
+        },
+      }),
+    });
+    assert.strictEqual(r.status, 200, await r.clone().text());
+    const d = await r.json();
+    assert.strictEqual(d.ok, false);
+    assert.match(d.summary, /ключа|Folder ID/i);
+    assert.ok(d.checks.some(c => c.id === 'yandex' && c.ok === false));
+    assert.ok(!JSON.stringify(d).includes('ya-test-key'));
   });
   await t('/api/settings отдаёт провайдеров без ключей и заготовки', async () => {
     const r = await fetch(url('/api/settings'), { headers: { authorization: auth } });

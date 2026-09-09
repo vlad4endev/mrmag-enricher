@@ -17,6 +17,7 @@
  *   PUT  /api/settings        сохранить настройки; пустой api_key оставляет прежний
  *   POST /api/prompt/preview  превью системного промпта { template?, category }
  *   GET  /api/parser          статус и настройки поиска пустых карточек
+ *   POST /api/parser/probe    живая проверка Yandex Search API / запасного поиска
  *   GET  /api/product?url=... прокси к каталогу, только по разрешённым хостам
  *   GET  /api/categories      разделы из требований и схемы полей
  *   GET  /api/dictionaries      список + catalog + pending (дампы без справочника)
@@ -103,7 +104,7 @@ import {
   heuristicSuggest, parseModelSuggestions, applySuggestions,
   harvestDumpAttrLines,
 } from './pipeline/schema_import.js';
-import { publicParserStatus } from './pipeline/search.js';
+import { publicParserStatus, probeParser } from './pipeline/search.js';
 import {
   loadSettings, saveSettings, publicSettings, applySettingsPatch,
   resolveProvider, providerEndpoint, providerKey,
@@ -786,6 +787,37 @@ function apiParser(res) {
     parser.label = 'выключен (WEB_LOOKUP=0)';
   }
   json(res, 200, parser);
+}
+
+/** Проба Search API по полям формы (не сохраняет). Пустой ключ — берём сохранённый. */
+async function apiParserProbe(req, res) {
+  let body = {};
+  try {
+    const raw = await readBody(req, 80_000);
+    if (raw && String(raw).trim()) body = JSON.parse(raw);
+  } catch {
+    return json(res, 400, { error: 'Тело запроса не JSON' });
+  }
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    return json(res, 400, { error: 'Ожидался объект' });
+  }
+  const current = loadSettings(ROOT);
+  const config = body.search && typeof body.search === 'object'
+    ? applySettingsPatch(current, { search: body.search })
+    : current;
+  const query = typeof body.query === 'string' ? body.query.trim().slice(0, 80) : '';
+  try {
+    const result = await probeParser(config, { query: query || undefined });
+    return json(res, 200, result);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return json(res, 200, {
+      ok: false,
+      summary: msg,
+      query: query || undefined,
+      checks: [{ id: 'probe', ok: false, title: 'Проверка', error: msg }],
+    });
+  }
 }
 
 function promptMeta(settings, category = null) {
@@ -1962,6 +1994,7 @@ const server = http.createServer(async (req, res) => {
 
     if (req.method === 'GET'  && u.pathname === '/api/models')     return await apiModels(res);
     if (req.method === 'GET'  && u.pathname === '/api/parser')     return apiParser(res);
+    if (req.method === 'POST' && u.pathname === '/api/parser/probe') return await apiParserProbe(req, res);
     if (req.method === 'GET'  && u.pathname === '/api/settings')   return apiSettingsGet(res);
     if (req.method === 'PUT'  && u.pathname === '/api/settings')   return await apiSettingsPut(req, res);
     if (req.method === 'POST' && u.pathname === '/api/prompt/preview') return await apiPromptPreview(req, res);

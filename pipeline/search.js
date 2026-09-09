@@ -360,9 +360,9 @@ function jsonApiError(data, status) {
   return `HTTP ${status}`;
 }
 
-async function fetchJson(url, { timeoutMs = 20_000, cacheKey, gapMs, method = 'GET', headers = {}, body } = {}) {
+async function fetchJson(url, { timeoutMs = 20_000, cacheKey, gapMs, method = 'GET', headers = {}, body, noCache = false } = {}) {
   const file = cachePath(cacheKey || url);
-  if (fresh(file, ttlMs())) {
+  if (!noCache && fresh(file, ttlMs())) {
     try { return JSON.parse(fs.readFileSync(file, 'utf-8')); } catch { forget(file); }
   }
 
@@ -395,8 +395,10 @@ async function fetchJson(url, { timeoutMs = 20_000, cacheKey, gapMs, method = 'G
       forget(file);
       throw new Error(jsonApiError(data, res.status));
     }
-    fs.mkdirSync(cacheDir(), { recursive: true });
-    fs.writeFileSync(file, text, 'utf-8');
+    if (!noCache) {
+      fs.mkdirSync(cacheDir(), { recursive: true });
+      fs.writeFileSync(file, text, 'utf-8');
+    }
     return data;
   } catch (e) {
     if (/^HTTP |ответ не JSON/.test(e.message)) throw e;
@@ -660,7 +662,7 @@ export function parseYandexSearchResponse(data, settings = resolveSearchSettings
 }
 
 /** Поиск через Yandex Cloud Search API v2. Ключ + folder id. */
-export async function searchYandex(query, config = {}) {
+export async function searchYandex(query, config = {}, { noCache = false } = {}) {
   const settings = resolveSearchSettings(config);
   const ya = settings.yandex;
   if (!ya.enabled) throw new Error('Yandex Search API выключен в настройках');
@@ -702,7 +704,8 @@ export async function searchYandex(query, config = {}) {
     const data = await fetchJson(endpoint.toString(), {
       timeoutMs: settings.timeoutMs,
       gapMs: settings.gapMs,
-      cacheKey,
+      cacheKey: noCache ? undefined : cacheKey,
+      noCache,
       method: 'POST',
       headers: {
         Authorization: `Api-Key ${ya.apiKey}`,
@@ -752,6 +755,212 @@ export async function searchDuckDuckGo(query, config = {}) {
   const urls = parseDuckDuckGoResults(html, settings);
   if (!urls.length) throw new Error('DuckDuckGo: выдача без ссылок');
   return urls;
+}
+
+const PROBE_QUERY = 'холодильник ATLANT';
+
+function hostsOf(urls, cap = 3) {
+  const out = [];
+  const seen = new Set();
+  for (const href of urls || []) {
+    try {
+      const host = new URL(href).hostname.replace(/^www\./, '');
+      if (!host || seen.has(host)) continue;
+      seen.add(host);
+      out.push(host);
+      if (out.length >= cap) break;
+    } catch { /* битая ссылка */ }
+  }
+  return out;
+}
+
+/**
+ * Сообщение API → фраза для настроек. Коды XML Search API и типичные
+ * ответы Cloud IAM, чтобы «42» не оставалось загадкой.
+ */
+export function explainSearchError(msg, engine = 'yandex') {
+  const s = String(msg || '').trim() || 'неизвестная ошибка';
+  const xmlCode = s.match(/Yandex Search API:\s*(\d+)/i)?.[1]
+    || s.match(/\bкод\s+(\d+)\b/i)?.[1];
+  const hint = xmlCode ? YANDEX_XML_ERROR_HINT[Number(xmlCode)] : '';
+
+  if (engine === 'yandex' || /yandex/i.test(s)) {
+    if (/выключен/i.test(s)) {
+      return { code: 'disabled', text: 'Yandex Search API выключен — включите его в настройках парсера.' };
+    }
+    if (/нет ключа/i.test(s)) {
+      return { code: 'no_key', text: 'Нет ключа API. Вставьте ключ или задайте YANDEX_SEARCH_API_KEY.' };
+    }
+    if (/нет folder/i.test(s)) {
+      return { code: 'no_folder', text: 'Нет Folder ID. Укажите каталог Cloud с ролью search-api.editor.' };
+    }
+    if (/некорректный endpoint/i.test(s)) {
+      return { code: 'endpoint', text: 'Некорректный адрес Search API.' };
+    }
+    if (xmlCode === '42' || /не прошёл аутентификацию/i.test(s) || /unauthor/i.test(s) || /\b401\b/.test(s)) {
+      return { code: '42', text: 'Ключ не принят (код 42 / HTTP 401). Проверьте API-ключ и scope yc.search-api.execute.' };
+    }
+    if (xmlCode === '31') {
+      return { code: '31', text: 'Каталог не зарегистрирован в Search API (код 31). Включите сервис для этого Folder ID.' };
+    }
+    if (xmlCode === '32' || xmlCode === '55') {
+      return { code: xmlCode, text: `Лимит Search API: ${hint || s} (код ${xmlCode}). Подождите или поднимите квоту.` };
+    }
+    if (xmlCode === '33') {
+      return { code: '33', text: 'IP сервера не совпадает с зарегистрированным в Search API (код 33).' };
+    }
+    if (xmlCode === '48') {
+      return { code: '48', text: 'Тип поиска (ru/com/tr) не совпадает с тем, что зарегистрирован в кабинете (код 48).' };
+    }
+    if (/permission|forbidden|\b403\b|access denied/i.test(s)) {
+      return { code: '403', text: 'Нет права search-api.editor на каталог (HTTP 403).' };
+    }
+    if (xmlCode && hint) {
+      return { code: xmlCode, text: `Yandex Search API: ${hint} (код ${xmlCode}).` };
+    }
+    if (/выдача без ссылок/i.test(s)) {
+      return { code: 'empty', text: 'Ключ принят, но в выдаче нет ссылок. Интеграция работает, запрос ничего не нашёл.' };
+    }
+  }
+  if (/заглушка|капча/i.test(s)) {
+    return { code: 'captcha', text: 'DuckDuckGo вернул капчу вместо выдачи — запасной поиск сейчас недоступен.' };
+  }
+  if (/таймаут/i.test(s)) {
+    return { code: 'timeout', text: 'Нет ответа: превышен таймаут. Проверьте сеть и endpoint.' };
+  }
+  if (/поиск выключен/i.test(s)) {
+    return { code: 'search_off', text: 'Поиск в сети выключен. Включите «Искать описания пустых карточек в сети».' };
+  }
+  return { code: xmlCode || 'error', text: s };
+}
+
+function probeCfg(config) {
+  const search = { ...(config?.search || {}), gap_ms: 0 };
+  const t = Number(search.timeout_ms);
+  search.timeout_ms = Number.isFinite(t) ? Math.min(15_000, Math.max(3_000, t)) : 12_000;
+  return { ...config, search };
+}
+
+async function timedCall(fn) {
+  const t0 = Date.now();
+  try {
+    const value = await fn();
+    return { ok: true, ms: Date.now() - t0, value };
+  } catch (e) {
+    return { ok: false, ms: Date.now() - t0, error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+/**
+ * Живая проверка парсера для экрана настроек: ключ, folder, ответ Search API.
+ * Пустая выдача (код 15) — не ошибка интеграции. DuckDuckGo зовём, только если
+ * Yandex выключен или не ответил — чтобы было видно, сработает ли запасной путь.
+ */
+export async function probeParser(config = {}, io = {}) {
+  const query = String(io.query || PROBE_QUERY).replace(/\s+/g, ' ').trim().slice(0, 80) || PROBE_QUERY;
+  const cfg = probeCfg(config);
+  const settings = resolveSearchSettings(cfg);
+  const checks = [];
+  const yaSearch = io.searchYandex || io.searchYandexFn || ((q, c) => searchYandex(q, c, { noCache: true }));
+  const ddgSearch = io.searchDuckDuckGo || io.searchDuckDuckGoFn || ((q, c) => searchDuckDuckGo(q, c));
+
+  if (!settings.enabled) {
+    const { text } = explainSearchError('поиск выключен');
+    checks.push({ id: 'search', ok: false, title: 'Поиск в сети', error: text, code: 'search_off' });
+    return { ok: false, summary: text, query, checks };
+  }
+  checks.push({ id: 'search', ok: true, title: 'Поиск в сети', detail: 'включён' });
+
+  const ya = settings.yandex;
+  let yandexOk = false;
+  let yandexTried = false;
+  if (!ya.enabled) {
+    checks.push({
+      id: 'yandex', ok: true, skipped: true,
+      title: 'Yandex Search API', detail: 'выключен — не проверялся',
+    });
+  } else if (!ya.apiKey) {
+    yandexTried = true;
+    const { text, code } = explainSearchError('Yandex Search API: нет ключа');
+    checks.push({ id: 'yandex', ok: false, title: 'Yandex Search API', error: text, code });
+  } else if (!ya.folderId) {
+    yandexTried = true;
+    const { text, code } = explainSearchError('Yandex Search API: нет folder id');
+    checks.push({ id: 'yandex', ok: false, title: 'Yandex Search API', error: text, code });
+  } else {
+    yandexTried = true;
+    const got = await timedCall(() => yaSearch(query, cfg));
+    if (got.ok) {
+      yandexOk = true;
+      const n = got.value?.length || 0;
+      const hosts = hostsOf(got.value);
+      checks.push({
+        id: 'yandex', ok: true, title: 'Yandex Search API',
+        detail: n ? `${n} ${n === 1 ? 'ссылка' : 'ссылок'} за ${got.ms} мс` : `ответ за ${got.ms} мс`,
+        ms: got.ms,
+        urls: n,
+        hosts,
+      });
+    } else if (/выдача без ссылок/i.test(got.error)) {
+      yandexOk = true;
+      const { text, code } = explainSearchError(got.error);
+      checks.push({
+        id: 'yandex', ok: true, warning: true, title: 'Yandex Search API',
+        detail: text, code, ms: got.ms, urls: 0, hosts: [],
+      });
+    } else {
+      const { text, code } = explainSearchError(got.error, 'yandex');
+      checks.push({
+        id: 'yandex', ok: false, title: 'Yandex Search API',
+        error: text, code, raw: got.error, ms: got.ms,
+      });
+    }
+  }
+
+  const needFallback = !yandexOk && settings.duckduckgo.enabled;
+  if (needFallback) {
+    const got = await timedCall(() => ddgSearch(query, cfg));
+    if (got.ok) {
+      const n = got.value?.length || 0;
+      checks.push({
+        id: 'duckduckgo', ok: true, title: 'DuckDuckGo',
+        detail: `запасной поиск отвечает (${n} ${n === 1 ? 'ссылка' : 'ссылок'})`,
+        ms: got.ms, urls: n, hosts: hostsOf(got.value),
+      });
+    } else {
+      const { text, code } = explainSearchError(got.error, 'duckduckgo');
+      checks.push({
+        id: 'duckduckgo', ok: false, title: 'DuckDuckGo',
+        error: text, code, raw: got.error, ms: got.ms,
+      });
+    }
+  } else if (!settings.duckduckgo.enabled && !yandexOk) {
+    checks.push({
+      id: 'duckduckgo', ok: true, skipped: true,
+      title: 'DuckDuckGo', detail: 'выключен — не проверялся',
+    });
+  }
+
+  const yaCheck = checks.find(c => c.id === 'yandex');
+  const ddgCheck = checks.find(c => c.id === 'duckduckgo');
+  const ok = yandexTried ? yandexOk : Boolean(ddgCheck?.ok && !ddgCheck.skipped);
+  let summary;
+  if (ok && yandexOk && yaCheck?.warning) {
+    summary = yaCheck.detail;
+  } else if (ok && yandexOk) {
+    summary = `Yandex Search API работает${yaCheck?.detail ? `: ${yaCheck.detail}` : '.'}`;
+  } else if (ok) {
+    summary = ddgCheck?.detail || 'Запасной поиск отвечает. Yandex выключен.';
+  } else if (yaCheck && !yaCheck.ok) {
+    summary = yaCheck.error;
+    if (ddgCheck?.ok && !ddgCheck.skipped) {
+      summary += ' Запасной DuckDuckGo отвечает — прогон сможет искать, но основной API не работает.';
+    }
+  } else {
+    summary = ddgCheck?.error || 'Ни один поисковик не ответил.';
+  }
+
+  return { ok, summary, query, checks };
 }
 
 export async function searchWeb(query, config = {}) {

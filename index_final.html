@@ -783,6 +783,19 @@ input[type=range]::-moz-range-thumb{
 }
 .set-note{font-size:12px;color:var(--t2);flex:1;min-width:0}
 .set-warn{background:var(--abg);border:1px solid var(--abd);border-radius:var(--r);padding:10px 12px;font-size:12px;color:var(--amber)}
+.parser-probe{margin-top:4px;border-radius:var(--r);padding:10px 12px;font-size:12.5px;line-height:1.5;border:1px solid var(--b1);background:var(--bg3);color:var(--t1)}
+.parser-probe.ok{background:var(--gbg);border-color:var(--gbd)}
+.parser-probe.err{background:var(--rbg);border-color:var(--rbd)}
+.parser-probe.warn{background:var(--abg);border-color:var(--abd)}
+.parser-probe-h{font-weight:700;margin-bottom:6px}
+.parser-probe.ok .parser-probe-h{color:var(--green)}
+.parser-probe.err .parser-probe-h{color:var(--red)}
+.parser-probe.warn .parser-probe-h{color:var(--amber)}
+.parser-probe-list{margin:0;padding:0;list-style:none}
+.parser-probe-list li{padding:3px 0;color:var(--t1)}
+.parser-probe-list li.err{color:var(--red)}
+.parser-probe-list li.warn{color:var(--amber)}
+.parser-probe-list b{font-weight:650}
 .set-presets{display:flex;flex-wrap:wrap;gap:6px}
 .set-tpl-tabs{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px}
 .set-tpl-tabs button{
@@ -1778,7 +1791,11 @@ input[type=range]::-moz-range-thumb{
           <div class="set-row"><label for="setSearchUrl">Свой поисковик (URL с %s)</label><input type="url" id="setSearchUrl" placeholder="https://searx.example/search?q=%s"></div>
         </div>
         <div class="set-card" style="margin-bottom:12px">
-          <div class="set-card-h"><b>Yandex Search API</b></div>
+          <div class="set-card-h">
+            <b>Yandex Search API</b>
+            <button type="button" class="sbtn ghost" id="parserProbeBtn" onclick="runParserProbe()">Проверить работу</button>
+          </div>
+          <div id="parserProbe" hidden></div>
           <label class="set-check"><input type="checkbox" id="setYaOn"> Использовать Yandex Search API (основной поиск)</label>
           <div class="set-grid">
             <div class="set-row"><label for="setYaType">Индекс</label>
@@ -1809,7 +1826,7 @@ input[type=range]::-moz-range-thumb{
           <div class="set-row"><label for="setYaKey">Ключ API <span id="setYaKeyHint" class="set-badge off">нет ключа</span></label>
             <input type="password" id="setYaKey" name="yandex-search-api-key" data-secret="1" placeholder="оставьте пустым, чтобы не менять" autocomplete="new-password" spellcheck="false" autocapitalize="off" data-lpignore="true" data-1p-ignore="true">
           </div>
-          <div class="hint">Нужны API-ключ (scope <code>yc.search-api.execute</code>) и Folder ID каталога с ролью <code>search-api.editor</code>. Ключ остаётся на сервере. Без ключа или folder поиск идёт дальше — свой URL, затем DuckDuckGo.</div>
+          <div class="hint">Нужны API-ключ (scope <code>yc.search-api.execute</code>) и Folder ID каталога с ролью <code>search-api.editor</code>. Ключ остаётся на сервере. «Проверить работу» ходит в Cloud по полям на этой странице — сохранять не обязательно. Без ключа или folder поиск идёт дальше — свой URL, затем DuckDuckGo.</div>
         </div>
         <div class="set-card" style="margin-bottom:12px">
           <div class="set-card-h"><b>DuckDuckGo</b></div>
@@ -4121,6 +4138,44 @@ function readSettingsPatch(){
     },
     export_templates:readExportTemplatesPatch(),
   };
+}
+
+function renderParserProbe(box, d){
+  const checks=Array.isArray(d?.checks)?d.checks:[];
+  const cls=d?.ok?(checks.some(c=>c.warning)?'warn':'ok'):'err';
+  box.hidden=false;
+  box.className='parser-probe '+cls;
+  const rows=checks.map(c=>{
+    const mark=c.skipped?'·':(!c.ok?'✗':(c.warning?'!':'✓'));
+    const text=c.error||c.detail||'';
+    const extra=c.hosts?.length?` · ${c.hosts.join(', ')}`:'';
+    const k=!c.ok?'err':(c.warning?'warn':(c.skipped?'skip':'ok'));
+    return `<li class="${k}"><b>${esc(mark)} ${esc(c.title)}</b> — ${esc(text)}${esc(extra)}</li>`;
+  }).join('');
+  box.innerHTML=`<div class="parser-probe-h">${esc(d?.summary||'Нет ответа')}</div>`
+    +(rows?`<ul class="parser-probe-list">${rows}</ul>`:'');
+}
+
+async function runParserProbe(){
+  const box=document.getElementById('parserProbe');
+  const btn=document.getElementById('parserProbeBtn');
+  if(!box||!btn) return;
+  btn.disabled=true;
+  box.hidden=false;
+  box.className='parser-probe';
+  box.innerHTML='<div class="parser-probe-h">Проверяю Yandex Search API…</div>';
+  try{
+    const d=await apiJson('/api/parser/probe',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({ search:readSettingsPatch().search, query:'холодильник ATLANT' }),
+    });
+    renderParserProbe(box,d);
+  }catch(e){
+    renderParserProbe(box,{ ok:false, summary:'Не удалось запустить проверку', checks:[{ id:'probe', ok:false, title:'Проверка', error:e.message }] });
+  }finally{
+    btn.disabled=false;
+  }
 }
 
 async function loadSettings(){

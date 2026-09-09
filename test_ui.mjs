@@ -149,6 +149,7 @@ export const api={syncSteps,setCnt,setCntFree,applyCnt,applySource,setSource,pic
   loadFile,classifyPayload,normalizeCatalogProduct,catIdFromFilename,catNameFromId,
   productsFromPayload,isFiltersPayload,filtersForExport,
   showPage,setTab,renderSettings,addProvider,removeProvider,addEngine,readSettingsPatch,
+  renderParserProbe,runParserProbe,
   renderExportTemplates,applyExportTemplate,shapeProductsFile,shapeFiltersFile,exportPack,
   modelsFromSettings,pickDefaultModel,applyDefaultProviderModels,looksLikeModelId,catalogHint,
   addDumpSection,openDumpDest,cancelDumpDest,dumpBodyWithName,matchDictCatalog,
@@ -403,6 +404,32 @@ t('рисует провайдеров и условия из ответа се�
   assert.strictEqual(G('setYaRegion').value, '225');
   assert.ok(G('setYaOn').checked);
   assert.ok(G('setSearchOn').checked);
+  assert.ok(G('parserProbeBtn'));
+});
+t('проверка парсера показывает ошибку ключа и успех API', () => {
+  const box = G('parserProbe');
+  api.renderParserProbe(box, {
+    ok: false,
+    summary: 'Нет ключа API. Вставьте ключ или задайте YANDEX_SEARCH_API_KEY.',
+    checks: [
+      { id: 'search', ok: true, title: 'Поиск в сети', detail: 'включён' },
+      { id: 'yandex', ok: false, title: 'Yandex Search API', error: 'Нет ключа API. Вставьте ключ или задайте YANDEX_SEARCH_API_KEY.' },
+    ],
+  });
+  assert.match(box.className, /\berr\b/);
+  assert.match(box.innerHTML, /Нет ключа API/);
+  assert.match(box.innerHTML, /Yandex Search API/);
+  api.renderParserProbe(box, {
+    ok: true,
+    summary: 'Yandex Search API работает: 2 ссылки за 40 мс',
+    checks: [
+      { id: 'search', ok: true, title: 'Поиск в сети', detail: 'включён' },
+      { id: 'yandex', ok: true, title: 'Yandex Search API', detail: '2 ссылки за 40 мс', hosts: ['shop.example'] },
+    ],
+  });
+  assert.match(box.className, /\bok\b/);
+  assert.match(box.innerHTML, /работает/);
+  assert.match(box.innerHTML, /shop\.example/);
 });
 t('добавляет провайдера из заготовки', () => {
   api.addProvider('ollama');

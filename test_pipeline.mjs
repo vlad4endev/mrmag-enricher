@@ -22,6 +22,7 @@ import {
   parseYandexSearchXml, parseYandexSearchResponse,
   searchQuery, countryQuery, missingQuery, searchWeb, searchDuckDuckGo, searchYandex,
   resolveSearchSettings, publicParserStatus, isTimeoutError, fetchPage,
+  probeParser, explainSearchError,
 } from './pipeline/search.js';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -744,6 +745,92 @@ console.log('golden tests passed');
     }
   }
   console.log('ok parser status for the UI');
+}
+
+{
+  const prev = {
+    YANDEX_SEARCH_API_KEY: process.env.YANDEX_SEARCH_API_KEY,
+    YANDEX_FOLDER_ID: process.env.YANDEX_FOLDER_ID,
+    YC_API_KEY: process.env.YC_API_KEY,
+    YC_FOLDER_ID: process.env.YC_FOLDER_ID,
+    FOLDER_ID: process.env.FOLDER_ID,
+    SEARCH_API_KEY: process.env.SEARCH_API_KEY,
+  };
+  delete process.env.YANDEX_SEARCH_API_KEY;
+  delete process.env.YANDEX_FOLDER_ID;
+  delete process.env.YC_API_KEY;
+  delete process.env.YC_FOLDER_ID;
+  delete process.env.FOLDER_ID;
+  delete process.env.SEARCH_API_KEY;
+  try {
+    const off = await probeParser({ search: { enabled: false, duckduckgo: { enabled: false } } });
+  assert.equal(off.ok, false);
+  assert.match(off.summary, /выключен/i);
+  assert.ok(off.checks.some(c => c.id === 'search' && c.ok === false));
+
+  const noKey = await probeParser({
+    search: {
+      enabled: true,
+      yandex: { enabled: true, api_key: '', folder_id: 'b1g', api_key_env: '__no_ya_key__', folder_id_env: '__no_ya_folder__' },
+      duckduckgo: { enabled: false },
+    },
+  });
+  assert.equal(noKey.ok, false);
+  assert.match(noKey.summary, /ключа/i);
+  assert.ok(noKey.checks.some(c => c.id === 'yandex' && c.code === 'no_key'));
+
+  const noFolder = await probeParser({
+    search: {
+      enabled: true,
+      yandex: { enabled: true, api_key: 'yk', folder_id: '', api_key_env: '__no_ya_key__', folder_id_env: '__no_ya_folder__' },
+      duckduckgo: { enabled: false },
+    },
+  });
+  assert.equal(noFolder.ok, false);
+  assert.match(noFolder.summary, /Folder ID/i);
+
+  const auth = explainSearchError('Yandex Search API: 42 ключ не прошёл аутентификацию');
+  assert.equal(auth.code, '42');
+  assert.match(auth.text, /не принят/);
+
+  const live = await probeParser({
+    search: {
+      enabled: true,
+      yandex: { enabled: true, api_key: 'yk', folder_id: 'b1g' },
+      duckduckgo: { enabled: false },
+    },
+  }, { searchYandexFn: async () => ['https://shop.example/card', 'https://other.example/t'] });
+  assert.equal(live.ok, true);
+  assert.match(live.summary, /работает/);
+  const ya = live.checks.find(c => c.id === 'yandex');
+  assert.deepEqual(ya.hosts, ['shop.example', 'other.example']);
+
+  const empty = await probeParser({
+    search: {
+      enabled: true,
+      yandex: { enabled: true, api_key: 'yk', folder_id: 'b1g' },
+      duckduckgo: { enabled: false },
+    },
+  }, { searchYandexFn: async () => { throw new Error('Yandex Search API: выдача без ссылок'); } });
+  assert.equal(empty.ok, true, 'пустая выдача — ключ принят');
+  assert.equal(empty.checks.find(c => c.id === 'yandex').warning, true);
+
+  const bad = await probeParser({
+    search: {
+      enabled: true,
+      yandex: { enabled: true, api_key: 'yk', folder_id: 'b1g' },
+      duckduckgo: { enabled: false },
+    },
+  }, { searchYandexFn: async () => { throw new Error('Yandex Search API: 42 ключ не прошёл аутентификацию'); } });
+  assert.equal(bad.ok, false);
+  assert.match(bad.summary, /не принят/);
+  console.log('ok parser probe: config errors, live ok, empty, auth fail');
+  } finally {
+    for (const [k, v] of Object.entries(prev)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  }
 }
 
 {

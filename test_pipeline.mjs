@@ -15,12 +15,12 @@ import {
 } from './pipeline/dumps.js';
 import { displayEnum, isBrandFilterKey, valueFold } from './pipeline/types.js';
 import { identityMatches, nameKeyTokens, parseIdentity } from './pipeline/identity.js';
-import { extractPairsFromPage, pairFromTableCells, parseProductFields } from './pipeline/parse.js';
-import { needsExternal, parseProductBySpecs, lookupExternal, enrichMissing, needsCountry, lookupCountry, parseCountryFromPage } from './pipeline/external.js';
+import { extractPairsFromPage, pairFromTableCells, parseProductFields, needDescriptionParse, collectParseHits, collectPageHits, formatParseNotes } from './pipeline/parse.js';
+import { needsExternal, parseProductBySpecs, lookupExternal, enrichMissing, needsCountry, lookupCountry, parseCountryFromPage, needsMissingLookup, lookupMissing, parseMissingFromPage, missingRequiredCodes } from './pipeline/external.js';
 import {
   parseSearchResults, parseDuckDuckGoResults, isDuckDuckGoBlocked,
   parseYandexSearchXml, parseYandexSearchResponse,
-  searchQuery, countryQuery, searchWeb, searchDuckDuckGo, searchYandex,
+  searchQuery, countryQuery, missingQuery, searchWeb, searchDuckDuckGo, searchYandex,
   resolveSearchSettings, publicParserStatus, isTimeoutError, fetchPage,
 } from './pipeline/search.js';
 import fs from 'node:fs';
@@ -205,6 +205,60 @@ console.log('golden tests passed');
 }
 
 {
+  const requiredAnn = [
+    'Тип загрузки - Фронтальная',
+    'Максимальная загрузка белья - 6 кг',
+    'Максимальная скорость отжима - 1000 об/мин',
+    'Класс энергоэффективности - A++',
+    'Уровень шума при стирке - 59 дБ',
+    'Количество программ - 16',
+    'Ширина - 59.6 см',
+    'Глубина - 45 см',
+    'Тип двигателя - Инверторный',
+  ].join('<br>');
+  const desc = 'Макс. загрузка - 9 кг<br>Скорость отжима - 800 об/мин<br>Высота - 85 см<br>Цвет - белый<br>Дисплей - есть';
+  const parsed = parseProductFields({ annotation: requiredAnn, description: desc }, d467);
+  assert.equal(needDescriptionParse(parsed.fromAnn, d467, { format: parsed.format, dumpDesc: true }), false);
+  assert.equal(parsed.fromDesc.length, 0, `шаг 2 не должен парсить, если шаг 1 закрыл обязательные: ${parsed.fromDesc.map(x => x.key).join(' | ')}`);
+  const r = normalizeProduct({
+    id: 2,
+    name: 'Стиральная машина Test 6kg',
+    annotation: requiredAnn,
+    description: desc,
+  }, d467, config);
+  assert.equal(r.attrs.load_max, 6, `S1 не должен уступить парсингу description, got ${r.attrs.load_max}`);
+  assert.equal(r.attrs.spin_max, 1000);
+  console.log('ok step 2 parse skipped when required filters filled');
+}
+
+{
+  const partialAnn = [
+    'Тип загрузки - Фронтальная',
+    'Максимальная загрузка белья - 6 кг',
+    'Максимальная скорость отжима - 1000 об/мин',
+    'Класс энергоэффективности - A++',
+    'Уровень шума при стирке - 59 дБ',
+    'Количество программ - 16',
+    'Ширина - 59.6 см',
+    'Глубина - 45 см',
+  ].join('<br>');
+  const desc = 'Тип двигателя - Инверторный<br>Макс. загрузка - 9 кг<br>Цвет - белый<br>Дисплей - есть<br>Гарантия - 2 года';
+  const parsed = parseProductFields({ annotation: partialAnn, description: desc }, d467);
+  assert.ok(parsed.fromAnn.length >= 8);
+  assert.ok(parsed.fromDesc.length >= 1, `шаг 2 должен разобрать dump, если шаг 1 не закрыл обязательный фильтр: ${parsed.fromDesc.map(x => x.key).join(' | ')}`);
+  const r = normalizeProduct({
+    id: 3,
+    name: 'Стиральная машина Test 6kg',
+    annotation: partialAnn,
+    description: desc,
+  }, d467, config);
+  assert.equal(r.attrs.load_max, 6, 'шаг 1 не уступает парсингу по уже заполненной оси');
+  assert.ok(r.attrs.motor_type, `шаг 2 добирает пустой обязательный фильтр, got ${r.attrs.motor_type}`);
+  assert.equal(r.provenance.motor_type.level, 'S2');
+  console.log('ok step 2 parse fills only missing required filter');
+}
+
+{
   assert.deepEqual(pairFromTableCells(['Ширина', '60 см']), ['Ширина', '60 см']);
   assert.deepEqual(pairFromTableCells(['★', 'Ширина', '60 см']), ['Ширина', '60 см']);
   assert.deepEqual(pairFromTableCells(['Высота', '85', 'см']), ['Высота', '85 см']);
@@ -221,6 +275,34 @@ console.log('golden tests passed');
   assert.match(String(byKey['Ширина'] || ''), /60/);
   assert.match(String(byKey['Скорость отжима'] || ''), /1200/);
   console.log('ok page parser: json-ld + div specs + 3-cell');
+}
+
+{
+  const parsed = collectParseHits({
+    annotation: 'Макс. загрузка - 6 кг<br>Скорость отжима - 1000 об/мин',
+    description: 'Цвет - белый<br>Тип загрузки - фронтальная<br>Установка - отдельно стоящая<br>Дисплей - есть',
+  }, d467);
+  assert.ok(parsed.hits.length >= 2, `hits ${parsed.hits.length}`);
+  assert.ok(parsed.hits.some(h => h.where === 'аннотация' && /загрузк/i.test(h.key)));
+  const notes = formatParseNotes(parsed, { origin: 'карточка' });
+  assert.match(notes[0], /Парсинг \(карточка\)/);
+  assert.match(notes.join('\n'), /аннотация/);
+  assert.match(notes.join('\n'), /6 кг/);
+  console.log('ok parse log: what was found and from where');
+}
+
+{
+  const page = collectPageHits([
+    { name: 'Общий объём', value: '310 л', via: 'table' },
+    { name: 'Цвет', value: 'белый', via: 'jsonld' },
+  ]);
+  assert.equal(page.hits[0].where, 'таблица');
+  assert.equal(page.hits[1].where, 'JSON-LD');
+  const notes = formatParseNotes(page, { origin: 'dns-shop.ru' });
+  assert.match(notes[0], /dns-shop\.ru/);
+  assert.match(notes.join('\n'), /таблица: Общий объём = 310 л/);
+  assert.match(notes.join('\n'), /JSON-LD: Цвет = белый/);
+  console.log('ok page parse log groups by extractor');
 }
 
 {
@@ -344,6 +426,73 @@ console.log('golden tests passed');
   assert.equal(rec.provenance.country.level, 'S3');
   assert.equal(rec.attrs.load_max, 6, 'чужие поля с страницы страны не затирают свои');
   console.log('ok country from web by model, neighbour rejected, source fields kept');
+}
+
+{
+  const rec = normalizeProduct(p467[419718], d467, config);
+  assert.equal(needsExternal(rec), false, 'карточка живая — полный S3-скрейп не нужен');
+  assert.equal(rec.attrs.spin_max, null, 'не выдумывать об/мин из 5109');
+  assert.ok(missingRequiredCodes(rec, d467).includes('spin_max'));
+  assert.equal(needsMissingLookup(rec, d467), true);
+  assert.equal(needsMissingLookup(normalizeProduct(p467[343148], d467, config), d467), false);
+  assert.match(missingQuery(rec, d467, ['spin_max']), /BWSA 5109/);
+  assert.match(missingQuery(rec, d467, ['spin_max']), /отжим/i);
+  assert.match(missingQuery(rec, d467, ['spin_max', 'energy_class']), /характеристики/);
+
+  const html = `
+    <h1>Стиральная машина Indesit BWSA 5109 WWV</h1>
+    <table>
+      <tr><td>Скорость отжима</td><td>1000 об/мин</td></tr>
+      <tr><td>Максимальная загрузка</td><td>9 кг</td></tr>
+    </table>`;
+  const parsed = parseMissingFromPage(html, rec, d467, config);
+  assert.equal(parsed.ok, true, parsed.reason);
+  assert.equal(parsed.pairs.some(p => /отжим/i.test(p.key)), true);
+  assert.equal(parsed.pairs.some(p => /загрузк/i.test(p.key)), false, 'уже заполненную загрузку со страницы не берём');
+
+  const found = await lookupMissing(rec, d467, config, {
+    search: async q => {
+      assert.match(q, /BWSA 5109/);
+      assert.doesNotMatch(q, /характеристики товара/);
+      return ['https://a.test/wrong', 'https://b.test/spin'];
+    },
+    fetchHtml: async url => {
+      if (url.includes('wrong')) {
+        return '<h1>Indesit BWSA 7109 WWV</h1><table><tr><td>Скорость отжима</td><td>1400 об/мин</td></tr></table>';
+      }
+      return html;
+    },
+  });
+  assert.equal(found.ok, true, found.reason);
+  assert.equal(rec.attrs.spin_max, 1000);
+  assert.equal(rec.provenance.spin_max.level, 'S3');
+  assert.equal(rec.attrs.load_max, 5, 'своя загрузка не затирается чужой');
+
+  const f12 = normalizeProduct(p467[444500], d467, config);
+  assert.equal(f12.attrs.spin_max, null, 'F12 из артикула — не об/мин');
+  const noPage = await lookupMissing(f12, d467, config, {
+    search: async () => ['https://x.test/other'],
+    fetchHtml: async () => '<h1>LG F14A8TD</h1><table><tr><td>Скорость отжима</td><td>1400 об/мин</td></tr></table>',
+  });
+  assert.equal(noPage.ok, false);
+  assert.equal(f12.attrs.spin_max, null, 'чужая модель F14 не подходит к F12');
+  console.log('ok missing required filter from web by model, article not parsed as rpm');
+}
+
+{
+  const rec = normalizeProduct(p467[419718], d467, config);
+  const notes = [];
+  const results = await enrichMissing([rec], d467, config, {
+    search: async () => ['https://b.test/spin'],
+    fetchHtml: async () => `
+      <h1>Стиральная машина Indesit BWSA 5109 WWV</h1>
+      <table><tr><td>Скорость отжима</td><td>1200 об/мин</td></tr></table>`,
+    onNote: m => notes.push(m),
+  });
+  assert.ok(results.some(r => r.ok && r.rec.attrs.spin_max === 1200), results.map(r => r.reason).join('; '));
+  assert.equal(rec.attrs.spin_max, 1200);
+  assert.ok(notes.some(n => /недостающ/i.test(n)), notes.join(' | '));
+  console.log('ok enrichMissing looks up full cards with an empty required filter');
 }
 
 {
@@ -1200,6 +1349,21 @@ console.log('golden tests passed');
   const built = buildFilters(exported, d467, config);
   assert.equal(expectedFilters(d467).length, 18);
   assert.equal(expectedFilters(d523).length, 20);
+  {
+    const { isRequiredFilter, requiredFilterAttrs, optionalFilterAttrs } = await import('./pipeline/required_filters.js');
+    assert.equal(isRequiredFilter(d467.byCode.get('load_type')), true);
+    assert.equal(isRequiredFilter(d467.byCode.get('load_max')), true);
+    assert.equal(isRequiredFilter(d467.byCode.get('color')), false);
+    assert.equal(isRequiredFilter(d467.byCode.get('brand')), false);
+    assert.ok(requiredFilterAttrs(d467).some(a => a.code === 'energy_class'));
+    assert.ok(optionalFilterAttrs(d467).some(a => a.code === 'color'));
+    const { heuristicSuggest, buildImportSuggestPrompt } = await import('./pipeline/schema_import.js');
+    assert.match(buildImportSuggestPrompt(d467.attrs, { catId: '467' }), /ОБЯЗАТЕЛЬНЫЕ ФИЛЬТРЫ КАТЕГОРИИ/);
+    const hsReq = heuristicSuggest([{ id: 'i1', raw: 'Производительность — 650', label: 'Производительность', value: '650' }], []);
+    assert.equal(hsReq[0].proposed.facet_required, true);
+    const hsOpt = heuristicSuggest([{ id: 'i1', raw: 'Цвет — белый', label: 'Цвет', value: 'белый' }], []);
+    assert.equal(hsOpt[0].proposed.facet_required, false);
+  }
   const ids = [11391, 29921, 44772, 12957, 44773, 44782, 52904, 128925, 182681, 190925];
   const recs = ids.map(id => all.find(x => x.id === id)).filter(Boolean);
   const rows = recs.map(r => serializeProduct(r, d467, built.debug));
@@ -2032,6 +2196,8 @@ console.log('golden tests passed');
   const inv = collectFacetValueInventory(recs523, d523);
   assert.ok(inv.some(f => f.attr_code === 'fridge_type'));
   assert.ok(buildFiltersAgentPrompt(d523, inv, { catId: '523' }).includes('НЕ предлагай новые фасеты'));
+  assert.ok(buildFiltersAgentPrompt(d523, inv, { catId: '523' }).includes('required=true'));
+  assert.ok(inv.some(f => f.attr_code === 'fridge_type' && f.required === true));
 
   const parsedBad = parseFiltersAgentResponse({
     mappings: [
@@ -2180,7 +2346,7 @@ console.log('golden tests passed');
 }
 
 {
-  const { matchBucket, toIntEnum, coerceFacetNumber, assignFilterValues } = await import('./pipeline/facets.js');
+  const { matchBucket, toIntEnum, coerceFacetNumber, assignFilterValues, buildFilters } = await import('./pipeline/facets.js');
   const { applyEnrichedSpecs } = await import('./pipeline/export.js');
   const { markCategoryMismatch } = await import('./pipeline/category_mismatch.js');
   const { buildFilterCoverageReport } = await import('./pipeline/filter_report.js');
@@ -2224,9 +2390,14 @@ console.log('golden tests passed');
   assert.ok(!Object.keys(d467.byCode.get('color').value_aliases).includes('Антрацит'));
   assert.equal(aliasValue(d523.byCode.get('fridge_type'), 'Трехкамерный'), 'Трёхкамерный');
   assert.equal(aliasValue(d523.byCode.get('freezer_pos'), 'Верхнее'), 'Сверху');
-  assert.ok(!Object.keys(d523.byCode.get('freezer_pos').value_aliases).includes('Сбоку'));
-  assert.equal(matchBucket(92, d467.byCode.get('height').facet), null);
-  assert.equal(matchBucket(72, d523.byCode.get('depth').facet), null);
+  assert.equal(aliasValue(d523.byCode.get('freezer_pos'), 'Отсутствует'), 'Отсутствует');
+  assert.equal(aliasValue(d523.byCode.get('freezer_pos'), 'Слева'), 'Сбоку');
+  assert.ok(Object.keys(d523.byCode.get('freezer_pos').value_aliases).includes('Сбоку'));
+  assert.equal(matchBucket(92, d467.byCode.get('height').facet), '90+');
+  assert.equal(matchBucket(52.5, d467.byCode.get('height').facet), '50-70');
+  assert.equal(matchBucket(72, d523.byCode.get('depth').facet), '70+');
+  assert.equal(matchBucket(44.2, d523.byCode.get('depth').facet), '40-45');
+  assert.equal(matchBucket(49.2, d523.byCode.get('height').facet), '40-50');
   assert.ok(Object.keys(d467.byCode.get('energy_class').value_aliases).includes('C'));
   assert.ok(!Object.keys(d467.byCode.get('energy_class').value_aliases).includes('D'));
   assert.ok(!Object.keys(d523.byCode.get('energy_class').value_aliases).includes('E'));
@@ -2266,6 +2437,103 @@ console.log('golden tests passed');
   const washerOk = { id: 1, name: 'Стиральная машина ATLANT 60С1010' };
   assert.equal(markCategoryMismatch(washerOk, '467'), null);
 
+  const { parseDimensions } = await import('./pipeline/dimensions.js');
+  const { normalizeValue } = await import('./pipeline/types.js');
+
+  const filt = (id, dict, src) => {
+    const r = normalizeProduct(src[id], dict, config);
+    const built = buildFilters([r], dict, config);
+    return { r, assigned: assignFilterValues(r, dict, built.debug, config) };
+  };
+
+  const w272663 = filt(272663, d467, p467);
+  assert.equal(w272663.r.attrs.install, 'Отдельностоящая');
+  assert.deepEqual(w272663.assigned['Установка'], ['Отдельностоящая']);
+
+  const w343148 = filt(343148, d467, p467);
+  assert.equal(w343148.r.attrs.height, 98.5);
+  assert.equal(w343148.r.attrs.width, 70.1);
+  assert.deepEqual(w343148.assigned['Высота, см'], ['90+']);
+  assert.deepEqual(w343148.assigned['Ширина, см'], ['65+']);
+
+  const w388135 = filt(388135, d467, p467);
+  assert.deepEqual(w388135.r.attrs.control_type, ['Электронное']);
+  assert.deepEqual(w388135.assigned['Тип управления'], ['Электронное']);
+
+  const w423424 = filt(423424, d467, p467);
+  assert.equal(w423424.r.attrs.depth, 49);
+  assert.deepEqual(w423424.assigned['Глубина, см'], ['45-50']);
+
+  const messy = parseDimensions(
+    'Размеры (ширина х глубина(*макс. корпус/ **с открытой дверцей) х высота, мм.)',
+    '600 x 550(*590/**1030) x 850',
+  );
+  assert.deepEqual(messy?.dims, { width: 60, depth: 55, height: 85 });
+  const w406572 = filt(406572, d467, p467);
+  assert.equal(w406572.r.attrs.height, 85);
+  assert.deepEqual(w406572.assigned['Высота, см'], ['85-90']);
+
+  const w419718 = filt(419718, d467, p467);
+  assert.equal(w419718.r.attrs.spin_max, null, 'не выдумывать об/мин из артикула');
+  assert.equal(w419718.assigned['Скорость отжима, об/мин'], undefined);
+
+  const w451601 = filt(451601, d467, p467);
+  assert.deepEqual(w451601.assigned['Тип управления'], ['Электронное']);
+
+  const w455270 = filt(455270, d467, p467);
+  assert.equal(w455270.r.attrs.install, 'Отдельностоящая');
+  assert.equal(w455270.r.attrs.load_type, null, 'сушилка: не подставлять фронтальную');
+
+  const w458847 = filt(458847, d467, p467);
+  assert.equal(w458847.r.attrs.height, 52.5);
+  assert.deepEqual(w458847.assigned['Высота, см'], ['50-70']);
+  assert.equal(w458847.r.attrs.spin_max, null);
+
+  const abs = normalizeValue(d523.byCode.get('freezer_pos'), 'Отсутствует');
+  assert.equal(abs.ok, true);
+  assert.equal(abs.value, 'Отсутствует');
+
+  const f805 = filt(805, d523, p523);
+  assert.equal(f805.r.attrs.energy_class, 'A+');
+  assert.equal(f805.r.attrs.freezer_pos, 'Снизу');
+  assert.deepEqual(f805.assigned['Класс энергоэффективности'], ['A+']);
+  assert.deepEqual(f805.assigned['Расположение морозильной камеры'], ['Снизу']);
+
+  const f247375 = filt(247375, d523, p523);
+  assert.equal(f247375.r.attrs.chambers, 2);
+  assert.equal(f247375.r.attrs.freezer_pos, 'Снизу');
+  assert.deepEqual(f247375.assigned['Количество камер'], ['2']);
+
+  const f316688 = filt(316688, d523, p523);
+  assert.equal(f316688.r.attrs.height, 49.2);
+  assert.deepEqual(f316688.assigned['Высота, см'], ['40-50']);
+
+  const f377295 = filt(377295, d523, p523);
+  assert.equal(f377295.r.attrs.freezer_pos, 'Отсутствует');
+  assert.deepEqual(f377295.assigned['Расположение морозильной камеры'], ['Отсутствует']);
+
+  const f236424 = filt(236424, d523, p523);
+  assert.equal(f236424.r.attrs.freezer_pos, 'Сверху');
+  assert.deepEqual(f236424.assigned['Расположение морозильной камеры'], ['Сверху']);
+
+  const f385186 = filt(385186, d523, p523);
+  assert.equal(f385186.r.attrs.depth, 44.2);
+  assert.deepEqual(f385186.assigned['Глубина, см'], ['40-45']);
+
+  const f403857 = filt(403857, d523, p523);
+  assert.equal(f403857.r.attrs.freezer_pos, 'Сбоку');
+  assert.deepEqual(f403857.assigned['Расположение морозильной камеры'], ['Сбоку']);
+
+  const f408165 = filt(408165, d523, p523);
+  assert.equal(f408165.r.attrs.depth, 72.6);
+  assert.deepEqual(f408165.assigned['Глубина, см'], ['70+']);
+
+  const f461138 = filt(461138, d523, p523);
+  assert.equal(f461138.r.attrs.height, null, 'пустая карточка — не выдумывать габариты');
+  assert.equal(f461138.r.attrs.energy_class, null);
+
+  console.log('ok listed SKU holes: install/control/energy/freezer/size buckets');
+
   const report = buildFilterCoverageReport({
     catId: 467,
     dict: d467,
@@ -2281,6 +2549,9 @@ console.log('golden tests passed');
   assert.ok(report.filters.every(f => Array.isArray(f.unmapped_values)));
   const ctrl = report.filters.find(f => f.name === 'Тип управления');
   assert.deepEqual(ctrl.unmapped_values, [{ value: 'поворотный механизм', count: 4 }]);
+  assert.ok(Array.isArray(report.required_filters) && report.required_filters.includes('Загрузка белья, кг'));
+  assert.ok(!report.required_filters.includes('Цвет'));
+  assert.ok(Array.isArray(report.products_missing_required_filters));
 
   const { buildCustomerExport: bce2 } = await import('./pipeline/export.js');
   const mixed = await bce2([

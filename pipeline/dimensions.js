@@ -55,7 +55,9 @@ export function parseDimensions(key, value) {
   if (isPackingKey(key) || isPackingKey(value)) {
     return { dims: null, packed: true, flag: 'packing_discarded' };
   }
-  const nums = parseTriple(value);
+  // «600 x 550(*590/**1030) x 850» — в скобках альтернативы, не третья ось.
+  const cleaned = String(value || '').replace(/\([^)]*\)/g, ' ').replace(/\s+/g, ' ').trim();
+  const nums = parseTriple(cleaned) || parseTriple(value);
   if (!nums) return null;
   const unit = unitHint(key, value);
   const cm = nums.map(n => +toCm(n, unit).toFixed(2));

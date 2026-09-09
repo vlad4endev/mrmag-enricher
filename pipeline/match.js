@@ -34,15 +34,29 @@ function fuzzyBlacklisted(nk, dict) {
   return Boolean(blacklistHit(nk, dict));
 }
 
+function looksLikeClass(value) {
+  const s = String(value || '').trim();
+  if (/^[a-gа-е]\+{0,3}$/iu.test(s)) return true;
+  return /класс\s*[a-gа-е]\+{0,3}/iu.test(s);
+}
+
+function looksLikeBool(value) {
+  const s = String(value || '').trim().toLowerCase().replace(/ё/g, 'е');
+  return /^(да|нет|есть|имеется|true|false|yes|no)$/i.test(s);
+}
+
 function pickSyn(list, value) {
   if (list.length === 1) return list[0];
-  const looksClass = /^[a-gа-е]\+{0,3}$/i.test(String(value || '').trim());
+  const looksClass = looksLikeClass(value);
   const looksNum = /^-?\d/.test(String(value || '').trim());
+  const looksBool = looksLikeBool(value);
   const scored = list.map(x => {
     let s = x.len;
     if (looksClass && x.attr.type === 'class_scale') s += 100;
     if (looksNum && (x.attr.type === 'number' || x.attr.type === 'integer')) s += 100;
     if (!looksNum && x.attr.type === 'enum') s += 10;
+    if (x.attr.type === 'boolean' && !looksBool) s -= 50;
+    if (x.attr.type === 'boolean' && looksBool) s += 40;
     return { ...x, s };
   });
   scored.sort((a, b) => b.s - a.s);

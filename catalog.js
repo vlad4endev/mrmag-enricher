@@ -26,9 +26,11 @@ import { fileURLToPath } from 'url';
 import { netError, isEnrichable, modelToken, MIN_SOURCE_CHARS, extractFacts, hasCountryFact, canSearchWeb, schemaFor, hydrateFromDump, isSourceThin } from './lib.js';
 import { specFacets, enrichedRows } from './export_v2.js';
 import { loadConfig, loadCategories, hasDictionary } from './pipeline/dict.js';
+import { normalizeProduct } from './pipeline/normalize.js';
+import { lookupMissing, needsMissingLookup } from './pipeline/external.js';
 import { CRAWL_SLUGS } from './pipeline/schema.js';
 import { containsTokenSequence, identityMatches, nameKeyTokens, parseIdentity } from './pipeline/identity.js';
-import { extractPairsFromPage, visibleText } from './pipeline/parse.js';
+import { extractPairsFromPage, visibleText, collectPageHits, formatParseNotes } from './pipeline/parse.js';
 import {
   isDuckDuckGoBlocked, isJunkHost, parseDuckDuckGoResults,
   searchWeb as pipelineSearchWeb, countryQuery, searchQuery,
@@ -388,7 +390,7 @@ export function parseAnyProductPage(html, dict) {
     const key = name.toLowerCase();
     if (seen.has(key)) continue;
     seen.add(key);
-    attributes.push({ name, value });
+    attributes.push({ name, value, via: p.via || 'text' });
   }
 
   const body = String(html || '').replace(/<(script|style|noscript|svg|template)[\s\S]*?<\/\1>/gi, ' ');
@@ -565,6 +567,16 @@ function countrySearchIdentity(product, schema) {
   return { brand: product.brand || null, model: modelToken(product.name) };
 }
 
+function withSpecLines(product, pairs, url) {
+  const lines = (pairs || []).map(p => `${p.key} - ${p.value}`);
+  if (!lines.length) return product;
+  return {
+    ...product,
+    annotation: [product.annotation, ...lines].filter(Boolean).join('<br>'),
+    source_url: product.source_url || url,
+  };
+}
+
 /**
  * Страны нет в исходнике → поиск по модели. Совпавшая страница даёт только
  * страну: остальные поля карточки уже свои, чужую таблицу в них не мешаем.
@@ -618,6 +630,36 @@ async function fillCountryFromWeb(product, schema, { onNote = () => {} } = {}) {
 }
 
 /**
+ * Обязательный фильтр (отжим, шум, энергокласс…) пуст при живой карточке —
+ * тот же поиск по модели, что и для страны. Не открываем сеть из‑за цвета
+ * или дисплея. Совпавшая страница дописывает только пустые поля.
+ */
+async function fillMissingFiltersFromWeb(product, schema, { onNote = () => {} } = {}) {
+  const dict = dictOf(schema);
+  if (!dict || !canSearchWeb(product)) return { ok: false, product };
+  let rec;
+  try { rec = normalizeProduct(product, dict, loadConfig(ROOT)); }
+  catch { return { ok: false, product }; }
+  if (!needsMissingLookup(rec, dict)) return { ok: false, product };
+  if (isWebSearchDisabled()) {
+    onNote(`недостающие фильтры в сети не искали: ${webSearchSkippedReason()}`);
+    return { ok: false, product };
+  }
+  const got = await lookupMissing(rec, dict, loadConfig(ROOT), {
+    onNote,
+    search: searchWeb,
+    fetchHtml: url => fetchPage(url, { ua: WEB_UA, timeoutMs: 20_000 }),
+  });
+  if (!got.ok) return { ok: false, product, parser: true };
+  return {
+    ok: true,
+    product: withSpecLines(product, got.pairs, got.url),
+    source: got.url,
+    parser: true,
+  };
+}
+
+/**
  * Товар с описанием: дамп заказчика, своё, иначе найденное в сети.
  * Возвращает { product, gate, source, parser }: product — то, что уходит в модель,
  * gate — вердикт по нему, source — адрес страницы, откуда добран текст,
@@ -629,8 +671,9 @@ async function fillCountryFromWeb(product, schema, { onNote = () => {} } = {}) {
  * таймаут не пропускает карточку, модели уходит исходное имя. Чужие
  * характеристики без совпадения модели по-прежнему не подставляются.
  *
- * Страна производства — отдельный случай: своих характеристик может быть
- * достаточно, а страны в исходнике нет. Тогда ищем её по модели.
+ * Страна производства и дыры в обязательных фильтрах — отдельные случаи:
+ * своих характеристик может быть достаточно, а отжима или страны в исходнике
+ * нет. Тогда ищем их по модели. Артикул (F12, 5109) в об/мин не переводим.
  *
  * Атрибуты магазина остаются нетронутыми: они задают фасеты каталога, и
  * подмешивать в них чужую таблицу нельзя — спор «каталога с самим собой»
@@ -650,6 +693,7 @@ export async function ensureSource(product, schema, { onNote = () => {}, root = 
   let source = null;
   let parser = false;
   let currentGate = gate;
+  let pageParse = null;
 
   if (wantSpecs) {
     const token = modelToken(current.name);
@@ -714,6 +758,10 @@ export async function ensureSource(product, schema, { onNote = () => {}, root = 
         };
         const after = isEnrichable(merged, schema);
         if (!after.ok && !gate.ok) { tried.push(`${host}: ${after.reason}`); continue; }
+        pageParse = collectPageHits(found.attributes);
+        for (const msg of formatParseNotes(pageParse, { origin: host })) {
+          onNote(msg, { step: 'parse' });
+        }
         onNote(`описание из сети: ${host}`);
         current = merged;
         source = url;
@@ -731,6 +779,14 @@ export async function ensureSource(product, schema, { onNote = () => {}, root = 
     }
   }
 
+  const missing = await fillMissingFiltersFromWeb(current, schema, { onNote });
+  if (missing.parser) parser = true;
+  if (missing.ok) {
+    current = missing.product;
+    source = source || missing.source;
+    currentGate = isEnrichable(current, schema);
+  }
+
   const country = await fillCountryFromWeb(current, schema, { onNote });
   if (country.parser) parser = true;
   if (country.ok) {
@@ -745,6 +801,7 @@ export async function ensureSource(product, schema, { onNote = () => {}, root = 
     gate: currentGate,
     ...(source ? { source } : {}),
     ...(parser ? { parser: true } : {}),
+    ...(pageParse ? { page_parse: pageParse } : {}),
   };
 }
 

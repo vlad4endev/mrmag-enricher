@@ -23,10 +23,11 @@
  */
 
 import { nameKeyTokens } from './pipeline/identity.js';
-import { tryLoadDictSchema, extractFactsFromDictionary, loadConfigSafe, CRAWL_SLUGS, specDest, expectedDictCatId, resolveCatId, dictIdFromText, isMustHaveDict } from './pipeline/schema.js';
+import { tryLoadDictSchema, extractFactsFromDictionary, loadConfigSafe, CRAWL_SLUGS, specDest, expectedDictCatId, resolveCatId, dictIdFromText, isMustHaveDict, formatFilterRoleLines } from './pipeline/schema.js';
 import { alignCardTextsToSpecs } from './pipeline/prose_align.js';
 import { matchKey } from './pipeline/match.js';
 import { normalizeValue, aliasValue, enumValuesEqual, isGluedFactDump, displayEnum, valueFold, hasStrictEnum } from './pipeline/types.js';
+import { optionalFilterAttrs, requiredFilterAttrs } from './pipeline/required_filters.js';
 import { loadBenchmarks, dictDebugInfo, formatDictDebug, resolveDictRoot } from './pipeline/dict.js';
 import { findDumpProduct } from './pipeline/dumps.js';
 import {
@@ -895,6 +896,8 @@ export const PROMPT_PLACEHOLDERS = [
   { key: '{{color_facets}}', note: 'палитра цвета' },
   { key: '{{spec_keys}}', note: 'скелет specs в JSON-ответе' },
   { key: '{{highlight_keys}}', note: 'атрибуты с highlight: true' },
+  { key: '{{required_filters}}', note: 'обязательные фильтры категории (витрина)' },
+  { key: '{{optional_filters}}', note: 'остальные (необязательные) фильтры витрины' },
 ];
 
 /**
@@ -1029,6 +1032,34 @@ export function defaultSystemPromptTemplate() {
 
 {{enums}}
 
+4.1 ОБЯЗАТЕЛЬНЫЕ ФИЛЬТРЫ ЭТОЙ КАТЕГОРИИ
+Это оси витрины, без которых товар не находится покупателем. Не путай с
+обычными характеристиками карточки: обязательный фильтр делит каталог на
+группы, по которым люди ИЩУТ этот тип товара.
+
+Как понять, что характеристика должна быть обязательным фильтром категории:
+- покупатель почти всегда выбирает по ней (тип/конструкция, ёмкость, размер
+  ниши, энергокласс, ключевая технология рынка: No Frost, инвертор, сушка);
+- одно и то же значение повторяется у многих SKU и режет выдачу, а не
+  описывает один экземпляр (не артикул, не модель, не серийный номер);
+- это не мелочь витрины: цвет, дисплей, Wi-Fi, защита от детей, вес — обычно
+  необязательные фильтры, если в этой категории по ним почти не ищут;
+- бренд на витрине не фильтр (сопоставление по id).
+
+Для «{{category_name}}» обязательные фильтры:
+{{required_filters}}
+
+Необязательные фильтры (заполняй, если данные есть, но не вместо обязательных):
+{{optional_filters}}
+
+Недостающий обязательный фильтр заполняй по приоритету:
+1) facts, attributes, annotation — готовые пары, в том числе добор из сети
+   по модели (как страну производства);
+2) парсинг description и name — ТОЛЬКО если шаг 1 не дал значения по ЭТОЙ оси.
+Не парси описание «на всякий случай» и не восстанавливай число из артикула
+модели. Нет данных → null, не выдумывай. В user-JSON смотри
+missing_required_filters: это дыры именно этой карточки.
+
 5. НОРМАЛИЗАЦИЯ И ТЕРМИНОЛОГИЯ
 Ты не копируешь формулировку источника дословно — ты ПРИВОДИШЬ её к канону
 магазина. Ошибка, транслит, устаревший ярлык или сленг в данных → исправь
@@ -1111,6 +1142,9 @@ export function promptVarsForSchema(schemaKey) {
     highlight_keys: highlightKeys.length
       ? highlightKeys.join(', ')
       : (s.specKeys || []).slice(0, 8).join(', '),
+    required_filters: formatFilterRoleLines(requiredFilterAttrs(s.dict))
+      || '- (список не размечен — определи обязательные оси сам: тип, ёмкость/размер ниши, энергокласс, ключевая технология рынка; не цвет, не дисплей, не артикул)',
+    optional_filters: formatFilterRoleLines(optionalFilterAttrs(s.dict)) || '- (нет или не размечены)',
     spec_keys: (s.specKeys || [])
       .map(k => `    "${k}": ${(s.numericKeys || []).includes(k) ? 'null' : '"..."'}`)
       .join(',\n'),
@@ -1318,17 +1352,23 @@ export function attrFacts(attributes, schemaKey) {
  */
 export function productFacts(product, schemaKey) {
   const plain = sourceText(product);
-  const fromPlain = extractFacts(plain, schemaKey);
-  // Сырой annotation/description — пока HTML жив; поверх plain.
-  const fromAnn = product?.annotation ? extractFacts(String(product.annotation), schemaKey) : {};
-  const fromDesc = product?.description ? extractFacts(String(product.description), schemaKey) : {};
-  const facts = { ...fromPlain, ...fromDesc, ...fromAnn };
   const { facts: attr, bounds, sources } = attrFacts(product?.attributes, schemaKey);
+  const requiredKeys = schemaFor(schemaKey)?.requiredSpecKeys || [];
+  const fromAnn = product?.annotation ? extractFacts(String(product.annotation), schemaKey) : {};
+  // Шаг 1: attributes + annotation. Шаг 2 (парсинг description) — только
+  // пустые оси, и только если шаг 1 не закрыл обязательный фильтр.
+  const fromPlain = extractFacts(plain, schemaKey);
+  const fromDesc = product?.description ? extractFacts(String(product.description), schemaKey) : {};
+  let facts = requiredKeys.length
+    ? { ...fromAnn }
+    : { ...fromPlain, ...fromDesc, ...fromAnn };
   // Спор не проглатывается молча: это ошибка в самом каталоге, и её владелец —
   // магазин, а не модель. Собираем отдельно от warnings, которые про модель.
   const conflicts = [];
+  const dropped = new Set();
   const drop = (field, text) => {
     conflicts.push({ field, text, attr: sources[field] });
+    dropped.add(field);
     delete facts[field];
     delete bounds[field];
   };
@@ -1336,6 +1376,20 @@ export function productFacts(product, schemaKey) {
   for (const [k, v] of Object.entries(attr)) {
     if (!(k in facts)) { facts[k] = v; continue; }
     if (!sameFact(k, facts[k], v)) drop(k, facts[k]);
+  }
+
+  if (requiredKeys.length) {
+    const needStep2 = requiredKeys.some(k => (facts[k] == null || facts[k] === '') && !dropped.has(k));
+    if (needStep2) {
+      for (const src of [fromDesc, fromPlain]) {
+        for (const [k, v] of Object.entries(src)) {
+          if (v == null || v === '') continue;
+          if (dropped.has(k)) continue;
+          if (facts[k] != null && facts[k] !== '') continue;
+          facts[k] = v;
+        }
+      }
+    }
   }
   // Число из текста вне интервала атрибута — тот же спор источников.
   for (const [k, b] of Object.entries(bounds)) {
@@ -1853,7 +1907,14 @@ export function normalizeResponse(data, sourceText = '', schemaKey, attributes =
 }
 
 // ── ТЕЛО ЗАПРОСА ─────────────────────────────────────────────
-export function buildUserContent(product, facts = null, { benchmarks = null } = {}) {
+export function buildUserContent(product, facts = null, { benchmarks = null, schema = null } = {}) {
+  const required = schema?.requiredSpecKeys
+    || (schema?.dict ? requiredFilterAttrs(schema.dict).map((a) => {
+      const dest = specDest(a);
+      return typeof dest === 'object' ? dest.key : dest;
+    }).filter(Boolean) : []);
+  const missing = required.filter((k) => facts?.[k] == null || facts[k] === '');
+  const filledRequired = required.length - missing.length;
   return JSON.stringify({
     facts:       facts && Object.keys(facts).length ? facts : undefined,
     name:        product.name,
@@ -1865,6 +1926,11 @@ export function buildUserContent(product, facts = null, { benchmarks = null } = 
     attributes:  product.attributes || [],
     price:       product.price,
     benchmarks:  benchmarks || undefined,
+    required_filters: required.length ? required : undefined,
+    missing_required_filters: missing.length ? missing : undefined,
+    filter_task: missing.length
+      ? `Обязательные фильтры категории не заполнены (${filledRequired}/${required.length}). Шаг 1: возьми значение из facts/attributes/annotation (включая добор из сети по модели). Шаг 2: парсинг description/name — только если шаг 1 пуст по этой оси. Не восстанавливай число из артикула. Не выдумывай.`
+      : undefined,
   });
 }
 
@@ -2263,7 +2329,7 @@ export async function enrichProduct(product, opts) {
   const src = sourceText(product);
   const { facts } = productFacts(product, schema);
   const benchmarks = schema.id != null ? loadBenchmarks(schema.id, opts.root) : null;
-  const baseUser = buildUserContent(product, facts, { benchmarks });
+  const baseUser = buildUserContent(product, facts, { benchmarks, schema });
   const dumpRow = findDumpProduct(schemaCatId(schema, product, opts.root), productDumpKey(product), opts.root);
   const attemptsCap = Math.min(2, Math.max(1, maxRetries));
   const repairMax = attemptsCap + AI_REPAIR_PASSES;

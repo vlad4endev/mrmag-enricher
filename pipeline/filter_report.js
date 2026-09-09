@@ -3,6 +3,7 @@
  */
 
 import { isBrandAttr } from './types.js';
+import { requiredFilterAttrs } from './required_filters.js';
 
 const FEW_FILTERS = 5;
 
@@ -79,12 +80,24 @@ export function buildFilterCoverageReport({
     .filter(p => Object.keys(p.filters || {}).length <= FEW_FILTERS)
     .map(p => p.id);
 
+  const requiredNames = requiredFilterAttrs(dict).map(a => a.facet?.label || a.name);
+  const needRequired = Math.min(3, requiredNames.length);
+  const products_missing_required_filters = eligible
+    .filter((p) => {
+      if (!requiredNames.length) return false;
+      const filled = requiredNames.filter(name => hasFilterValue(p.filters, name)).length;
+      return filled < needRequired;
+    })
+    .map(p => p.id);
+
   return {
     category_id: Number(catId) || catId,
     products_total: (products || []).length,
     eligible_products: eligible.length,
     filters,
+    required_filters: requiredNames,
     products_with_few_filters,
+    products_missing_required_filters,
     category_mismatch: mismatchIds,
   };
 }

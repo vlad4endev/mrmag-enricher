@@ -1,13 +1,17 @@
 /**
- * Добор характеристик у товаров без своих данных (S3) и страны производства.
+ * Добор характеристик у товаров без своих данных (S3), дыр в обязательных
+ * фильтрах и страны производства.
  *
  * 1. По имени ищем ту же модель в поисковике.
  * 2. Читаем страницы выдачи, пока бренд и модель (или опознавательные
  *    слова имени) не совпадут.
  * 3. Таблицу характеристик разбираем тем же парсером, что и свой фид,
  *    и дописываем пустые поля. Уже заполненное из annotation не трогаем.
- * 4. Если своих данных достаточно, но страны производства в исходнике нет —
- *    отдельный поиск по модели («бренд модель страна производства»).
+ * 4. Если своих данных достаточно, но обязательный фильтр (отжим, шум,
+ *    энергокласс…) в исходнике пуст — отдельный поиск по модели, как для
+ *    страны. Не восстанавливаем число из артикула (F12, 5109).
+ * 5. Если страны производства в исходнике нет — поиск «бренд модель
+ *    страна производства».
  *
  * WW80AG6S28AELP и WW80AGAS26AXLP — разные товары: чужая страница
  * с соседней моделью отбрасывается.
@@ -17,7 +21,8 @@ import { extractPairsFromPage, visibleText } from './parse.js';
 import { identityMatches, nameKeyTokens } from './identity.js';
 import { ingestPairs } from './normalize.js';
 import { matchKey } from './match.js';
-import { searchWeb, fetchPage, searchQuery, countryQuery, resolveSearchSettings } from './search.js';
+import { requiredFilterAttrs } from './required_filters.js';
+import { searchWeb, fetchPage, searchQuery, countryQuery, missingQuery, resolveSearchSettings } from './search.js';
 
 const MIN_PAIRS = 2;
 
@@ -31,11 +36,15 @@ function filledCount(rec) {
   return n;
 }
 
+function identifiable(rec) {
+  if (rec?.identity?.model) return true;
+  return nameKeyTokens(rec?.name || rec?.identity?.name, rec?.identity?.brand).length > 0;
+}
+
 /** Своих характеристик мало, а по имени товар ещё можно найти. */
 export function needsExternal(rec, { minAttrs = 5 } = {}) {
   if (filledCount(rec) >= minAttrs) return false;
-  if (rec?.identity?.model) return true;
-  return nameKeyTokens(rec?.name || rec?.identity?.name, rec?.identity?.brand).length > 0;
+  return identifiable(rec);
 }
 
 /** Страны нет в исходнике, а по модели ещё можно найти чужую карточку. */
@@ -43,8 +52,31 @@ export function needsCountry(rec, dict) {
   if (!dict?.byCode?.has('country')) return false;
   const v = rec?.attrs?.country;
   if (v != null && v !== '') return false;
-  if (rec?.identity?.model) return true;
-  return nameKeyTokens(rec?.name || rec?.identity?.name, rec?.identity?.brand).length > 0;
+  return identifiable(rec);
+}
+
+function isEmptyAttr(rec, code) {
+  const v = rec?.attrs?.[code];
+  if (v == null || v === '') return true;
+  if (Array.isArray(v) && !v.length) return true;
+  return false;
+}
+
+/**
+ * Обязательные оси витрины, которых нет в карточке.
+ * Страна сюда не входит: у неё свой запрос и parseCountryFromPage.
+ */
+export function missingRequiredCodes(rec, dict) {
+  if (!dict) return [];
+  return requiredFilterAttrs(dict)
+    .map(a => a.code)
+    .filter(code => isEmptyAttr(rec, code));
+}
+
+/** Карточка живая, но покупательский фильтр (отжим, шум, габарит…) пуст. */
+export function needsMissingLookup(rec, dict) {
+  if (!missingRequiredCodes(rec, dict).length) return false;
+  return identifiable(rec);
 }
 
 /**
@@ -97,6 +129,16 @@ function countryPairsOf(pairs, dict, config) {
   });
 }
 
+/** Пары с совпавшей страницы, которые закрывают ещё пустые слоты. */
+export function emptyAttrPairsOf(pairs, rec, dict, config) {
+  const fuzzyMin = config?.fuzzy?.min_score ?? config?.conditions?.fuzzy_min_score ?? 0.9;
+  return (pairs || []).filter(p => {
+    const matched = matchKey(p.key, dict, { value: p.value, fuzzyMin });
+    if (!matched.attr) return false;
+    return isEmptyAttr(rec, matched.attr.code);
+  });
+}
+
 /**
  * На совпавшей модели достаточно одной пары «страна — значение».
  * MIN_PAIRS для полной таблицы здесь не действует: ищем только страну.
@@ -113,6 +155,61 @@ export function parseCountryFromPage(html, identity, dict, config) {
 }
 
 /**
+ * На совпавшей модели берём только то, чего в карточке ещё нет.
+ * MIN_PAIRS полной таблицы не действует: ищем дыру, не весь дамп.
+ */
+export function parseMissingFromPage(html, rec, dict, config) {
+  const text = visibleText(html);
+  if (!identityMatches(text, rec.identity, dict)) {
+    return { ok: false, reason: 'модель не совпала', pairs: [] };
+  }
+  const pairs = extractPairsFromPage(html, dict).map(p => ({ ...p, source: 'S3' }));
+  const useful = emptyAttrPairsOf(pairs, rec, dict, config);
+  if (!useful.length) return { ok: false, reason: 'недостающих характеристик на странице нет', pairs };
+  return { ok: true, pairs: useful };
+}
+
+async function walkSerp(rec, dict, config, io, { query, parsePage, noteStart, noteHit }) {
+  const settings = resolveSearchSettings(config);
+  const search = io.search || (q => searchWeb(q, config));
+  const fetchHtml = io.fetchHtml || (url => fetchPage(url, { timeoutMs: settings.timeoutMs }));
+  const maxPages = io.maxPages ?? settings.tries;
+  const onNote = io.onNote || (() => {});
+
+  let urls = [];
+  try {
+    onNote(noteStart(query));
+    urls = await search(query);
+  } catch (e) {
+    return { rec, ok: false, reason: `поиск не удался: ${e.message}`, query };
+  }
+
+  const tried = [];
+  for (const url of (urls || []).slice(0, maxPages)) {
+    let host = url;
+    try { host = new URL(url).hostname.replace(/^www\./, ''); } catch { /* оставляем url */ }
+    let html;
+    try { html = await fetchHtml(url); }
+    catch { tried.push(`${host}: не открылась`); continue; }
+    const got = parsePage(html, url);
+    if (!got.ok) {
+      tried.push(`${host}: ${got.reason}`);
+      continue;
+    }
+    const page_data = html ? visibleText(html) : '';
+    applyExternal(rec, got.pairs, dict, config, { url, query, page_data });
+    onNote(noteHit(host, rec, got));
+    return { rec, ok: true, url, query, pairs: got.pairs };
+  }
+  return {
+    rec,
+    ok: false,
+    query,
+    reason: tried.length ? tried.join('; ') : 'выдача пуста',
+  };
+}
+
+/**
  * Найти страну производства по модели. Чужие поля не трогаем:
  * карточка уже заполнена, нужен только пропуск в исходнике.
  */
@@ -126,42 +223,35 @@ export async function lookupCountry(rec, dict, config, io = {}) {
   }
   const query = io.query || countryQuery(rec);
   if (!query) return { rec, ok: false, reason: 'пустой поисковый запрос' };
-  const search = io.search || (q => searchWeb(q, config));
-  const fetchHtml = io.fetchHtml || (url => fetchPage(url, { timeoutMs: settings.timeoutMs }));
-  const maxPages = io.maxPages ?? settings.tries;
-  const onNote = io.onNote || (() => {});
-
-  let urls = [];
-  try {
-    onNote(`ищем страну: ${query}`);
-    urls = await search(query);
-  } catch (e) {
-    return { rec, ok: false, reason: `поиск не удался: ${e.message}`, query };
-  }
-
-  const tried = [];
-  for (const url of (urls || []).slice(0, maxPages)) {
-    let host = url;
-    try { host = new URL(url).hostname.replace(/^www\./, ''); } catch { /* оставляем url */ }
-    let html;
-    try { html = await fetchHtml(url); }
-    catch { tried.push(`${host}: не открылась`); continue; }
-    const got = parseCountryFromPage(html, rec.identity, dict, config);
-    if (!got.ok) {
-      tried.push(`${host}: ${got.reason}`);
-      continue;
-    }
-    const page_data = html ? visibleText(html) : '';
-    applyExternal(rec, got.pairs, dict, config, { url, query, page_data });
-    onNote(`страна с ${host}: ${rec.attrs.country}`);
-    return { rec, ok: true, url, query, pairs: got.pairs };
-  }
-  return {
-    rec,
-    ok: false,
+  return walkSerp(rec, dict, config, io, {
     query,
-    reason: tried.length ? tried.join('; ') : 'выдача пуста',
-  };
+    parsePage: html => parseCountryFromPage(html, rec.identity, dict, config),
+    noteStart: q => `ищем страну: ${q}`,
+    noteHit: (host, rec) => `страна с ${host}: ${rec.attrs.country}`,
+  });
+}
+
+/**
+ * Обязательный фильтр пуст в исходнике → поиск по модели, как для страны.
+ * Артикул (F12, 5109) в об/мин не переводим: берём только пару со страницы.
+ */
+export async function lookupMissing(rec, dict, config, io = {}) {
+  const settings = resolveSearchSettings(config);
+  if (!settings.enabled) {
+    return { rec, ok: false, reason: 'поиск выключен' };
+  }
+  const codes = missingRequiredCodes(rec, dict);
+  if (!codes.length || !identifiable(rec)) {
+    return { rec, ok: false, reason: 'обязательные фильтры уже заполнены или искать не по чему' };
+  }
+  const query = io.query || missingQuery(rec, dict, codes);
+  if (!query) return { rec, ok: false, reason: 'пустой поисковый запрос' };
+  return walkSerp(rec, dict, config, io, {
+    query,
+    parsePage: html => parseMissingFromPage(html, rec, dict, config),
+    noteStart: q => `ищем недостающие характеристики: ${q}`,
+    noteHit: (host, _rec, got) => `недостающие характеристики с ${host}: ${got.pairs.length}`,
+  });
 }
 
 /**
@@ -232,6 +322,10 @@ export async function enrichMissing(recs, dict, config, io = {}) {
   const results = [];
   for (const rec of need) {
     results.push(await lookupExternal(rec, dict, config, io));
+  }
+  const forMissing = recs.filter(r => needsMissingLookup(r, dict));
+  for (const rec of forMissing) {
+    results.push(await lookupMissing(rec, dict, config, io));
   }
   const forCountry = recs.filter(r => needsCountry(r, dict));
   for (const rec of forCountry) {

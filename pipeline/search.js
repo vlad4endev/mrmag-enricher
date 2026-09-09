@@ -709,3 +709,23 @@ export function countryQuery(rec) {
   const name = String(rec?.name || '').replace(/["«»]/g, ' ').replace(/\s+/g, ' ').trim();
   return name ? `${name} страна производства` : '';
 }
+
+/**
+ * Запрос за дырой в обязательном фильтре: та же модель, не артикул как число.
+ * Одна ось — её имя в запрос («скорость отжима»); несколько — таблица характеристик.
+ */
+export function missingQuery(rec, dict, codes = []) {
+  const brand = String(rec?.identity?.brand || rec?.brand || '').trim();
+  const model = String(rec?.identity?.model || '').trim();
+  const unique = [...new Set((codes || []).filter(Boolean))];
+  let hint = 'характеристики';
+  if (unique.length === 1) {
+    const attr = dict?.byCode?.get(unique[0]);
+    const raw = String(attr?.facet?.label || attr?.name || '').trim();
+    const stripped = raw.replace(/,\s*[^,]+$/, '').trim();
+    if (stripped) hint = stripped;
+  }
+  if (model) return [brand, model, hint].filter(Boolean).join(' ');
+  const name = String(rec?.name || '').replace(/["«»]/g, ' ').replace(/\s+/g, ' ').trim();
+  return name ? `${name} ${hint}` : hint;
+}

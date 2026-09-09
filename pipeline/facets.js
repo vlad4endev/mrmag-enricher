@@ -124,7 +124,17 @@ export function matchBucket(value, facet) {
     if (leftClosed) return n >= b.min && n < b.max;
     return n > b.min && n <= b.max;
   });
-  if (!hits.length) return null;
+  if (!hits.length) {
+    // Высота/ширина/глубина: spec часто закрывает последний бакет (open_last:false),
+    // хотя valid_range шире — 98 см при сетке до 90 иначе выпадает из фильтра.
+    // Программы/шум не расширяем: 90 программ ≠ «25+».
+    const sizeFacet = /высот|ширин|глубин/i.test(String(facet?.label || ''));
+    const last = buckets[buckets.length - 1];
+    if (sizeFacet && last && last.max !== Infinity && n >= last.max) {
+      return last.label.endsWith('+') ? last.label : `${fmtBucketNum(last.max)}+`;
+    }
+    return null;
+  }
   hits.sort((a, b) => b.min - a.min);
   return hits[0].label;
 }

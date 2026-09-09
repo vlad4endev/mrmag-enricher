@@ -62,12 +62,14 @@
       "status": "filter",
       "type": "range",
       "bound_rule": "left_closed",
-      "open_last": false,
+      "open_last": true,
       "buckets": [
+        {"label": "50-70", "min": 50, "max": 70},
         {"label": "70-75", "min": 70, "max": 75},
         {"label": "75-80", "min": 75, "max": 80},
         {"label": "80-85", "min": 80, "max": 85},
-        {"label": "85-90", "min": 85, "max": 90}
+        {"label": "85-90", "min": 85, "max": 90},
+        {"label": "90+", "min": 90, "max": null}
       ]
     },
     {
@@ -76,13 +78,14 @@
       "status": "filter",
       "type": "range",
       "bound_rule": "left_closed",
-      "open_last": false,
+      "open_last": true,
       "buckets": [
         {"label": "40-45", "min": 40, "max": 45},
         {"label": "45-50", "min": 45, "max": 50},
         {"label": "50-55", "min": 50, "max": 55},
         {"label": "55-60", "min": 55, "max": 60},
-        {"label": "60-65", "min": 60, "max": 65}
+        {"label": "60-65", "min": 60, "max": 65},
+        {"label": "65+", "min": 65, "max": null}
       ]
     },
     {

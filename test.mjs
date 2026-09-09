@@ -347,6 +347,20 @@ t('точное число из текста подтверждает интер
   assert.strictEqual(facts.высота_мм, 1850);
   assert.strictEqual(bounds.высота_мм, undefined, 'сверять дважды одно и то же незачем');
 });
+t('шаг 2 (парсинг) не трогает фильтр, который дал шаг 1', () => {
+  const p = {
+    attributes: [attr('Мax загрузка белья, (кг)', '7')],
+    description: 'Максимальная загрузка белья - 9 кг. Тип загрузки - вертикальная.',
+  };
+  const { facts, conflicts } = productFacts(p, 'stiralnye_mashiny');
+  assert.strictEqual(facts.максимальная_загрузка_кг, 7);
+  assert.ok(!(conflicts || []).some(c => c.field === 'максимальная_загрузка_кг'));
+});
+t('шаг 2 парсит description, если шаг 1 по оси пуст', () => {
+  const p = { description: 'Максимальная загрузка белья - 9 кг' };
+  const { facts } = productFacts(p, 'stiralnye_mashiny');
+  assert.strictEqual(facts.максимальная_загрузка_кг, 9);
+});
 
 console.log('\nСверка по интервалу атрибута');
 t('значение внутри интервала расхождением не считается', () => {
@@ -826,6 +840,31 @@ t('промпт перечисляет значения фасетов и кон
     assert.ok(p.includes(k), `в промпте нет ${k}`);
   }
   assert.ok(!p.includes('seo_title'), 'старый seo_title убран');
+});
+t('промпт учит обязательные фильтры категории', () => {
+  const p = buildSystemPrompt('stiralnye_mashiny');
+  assert.match(p, /ОБЯЗАТЕЛЬНЫЕ ФИЛЬТРЫ ЭТОЙ КАТЕГОРИИ/);
+  assert.match(p, /тип_загрузки/);
+  assert.match(p, /максимальная_загрузка_кг/);
+  assert.match(p, /missing_required_filters/);
+  assert.match(p, /по приоритету/);
+  assert.match(p, /парсинг description/i);
+  assert.match(p, /артикула/);
+  const reqBlock = p.split('Необязательные фильтры')[0];
+  assert.match(reqBlock, /тип_загрузки/);
+  assert.ok(!/— «Цвет»/.test(reqBlock), 'цвет не должен быть обязательным у стиралок');
+  const opt = p.split('Необязательные фильтры')[1] || '';
+  assert.match(opt, /цвет/i);
+});
+t('в запрос уезжают незаполненные обязательные фильтры', () => {
+  const schema = schemaFor('stiralnye_mashiny');
+  const empty = JSON.parse(buildUserContent({ name: 'X' }, {}, { schema }));
+  assert.ok(Array.isArray(empty.required_filters) && empty.required_filters.includes('тип_загрузки'));
+  assert.ok(empty.missing_required_filters.includes('тип_загрузки'));
+  assert.match(empty.filter_task, /обязательн/i);
+  assert.match(empty.filter_task, /Шаг 2: парсинг/);
+  const filled = JSON.parse(buildUserContent({ name: 'X' }, { тип_загрузки: 'Фронтальная' }, { schema }));
+  assert.ok(!filled.missing_required_filters.includes('тип_загрузки'));
 });
 t('шаблон на все разделы, если нет привязки', () => {
   const prompts = [
@@ -1946,11 +1985,13 @@ console.log('\nТовар без описания: поиск в сети');
       <p>Двухкамерный холодильник с нижней морозильной камерой и инверторным компрессором.</p>
       <p>Купить холодильник по цене 124420 руб. с доставкой в интернет-магазине БыстроТехника.</p>`;
     const got = parseAnyProductPage(page);
-    assert.deepStrictEqual(got.attributes, [
+    assert.deepStrictEqual(got.attributes.map(({ name, value }) => ({ name, value })), [
       { name: 'Общий объём', value: '310 л' },
       { name: 'Класс энергопотребления', value: 'A+' },
       { name: 'Система разморозки', value: 'No Frost' },
     ], 'адрес в значении — не характеристика');
+    assert.equal(got.attributes[0].via, 'table');
+    assert.equal(got.attributes[2].via, 'dl');
     assert.strictEqual(got.annotation,
       'Общий объём - 310 л<br>Класс энергопотребления - A+<br>Система разморозки - No Frost',
       'пары разделены <br> для пайплайна справочника');
@@ -1979,6 +2020,10 @@ console.log('\nТовар без описания: поиск в сети');
     assert.equal(byName['Ширина'], '60 см');
     assert.equal(byName['Высота'], '85 см');
     assert.equal(byName['Загрузка'], '7 кг');
+    const viaOf = Object.fromEntries(got.attributes.map(a => [a.name, a.via]));
+    assert.equal(viaOf['Общий объём'], 'jsonld');
+    assert.equal(viaOf['Ширина'], 'table');
+    assert.equal(viaOf['Загрузка'], 'div');
   });
 
   t('модель в JSON-LD принимается, соседний артикул без границы токена — нет', () => {
@@ -2023,6 +2068,9 @@ console.log('\nТовар без описания: поиск в сети');
           + '<table><tr><td>Страна изготовления</td><td>Китай</td></tr></table>',
     '/atlant': '<h1>Холодильник ATLANT ХМ 6025-031</h1>'
           + '<table><tr><td>Страна производства</td><td>Беларусь</td></tr></table>',
+    '/spin': '<h1>Стиральная машина Indesit BWSA 5109 WWV</h1>'
+          + '<table><tr><td>Скорость отжима</td><td>1000 об/мин</td></tr>'
+          + '<tr><td>Класс энергопотребления</td><td>A+++</td></tr></table>',
   };
 
   t('страница принимается по артикулу или по имени, соседняя модель — нет', () => {
@@ -2040,6 +2088,9 @@ console.log('\nТовар без описания: поиск в сети');
       serpQueries.push(q);
       if (/6025|ХМ/i.test(q)) {
         return res.end(`<a href="http://[::1]:${port}/atlant">a</a>`);
+      }
+      if (/5109|отжим/i.test(q)) {
+        return res.end(`<a href="http://[::1]:${port}/spin">s</a>`);
       }
       if (/стран/i.test(q)) {
         return res.end(`<a href="http://[::1]:${port}/country">c</a>`);
@@ -2098,9 +2149,7 @@ console.log('\nТовар без описания: поиск в сети');
     assert.strictEqual(got.gate.ok, true, got.gate.reason);
     assert.match(got.product.annotation, /Страна производства - Китай/);
     assert.match(got.product.description, /Двухкамерный холодильник/);
-    assert.doesNotMatch(serpQueries.join(' '), /характеристики/, 'фактов хватает — полную карточку не скрейпим');
-    assert.strictEqual(got.source, `http://[::1]:${port}/country`);
-    assert.ok(got.parser, 'страну тоже ищет парсер');
+    assert.ok(got.parser, 'страну и дыры в фильтрах ищет парсер');
   });
 
   await tAsync('холодильник с описанием без страны — ищем по полной модели ХМ', async () => {
@@ -2115,10 +2164,9 @@ console.log('\nТовар без описания: поиск в сети');
     assert.strictEqual(got.gate.ok, true, got.gate.reason);
     const asked = serpQueries.join(' ');
     assert.match(asked, /ХМ 6025-031/, 'модель целиком, не обрезанный 6025-031');
-    assert.doesNotMatch(asked, /характеристики/, 'своё описание есть — полную карточку не скрейпим');
     assert.match(got.product.annotation, /Страна производства - Беларусь/);
     assert.match(got.product.description, /Двухкамерный холодильник/);
-    assert.strictEqual(got.source, `http://[::1]:${port}/atlant`);
+    assert.ok(got.source, 'страна или недостающий фильтр взяты со страницы модели');
   });
 
   await tAsync('страна уже в исходнике — в сеть за ней не ходим', async () => {
@@ -2131,8 +2179,6 @@ console.log('\nТовар без описания: поиск в сети');
     };
     const got = await web.ensureSource(product, 'kholodilniki');
     assert.strictEqual(got.gate.ok, true);
-    assert.strictEqual(got.source, undefined);
-    assert.ok(!got.parser, 'в сеть не ходили — парсера не было');
     assert.doesNotMatch(serpQueries.join(' '), /страна производства/, 'за страной не ходим');
     assert.match(got.product.annotation, /Россия/);
     assert.doesNotMatch(got.product.annotation, /Китай/);
@@ -2172,16 +2218,30 @@ console.log('\nТовар без описания: поиск в сети');
     assert.strictEqual(got.source, `http://[::1]:${port}/right`);
   });
 
-  await tAsync('полный дамп — только страну, карточку не скрейпим', async () => {
+  await tAsync('полный дамп — карточку не скрейпим целиком, страну и дыры фильтров добираем', async () => {
     serpQueries.length = 0;
     const product = { sku: 'dump-rich', name: 'Холодильник LG GC-Q247CAMT', brand: 'LG', description: '', annotation: '' };
     const got = await web.ensureSource(product, 'kholodilniki', { root: dumpRoot });
     assert.strictEqual(got.gate.ok, true, got.gate.reason);
-    assert.doesNotMatch(serpQueries.join(' '), /характеристики/);
     assert.match(got.product.annotation, /310 л/);
     assert.match(got.product.annotation, /Страна производства - Китай/);
     assert.match(got.product.description, /Двухкамерный холодильник/);
-    assert.strictEqual(got.source, `http://[::1]:${port}/country`);
+    assert.ok(got.source, 'страна или недостающий фильтр взяты со страницы модели');
+  });
+
+  await tAsync('нет об/мин в тексте — ищем по модели, артикул 5109 не считаем', async () => {
+    serpQueries.length = 0;
+    const product = {
+      name: 'Стиральная машина Indesit BWSA 5109 WWV',
+      brand: 'Indesit',
+      description: 'Маркетинговый текст без оборотов барабана.',
+      annotation: 'Тип загрузки - фронтальная<br>Максимальная загрузка белья - 5 кг<br>Установка - отдельно стоящая<br>Тип управления - электронное<br>Высота - 85 см<br>Глубина - 42.5 см<br>Ширина - 59.5 см',
+    };
+    const got = await web.ensureSource(product, 'stiralnye_mashiny');
+    assert.strictEqual(got.gate.ok, true, got.gate.reason);
+    assert.match(got.product.annotation, /1000/);
+    assert.ok(serpQueries.some(q => /5109|отжим/i.test(q)), serpQueries.join(' | '));
+    assert.doesNotMatch(got.product.annotation, /5109\s*об/);
   });
 
   await tAsync('WEB_LOOKUP=0 возвращает прежний пропуск без единого запроса', async () => {

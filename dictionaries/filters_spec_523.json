@@ -34,13 +34,15 @@
       "status": "filter",
       "type": "range",
       "bound_rule": "left_closed",
-      "open_last": false,
+      "open_last": true,
       "buckets": [
+        {"label": "40-45", "min": 40, "max": 45},
         {"label": "45-50", "min": 45, "max": 50},
         {"label": "50-55", "min": 50, "max": 55},
         {"label": "55-60", "min": 55, "max": 60},
         {"label": "60-65", "min": 60, "max": 65},
-        {"label": "65-70", "min": 65, "max": 70}
+        {"label": "65-70", "min": 65, "max": 70},
+        {"label": "70+", "min": 70, "max": null}
       ]
     },
     {

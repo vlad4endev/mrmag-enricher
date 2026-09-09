@@ -587,7 +587,10 @@ export function normalizeValue(attr, raw, { keyText = '' } = {}) {
       return { ok: false, value: null, reason: 'not_boolean', raw: v };
     }
     if (typ === 'class_scale') {
-      const m = String(v).trim().match(/([A-Ga-gА-Еа-еA-Ea-eСсC])(\+{0,3})/);
+      const s = String(v).trim();
+      // Не брать «а» из слова «класс»: только отдельный токен A/A+/A++.
+      const m = s.match(/(?<![а-яёa-z])([A-Ga-gА-Еа-еСсC])(\+{0,3})(?![а-яёa-z])/u)
+        || s.match(/^([A-Ga-gА-Еа-еСсC])(\+{0,3})$/u);
       if (!m) return { ok: false, value: null, reason: 'not_class', raw: v };
       const letter = CLASS_CYR[m[1].toLowerCase()] || m[1].toUpperCase().replace('С', 'C');
       return { ok: true, value: letter + m[2] };
@@ -623,7 +626,7 @@ export function normalizeValue(attr, raw, { keyText = '' } = {}) {
       if (!aliased && /^[a-z][a-z0-9]*[-_][a-z0-9_-]+$/.test(String(rawEnum).trim())) {
         return { ok: false, value: null, reason: 'slug', raw: v };
       }
-      if (typ === 'enum' && isBareBooleanWord(rawEnum)) {
+      if (typ === 'enum' && isBareBooleanWord(rawEnum) && !aliased) {
         const k = String(rawEnum).trim().toLowerCase().replace(/ё/g, 'е');
         if (BOOL_FALSE.has(k)) {
           return { ok: false, value: null, reason: 'bool_false_in_enum', raw: v };
@@ -673,6 +676,10 @@ export function normalizeValue(attr, raw, { keyText = '' } = {}) {
   };
 
   if (attr.cardinality === 'multi') {
+    const whole = one(attr.type, text);
+    if (whole.ok && !whole.pending_canon) {
+      return { ok: true, value: Array.isArray(whole.value) ? whole.value : [whole.value] };
+    }
     const parts = splitMulti(text);
     const seen = new Set();
     const values = [];

@@ -12,6 +12,7 @@ import { extractPairs } from './parse.js';
 import { matchKey } from './match.js';
 import { valueFold, displayEnum, aliasValue } from './types.js';
 import { normKey } from './text.js';
+import { isRequiredFilter, requiredFilterAttrs } from './required_filters.js';
 
 const ACTIONS = new Set([
   'synonym_name',   // синоним названия атрибута
@@ -91,6 +92,7 @@ function attrBrief(attr) {
     type: attr.type,
     unit: attr.unit || null,
     facet: !!attr.facet?.enabled,
+    required_filter: isRequiredFilter(attr),
     synonyms: (attr.synonyms || []).slice(0, 6),
     blacklist: (attr.blacklist || []).slice(0, 6),
     canons,
@@ -113,6 +115,24 @@ export function buildImportSuggestPrompt(attrs, { categoryName = '', catId = '' 
 6. Числа/объёмы/габариты: type=number|integer + unit.
 7. code нового атрибута: латиница snake_case, уникален.
 8. Ответь ТОЛЬКО JSON-объектом, без markdown.
+
+ОБЯЗАТЕЛЬНЫЕ ФИЛЬТРЫ КАТЕГОРИИ
+Это оси витрины, по которым покупатель ИЩЕТ товар этого типа. Без них карточка
+не попадает в фильтр раздела — даже если характеристика есть в тексте.
+
+Как понять, что характеристика должна стать обязательным фильтром:
+- покупатель почти всегда выбирает по ней: тип/конструкция, ёмкость, размер ниши,
+  энергокласс, ключевая технология рынка (No Frost, инвертор, сушка, производительность);
+- значение повторяется у многих SKU и делит каталог, а не описывает один экземпляр;
+- не артикул, не модель, не серийный номер, не бренд (бренд — не фасет).
+
+Необязательный фильтр (facet_enabled=true, facet_required=false): цвет, дисплей,
+Wi-Fi, защита от детей, вес, материал бака — полезно, но не «must» поиска.
+Не фильтр (facet_enabled=false): гарантия, страна, EAN, маркетинговый слоган.
+
+Сейчас обязательные: ${requiredFilterAttrs({ attrs }).map(a => `${a.code} («${a.facet?.label || a.name}»)`).join('; ') || '(ещё не размечены — предложи по критериям выше)'}.
+Если у товаров много характеристик, а обязательных фильтров мало — new_attr
+с facet_enabled=true и facet_required=true для недостающих осей поиска.
 
 ТЕКУЩИЕ АТРИБУТЫ:
 ${JSON.stringify(brief, null, 2)}
@@ -146,6 +166,7 @@ ${JSON.stringify(brief, null, 2)}
         "type": "enum",
         "unit": null,
         "facet_enabled": true,
+        "facet_required": false,
         "facet_kind": "enum",
         "description": "...",
         "synonyms": ["Зона свежести"],
@@ -262,12 +283,14 @@ export function heuristicSuggest(items, attrs, { fuzzyMin = 0.72 } = {}) {
     const name = item.label;
     const code = slugCode(name, used);
     const type = guessType(item);
+    const role = guessFacetRole(item);
     const proposed = {
       code,
       name,
       type,
       unit: guessUnit(item),
-      facet_enabled: type === 'enum' || type === 'boolean' || type === 'number' || type === 'integer',
+      facet_enabled: role.enabled,
+      facet_required: role.required,
       facet_kind: type === 'boolean' ? 'boolean' : (type === 'number' || type === 'integer' ? 'range' : 'enum'),
       description: '',
       synonyms: [name],
@@ -292,6 +315,25 @@ export function heuristicSuggest(items, attrs, { fuzzyMin = 0.72 } = {}) {
     });
   }
   return out;
+}
+
+function guessFacetRole(item) {
+  const blob = `${item.label} ${item.value || ''}`.toLowerCase();
+  if (/артикул|ean|штрих|серийн|гарант|страна производ|слоган|комплектац/.test(blob)
+    || /(?:^|\s)модель(?:\s|$)/.test(blob)) {
+    return { enabled: false, required: false };
+  }
+  if (/цвет|дисплей|защит[аы] от детей|wifi|wi-fi|перенавеш|перевеш|полк|ящик|подсветк|материал бака|материал барабан|вес/.test(blob)) {
+    return { enabled: true, required: false };
+  }
+  if (/тип\s|загрузк|объ[её]м|энерго|класс энерг|отжим|шум|ширин|глубин|высот|охлажден|камер|компрессор|двигател|производительн|мощност|конструкц|инвертор|сушк/.test(blob)) {
+    return { enabled: true, required: true };
+  }
+  const type = guessType(item);
+  if (type === 'enum' || type === 'boolean' || type === 'number' || type === 'integer') {
+    return { enabled: true, required: false };
+  }
+  return { enabled: false, required: false };
 }
 
 function guessType(item) {
@@ -423,6 +465,8 @@ export function applySuggestions(attrs, suggestions) {
           label: name,
           kind: s.proposed.facet_kind
             || (type === 'boolean' ? 'boolean' : (type === 'number' || type === 'integer' ? 'range' : 'enum')),
+          ...(s.proposed.facet_required === true ? { required: true } : {}),
+          ...(s.proposed.facet_required === false ? { required: false } : {}),
         },
       });
       if (type === 'multi_enum') attr.cardinality = 'multi';

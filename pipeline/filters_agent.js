@@ -6,6 +6,7 @@
 
 import { aliasValue, displayEnum, hasStrictEnum, isBrandAttr, looksLikeEnumFragment, unifyEnumValues, valueFold } from './types.js';
 import { facetKind, filterSourceAllowed } from './facets.js';
+import { isRequiredFilter, requiredFilterAttrs } from './required_filters.js';
 
 const BARE_BOOL = /^(?:нет|да|есть|имеется|yes|no)$/i;
 
@@ -46,6 +47,7 @@ export function collectFacetValueInventory(recs, dict, config = {}) {
       attr_code: attr.code,
       name: attr.facet?.label || attr.name,
       type: attr.type,
+      required: isRequiredFilter(attr),
       canons,
       values: [...counts]
         .map(([raw, count]) => ({ raw, count }))
@@ -60,8 +62,10 @@ export function buildFiltersAgentPrompt(dict, inventory, { categoryName = '', ca
   const facets = (inventory || []).map(f => ({
     attr_code: f.attr_code,
     name: f.name,
+    required: !!f.required,
     canons: f.canons,
   }));
+  const required = requiredFilterAttrs(dict).map(a => `${a.code} («${a.facet?.label || a.name}»)`);
   return `Ты нормализуешь значения фасетов интернет-магазина перед записью filters_{id}.json.
 
 Категория: ${categoryName || catId || 'не указана'} (id=${catId || '—'})
@@ -76,8 +80,13 @@ export function buildFiltersAgentPrompt(dict, inventory, { categoryName = '', ca
 7. Если canons пуст — только skip для фрагментов; иначе оставь без map (не выдумывай канон).
 8. Нельзя создать новый канон. Нет подходящего пункта словаря — skip.
 9. Ответь ТОЛЬКО JSON-объектом, без markdown.
+10. required=true — обязательный фильтр категории: покупатель ищет товар по этой оси.
+    Для обязательных skip ТОЛЬКО на мусор (§4–5). Если raw по смыслу совпадает с каноном
+    (даже длинная формулировка) — map. Товар без обязательных фильтров на витрине невидим.
 
-ФАСЕТЫ (допустимые attr_code и canons):
+Обязательные фильтры категории: ${required.length ? required.join('; ') : '(не размечены)'}.
+
+ФАСЕТЫ (допустимые attr_code, required и canons):
 ${JSON.stringify(facets, null, 2)}
 
 ФОРМАТ ОТВЕТА:

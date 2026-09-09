@@ -55,6 +55,14 @@
     return k === 'brand' || k === 'бренд' || n === 'бренд' || n === 'brand' || lab === 'бренд' || lab === 'brand';
   }
 
+  function isRequiredFilter(attr) {
+    if (isBrandAttr(attr) || attr.tier === 'X') return false;
+    if (!attr.facet?.enabled || attr.facet?.status === 'not_a_filter') return false;
+    if (attr.facet?.required === true) return true;
+    if (attr.facet?.required === false) return false;
+    return !!attr.highlight || attr.tier === 'A';
+  }
+
   function kindFromWidget(widget, type) {
     if (type === 'boolean' || widget === 'toggle') return 'boolean';
     if (widget === 'slider') return 'range';
@@ -114,6 +122,7 @@
       <code>${esc(d.file || ('dictionaries/attributes_' + d.id + '.json'))}</code>
       <b>${attrs.length}</b> атрибутов<i></i>
       <b>${facets}</b> в фильтрах<i></i>
+      <b>${attrs.filter(a => isRequiredFilter(a)).length}</b> обязательных<i></i>
       <b>${enums}</b> enum
       ${problems ? `<span class="ae-meta-warn">${problems} с проблемами</span>` : ''}
       ${window.dictDirty ? '<span class="ae-meta-dirty">не сохранено</span>' : ''}
@@ -122,6 +131,7 @@
     const set = (id, n) => { const nEl = $(id); if (nEl) nEl.textContent = String(n); };
     set('aeCntAll', attrs.length);
     set('aeCntFacet', facets);
+    set('aeCntRequired', attrs.filter(a => isRequiredFilter(a)).length);
     set('aeCntProblems', problems);
     set('aeCntEnum', enums);
   };
@@ -131,6 +141,7 @@
     return [...attrs]
       .filter(a => {
         if (listFilter === 'facet') return !!a.facet?.enabled;
+        if (listFilter === 'required') return isRequiredFilter(a);
         if (listFilter === 'problems') return localIssues(a, attrs).length > 0;
         if (listFilter === 'enum') return a.type === 'enum';
         return true;
@@ -381,6 +392,12 @@
       if ('facet' in upd && !isBrandAttr(a)) {
         a.facet = a.facet || {};
         a.facet.enabled = !!upd.facet;
+        if (!upd.facet && !('required' in upd)) a.facet.required = false;
+      }
+      if ('required' in upd && !isBrandAttr(a)) {
+        a.facet = a.facet || {};
+        a.facet.required = !!upd.required;
+        if (upd.required) a.facet.enabled = true;
       }
       if ('annotate' in upd) a.show_in_annotation = !!upd.annotate;
     });
@@ -489,6 +506,7 @@
         <label class="ae-switch">${chkHtml(isBrandAttr(attr) ? false : facetOn, isBrandAttr(attr)
           ? 'id="schFacet" disabled aria-disabled="true" title="Бренд не фасет: сопоставление по id"'
           : 'id="schFacet"')} <span>Показывать в фильтрах${isBrandAttr(attr) ? ' (бренд — по id)' : ''}</span></label>
+        <label class="ae-switch" id="schRequiredWrap" style="${facetOn && !isBrandAttr(attr) ? '' : 'display:none'}">${chkHtml(isRequiredFilter(attr), 'id="schRequired"')} <span>Обязательный фильтр категории</span></label>
         <label class="ae-fld" id="schWidgetWrap" style="${facetOn ? '' : 'display:none'}">
           <span>Виджет</span>
           <select id="schWidget">${WIDGETS.map(w =>
@@ -559,6 +577,7 @@
 
   function wirePanel(attr) {
     const facetBtn = $('schFacet');
+    const requiredBtn = $('schRequired');
     const annBtn = $('schAnn');
     facetBtn?.addEventListener('click', () => {
       if (facetBtn.disabled || isBrandAttr(attr)) return;
@@ -566,7 +585,14 @@
       facetBtn.classList.toggle('on', on);
       facetBtn.textContent = on ? '✓' : '';
       if ($('schWidgetWrap')) $('schWidgetWrap').style.display = on ? '' : 'none';
+      if ($('schRequiredWrap')) $('schRequiredWrap').style.display = on && !isBrandAttr(attr) ? '' : 'none';
       syncBreaksVis();
+    });
+    requiredBtn?.addEventListener('click', () => {
+      if (!facetBtn?.classList.contains('on') || isBrandAttr(attr)) return;
+      const on = !requiredBtn.classList.contains('on');
+      requiredBtn.classList.toggle('on', on);
+      requiredBtn.textContent = on ? '✓' : '';
     });
     annBtn?.addEventListener('click', () => {
       const on = !annBtn.classList.contains('on');
@@ -631,6 +657,11 @@
     attr.unit = $('schUnit')?.value?.trim() || null;
     attr.facet = attr.facet || {};
     attr.facet.enabled = isBrandAttr(attr) ? false : !!$('schFacet')?.classList.contains('on');
+    if (isBrandAttr(attr) || !attr.facet.enabled) {
+      attr.facet.required = false;
+    } else if ($('schRequired')) {
+      attr.facet.required = !!$('schRequired').classList.contains('on');
+    }
     attr.show_in_annotation = !!$('schAnn')?.classList.contains('on');
     const widget = $('schWidget')?.value || widgetOf(attr);
     attr.facet.widget = widget;

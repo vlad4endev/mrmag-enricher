@@ -13,6 +13,7 @@ import { matchKey } from './match.js';
 import { normalizeValue } from './types.js';
 import { attrLabel } from './types.js';
 import { parseDimensions } from './dimensions.js';
+import { optionalFilterAttrs, requiredFilterAttrs } from './required_filters.js';
 
 export { PROJECT_ROOT, resolveDictRoot };
 
@@ -119,6 +120,30 @@ function specDest(attr) {
 
 export { specDest, CODE_TO_SPEC };
 
+export function specKeyOf(attr) {
+  const dest = specDest(attr);
+  return typeof dest === 'object' ? dest.key : dest;
+}
+
+function filterKindHint(attr) {
+  if (attr.type === 'boolean') return 'да/нет';
+  if (attr.type === 'number' || attr.type === 'integer') return 'число';
+  return 'enum/text';
+}
+
+/** Строки промпта: spec-ключ — «подпись фильтра» (вид). */
+export function formatFilterRoleLines(attrs) {
+  return (attrs || [])
+    .map((a) => {
+      const key = specKeyOf(a);
+      if (!key) return '';
+      const label = a.facet?.label || a.name || a.code;
+      return `- ${key} — «${label}» (${filterKindHint(a)})`;
+    })
+    .filter(Boolean)
+    .join('\n');
+}
+
 export function schemaFromDictionary(dict, { slug = null, name = null, root } = {}) {
   const fields = [
     ['тип_товара', 'str'],
@@ -169,6 +194,8 @@ export function schemaFromDictionary(dict, { slug = null, name = null, root } = 
     hints: ['Характеристики и диапазоны — из справочника dictionaries/attributes_' + dict.catId + '.json'],
     fromDictionary: true,
     dict,
+    requiredSpecKeys: requiredFilterAttrs(dict).map(specKeyOf).filter(Boolean),
+    optionalFilterSpecKeys: optionalFilterAttrs(dict).map(specKeyOf).filter(Boolean),
   };
 }
 

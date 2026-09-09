@@ -158,6 +158,16 @@ function evidenceConfidence(prov) {
   return 0.3;
 }
 
+function tryCompoundDims(key, value) {
+  const blob = `${key} ${value}`;
+  if (!/(\d+(?:[.,]\d+)?)\s*(?:[x×хX*]|\s+на\s+)\s*(\d+(?:[.,]\d+)?)\s*(?:[x×хX*]|\s+на\s+)\s*(\d+(?:[.,]\d+)?)/i.test(blob)) {
+    return null;
+  }
+  const parsed = parseDimensions(blob, value);
+  if (parsed?.dims && !parsed.packed && parsed.flag !== 'dimensions_axis_order_unknown') return parsed;
+  return null;
+}
+
 function applyDims(rec, dims, prov, dict) {
   let used = false;
   for (const axis of ['width', 'height', 'depth']) {
@@ -217,6 +227,13 @@ export function ingestPair(rec, pair, dict, { fuzzyMin } = {}) {
       return;
     }
     if (parsed.flag === 'dimensions_axis_order_unknown') {
+      const fallback = parseDimensions(attr.name || 'ШхГхВ', pair.value);
+      if (fallback?.dims && !fallback.packed && fallback.flag !== 'dimensions_axis_order_unknown') {
+        rec.stats.dims_parsed++;
+        applyDims(rec, fallback.dims, { ...prov, from: 'dims', how: 'dims_attr_order' }, dict);
+        setAttr(rec, attr.code, fallback.dims, prov);
+        return;
+      }
       rec.flags.push('dimensions_axis_order_unknown');
       rec.moderation.push({ code: attr.code, reason: 'dimensions_axis_order_unknown', key, value: pair.value });
       rec.stats.dims_unknown++;
@@ -246,6 +263,14 @@ export function ingestPair(rec, pair, dict, { fuzzyMin } = {}) {
   if (!norm.ok) {
     if (norm.reason === 'out_of_range') {
       rec.moderation.push({ code: attr.code, reason: 'out_of_range', value: norm.parsed, raw: pair.value });
+    }
+    // «Высота х Ширина х Глубина … — 177.5 х 90.5 х 72.6»: ключ съехал на первую ось.
+    const compound = tryCompoundDims(key, pair.value);
+    if (compound) {
+      rec.stats.dims_parsed++;
+      applyDims(rec, compound.dims, { ...prov, from: 'dims', how: 'dims_from_axis_line' }, dict);
+      if (dict.byCode.has('dims')) setAttr(rec, 'dims', compound.dims, { ...prov, from: 'dims' });
+      return;
     }
     return;
   }
@@ -310,40 +335,88 @@ export function normalizeProduct(product, dict, config) {
   }
 
   ingestPairs(rec, parsed.pairs, dict, config);
-  deriveLinkedAttrs(rec, dict);
+  deriveLinkedAttrs(rec, dict, product);
 
   return rec;
 }
 
-/**
- * Связанные факты из сырого значения: «двухкамерный с нижней морозильной»
- * → fridge_type=Двухкамерный + freezer_pos=Нижнее (если слот пуст).
- */
-function deriveLinkedAttrs(rec, dict) {
-  if (!dict.byCode.has('freezer_pos') || rec.attrs.freezer_pos != null) return;
-  const raw = rec.provenance?.fridge_type?.raw
-    || rec.provenance?.fridge_type?.evidence?.raw_value
-    || '';
-  const blob = `${raw} ${rec.attrs.fridge_type || ''} ${rec.name || ''}`.toLowerCase().replace(/ё/g, 'е');
-  let label = null;
-  if (/нижн|снизу/.test(blob)) label = 'Нижнее';
-  else if (/верхн|сверху/.test(blob)) label = 'Верхнее';
-  else if (/бок|слева|справа/.test(blob)) label = 'Сбоку';
-  if (!label) return;
-  const attr = dict.byCode.get('freezer_pos');
-  if (attr.tier === 'X') return;
-  const norm = normalizeValue(attr, label, { keyText: attr.name });
-  if (!norm.ok) return;
-  setAttr(rec, 'freezer_pos', norm.value, {
-    // Не подделываем S1: иначе derived попадёт в filters без графы характеристик.
-    level: (rec.provenance?.fridge_type?.level === 'S1' || rec.provenance?.fridge_type?.level === 'S2')
-      ? rec.provenance.fridge_type.level
-      : 'model',
-    raw: raw || label,
+function factBlob(rec, product) {
+  const ann = String(rec.annotation || '')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/gi, ' ');
+  return [
+    product?.name || rec.name,
+    ann,
+    rec.attrs.fridge_type,
+    rec.provenance?.fridge_type?.raw,
+  ].filter(Boolean).join(' ').toLowerCase().replace(/ё/g, 'е');
+}
+
+function derivedLevel(rec, fromCode) {
+  const lv = rec.provenance?.[fromCode]?.level;
+  if (lv === 'S1' || lv === 'S2' || lv === 'S3') return lv;
+  return 'S0';
+}
+
+function setDerived(rec, dict, code, rawLabel, how, level) {
+  if (!dict.byCode.has(code) || rec.attrs[code] != null) return false;
+  const attr = dict.byCode.get(code);
+  if (attr.tier === 'X') return false;
+  const norm = normalizeValue(attr, rawLabel, { keyText: attr.name });
+  if (!norm.ok) return false;
+  return setAttr(rec, code, norm.value, {
+    level,
+    raw: rawLabel,
     model: null,
     prompt: null,
-    how: 'derived_from_fridge_type',
+    how,
   });
+}
+
+/**
+ * Связанные факты из уже разобранного текста: тип холодильника → камеры
+ * и сторона морозилки; стиралка без «установки» → отдельностоящая.
+ * level не 'model': иначе filterSourceAllowed выкинет значение с витрины.
+ */
+function deriveLinkedAttrs(rec, dict, product) {
+  const blob = factBlob(rec, product);
+
+  if (dict.byCode.has('install') && rec.attrs.install == null) {
+    const builtIn = /встраиваем|встроенн/.test(blob);
+    const label = builtIn ? 'Встраиваемая' : 'Отдельностоящая';
+    setDerived(rec, dict, 'install', label, 'derived_install', 'S0');
+  }
+
+  if (dict.byCode.has('load_type') && rec.attrs.load_type == null && !/сушильн/.test(blob)) {
+    if (/вертикал/.test(blob)) {
+      setDerived(rec, dict, 'load_type', 'Вертикальная', 'derived_load_type', 'S0');
+    } else if (/фронтал/.test(blob)) {
+      setDerived(rec, dict, 'load_type', 'Фронтальная', 'derived_load_type', 'S0');
+    }
+  }
+
+  if (dict.byCode.has('freezer_pos') && rec.attrs.freezer_pos == null) {
+    let label = null;
+    if (/side\s*-?\s*by\s*-?\s*side|сбоку/.test(blob)) label = 'Сбоку';
+    else if (/без морозил/.test(blob)) label = 'Отсутствует';
+    else if (/нижн|снизу/.test(blob)) label = 'Снизу';
+    else if (/верхн|сверху/.test(blob)) label = 'Сверху';
+    else if (/однокамер/.test(blob) && /(?<![а-яё])нто(?![а-яё])/u.test(blob)) label = 'Сверху';
+    if (label) {
+      setDerived(rec, dict, 'freezer_pos', label, 'derived_from_fridge_type', derivedLevel(rec, 'fridge_type'));
+    }
+  }
+
+  if (dict.byCode.has('chambers') && rec.attrs.chambers == null) {
+    let n = null;
+    if (/четырехкамер|четырёхкамер|4-камер/.test(blob)) n = 4;
+    else if (/трехкамер|трёхкамер|3-камер/.test(blob)) n = 3;
+    else if (/однокамер|1-камер/.test(blob)) n = 1;
+    else if (/двухкамер|2-камер|side\s*-?\s*by|нижн\w*.{0,20}морозил|верхн\w*.{0,20}морозил|четырехдвер|четырёхдвер/.test(blob)) n = 2;
+    if (n != null) {
+      setDerived(rec, dict, 'chambers', String(n), 'derived_chambers', derivedLevel(rec, 'fridge_type'));
+    }
+  }
 }
 
 export function ingestPairs(rec, pairs, dict, config) {

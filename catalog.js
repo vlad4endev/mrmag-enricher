@@ -27,13 +27,13 @@ import { netError, isEnrichable, modelToken, MIN_SOURCE_CHARS, extractFacts, has
 import { specFacets, enrichedRows } from './export_v2.js';
 import { loadConfig, loadCategories, hasDictionary } from './pipeline/dict.js';
 import { normalizeProduct } from './pipeline/normalize.js';
-import { lookupMissing, needsMissingLookup } from './pipeline/external.js';
+import { lookupMissing, needsMissingLookup, parseMissingFromPage } from './pipeline/external.js';
 import { CRAWL_SLUGS } from './pipeline/schema.js';
 import { containsTokenSequence, identityMatches, nameKeyTokens, parseIdentity } from './pipeline/identity.js';
 import { extractPairsFromPage, visibleText, collectPageHits, formatParseNotes } from './pipeline/parse.js';
 import {
   isDuckDuckGoBlocked, isJunkHost, parseDuckDuckGoResults,
-  searchWeb as pipelineSearchWeb, countryQuery, searchQuery,
+  searchWeb as pipelineSearchWeb, countryQuery, searchQuery, firstMatchingPage,
 } from './pipeline/search.js';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
@@ -332,6 +332,7 @@ export async function crawlCategory(url, { limit = Infinity, offset = 0, feed = 
 const WEB_UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 '
              + '(KHTML, like Gecko) Chrome/126.0 Safari/537.36';
 const WEB_TRIES = Number(process.env.WEB_LOOKUP_TRIES || 3);   // страниц на товар
+const WEB_PAGE_TIMEOUT = Number(process.env.WEB_PAGE_TIMEOUT_MS || 10_000);
 export const WEB_LOOKUP = process.env.WEB_LOOKUP !== '0';
 
 const htmlText = h => decode(String(h || '')
@@ -618,6 +619,37 @@ function withSpecLines(product, pairs, url) {
   };
 }
 
+function pageFetch(url) {
+  return fetchPage(url, { ua: WEB_UA, timeoutMs: WEB_PAGE_TIMEOUT });
+}
+
+/**
+ * Со совпавшей страницы добираем страну и дыры в обязательных фильтрах.
+ * Отдельный поиск не нужен, если таблица уже на руках.
+ */
+function harvestGapsFromHtml(product, html, url, schema) {
+  const dict = dictOf(schema);
+  let next = product;
+  const pairs = [];
+  if (!hasCountryFact(next, schema)) {
+    const country = countryFromHtml(html, schema, dict);
+    if (country) {
+      next = withCountryLine(next, country, url);
+      pairs.push({ key: 'Страна производства', value: country, via: 'table' });
+    }
+  }
+  if (!dict) return { product: next, pairs };
+  let rec;
+  try { rec = normalizeProduct(next, dict, loadConfig(ROOT)); }
+  catch { return { product: next, pairs }; }
+  if (!needsMissingLookup(rec, dict)) return { product: next, pairs };
+  const got = parseMissingFromPage(html, rec, dict, loadConfig(ROOT));
+  if (!got.ok) return { product: next, pairs };
+  next = withSpecLines(next, got.pairs, url);
+  pairs.push(...got.pairs);
+  return { product: next, pairs };
+}
+
 /**
  * Страны нет в исходнике → поиск по модели. Совпавшая страница даёт только
  * страну: остальные поля карточки уже свои, чужую таблицу в них не мешаем.
@@ -647,33 +679,30 @@ async function fillCountryFromWeb(product, schema, { onNote = () => {} } = {}) {
     return { ok: false, product, parser: true };
   }
 
-  const tried = [];
-  for (const url of urls.slice(0, WEB_TRIES)) {
-    const host = new URL(url).hostname.replace(/^www\./, '');
-    let html;
-    try { html = await fetchPage(url, { ua: WEB_UA, timeoutMs: 20_000 }); }
-    catch { tried.push(`${host}: не открылась`); continue; }
-    const who = pageDescribesProduct(html, product, dict);
-    if (!who.ok) {
-      tried.push(`${host}: ${who.reason}`);
-      continue;
-    }
-    const country = countryFromHtml(html, schema, dict);
-    if (!country) {
-      tried.push(`${host}: страны нет на странице`);
-      continue;
-    }
-    onNote(`страна из сети: ${country} (${host})`);
-    return {
-      ok: true,
-      product: withCountryLine(product, country, url),
-      source: url,
-      parser: true,
-      pairs: [{ key: 'Страна производства', value: country, via: 'table' }],
-    };
+  const found = await firstMatchingPage(urls, {
+    fetchHtml: pageFetch,
+    maxPages: WEB_TRIES,
+    match: (html, url) => {
+      const who = pageDescribesProduct(html, product, dict);
+      if (!who.ok) return { ok: false, reason: who.reason };
+      const country = countryFromHtml(html, schema, dict);
+      if (!country) return { ok: false, reason: 'страны нет на странице' };
+      return { ok: true, country };
+    },
+  });
+  if (!found.ok) {
+    if (found.tried.length) onNote(`страну в сети не нашли: ${found.tried.join('; ')}`);
+    return { ok: false, product, parser: true };
   }
-  if (tried.length) onNote(`страну в сети не нашли: ${tried.join('; ')}`);
-  return { ok: false, product, parser: true };
+  const host = hostOfUrl(found.url);
+  onNote(`страна из сети: ${found.country} (${host})`);
+  return {
+    ok: true,
+    product: withCountryLine(product, found.country, found.url),
+    source: found.url,
+    parser: true,
+    pairs: [{ key: 'Страна производства', value: found.country, via: 'table' }],
+  };
 }
 
 /**
@@ -695,7 +724,7 @@ async function fillMissingFiltersFromWeb(product, schema, { onNote = () => {} } 
   const got = await lookupMissing(rec, dict, loadConfig(ROOT), {
     onNote,
     search: searchWeb,
-    fetchHtml: url => fetchPage(url, { ua: WEB_UA, timeoutMs: 20_000 }),
+    fetchHtml: pageFetch,
   });
   if (!got.ok) return { ok: false, product, parser: true };
   return {
@@ -780,42 +809,47 @@ export async function ensureSource(product, schema, { onNote = () => {}, root = 
     }
 
     if (!searchFailed) {
-      const tried = [];
-      let foundPage = false;
-      for (const url of urls.slice(0, WEB_TRIES)) {
-        const host = new URL(url).hostname.replace(/^www\./, '');
-        let html;
-        try { html = await fetchPage(url, { ua: WEB_UA, timeoutMs: 20_000 }); }
-        catch { tried.push(`${host}: не открылась`); continue; }
-
-        const who = pageDescribesProduct(html, current, dict);
-        if (!who.ok) {
-          tried.push(`${host}: ${who.reason}`);
-          continue;
-        }
-        const found = parseAnyProductPage(html, dict);
-        if (!found.annotation && found.description.length < MIN_SOURCE_CHARS) {
-          tried.push(`${host}: нечего взять`);
-          continue;
-        }
-        const merged = {
-          ...current,
-          description: String(current.description || '').trim() || found.description,
-          annotation:  [current.annotation, found.annotation].filter(Boolean).join('<br>'),
-          source_url:  url,
-        };
-        const after = isEnrichable(merged, schema);
-        if (!after.ok && !gate.ok) { tried.push(`${host}: ${after.reason}`); continue; }
-        pageParse = rememberPageParse(pageParse, collectPageHits(found.attributes), host, onNote);
+      const foundPage = await firstMatchingPage(urls, {
+        fetchHtml: pageFetch,
+        maxPages: WEB_TRIES,
+        match: (html, url) => {
+          const who = pageDescribesProduct(html, current, dict);
+          if (!who.ok) return { ok: false, reason: who.reason };
+          const found = parseAnyProductPage(html, dict);
+          if (!found.annotation && found.description.length < MIN_SOURCE_CHARS) {
+            return { ok: false, reason: 'нечего взять' };
+          }
+          const merged = {
+            ...current,
+            description: String(current.description || '').trim() || found.description,
+            annotation:  [current.annotation, found.annotation].filter(Boolean).join('<br>'),
+            source_url:  url,
+          };
+          const after = isEnrichable(merged, schema);
+          if (!after.ok && !gate.ok) return { ok: false, reason: after.reason };
+          return { ok: true, merged, found, after };
+        },
+      });
+      if (foundPage.ok) {
+        const host = hostOfUrl(foundPage.url);
+        pageParse = rememberPageParse(pageParse, collectPageHits(foundPage.found.attributes), host, onNote);
         onNote(`описание из сети: ${host}`);
-        current = merged;
-        source = url;
-        currentGate = after.ok ? after : { ...gate, ok: true, facts: after.facts };
-        foundPage = true;
-        break;
-      }
-      if (!foundPage) {
-        const why = tried.length ? tried.join('; ') : 'выдача пуста';
+        const harvested = harvestGapsFromHtml(foundPage.merged, foundPage.html, foundPage.url, schema);
+        current = harvested.product;
+        source = foundPage.url;
+        currentGate = foundPage.after.ok
+          ? isEnrichable(current, schema)
+          : { ...gate, ok: true, facts: foundPage.after.facts };
+        if (harvested.pairs.length) {
+          pageParse = rememberPageParse(
+            pageParse,
+            pageHitsFromPairs(harvested.pairs),
+            host,
+            onNote,
+          );
+        }
+      } else {
+        const why = foundPage.tried.length ? foundPage.tried.join('; ') : 'выдача пуста';
         onNote(`в сети не нашлось, отправляем как есть: ${why}`);
         if (!gate.ok) {
           currentGate = { ...gate, ok: true, reason: `${gate.reason}; в сети не нашлось (${why})` };
@@ -824,22 +858,26 @@ export async function ensureSource(product, schema, { onNote = () => {}, root = 
     }
   }
 
-  const missing = await fillMissingFiltersFromWeb(current, schema, { onNote });
-  if (missing.parser) parser = true;
+  const [missing, country] = await Promise.all([
+    fillMissingFiltersFromWeb(current, schema, { onNote }),
+    fillCountryFromWeb(current, schema, { onNote }),
+  ]);
+  if (missing.parser || country.parser) parser = true;
   if (missing.ok) {
-    current = missing.product;
+    current = withSpecLines(current, missing.pairs, missing.source);
     source = source || missing.source;
-    currentGate = isEnrichable(current, schema);
     pageParse = rememberPageParse(pageParse, pageHitsFromPairs(missing.pairs), hostOfUrl(missing.source), onNote);
   }
-
-  const country = await fillCountryFromWeb(current, schema, { onNote });
-  if (country.parser) parser = true;
   if (country.ok) {
-    current = country.product;
+    const value = country.pairs?.[0]?.value;
+    if (value && !hasCountryFact(current, schema)) {
+      current = withCountryLine(current, value, country.source);
+    }
     source = source || country.source;
-    currentGate = isEnrichable(current, schema);
     pageParse = rememberPageParse(pageParse, pageHitsFromPairs(country.pairs), hostOfUrl(country.source), onNote);
+  }
+  if (missing.ok || country.ok) {
+    currentGate = isEnrichable(current, schema);
   }
   if (source) parser = true;
 

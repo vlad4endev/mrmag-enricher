@@ -21,7 +21,7 @@ import {
   parseSearchResults, parseDuckDuckGoResults, isDuckDuckGoBlocked,
   parseYandexSearchXml, parseYandexSearchResponse,
   searchQuery, countryQuery, missingQuery, searchWeb, searchDuckDuckGo, searchYandex,
-  resolveSearchSettings, publicParserStatus, isTimeoutError, fetchPage,
+  resolveSearchSettings, publicParserStatus, isTimeoutError, fetchPage, firstMatchingPage,
   probeParser, explainSearchError,
 } from './pipeline/search.js';
 import fs from 'node:fs';
@@ -397,6 +397,31 @@ console.log('golden tests passed');
 }
 
 {
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+  const order = [];
+  const found = await firstMatchingPage(
+    ['https://a.test/slow-wrong', 'https://b.test/fast-right', 'https://c.test/later'],
+    {
+      maxPages: 3,
+      fetchHtml: async url => {
+        if (url.includes('slow')) { await sleep(40); order.push('slow'); return '<p>wrong</p>'; }
+        if (url.includes('fast')) { await sleep(5); order.push('fast'); return '<p>right</p>'; }
+        order.push('later');
+        return '<p>later</p>';
+      },
+      match: html => ({ ok: /right/.test(html), reason: 'не та' }),
+    },
+  );
+  assert.equal(found.ok, true);
+  assert.equal(found.url, 'https://b.test/fast-right');
+  assert.ok(order.includes('fast'));
+  assert.ok(order.includes('slow'), 'первая ссылка должна дочитаться, иначе порядок выдачи сломается');
+  const empty = await firstMatchingPage([], { fetchHtml: async () => '', match: () => ({ ok: true }) });
+  assert.equal(empty.ok, false);
+  console.log('ok firstMatchingPage keeps SERP order and fetches in parallel');
+}
+
+{
   const made = normalizeProduct({
     id: 1,
     name: 'Холодильник LG GA-B419SQGL',
@@ -627,6 +652,7 @@ console.log('golden tests passed');
   const prev = {
     WEB_LOOKUP: process.env.WEB_LOOKUP,
     WEB_LOOKUP_TRIES: process.env.WEB_LOOKUP_TRIES,
+    WEB_PAGE_TIMEOUT_MS: process.env.WEB_PAGE_TIMEOUT_MS,
     DDG_REGION: process.env.DDG_REGION,
     DDG_ENDPOINT: process.env.DDG_ENDPOINT,
     SEARCH_URL: process.env.SEARCH_URL,
@@ -641,6 +667,7 @@ console.log('golden tests passed');
   try {
     delete process.env.WEB_LOOKUP;
     delete process.env.WEB_LOOKUP_TRIES;
+    delete process.env.WEB_PAGE_TIMEOUT_MS;
     delete process.env.DDG_REGION;
     delete process.env.DDG_ENDPOINT;
     delete process.env.SEARCH_URL;
@@ -654,6 +681,7 @@ console.log('golden tests passed');
     const fromFile = resolveSearchSettings(config);
     assert.equal(fromFile.enabled, true);
     assert.equal(fromFile.tries, 3);
+    assert.equal(fromFile.pageTimeoutMs, 10000);
     assert.equal(fromFile.yandex.enabled, true);
     assert.equal(fromFile.yandex.searchType, 'ru');
     assert.equal(fromFile.yandex.region, '225');

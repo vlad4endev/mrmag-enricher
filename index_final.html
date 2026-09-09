@@ -1329,6 +1329,7 @@ input[type=range]::-moz-range-thumb{
 .runlog-empty{color:var(--t3);font-size:11px;padding:6px 2px;line-height:1.4;font-family:var(--sans)}
 .runlog-line{display:block;padding:1px 0}
 .runlog-line .rl-ts{color:var(--t3);margin-right:6px}
+.runlog-line .rl-pos{color:var(--t3);margin-right:4px;font-variant-numeric:tabular-nums}
 .runlog-line.l-ok{color:var(--green)}
 .runlog-line.l-err{color:var(--red)}
 .runlog-line.l-warn{color:var(--amber)}
@@ -4213,7 +4214,7 @@ let pickCat=null;    // выбранная категория из данных;
 let items=[];        // товары, которые пойдут в обработку: срез srcItems
 let results=[];      // результаты, индексы совпадают с items
 let curIdx=0, selCnt=10, curTab='vis', filter='all', running=false;
-let runIdx=-1, runT0=0;   // что обрабатывается сейчас и когда начали
+let runIdx=-1, runIdxs=[], runT0=0;   // что обрабатывается сейчас (до трёх сразу)
 let runQueue=null;        // индексы текущего прогона: он идёт по фильтру, а не по всему списку
 
 // results разрежен: пока товар не обработан, на его месте пусто (после
@@ -5057,13 +5058,24 @@ function renderEstimate(){
    +` Курс ${RUB} ₽/$ на ${RUB_DATE}.</div>`;
 }
 
+function runningSet(){
+  if(runIdxs.length) return runIdxs;
+  return runIdx>=0?[runIdx]:[];
+}
+function isRunningItem(i){
+  return running&&!results[i]&&runningSet().includes(i);
+}
+function itemTitle(i){
+  return items[i]?.name||items[i]?.title||items[i]?.sku||`Товар №${i+1}`;
+}
+
 // ── СПИСОК ТОВАРОВ (он же прогресс) ──────────────────────────
 function statusOf(i){
   const r=results[i];
-  // Обрабатываемый сейчас товар обязан отличаться от стоящих в очереди —
-  // иначе непонятно, где вообще идёт работа.
-  if(!r&&running&&i===runIdx){
-    const live=liveItemState(runLog);
+  // Обрабатываемые сейчас товары отличаются от стоящих в очереди —
+  // иначе непонятно, где вообще идёт работа. До трёх сразу.
+  if(!r&&isRunningItem(i)){
+    const live=liveItemState(runLog,i);
     const tag=stepTag(live?.rawStep||live?.phase||'model');
     const age=live?.at?` ${dur(Date.now()-live.at)}`:'';
     return {cls:'run',sym:'',txt:`${tag}${age}`};
@@ -5140,15 +5152,20 @@ function renderRunline(){
   const pct=total?Math.round(done/total*100):0;
   const elapsed=Date.now()-runT0;
   const eta=done>0?(elapsed/done)*(total-done):null;
-  const live=liveItemState(runLog);
-  const itemName=live?.title
-    || (runIdx>=0?(items[runIdx]?.name||items[runIdx]?.title||items[runIdx]?.sku||`Товар №${runIdx+1}`):'—');
+  const active=runningSet();
+  const focus=active.includes(curIdx)?curIdx:(active[0]??-1);
+  const live=liveItemState(runLog, focus>=0?focus:undefined);
+  const names=active.map(i=>itemTitle(i));
+  const itemName=names.join(' · ')
+    || live?.title
+    || (focus>=0?itemTitle(focus):'—');
   const phaseAge=live?.at?Date.now()-live.at:0;
   const phaseSec=phaseAge>0?` · ${dur(phaseAge)} на этапе`:'';
   const noteText=(live?.note||'Готовим следующий шаг…')+phaseSec;
   const noteCls=live?.level==='err'?'err':live?.level==='warn'?'warn':live?.level==='ok'?'ok':live?.note?'on':'';
   const phaseLabel=stepTag(live?.rawStep||live?.phase||'gate');
   const n=Math.min(done+(live?.phase==='done'||live?.phase==='skip'||live?.phase==='error'?0:1),total);
+  const nowLabel=active.length>1?`Сейчас ${active.length} сразу`:'Сейчас';
   el.classList.add('on');
   el.style.display='flex';
   head?.classList.add('running');
@@ -5157,13 +5174,13 @@ function renderRunline(){
     +`<div class="rl-ring" style="--p:${pct}" aria-hidden="true"><span>${pct}%</span></div>`
     +`<div class="rl-meta">`
     +`<div class="rl-kicker">Огранка · ${esc(phaseLabel)}</div>`
-    +`<div class="rl-title"><span class="rl-n">${n}</span> из ${total}</div>`
+    +`<div class="rl-title"><span class="rl-n">${n}</span> из ${total}${active.length>1?` · сразу ${active.length}`:''}</div>`
     +`<div class="rl-sub">${dur(elapsed)}${eta!=null?` · осталось ~${dur(eta)}`:''}</div>`
     +`</div></div>`
-    +`<div class="rl-item"><b>Сейчас</b>${esc(String(itemName))}</div>`
+    +`<div class="rl-item"><b>${nowLabel}</b>${esc(String(itemName))}</div>`
     +pipeHtml(live)
     +`<p class="rl-note ${noteCls}">${esc(noteText)}</p>`
-    +`<button type="button" class="rl-stop" onclick="stopJob()">Остановить после текущего</button>`;
+    +`<button type="button" class="rl-stop" onclick="stopJob()">Остановить после текущих</button>`;
   bar?.classList.add('running');
   document.getElementById('rbFill').style.width=total?`${pct}%`:'0';
   document.getElementById('runBtn').classList.add('working');
@@ -5318,8 +5335,8 @@ function renderDetail(){
   if(!r){
     const src=[it?.description,it?.annotation].filter(Boolean).join(' ').replace(/<[^>]+>/g,' ').replace(/\s{2,}/g,' ').trim();
     // Пока ждём ответ по этому товару — видно, что работа идёт именно здесь.
-    if(running&&curIdx===runIdx){
-      setP('detail',livePipeHtml(liveItemState(runLog)));
+    if(running&&isRunningItem(curIdx)){
+      setP('detail',livePipeHtml(liveItemState(runLog,curIdx)));
       return;
     }
     setP('detail',conf+`<div class="seobox"><div class="st">Исходный текст — ${src.length} символов</div>${esc(src||'пусто')}</div>`
@@ -5435,6 +5452,7 @@ let logCursor=0;          // сколько строк лога уже забр�
 let logStick=true;        // автопрокрутка вниз, пока пользователь сам не ушёл вверх
 let logOpen=false;        // журнал свёрнут: список товаров не вытесняется
 let liveSnap=null;        // горячий снимок этапа с сервера (job.live)
+let liveByPos={};         // снимок по каждой из трёх карточек (job.live_by_pos)
 
 /** Этапы одного товара — порядок важен для пайплайна в UI. */
 const PIPE_STEPS=[
@@ -5457,13 +5475,22 @@ function stepTag(step){
 }
 
 /**
- * Состояние текущего товара по хвосту лога + live-снимку с сервера.
+ * Состояние одного товара по хвосту лога + live-снимку с сервера.
+ * pos — индекс в списке: без него три карточки смешали бы шаги.
  * liveSnap страхует UI, если лог ещё не доехал или пуст.
  */
-function liveItemState(log){
+function snapForPos(pos){
+  if(pos!=null && liveByPos[pos]) return liveByPos[pos];
+  if(liveSnap && (liveSnap.pos===pos || (liveSnap.pos==null && pos===runIdx))) return liveSnap;
+  if(pos==null) return liveSnap;
+  return null;
+}
+
+function liveItemState(log, pos){
+  const snap=snapForPos(pos);
   const fromSnap=()=>{
-    if(!liveSnap) return null;
-    const step=liveSnap.step||'gate';
+    if(!snap) return null;
+    const step=snap.step||'gate';
     let phase='gate';
     if(step==='error') phase='error';
     else if(step==='skip') phase='skip';
@@ -5473,43 +5500,45 @@ function liveItemState(log){
     else if(step==='parse') phase='parse';
     else if(step==='gate'||step==='schema'||step==='item') phase='gate';
     else phase='model';
-    const title=runIdx>=0
-      ?(items[runIdx]?.name||items[runIdx]?.title||items[runIdx]?.sku||null)
-      :null;
+    const title=pos>=0?itemTitle(pos):(runIdx>=0?itemTitle(runIdx):null);
     return {
-      pos:liveSnap.pos??null,
+      pos:snap.pos??pos??null,
       title,
       phase,
       rawStep:step,
-      note:liveSnap.msg||'',
-      level:liveSnap.level||'info',
-      at:liveSnap.at||Date.now(),
-      parse:liveSnap.parse||null,
-      rows:[{msg:liveSnap.msg||'',level:liveSnap.level||'info'}],
+      note:snap.msg||'',
+      level:snap.level||'info',
+      at:snap.at||Date.now(),
+      parse:snap.parse||null,
+      rows:[{msg:snap.msg||'',level:snap.level||'info'}],
     };
   };
 
-  if(!Array.isArray(log)||!log.length) return fromSnap();
+  const scoped=Array.isArray(log)
+    ? (pos==null?log:log.filter(e=>e.pos===pos))
+    : [];
+
+  if(!scoped.length) return fromSnap();
 
   let start=-1;
-  for(let i=0;i<log.length;i++){
-    if(log[i].step==='item') start=i;
+  for(let i=0;i<scoped.length;i++){
+    if(scoped[i].step==='item') start=i;
   }
   if(start<0){
-    const snap=fromSnap();
-    if(snap) return snap;
-    const last=log[log.length-1];
-    return {pos:null,title:null,phase:'gate',rawStep:last.step,note:last.msg,level:last.level||'info',at:last.t||Date.now(),parse:liveSnap?.parse||null,rows:log.slice(-6)};
+    const from=fromSnap();
+    if(from) return from;
+    const last=scoped[scoped.length-1];
+    return {pos:pos??null,title:pos>=0?itemTitle(pos):null,phase:'gate',rawStep:last.step,note:last.msg,level:last.level||'info',at:last.t||Date.now(),parse:snap?.parse||null,rows:scoped.slice(-6)};
   }
-  const rows=log.slice(start);
+  const rows=scoped.slice(start);
   const head=rows[0];
   const last=rows[rows.length-1];
   // Если live свежее последней строки лога — берём его сообщение (лог мог отстать).
-  const useLive=liveSnap&&liveSnap.at&&(!last.t||liveSnap.at>=last.t);
-  const tip=useLive?liveSnap:last;
-  const title=(head.msg||'').replace(/^\[[^\]]+\]\s*/,'')||null;
+  const useLive=snap&&snap.at&&(!last.t||snap.at>=last.t);
+  const tip=useLive?snap:last;
+  const title=(head.msg||'').replace(/^\[[^\]]+\]\s*/,'')|| (pos>=0?itemTitle(pos):null);
   const seen=new Set(rows.map(e=>e.step));
-  if(liveSnap?.step) seen.add(liveSnap.step);
+  if(snap?.step) seen.add(snap.step);
   let phase='gate';
   if(seen.has('error')) phase='error';
   else if(seen.has('skip')) phase='skip';
@@ -5519,14 +5548,14 @@ function liveItemState(log){
   else if(seen.has('parse')) phase='parse';
   else if(seen.has('gate')||seen.has('schema')) phase='gate';
   return {
-    pos:head.pos??null,
+    pos:head.pos??pos??null,
     title,
     phase,
     rawStep:tip.step||phase,
     note:tip.msg||last.msg,
     level:tip.level||last.level||'info',
     at:tip.at||tip.t||last.t||Date.now(),
-    parse:liveSnap?.parse||null,
+    parse:snap?.parse||null,
     rows:rows.filter(e=>e.step!=='item').slice(-12),
   };
 }
@@ -5585,7 +5614,8 @@ function fmtLogTs(t){
 }
 
 function logLineText(e){
-  return `${fmtLogTs(e.t)}  [${stepTag(e.step)}]  ${e.msg}`;
+  const tag=e.pos!=null?`#${e.pos+1} `:'';
+  return `${fmtLogTs(e.t)}  [${stepTag(e.step)}]  ${tag}${e.msg}`;
 }
 
 function renderRunLog(){
@@ -5609,7 +5639,8 @@ function renderRunLog(){
   body.innerHTML=runLog.map(e=>{
     const lvl=e.level==='ok'?'l-ok':e.level==='err'?'l-err':e.level==='warn'?'l-warn':e.level==='skip'?'l-skip':'l-info';
     const item=e.step==='item'?' is-item':'';
-    return `<span class="runlog-line ${lvl}${item}"><span class="rl-ts">${esc(fmtLogTs(e.t))}</span>${esc(e.msg)}</span>`;
+    const tag=e.pos!=null?`<span class="rl-pos">#${e.pos+1}</span> `:'';
+    return `<span class="runlog-line ${lvl}${item}"><span class="rl-ts">${esc(fmtLogTs(e.t))}</span>${tag}${esc(e.msg)}</span>`;
   }).join('');
   if(box.classList.contains('open')&&(logStick||nearBottom)) body.scrollTop=body.scrollHeight;
 }
@@ -5632,18 +5663,20 @@ function resetRunLog(){
   logStick=true;
   logOpen=false;
   liveSnap=null;
+  liveByPos={};
   renderRunLog();
 }
 
 function applyLive(d){
   if(d?.live&&typeof d.live==='object') liveSnap=d.live;
+  if(d?.live_by_pos&&typeof d.live_by_pos==='object') liveByPos=d.live_by_pos;
 }
 
 function applyLog(d){
   applyLive(d);
   if(!Array.isArray(d?.log)){
     if(running) renderRunline();
-    if(running&&curIdx===runIdx&&runIdx>=0) renderDetail();
+    if(running&&isRunningItem(curIdx)) renderDetail();
     return;
   }
   const from=typeof d.log_from==='number'?d.log_from:logCursor;
@@ -5660,8 +5693,8 @@ function applyLog(d){
   logCursor=typeof d.log_total==='number'?d.log_total:from+d.log.length;
   renderRunLog();
   if(running) renderRunline();
-  // Если смотрим обрабатываемый товар — обновляем правую панель без клика.
-  if(running&&curIdx===runIdx&&runIdx>=0) renderDetail();
+  // Если смотрим одну из обрабатываемых карточек — обновляем правую панель без клика.
+  if(running&&isRunningItem(curIdx)) renderDetail();
 }
 
 async function copyRunLog(){
@@ -5972,10 +6005,10 @@ async function run(){
   await follow(job.id);
 }
 
-/** Остановка: сервер доводит текущий товар и встаёт. */
+/** Остановка: сервер доводит текущие карточки и не берёт новые. */
 async function stopJob(){
   if(!jobId) return;
-  setSt('ld','Останавливаем после текущего товара...');
+  setSt('ld','Останавливаем после текущих...');
   try{ await apiJson(`/api/jobs/${jobId}/stop`,{method:'POST'}); }
   catch(e){ setSt('er',`Не удалось остановить: ${e.message}`); }
 }
@@ -6044,13 +6077,21 @@ async function follow(id){
       cursor=d.from+k;
       last=d;
 
-      runIdx=cursor<d.total?qIdx(d,cursor):-1;
-      setSt('ld',`${Math.min(cursor+1,d.total)} / ${d.total}`);
+      runIdxs=Array.isArray(d.active)&&d.active.length
+        ? d.active.map(p=>qIdx(d,p)).filter(i=>i>=0)
+        : (cursor<d.total?[qIdx(d,cursor)]:[]) ;
+      runIdx=runIdxs[0]??-1;
+      setSt('ld',`${Math.min(Math.max(d.done||cursor,1),d.total)} / ${d.total}${runIdxs.length>1?` · сразу ${runIdxs.length}`:''}`);
       renderList();
-      // Если пользователь не ушёл смотреть другой товар — следим за текущим.
-      if(curIdx===prev||curIdx===runIdx) selectResult(runIdx>=0?runIdx:curIdx);
+      // Не прыгаем между тремя карточками: следим только если уже смотрим одну из них,
+      // или ещё никуда не кликали (первый кадр).
+      if(runIdxs.includes(curIdx)){
+        /* остаёмся на выбранной из трёх */
+      }else if(prev<0 && runIdx>=0){
+        selectResult(runIdx);
+      }
       prev=runIdx;
-      if(curIdx>=0&&results[curIdx]) renderDetail();
+      if(curIdx>=0&&(results[curIdx]||isRunningItem(curIdx))) renderDetail();
       saveResults();
       renderFoot(sumRun());
 
@@ -6068,6 +6109,7 @@ async function follow(id){
 function finishRun(d){
   running=false;
   runIdx=-1;
+  runIdxs=[];
   const s=sumRun();
   const total=d?.total??runQueue?.length??0;
   const el=d?.started_at&&d?.finished_at?((d.finished_at-d.started_at)/1000).toFixed(1):null;

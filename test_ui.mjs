@@ -161,7 +161,8 @@ export const st={get items(){return items},set items(v){items=v},
   get allModels(){return allModels},set allModels(v){allModels=v},
   get curIdx(){return curIdx},get filter(){return filter},
   get running(){return running},set running(v){running=v},
-  get runIdx(){return runIdx},set runIdx(v){runIdx=v},
+  get runIdx(){return runIdx},set runIdx(v){runIdx=v; runIdxs=v>=0?[v]:[];},
+  get runIdxs(){return runIdxs},set runIdxs(v){runIdxs=Array.isArray(v)?v.slice():[]; runIdx=runIdxs[0]??-1;},
   get categories(){return categories},set categories(v){categories=v},
   set schemas(v){schemas=v},
   set runT0(v){runT0=v},
@@ -1356,6 +1357,23 @@ t('в списке у активного товара своя разметка'
   api.renderList();
   assert.match(G('midList').innerHTML, /og-beam[\s\S]*class="row"[\s\S]*class="ri s-run/, 'активный товар в радар-обводке');
   st.running = false; st.runIdx = -1;
+});
+t('три карточки сразу: все горят, четвёртая в очереди, фокус не путается', () => {
+  st.items = [{ name: 'A' }, { name: 'B' }, { name: 'C' }, { name: 'D' }];
+  st.results = [null, null, null, null];
+  st.running = true;
+  st.runIdxs = [0, 1, 2];
+  assert.strictEqual(api.statusOf(0).cls, 'run');
+  assert.strictEqual(api.statusOf(1).cls, 'run');
+  assert.strictEqual(api.statusOf(2).cls, 'run');
+  assert.strictEqual(api.statusOf(3).cls, 'pd', 'четвёртая ещё не начата');
+  api.renderList();
+  const h = G('midList').innerHTML;
+  assert.strictEqual((h.split('og-beam').length - 1), 3, 'три радар-обводки');
+  api.renderRunline();
+  assert.match(G('runline').innerHTML, /сразу 3|3 сразу/);
+  assert.match(G('runline').innerHTML, /Остановить/);
+  st.running = false; st.runIdxs = []; st.runIdx = -1;
 });
 
 console.log('\nТема оформления');

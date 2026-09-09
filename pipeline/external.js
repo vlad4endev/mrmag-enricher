@@ -22,7 +22,7 @@ import { identityMatches, nameKeyTokens } from './identity.js';
 import { ingestPairs } from './normalize.js';
 import { matchKey } from './match.js';
 import { requiredFilterAttrs } from './required_filters.js';
-import { searchWeb, fetchPage, searchQuery, countryQuery, missingQuery, resolveSearchSettings } from './search.js';
+import { searchWeb, fetchPage, searchQuery, countryQuery, missingQuery, resolveSearchSettings, firstMatchingPage } from './search.js';
 
 const MIN_PAIRS = 2;
 
@@ -172,7 +172,8 @@ export function parseMissingFromPage(html, rec, dict, config) {
 async function walkSerp(rec, dict, config, io, { query, parsePage, noteStart, noteHit }) {
   const settings = resolveSearchSettings(config);
   const search = io.search || (q => searchWeb(q, config));
-  const fetchHtml = io.fetchHtml || (url => fetchPage(url, { timeoutMs: settings.timeoutMs }));
+  const pageTimeout = settings.pageTimeoutMs || settings.timeoutMs;
+  const fetchHtml = io.fetchHtml || (url => fetchPage(url, { timeoutMs: pageTimeout }));
   const maxPages = io.maxPages ?? settings.tries;
   const onNote = io.onNote || (() => {});
 
@@ -184,29 +185,25 @@ async function walkSerp(rec, dict, config, io, { query, parsePage, noteStart, no
     return { rec, ok: false, reason: `поиск не удался: ${e.message}`, query };
   }
 
-  const tried = [];
-  for (const url of (urls || []).slice(0, maxPages)) {
-    let host = url;
-    try { host = new URL(url).hostname.replace(/^www\./, ''); } catch { /* оставляем url */ }
-    let html;
-    try { html = await fetchHtml(url); }
-    catch { tried.push(`${host}: не открылась`); continue; }
-    const got = parsePage(html, url);
-    if (!got.ok) {
-      tried.push(`${host}: ${got.reason}`);
-      continue;
-    }
-    const page_data = html ? visibleText(html) : '';
-    applyExternal(rec, got.pairs, dict, config, { url, query, page_data });
-    onNote(noteHit(host, rec, got));
-    return { rec, ok: true, url, query, pairs: got.pairs };
+  const found = await firstMatchingPage(urls, {
+    fetchHtml,
+    maxPages,
+    match: (html, url) => parsePage(html, url),
+  });
+  if (!found.ok) {
+    return {
+      rec,
+      ok: false,
+      query,
+      reason: found.tried.length ? found.tried.join('; ') : 'выдача пуста',
+    };
   }
-  return {
-    rec,
-    ok: false,
-    query,
-    reason: tried.length ? tried.join('; ') : 'выдача пуста',
-  };
+  const page_data = found.html ? visibleText(found.html) : '';
+  applyExternal(rec, found.pairs, dict, config, { url: found.url, query, page_data });
+  let host = found.url;
+  try { host = new URL(found.url).hostname.replace(/^www\./, ''); } catch { /* оставляем url */ }
+  onNote(noteHit(host, rec, found));
+  return { rec, ok: true, url: found.url, query, pairs: found.pairs };
 }
 
 /**
@@ -268,39 +265,12 @@ export async function lookupExternal(rec, dict, config, io = {}) {
     return { rec, ok: false, reason: 'своих данных достаточно' };
   }
   const query = io.query || searchQuery(rec, settings);
-  const search = io.search || (q => searchWeb(q, config));
-  const fetchHtml = io.fetchHtml || (url => fetchPage(url, { timeoutMs: settings.timeoutMs }));
-  const maxPages = io.maxPages ?? settings.tries;
-  const onNote = io.onNote || (() => {});
-
-  let urls = [];
-  try {
-    onNote(`ищем: ${query}`);
-    urls = await search(query);
-  } catch (e) {
-    return { rec, ok: false, reason: `поиск не удался: ${e.message}`, query };
-  }
-
-  const tried = [];
-  for (const url of (urls || []).slice(0, maxPages)) {
-    let host = url;
-    try { host = new URL(url).hostname.replace(/^www\./, ''); } catch { /* оставляем url */ }
-    let html;
-    try { html = await fetchHtml(url); }
-    catch { tried.push(`${host}: не открылась`); continue; }
-    const got = parseProductBySpecs(rec, html, dict, config, { url, query });
-    if (got.ok) {
-      onNote(`взяли ${got.pairs.length} характеристик с ${host}`);
-      return { rec, ok: true, url, query, pairs: got.pairs };
-    }
-    tried.push(`${host}: ${got.reason}`);
-  }
-  return {
-    rec,
-    ok: false,
+  return walkSerp(rec, dict, config, io, {
     query,
-    reason: tried.length ? tried.join('; ') : 'выдача пуста',
-  };
+    parsePage: html => parseExternalSpecs(html, rec.identity, dict),
+    noteStart: q => `ищем: ${q}`,
+    noteHit: (host, _rec, got) => `взяли ${got.pairs.length} характеристик с ${host}`,
+  });
 }
 
 export async function enrichMissing(recs, dict, config, io = {}) {

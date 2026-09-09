@@ -63,6 +63,7 @@
     "tries": 3,
     "gap_ms": 3000,
     "timeout_ms": 20000,
+    "page_timeout_ms": 10000,
     "min_pairs": 3,
     "query_suffix": "характеристики",
     "skip_hosts": ["mrmag.ru"],

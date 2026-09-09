@@ -29,6 +29,8 @@ const now = () => Date.now();
 const LOG_CAP = Number(process.env.JOBS_LOG_CAP || 4000);
 /** Потолок одного текстового поля в деталях (промпт/ответ) — иначе jobs/*.json раздуваются. */
 const DETAIL_TEXT_CAP = Number(process.env.JOBS_DETAIL_TEXT_CAP || 200_000);
+/** Сколько карточек обогащаем сразу. 3 — сеть и модель перекрываются, результаты не путаются. */
+export const JOB_CONCURRENCY = Math.max(1, Math.min(8, Number(process.env.JOB_CONCURRENCY || 3)));
 
 export function createJobStore({
   enrichOne,
@@ -36,6 +38,7 @@ export function createJobStore({
   // Неделя: столько живёт результат, за который заплатили и который могли не
   // успеть выгрузить. Дальше он мусор.
   ttlMs = Number(process.env.JOBS_TTL_MS || 7 * 24 * 3600_000),
+  concurrency = JOB_CONCURRENCY,
   log = console.log,
 } = {}) {
   const jobs = new Map();
@@ -78,7 +81,18 @@ export function createJobStore({
    */
   function liveParse(job, entry) {
     const fresh = entry.step === 'item' || entry.step === 'job' || entry.step === 'finish';
-    return entry.parse || (!fresh && job.live?.parse) || null;
+    if (entry.parse) return entry.parse;
+    if (fresh) return null;
+    const pos = entry.pos;
+    if (pos != null && job.live_by_pos?.[pos]?.parse) return job.live_by_pos[pos].parse;
+    return null;
+  }
+
+  function setLive(job, snap) {
+    job.live = snap;
+    if (snap.pos == null) return;
+    if (!job.live_by_pos || typeof job.live_by_pos !== 'object') job.live_by_pos = {};
+    job.live_by_pos[snap.pos] = snap;
   }
 
   function pushLog(job, entry) {
@@ -86,14 +100,14 @@ export function createJobStore({
     const parse = liveParse(job, entry);
     // Пустое сообщение + parse — только снимок для карточки, без строки в журнале.
     if (entry.parse && (entry.msg == null || entry.msg === '')) {
-      job.live = {
-        step: entry.step || job.live?.step || 'parse',
-        msg: job.live?.msg || '',
-        level: entry.level || job.live?.level || 'info',
+      setLive(job, {
+        step: entry.step || job.live_by_pos?.[entry.pos]?.step || job.live?.step || 'parse',
+        msg: job.live_by_pos?.[entry.pos]?.msg || job.live?.msg || '',
+        level: entry.level || job.live_by_pos?.[entry.pos]?.level || job.live?.level || 'info',
         pos: entry.pos ?? job.live?.pos ?? job.at_position ?? null,
         at: now(),
         ...(parse ? { parse } : {}),
-      };
+      });
       return;
     }
     const row = {
@@ -106,14 +120,14 @@ export function createJobStore({
     job.log.push(row);
     if (job.log.length > LOG_CAP) job.log.splice(0, job.log.length - LOG_CAP);
     // Горячий снимок для UI: даже без полного лога клиент видит текущий этап.
-    job.live = {
+    setLive(job, {
       step: row.step,
       msg: row.msg,
       level: row.level,
       pos: row.pos ?? job.at_position ?? null,
       at: row.t,
       ...(parse ? { parse } : {}),
-    };
+    });
   }
 
   function clipText(s, cap = DETAIL_TEXT_CAP) {
@@ -208,14 +222,18 @@ export function createJobStore({
       started_at: job.started_at ?? null, finished_at: job.finished_at ?? null,
       error: job.error ?? null, note: job.note ?? null, usage: usageOf(job),
       at_position: job.at_position ?? -1,
+      active: Array.isArray(job.active) ? job.active : [],
       live: job.live ?? null,
+      live_by_pos: job.live_by_pos && typeof job.live_by_pos === 'object' ? job.live_by_pos : {},
+      concurrency: job.concurrency ?? concurrency,
     };
   }
 
   /**
    * Состояние задачи для интерфейса. from — сколько результатов у клиента уже
-   * есть: результаты приходят по порядку очереди, поэтому хвоста достаточно, и
-   * опрос раз в секунду не тащит по мегабайту одного и того же.
+   * есть. Хвост может содержать дырки: три карточки идут сразу, и вторая
+   * может закрыться раньше первой. Курсор клиента двигается только по
+   * заполненному префиксу — слоты при этом не путаются.
    * logFrom — то же для пошагового лога: клиент дописывает хвост, не весь журнал.
    * details=1 — краткие карточки товаров для раздела «Логи».
    * detailPos=N — полный пакет одного товара (промпт/ответ/результат).
@@ -246,7 +264,7 @@ export function createJobStore({
           pos: k,
           status: job.results[k]
             ? (job.results[k].error ? 'error' : job.results[k].skipped ? 'skip' : job.results[k].enriched ? 'ok' : 'pending')
-            : (job.at_position === k ? 'running' : 'pending'),
+            : (Array.isArray(job.active) && job.active.includes(k) ? 'running' : 'pending'),
           product: {
             name: p?.name || p?.title || null,
             sku: p?.sku != null ? String(p.sku) : null,
@@ -281,9 +299,8 @@ export function createJobStore({
   }
 
   /**
-   * Остановка после текущего товара. Статус меняет сам прогон, когда выйдет из
-   * цикла: иначе клиент увидел бы «остановлен» раньше, чем придёт результат
-   * товара, который уже оплачен и вот-вот допишется.
+   * Остановка после текущих карточек. Новые не берём, уже начатые доводим:
+   * иначе клиент увидел бы «остановлен» раньше, чем придёт оплаченный ответ.
    */
   function stop(job, reason = 'остановлен') {
     if (job.status !== 'running' && job.status !== 'queued') return summary(job);
@@ -310,6 +327,117 @@ export function createJobStore({
     }
   }
 
+  function markActive(job, k, on) {
+    const set = new Set(Array.isArray(job.active) ? job.active : []);
+    if (on) set.add(k); else set.delete(k);
+    job.active = [...set].sort((a, b) => a - b);
+    job.at_position = job.active[0] ?? -1;
+  }
+
+  async function runItem(job, k) {
+    markActive(job, k, true);
+    const label = productLabel(job.products[k], k);
+    pushLog(job, {
+      level: 'info', step: 'item', pos: k,
+      msg: `[${k + 1}/${job.total}] ${label}`,
+    });
+    save(job);
+    try {
+      const d = await enrichOne(job.products[k], {
+        model: job.model, category: job.category, provider: job.provider,
+        onNote: (msg, meta = {}) => {
+          pushLog(job, {
+            level: meta.level || 'info',
+            step: meta.step || 'note',
+            pos: k,
+            msg: String(msg ?? ''),
+            ...(meta.parse ? { parse: meta.parse } : {}),
+          });
+          save(job);
+        },
+      });
+      job.results[k] = {
+        enriched: d.enriched ?? null,
+        ...(d.skipped ? { skipped: d.skipped } : {}),
+        ...(d.needs_review && !d.enriched ? { needs_review: true, validation_issues: d.validation_issues || [] } : {}),
+        ...(d.source_url ? { source: d.source_url } : {}),
+        ...(d.parser ? { parser: true } : {}),
+        ...(d.corrected ? { corrected: true } : {}),
+        ...(d.parse || d.detail?.parse ? { parse: d.parse || d.detail.parse } : {}),
+        iT:   d.usage?.prompt_tokens ?? 0,
+        oT:   d.usage?.completion_tokens ?? 0,
+        cost: typeof d.usage?.cost === 'number' ? d.usage.cost : null,
+      };
+      if (d.skipped) {
+        pushLog(job, { level: 'skip', step: 'skip', pos: k, msg: `⊘ Пропуск: ${d.skipped}` });
+      } else if (d.needs_review && !d.enriched) {
+        const issues = (d.validation_issues || []).map(i => `${i.field}: ${i.reason}`).join('; ');
+        const iT = d.usage?.prompt_tokens ?? 0;
+        const oT = d.usage?.completion_tokens ?? 0;
+        const cost = typeof d.usage?.cost === 'number' ? d.usage.cost : null;
+        pushLog(job, {
+          level: 'warn', step: 'needs_review', pos: k,
+          msg: `⚠ needs_review · ${issues || 'валидация'}`
+            + ` · in=${iT} out=${oT}`
+            + (cost != null ? ` · $${cost.toFixed(5)}` : '')
+            + (d.usage?.attempts ? ` · попыток ${d.usage.attempts}` : ''),
+        });
+      } else {
+        const iT = d.usage?.prompt_tokens ?? 0;
+        const oT = d.usage?.completion_tokens ?? 0;
+        const cost = typeof d.usage?.cost === 'number' ? d.usage.cost : null;
+        const attempts = d.usage?.attempts;
+        const mark = doneStatusLabel({
+          parser: Boolean(d.parser || d.source_url),
+          corrected: Boolean(d.corrected),
+        });
+        const pretty = mark.charAt(0).toUpperCase() + mark.slice(1);
+        pushLog(job, {
+          level: 'ok', step: 'done', pos: k,
+          msg: `✓ ${pretty} · in=${iT} out=${oT}`
+            + (cost != null ? ` · $${cost.toFixed(5)}` : '')
+            + (attempts > 1 ? ` · попыток ${attempts}` : '')
+            + (d.source_url ? ` · источник ${d.source_url}` : ''),
+        });
+      }
+      storeDetail(job, k, d.detail || {
+        product: { name: job.products[k]?.name || null, sku: job.products[k]?.sku != null ? String(job.products[k].sku) : null },
+        status: d.skipped ? 'skip' : (d.needs_review && !d.enriched) ? 'needs_review' : 'ok',
+        skipped: d.skipped || null,
+        needs_review: Boolean(d.needs_review && !d.enriched),
+        validation_issues: d.validation_issues || null,
+        enriched: d.enriched ?? null,
+        usage: d.usage || null,
+        raw_response: d.detail?.raw_response ?? null,
+        ...(d.source_url ? { source_url: d.source_url } : {}),
+        ...(d.parser ? { parser: true } : {}),
+        ...(d.corrected ? { corrected: true } : {}),
+      });
+    } catch (e) {
+      // Провал одного товара не отменяет прогон — ровно как в браузере.
+      // Неудачные попытки оплачены, поэтому usage сохраняем и на ошибке.
+      job.results[k] = {
+        enriched: null, error: e.message,
+        iT: e.usage?.iT ?? 0, oT: e.usage?.oT ?? 0,
+        cost: typeof e.usage?.cost === 'number' ? e.usage.cost : null,
+        ...(e.detail?.parse ? { parse: e.detail.parse } : {}),
+      };
+      pushLog(job, { level: 'err', step: 'error', pos: k, msg: `✗ Ошибка: ${e.message}` });
+      storeDetail(job, k, e.detail || {
+        product: { name: job.products[k]?.name || null, sku: job.products[k]?.sku != null ? String(job.products[k].sku) : null },
+        status: 'error',
+        error: e.message,
+        usage: e.usage
+          ? { prompt_tokens: e.usage.iT ?? 0, completion_tokens: e.usage.oT ?? 0, cost: e.usage.cost ?? 0 }
+          : null,
+      });
+    }
+    if (job.live_by_pos && typeof job.live_by_pos === 'object') delete job.live_by_pos[k];
+    markActive(job, k, false);
+    job.done = job.results.filter(Boolean).length;
+    save(job);
+  }
+
   async function runJob(job) {
     job.status = 'running';
     job.stopping = false;
@@ -317,127 +445,53 @@ export function createJobStore({
     job.note = null;
     job.started_at = job.started_at || now();
     if (!Array.isArray(job.log)) job.log = [];
+    job.active = [];
+    job.live_by_pos = {};
     job.live = null;
+    job.at_position = -1;
+    const pool = Math.max(1, Math.min(Number(job.concurrency || concurrency) || 1, job.total || 1));
+    job.concurrency = pool;
     const resumed = job.results.some(Boolean);
+    const how = pool > 1 ? `, по ${pool} сразу` : '';
     pushLog(job, {
       level: 'info', step: 'job',
       msg: resumed
-        ? `Продолжаем прогон: ${job.total} товаров, модель ${job.model}${job.provider ? `, ${job.provider}` : ''}`
-        : `Старт прогона: ${job.total} товаров, модель ${job.model}${job.provider ? `, ${job.provider}` : ''}`,
+        ? `Продолжаем прогон: ${job.total} товаров, модель ${job.model}${job.provider ? `, ${job.provider}` : ''}${how}`
+        : `Старт прогона: ${job.total} товаров, модель ${job.model}${job.provider ? `, ${job.provider}` : ''}${how}`,
     });
     save(job, true);
-    log(`▶ job ${job.id}: ${job.total} товаров, модель ${job.model}`);
+    log(`▶ job ${job.id}: ${job.total} товаров, модель ${job.model}${how}`);
 
-    for (let k = 0; k < job.total; k++) {
-      if (job.stopping) {
-        pushLog(job, { level: 'warn', step: 'stop', msg: `Остановка: осталось ${job.total - k} из ${job.total}` });
-        break;
-      }
-      if (job.results[k]) continue;                    // возобновление после перезапуска
-      job.at_position = k;
-      const label = productLabel(job.products[k], k);
-      pushLog(job, {
-        level: 'info', step: 'item', pos: k,
-        msg: `[${k + 1}/${job.total}] ${label}`,
-      });
-      save(job);
-      try {
-        const d = await enrichOne(job.products[k], {
-          model: job.model, category: job.category, provider: job.provider,
-          onNote: (msg, meta = {}) => {
+    let next = 0;
+    let stopNoted = false;
+    async function worker() {
+      for (;;) {
+        if (job.stopping) {
+          if (!stopNoted) {
+            stopNoted = true;
+            const left = job.results.filter(r => !r).length;
             pushLog(job, {
-              level: meta.level || 'info',
-              step: meta.step || 'note',
-              pos: k,
-              msg: String(msg ?? ''),
-              ...(meta.parse ? { parse: meta.parse } : {}),
+              level: 'warn', step: 'stop',
+              msg: `Остановка: дожидаемся текущих, осталось ${left} из ${job.total}`,
             });
-            save(job);
-          },
-        });
-        job.results[k] = {
-          enriched: d.enriched ?? null,
-          ...(d.skipped ? { skipped: d.skipped } : {}),
-          ...(d.needs_review && !d.enriched ? { needs_review: true, validation_issues: d.validation_issues || [] } : {}),
-          ...(d.source_url ? { source: d.source_url } : {}),
-          ...(d.parser ? { parser: true } : {}),
-          ...(d.corrected ? { corrected: true } : {}),
-          ...(d.parse || d.detail?.parse ? { parse: d.parse || d.detail.parse } : {}),
-          iT:   d.usage?.prompt_tokens ?? 0,
-          oT:   d.usage?.completion_tokens ?? 0,
-          cost: typeof d.usage?.cost === 'number' ? d.usage.cost : null,
-        };
-        if (d.skipped) {
-          pushLog(job, { level: 'skip', step: 'skip', pos: k, msg: `⊘ Пропуск: ${d.skipped}` });
-        } else if (d.needs_review && !d.enriched) {
-          const issues = (d.validation_issues || []).map(i => `${i.field}: ${i.reason}`).join('; ');
-          const iT = d.usage?.prompt_tokens ?? 0;
-          const oT = d.usage?.completion_tokens ?? 0;
-          const cost = typeof d.usage?.cost === 'number' ? d.usage.cost : null;
-          pushLog(job, {
-            level: 'warn', step: 'needs_review', pos: k,
-            msg: `⚠ needs_review · ${issues || 'валидация'}`
-              + ` · in=${iT} out=${oT}`
-              + (cost != null ? ` · $${cost.toFixed(5)}` : '')
-              + (d.usage?.attempts ? ` · попыток ${d.usage.attempts}` : ''),
-          });
-        } else {
-          const iT = d.usage?.prompt_tokens ?? 0;
-          const oT = d.usage?.completion_tokens ?? 0;
-          const cost = typeof d.usage?.cost === 'number' ? d.usage.cost : null;
-          const attempts = d.usage?.attempts;
-          const mark = doneStatusLabel({
-            parser: Boolean(d.parser || d.source_url),
-            corrected: Boolean(d.corrected),
-          });
-          const pretty = mark.charAt(0).toUpperCase() + mark.slice(1);
-          pushLog(job, {
-            level: 'ok', step: 'done', pos: k,
-            msg: `✓ ${pretty} · in=${iT} out=${oT}`
-              + (cost != null ? ` · $${cost.toFixed(5)}` : '')
-              + (attempts > 1 ? ` · попыток ${attempts}` : '')
-              + (d.source_url ? ` · источник ${d.source_url}` : ''),
-          });
+          }
+          return;
         }
-        storeDetail(job, k, d.detail || {
-          product: { name: job.products[k]?.name || null, sku: job.products[k]?.sku != null ? String(job.products[k].sku) : null },
-          status: d.skipped ? 'skip' : (d.needs_review && !d.enriched) ? 'needs_review' : 'ok',
-          skipped: d.skipped || null,
-          needs_review: Boolean(d.needs_review && !d.enriched),
-          validation_issues: d.validation_issues || null,
-          enriched: d.enriched ?? null,
-          usage: d.usage || null,
-          raw_response: d.detail?.raw_response ?? null,
-          ...(d.source_url ? { source_url: d.source_url } : {}),
-          ...(d.parser ? { parser: true } : {}),
-          ...(d.corrected ? { corrected: true } : {}),
-        });
-      } catch (e) {
-        // Провал одного товара не отменяет прогон — ровно как в браузере.
-        // Неудачные попытки оплачены, поэтому usage сохраняем и на ошибке.
-        job.results[k] = {
-          enriched: null, error: e.message,
-          iT: e.usage?.iT ?? 0, oT: e.usage?.oT ?? 0,
-          cost: typeof e.usage?.cost === 'number' ? e.usage.cost : null,
-          ...(e.detail?.parse ? { parse: e.detail.parse } : {}),
-        };
-        pushLog(job, { level: 'err', step: 'error', pos: k, msg: `✗ Ошибка: ${e.message}` });
-        storeDetail(job, k, e.detail || {
-          product: { name: job.products[k]?.name || null, sku: job.products[k]?.sku != null ? String(job.products[k].sku) : null },
-          status: 'error',
-          error: e.message,
-          usage: e.usage
-            ? { prompt_tokens: e.usage.iT ?? 0, completion_tokens: e.usage.oT ?? 0, cost: e.usage.cost ?? 0 }
-            : null,
-        });
+        while (next < job.total && job.results[next]) next++;
+        const k = next++;
+        if (k >= job.total) return;
+        await runItem(job, k);
       }
-      job.done = job.results.filter(Boolean).length;
-      save(job);
     }
+
+    const n = Math.min(pool, job.total);
+    await Promise.all(Array.from({ length: n }, () => worker()));
 
     if (job.stopping) job.status = 'stopped';
     else if (job.status === 'running') job.status = 'done';
     job.finished_at = now();
+    job.active = [];
+    job.live_by_pos = {};
     job.at_position = -1;
     const u = usageOf(job);
     pushLog(job, {
@@ -473,6 +527,9 @@ export function createJobStore({
       total: products.length,
       done: 0,
       at_position: -1,
+      active: [],
+      live_by_pos: {},
+      concurrency,
       indices: indices?.length === products.length ? indices : products.map((_, i) => i),
       products,
       results: new Array(products.length).fill(null),
@@ -508,6 +565,10 @@ export function createJobStore({
       job.details = Array.isArray(job.details) ? job.details : [];
       while (job.details.length < job.products.length) job.details.push(null);
       job.log = Array.isArray(job.log) ? job.log : [];
+      job.active = [];
+      job.live_by_pos = {};
+      job.live = null;
+      job.at_position = -1;
       job.done = job.results.filter(Boolean).length;
       jobs.set(job.id, job);
       if (job.status === 'running' || job.status === 'queued') {

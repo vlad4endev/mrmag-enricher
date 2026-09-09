@@ -299,6 +299,89 @@ await t('пример ATLANT 11391: trace из фактического model ca
   console.log('  confirmed: system/user taken from fetch body messages[]');
 });
 
+await t('три карточки сразу: слот результата совпадает с товаром, даже если вторая готова раньше', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'job-pool-'));
+  const finished = [];
+  const store = createJobStore({
+    concurrency: 3,
+    enrichOne: async (p) => {
+      const delay = { A: 70, B: 8, C: 25 }[p.name];
+      await new Promise(r => setTimeout(r, delay));
+      finished.push(p.name);
+      return {
+        enriched: { specs: { who: p.name } },
+        usage: { prompt_tokens: 1, completion_tokens: 1, cost: 0 },
+      };
+    },
+    dir,
+    log: () => {},
+  });
+  const job = store.create({
+    model: 'test/model',
+    products: [{ name: 'A' }, { name: 'B' }, { name: 'C' }],
+    indices: [10, 20, 30],
+  });
+  let sawThree = false;
+  const until = Date.now() + 4000;
+  while (store.get(job.id)?.status === 'running' || store.get(job.id)?.status === 'queued') {
+    if ((store.get(job.id).active || []).length === 3) sawThree = true;
+    if (Date.now() > until) break;
+    await new Promise(r => setTimeout(r, 5));
+  }
+  const j = store.get(job.id);
+  assert.equal(j.status, 'done');
+  assert.ok(sawThree, 'в работе были все три');
+  assert.equal(j.results[0].enriched.specs.who, 'A');
+  assert.equal(j.results[1].enriched.specs.who, 'B');
+  assert.equal(j.results[2].enriched.specs.who, 'C');
+  assert.ok(finished.indexOf('B') < finished.indexOf('A'), 'вторая закрылась раньше первой');
+  assert.deepEqual(j.active, []);
+  assert.equal(j.at_position, -1);
+  const st = store.state(j, { details: true });
+  assert.equal(st.details[0].status, 'ok');
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+await t('стоп не берёт новые карточки и дожидается текущих', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'job-stop-'));
+  let started = 0;
+  const store = createJobStore({
+    concurrency: 3,
+    enrichOne: async () => {
+      started++;
+      await new Promise(r => setTimeout(r, 80));
+      return {
+        enriched: { specs: { x: 1 } },
+        usage: { prompt_tokens: 1, completion_tokens: 1, cost: 0 },
+      };
+    },
+    dir,
+    log: () => {},
+  });
+  const job = store.create({
+    model: 'test/model',
+    products: [1, 2, 3, 4, 5, 6].map(n => ({ name: String(n) })),
+    indices: [0, 1, 2, 3, 4, 5],
+  });
+  const untilStart = Date.now() + 2000;
+  while ((store.get(job.id).active || []).length < 3) {
+    if (Date.now() > untilStart) break;
+    await new Promise(r => setTimeout(r, 5));
+  }
+  assert.equal((store.get(job.id).active || []).length, 3);
+  store.stop(store.get(job.id));
+  const until = Date.now() + 4000;
+  while (store.get(job.id)?.status === 'running' || store.get(job.id)?.status === 'queued') {
+    if (Date.now() > until) break;
+    await new Promise(r => setTimeout(r, 10));
+  }
+  const j = store.get(job.id);
+  assert.equal(j.status, 'stopped');
+  assert.equal(started, 3, 'новые слоты после стопа не стартуют');
+  assert.equal(j.results.filter(Boolean).length, 3);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
 if (failed) {
   console.error(`\n${failed} failed`);
   process.exit(1);

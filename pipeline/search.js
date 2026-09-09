@@ -131,6 +131,8 @@ function noProxyBypasses(host) {
 
 let lastFetch = 0;
 let lastSearch = 0;
+/** Очередь запросов к поисковику: три карточки сразу не бьют DDG параллельно (капча). */
+let searchLock = Promise.resolve();
 
 function fresh(file, ttlMs) {
   return fs.existsSync(file) && Date.now() - fs.statSync(file).mtimeMs < ttlMs;
@@ -214,6 +216,7 @@ export function resolveSearchSettings(config = {}) {
     tries: num(process.env.WEB_LOOKUP_TRIES, s.tries, 3),
     gapMs: num(process.env.SEARCH_GAP_MS, s.gap_ms, 3000),
     timeoutMs: num(s.timeout_ms, 20_000),
+    pageTimeoutMs: num(process.env.WEB_PAGE_TIMEOUT_MS, s.page_timeout_ms, 10_000),
     minPairs: num(s.min_pairs, 3),
     querySuffix: s.query_suffix ?? 'характеристики',
     skipHosts: Array.isArray(s.skip_hosts) && s.skip_hosts.length ? s.skip_hosts : ['mrmag.ru'],
@@ -271,6 +274,7 @@ export function publicParserStatus(config = {}) {
     tries: search.tries,
     gap_ms: search.gapMs,
     timeout_ms: search.timeoutMs,
+    page_timeout_ms: search.pageTimeoutMs,
     query_suffix: search.querySuffix,
     skip_hosts: search.skipHosts,
     search_url: search.extraUrl || null,
@@ -298,11 +302,99 @@ export function publicParserStatus(config = {}) {
 }
 
 async function waitGap(kind, gapMs) {
-  const last = kind === 'search' ? lastSearch : lastFetch;
-  const wait = gapMs - (Date.now() - last);
-  if (wait > 0) await sleep(wait);
-  if (kind === 'search') lastSearch = Date.now();
-  else lastFetch = Date.now();
+  if (kind !== 'search') {
+    const wait = gapMs - (Date.now() - lastFetch);
+    if (wait > 0) await sleep(wait);
+    lastFetch = Date.now();
+    return;
+  }
+  // Страницы товаров качаются параллельно; поисковик — строго по одному.
+  let release;
+  const prev = searchLock;
+  searchLock = new Promise(r => { release = r; });
+  await prev;
+  try {
+    const wait = gapMs - (Date.now() - lastSearch);
+    if (wait > 0) await sleep(wait);
+    lastSearch = Date.now();
+  } finally {
+    release();
+  }
+}
+
+function hostLabel(url) {
+  try { return new URL(url).hostname.replace(/^www\./, ''); }
+  catch { return String(url || ''); }
+}
+
+/**
+ * Читает до maxPages адресов сразу, принимает первую подходящую в порядке
+ * выдачи. Качество то же, что у последовательного обхода: чужая страница
+ * раньше в SERP по-прежнему отбрасывается раньше своей. Зависшая первая
+ * ссылка больше не держит следующие 20 секунд в очереди — они уже качаются.
+ */
+export async function firstMatchingPage(urls, {
+  fetchHtml,
+  match,
+  maxPages = 3,
+} = {}) {
+  const slice = (urls || []).slice(0, maxPages);
+  const tried = [];
+  if (!slice.length) return { ok: false, tried };
+  if (typeof fetchHtml !== 'function' || typeof match !== 'function') {
+    throw new Error('firstMatchingPage: нужны fetchHtml и match');
+  }
+
+  const results = new Array(slice.length);
+  let next = 0;
+  let inflight = slice.length;
+  let settled = false;
+
+  return await new Promise(resolve => {
+    const finish = value => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+    };
+
+    const drain = () => {
+      while (next < slice.length && results[next]) {
+        const cur = results[next];
+        const host = hostLabel(cur.url);
+        next += 1;
+        if (!cur.html) {
+          tried.push(`${host}: не открылась`);
+          continue;
+        }
+        let got;
+        try { got = match(cur.html, cur.url); }
+        catch {
+          tried.push(`${host}: не открылась`);
+          continue;
+        }
+        if (got && got.ok) {
+          return finish({ ...got, ok: true, url: cur.url, html: cur.html, tried });
+        }
+        tried.push(`${host}: ${got?.reason || 'не подошла'}`);
+      }
+      if (inflight === 0) finish({ ok: false, tried });
+    };
+
+    slice.forEach((url, i) => {
+      Promise.resolve()
+        .then(() => fetchHtml(url))
+        .then(html => {
+          results[i] = { url, html: html == null ? null : html };
+        })
+        .catch(() => {
+          results[i] = { url, html: null };
+        })
+        .finally(() => {
+          inflight -= 1;
+          drain();
+        });
+    });
+  });
 }
 
 export async function fetchPage(url, { timeoutMs = 20_000 } = {}) {

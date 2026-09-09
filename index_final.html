@@ -1769,7 +1769,7 @@ input[type=range]::-moz-range-thumb{
 
       <section class="set-panel on" id="setProv">
         <div class="set-h">Провайдеры ИИ</div>
-        <p class="set-lead">Шлюзы с API в формате OpenAI: OpenRouter, OpenAI, DeepSeek, Groq, Together, локальная Ollama или свой endpoint. Ключ остаётся на сервере и в браузер не попадает.</p>
+        <p class="set-lead">Шлюзы с API в формате OpenAI: OpenRouter, OpenAI, DeepSeek, Groq, Together, Yandex AI Studio, локальная Ollama или свой endpoint. Ключ остаётся на сервере и в браузер не попадает.</p>
         <div class="set-actions" style="margin-bottom:12px">
           <span class="flbl" style="margin:0">Добавить</span>
           <div class="set-presets" id="setPresets"></div>
@@ -3964,6 +3964,7 @@ function renderProviderCards(){
         <div class="set-row"><label>Id</label><input type="text" data-pk="id" data-i="${i}" value="${esc(p.id||'')}"></div>
         <div class="set-row"><label>Base URL</label><input type="url" data-pk="base_url" data-i="${i}" value="${esc(p.base_url||'')}"></div>
         <div class="set-row"><label>Переменная ключа</label><input type="text" data-pk="api_key_env" data-i="${i}" name="provider-api-key-env-${esc(p.id)}" value="${esc(p.api_key_env||'')}" placeholder="OPENROUTER_API_KEY" autocomplete="off"></div>
+        ${(p.folder_id_env || p.id==='yandex' || (p.base_url||'').includes('yandex.net')) ? `<div class="set-row"><label>Folder ID ${p.has_folder?'<span class="set-badge">есть</span>':'<span class="set-badge off">нет</span>'}</label><input type="text" data-pk="folder_id" data-i="${i}" value="${esc(p.folder_id||'')}" placeholder="из консоли Yandex Cloud" autocomplete="off"></div>` : ''}
         <div class="set-row set-row-wide"><label>Ключ API ${p.has_key?`<span class="set-badge">${esc(p.key_from==='env'?'из env':'в файле')} ${esc(p.key_hint||'')}</span>`:'<span class="set-badge off">нет ключа</span>'}</label>
           <input type="password" data-pk="api_key" data-i="${i}" data-secret="1" name="provider-api-key-${esc(p.id)}" placeholder="${p.has_key?'оставьте пустым, чтобы не менять':'sk-...'}" autocomplete="new-password" spellcheck="false" autocapitalize="off" data-lpignore="true" data-1p-ignore="true">
         </div>
@@ -4071,10 +4072,13 @@ function readSettingsPatch(){
     const models=typeof p.models==='string'?p.models.split(/\n+/).map(s=>s.trim()).filter(Boolean): (p.models||prev.models||[]);
     const out={
       id:p.id||prev.id, name:p.name||prev.name, kind:prev.kind||'openai',
+      auth:prev.auth||'bearer',
       base_url:p.base_url||prev.base_url, api_key_env:p.api_key_env??prev.api_key_env,
+      folder_id:p.folder_id??prev.folder_id??'',
+      folder_id_env:p.folder_id_env??prev.folder_id_env??'',
       enabled:p.enabled??prev.enabled, default:p.default??prev.default,
       models_path:prev.models_path, chat_path:prev.chat_path, headers:prev.headers||{},
-      models, notes:prev.notes||'',
+      models, model_labels:prev.model_labels||{}, notes:prev.notes||'',
     };
     if(p.api_key) out.api_key=p.api_key;
     return out;

@@ -20,6 +20,16 @@ import { normalizeExportTemplates, persistExportTemplates } from './pipeline/exp
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 
 export const PROVIDER_KINDS = ['openai'];
+export const PROVIDER_AUTH = ['bearer', 'api-key'];
+
+/** Короткие id моделей Yandex AI Studio → подписи в списке. */
+export const YANDEX_MODEL_LABELS = {
+  'yandexgpt-lite/latest': 'YandexGPT Lite',
+  'yandexgpt/latest': 'YandexGPT Pro',
+  'aliceai-llm/latest': 'Alice AI LLM',
+  'qwen3-235b-a22b-fp8/latest': 'Qwen3 235B',
+  'gpt-oss-120b/latest': 'GPT-OSS 120B',
+};
 
 /** Заготовки: пользователь добавляет провайдера в два клика, поля уже заполнены. */
 export const PROVIDER_PRESETS = [
@@ -86,6 +96,29 @@ export const PROVIDER_PRESETS = [
     chat_path: '/chat/completions',
     headers: {},
     models: ['llama3.1', 'qwen2.5'],
+  },
+  {
+    id: 'yandex',
+    name: 'Yandex AI Studio',
+    kind: 'openai',
+    auth: 'api-key',
+    // OpenAI-совместимый чат: POST /v1/chat/completions, модель gpt://<folder>/…
+    base_url: 'https://ai.api.cloud.yandex.net/v1',
+    api_key_env: 'YANDEX_API_KEY',
+    folder_id: '',
+    folder_id_env: 'YANDEX_FOLDER_ID',
+    models_path: '',
+    chat_path: '/chat/completions',
+    headers: {},
+    models: [
+      'yandexgpt-lite/latest',
+      'yandexgpt/latest',
+      'aliceai-llm/latest',
+      'qwen3-235b-a22b-fp8/latest',
+      'gpt-oss-120b/latest',
+    ],
+    model_labels: { ...YANDEX_MODEL_LABELS },
+    notes: 'Ключ с правом yc.ai.foundationModels.execute (не Search API). Folder ID — тот же каталог Cloud, что у поиска.',
   },
 ];
 
@@ -210,7 +243,25 @@ export function defaultSearch() {
   };
 }
 
-function normalizeProvider(raw, { keepKey = '' } = {}) {
+function mapStringEntries(obj) {
+  if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return {};
+  return Object.fromEntries(
+    Object.entries(obj).map(([k, v]) => [String(k), String(v)]).filter(([k]) => k),
+  );
+}
+
+function providerAuthSchemeOf(raw, preset = {}) {
+  const a = String(raw?.auth ?? preset.auth ?? 'bearer').toLowerCase().replace('_', '-');
+  return PROVIDER_AUTH.includes(a) ? a : 'bearer';
+}
+
+export function isYandexLlm(p) {
+  if (!p) return false;
+  if (p.id === 'yandex') return true;
+  return /(?:^|[./])(?:ai|llm)\.api\.cloud\.yandex\.net/i.test(String(p.base_url || ''));
+}
+
+function normalizeProvider(raw, { keepKey = '', keepFolder = '' } = {}) {
   const preset = PROVIDER_PRESETS.find(p => p.id === raw?.id) || {};
   const kind = PROVIDER_KINDS.includes(raw?.kind) ? raw.kind : 'openai';
   let apiKey;
@@ -225,22 +276,32 @@ function normalizeProvider(raw, { keepKey = '' } = {}) {
     ? raw.models.map(m => String(m).trim()).filter(Boolean).slice(0, 200)
     : [];
   const headers = (raw?.headers && typeof raw.headers === 'object' && !Array.isArray(raw.headers))
-    ? Object.fromEntries(Object.entries(raw.headers).map(([k, v]) => [String(k), String(v)]).filter(([k]) => k))
+    ? mapStringEntries(raw.headers)
     : { ...(preset.headers || {}) };
+  const labelsSrc = (raw?.model_labels && typeof raw.model_labels === 'object')
+    ? raw.model_labels
+    : (preset.model_labels || {});
+  const folderId = (raw && Object.prototype.hasOwnProperty.call(raw, 'folder_id'))
+    ? str(raw.folder_id)
+    : (keepFolder || str(raw?.folder_id));
   return {
     id: slugId(raw?.id || raw?.name, 'provider'),
     name: str(raw?.name || preset.name, 'Провайдер').slice(0, 80),
     kind,
+    auth: providerAuthSchemeOf(raw, preset),
     base_url: str(raw?.base_url || preset.base_url, 'https://openrouter.ai/api/v1').replace(/\/+$/, ''),
     api_key: apiKey,
     api_key_env: str(raw?.api_key_env ?? preset.api_key_env).slice(0, 80),
+    folder_id: folderId.slice(0, 80),
+    folder_id_env: str(raw?.folder_id_env ?? preset.folder_id_env).slice(0, 80),
     enabled: raw?.enabled !== false,
     default: raw?.default === true,
     models_path: str(raw?.models_path ?? preset.models_path, '/models'),
     chat_path: str(raw?.chat_path ?? preset.chat_path, '/chat/completions'),
     headers,
     models: models.length ? models : [...(preset.models || [])],
-    notes: str(raw?.notes).slice(0, 500),
+    model_labels: mapStringEntries(labelsSrc),
+    notes: str(raw?.notes ?? preset.notes).slice(0, 500),
   };
 }
 
@@ -420,8 +481,10 @@ function normalizeProviders(list, prev = []) {
   const taken = new Set();
   const out = [];
   for (const raw of src) {
-    const keepKey = prevById.get(raw?.id)?.api_key || '';
-    const p = normalizeProvider(raw, { keepKey });
+    const prevP = prevById.get(raw?.id) || {};
+    const keepKey = prevP.api_key || '';
+    const keepFolder = prevP.folder_id || '';
+    const p = normalizeProvider(raw, { keepKey, keepFolder });
     p.id = uniqueId(p.id, taken);
     taken.add(p.id);
     out.push(p);
@@ -491,6 +554,46 @@ export function providerKey(p) {
   return (envName && process.env[envName]) || '';
 }
 
+export function providerHasFolder(p, settings) {
+  return !!providerFolderId(p, settings);
+}
+
+export function providerFolderId(p, settings) {
+  if (p?.folder_id) return String(p.folder_id).trim();
+  const envName = p?.folder_id_env;
+  if (envName && process.env[envName]) return String(process.env[envName]).trim();
+  if (!isYandexLlm(p)) return '';
+  const ya = settings?.search?.yandex;
+  if (ya?.folder_id) return String(ya.folder_id).trim();
+  const searchEnv = ya?.folder_id_env || 'YANDEX_FOLDER_ID';
+  if (process.env[searchEnv]) return String(process.env[searchEnv]).trim();
+  return String(process.env.YANDEX_FOLDER_ID || process.env.YC_FOLDER_ID || process.env.FOLDER_ID || '').trim();
+}
+
+function headerHas(headers, name) {
+  const want = String(name).toLowerCase();
+  return Object.keys(headers || {}).some(k => k.toLowerCase() === want);
+}
+
+export function providerAuthHeader(p, apiKey) {
+  if (!apiKey) return {};
+  const scheme = providerAuthSchemeOf(p);
+  return { Authorization: scheme === 'api-key' ? `Api-Key ${apiKey}` : `Bearer ${apiKey}` };
+}
+
+const MODEL_URI_RE = /^(gpt|emb|ds):\/\//i;
+
+/** Короткие id Yandex → gpt://<folder>/<id>. Остальные провайдеры без изменений. */
+export function resolveProviderModel(p, modelId, settings) {
+  const raw = String(modelId || '').trim();
+  if (!raw) return raw;
+  const folder = providerFolderId(p, settings);
+  const id = folder ? raw.replace(/\{folder_id\}/gi, folder) : raw;
+  if (!isYandexLlm(p) || MODEL_URI_RE.test(id)) return id;
+  if (!folder) return id;
+  return `gpt://${folder}/${id.replace(/^\/+/, '')}`;
+}
+
 function publicYandex(ya = {}) {
   const envName = ya.api_key_env || 'YANDEX_SEARCH_API_KEY';
   const envKey = envName && process.env[envName] ? process.env[envName] : '';
@@ -508,32 +611,38 @@ function publicYandex(ya = {}) {
 }
 
 /** То, что видит интерфейс: без секретов. */
-export function publicProvider(p) {
+export function publicProvider(p, settings) {
   const envKey = p.api_key_env && process.env[p.api_key_env] ? process.env[p.api_key_env] : '';
   const stored = p.api_key || '';
+  const folder = providerFolderId(p, settings);
   return {
     id: p.id,
     name: p.name,
     kind: p.kind,
+    auth: p.auth || 'bearer',
     base_url: p.base_url,
     api_key_env: p.api_key_env || '',
+    folder_id: p.folder_id || '',
+    folder_id_env: p.folder_id_env || '',
     enabled: p.enabled,
     default: p.default,
     models_path: p.models_path,
     chat_path: p.chat_path,
     headers: p.headers,
     models: p.models,
+    model_labels: p.model_labels || {},
     notes: p.notes,
     has_key: !!(stored || envKey),
     key_hint: hintOf(stored || envKey),
     key_from: stored ? 'file' : envKey ? 'env' : 'none',
+    has_folder: !!folder,
   };
 }
 
 export function publicSettings(settings) {
   return {
     ...settings,
-    providers: (settings.providers || []).map(publicProvider),
+    providers: (settings.providers || []).map(p => publicProvider(p, settings)),
     search: {
       ...settings.search,
       yandex: publicYandex(settings.search?.yandex || {}),
@@ -545,6 +654,9 @@ export function envOverrides() {
   const out = [];
   if (process.env.WEB_LOOKUP === '0') out.push({ key: 'WEB_LOOKUP', value: '0', note: 'поиск пустых карточек выключен переменной окружения' });
   if (process.env.SEARCH_URL) out.push({ key: 'SEARCH_URL', value: process.env.SEARCH_URL, note: 'свой поисковик перекрывает поле в файле' });
+  if (process.env.YANDEX_API_KEY) {
+    out.push({ key: 'YANDEX_API_KEY', value: '••••', note: 'ключ Yandex AI Studio из окружения' });
+  }
   if (process.env.YANDEX_SEARCH_API_KEY || process.env.YC_API_KEY) {
     out.push({ key: 'YANDEX_SEARCH_API_KEY', value: '••••', note: 'ключ Yandex Search API из окружения' });
   }
@@ -661,13 +773,22 @@ export function resolveProvider(settings, id) {
   return list.find(p => p.default) || list.find(p => p.enabled) || list[0] || defaultProvider();
 }
 
-export function providerEndpoint(p) {
+export function providerEndpoint(p, settings) {
+  const apiKey = providerKey(p);
+  const folderId = providerFolderId(p, settings);
+  const headers = { ...(p.headers || {}) };
+  Object.assign(headers, providerAuthHeader(p, apiKey));
+  if (folderId && !headerHas(headers, 'x-folder-id')) {
+    headers['x-folder-id'] = folderId;
+  }
   return {
     baseUrl: String(p.base_url || '').replace(/\/+$/, ''),
     chatUrl: joinUrl(p.base_url, p.chat_path || '/chat/completions'),
     modelsUrl: joinUrl(p.base_url, p.models_path || '/models'),
-    headers: { ...(p.headers || {}) },
-    apiKey: providerKey(p),
+    headers,
+    apiKey,
+    folderId,
+    auth: providerAuthSchemeOf(p),
   };
 }
 

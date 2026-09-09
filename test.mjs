@@ -34,7 +34,7 @@ import { parseListing, parseProductPage, buildFilters, assignMissingBrands, writ
 import http from 'http';
 import { buildV2, splitKey } from './export_v2.js';
 import { loadDictionary } from './pipeline/dict.js';
-import { parseProxy, startBridge, setupProxy, mergeNoProxy, applyDirectHosts } from './socks.js';
+import { parseProxy, startBridge, setupProxy, mergeNoProxy, applyDirectHosts, fetchDirect } from './socks.js';
 import net from 'net';
 
 // fetch подменяется в разделе про запросы к модели. Возвращаем именно исходный,
@@ -1768,6 +1768,23 @@ console.log('\nМост SOCKS5 → HTTP CONNECT');
     delete process.env.NODE_USE_ENV_PROXY; delete process.env.NO_PROXY;
   });
 
+  await tAsync('карточки магазинов не гоняем через SOCKS OpenRouter', async () => {
+    const srv = http.createServer((req, res) => { res.writeHead(200); res.end('direct-ok'); });
+    await new Promise(r => srv.listen(0, '127.0.0.1', r));
+    const port = srv.address().port;
+    const prev = process.env.HTTPS_PROXY;
+    process.env.HTTPS_PROXY = 'http://127.0.0.1:1';
+    try {
+      const res = await fetchDirect(`http://127.0.0.1:${port}/page`, { timeoutMs: 3000 });
+      assert.equal(res.ok, true, res.status);
+      assert.equal(await res.text(), 'direct-ok');
+    } finally {
+      await new Promise(r => srv.close(r));
+      if (prev === undefined) delete process.env.HTTPS_PROXY;
+      else process.env.HTTPS_PROXY = prev;
+    }
+  });
+
   await tAsync('setupProxy дописывает DeepSeek, даже если NO_PROXY уже в .env', async () => {
     const socks = fakeSocks(null);
     const sp = await listen(socks, 0, '127.0.0.1');
@@ -2434,6 +2451,7 @@ console.log('\nТовар без описания: поиск в сети');
   const {
     loadSettings, applySettingsPatch, saveSettings, publicSettings, validateSettings,
     resolveProvider, parsersView, PROVIDER_PRESETS,
+    isYandexLlm, resolveProviderModel, providerEndpoint, providerFolderId,
   } = await import('./settings.js');
 
   console.log('\nГибкие настройки');
@@ -2535,6 +2553,51 @@ console.log('\nТовар без описания: поиск в сети');
     const s = loadSettings();
     assert.ok(s.providers.some(p => p.id === 'deepseek' && p.base_url === 'https://api.deepseek.com'));
     assert.equal(resolveProvider(s, 'deepseek').name, 'DeepSeek');
+  });
+  t('заготовка Yandex AI Studio — OpenAI-совместимый API и модели для парсинга', () => {
+    const ya = PROVIDER_PRESETS.find(p => p.id === 'yandex');
+    assert.ok(ya, 'нет заготовки yandex');
+    assert.equal(ya.base_url, 'https://ai.api.cloud.yandex.net/v1');
+    assert.equal(ya.auth, 'api-key');
+    assert.equal(ya.api_key_env, 'YANDEX_API_KEY');
+    assert.equal(ya.folder_id_env, 'YANDEX_FOLDER_ID');
+    assert.ok(ya.models.includes('yandexgpt-lite/latest'));
+    assert.ok(ya.models.includes('yandexgpt/latest'));
+    assert.ok(ya.models.includes('aliceai-llm/latest'));
+    const s = loadSettings();
+    const hit = s.providers.find(p => p.id === 'yandex');
+    assert.ok(hit, 'yandex должен быть в config');
+    assert.equal(hit.base_url, 'https://ai.api.cloud.yandex.net/v1');
+    assert.equal(hit.auth, 'api-key');
+    assert.equal(resolveProvider(s, 'yandex').name, 'Yandex AI Studio');
+  });
+  t('Yandex: короткий id модели собирается в gpt://folder/… и заголовок Api-Key', () => {
+    const prevFolder = process.env.YANDEX_FOLDER_ID;
+    process.env.YANDEX_FOLDER_ID = 'b1gtestfolder';
+    const s = loadSettings();
+    const p = resolveProvider(s, 'yandex');
+    assert.equal(isYandexLlm(p), true);
+    assert.equal(providerFolderId(p, s), 'b1gtestfolder');
+    assert.equal(resolveProviderModel(p, 'yandexgpt-lite/latest', s), 'gpt://b1gtestfolder/yandexgpt-lite/latest');
+    assert.equal(resolveProviderModel(p, 'gpt://b1gtestfolder/yandexgpt/latest', s), 'gpt://b1gtestfolder/yandexgpt/latest');
+    const ep = providerEndpoint({ ...p, api_key: 'AQVNtestkey' }, s);
+    assert.equal(ep.headers.Authorization, 'Api-Key AQVNtestkey');
+    assert.equal(ep.headers['x-folder-id'], 'b1gtestfolder');
+    assert.equal(ep.chatUrl, 'https://ai.api.cloud.yandex.net/v1/chat/completions');
+    if (prevFolder === undefined) delete process.env.YANDEX_FOLDER_ID;
+    else process.env.YANDEX_FOLDER_ID = prevFolder;
+  });
+  t('пустой список моделей Yandex дополняется из заготовки', () => {
+    const next = applySettingsPatch(loadSettings(), {
+      providers: [{
+        id: 'yandex', name: 'Yandex AI Studio', kind: 'openai', enabled: true, default: true,
+        base_url: 'https://ai.api.cloud.yandex.net/v1', models: [],
+      }],
+    });
+    const ya = next.providers.find(p => p.id === 'yandex');
+    assert.ok(ya.models.includes('yandexgpt-lite/latest'));
+    assert.ok(ya.models.includes('yandexgpt/latest'));
+    assert.equal(ya.auth, 'api-key');
   });
   t('свой шаблон на выбранные разделы пишется в config и читается обратно', () => {
     const cur = loadSettings();

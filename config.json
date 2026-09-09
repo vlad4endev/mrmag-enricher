@@ -56,6 +56,30 @@
       "headers": {},
       "models": ["deepseek-v4-flash", "deepseek-v4-pro"],
       "notes": "Официальный API. Ключ — DEEPSEEK_API_KEY или поле ниже."
+    },
+    {
+      "id": "yandex",
+      "name": "Yandex AI Studio",
+      "kind": "openai",
+      "auth": "api-key",
+      "base_url": "https://ai.api.cloud.yandex.net/v1",
+      "api_key": "",
+      "api_key_env": "YANDEX_API_KEY",
+      "folder_id": "",
+      "folder_id_env": "YANDEX_FOLDER_ID",
+      "enabled": true,
+      "default": false,
+      "models_path": "",
+      "chat_path": "/chat/completions",
+      "headers": {},
+      "models": [
+        "yandexgpt-lite/latest",
+        "yandexgpt/latest",
+        "aliceai-llm/latest",
+        "qwen3-235b-a22b-fp8/latest",
+        "gpt-oss-120b/latest"
+      ],
+      "notes": "Ключ с правом yc.ai.foundationModels.execute (не Search API). Folder ID — тот же каталог Cloud, что у поиска."
     }
   ],
   "search": {

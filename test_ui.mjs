@@ -401,6 +401,7 @@ t('рисует провайдеров и условия из ответа се�
     presets: [
       { id: 'ollama', name: 'Ollama (локально)' },
       { id: 'deepseek', name: 'DeepSeek', base_url: 'https://api.deepseek.com', models: ['deepseek-v4-flash', 'deepseek-v4-pro'] },
+      { id: 'yandex', name: 'Yandex AI Studio', base_url: 'https://ai.api.cloud.yandex.net/v1', auth: 'api-key', folder_id_env: 'YANDEX_FOLDER_ID', models: ['yandexgpt-lite/latest'] },
     ],
     overrides: [],
   });
@@ -447,6 +448,9 @@ t('добавляет провайдера из заготовки', () => {
   api.addProvider('deepseek');
   assert.match(G('setProvList').innerHTML, /DeepSeek/);
   assert.match(G('setProvList').innerHTML, /api\.deepseek\.com/);
+  api.addProvider('yandex');
+  assert.match(G('setProvList').innerHTML, /Yandex AI Studio/);
+  assert.match(G('setProvList').innerHTML, /ai\.api\.cloud\.yandex\.net/);
 });
 t('DeepSeek по умолчанию сразу стоит в шаге модели', () => {
   st.selModel = null;

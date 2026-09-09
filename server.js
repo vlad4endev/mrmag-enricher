@@ -110,6 +110,7 @@ import {
   resolveProvider, providerEndpoint, providerKey,
   bootstrapSettingsFile, PROVIDER_PRESETS, envOverrides,
   parsersView, conditionsView,
+  isYandexLlm, resolveProviderModel, providerFolderId,
 } from './settings.js';
 import { exportTemplatesView } from './pipeline/export_template.js';
 const API_KEY = process.env.OPENROUTER_API_KEY || '';
@@ -155,9 +156,14 @@ function tagModels(raw, p) {
   })).filter(m => m.id);
 }
 
-/** Модели из карточки провайдера — без сети. DeepSeek/Ollama ими и живут. */
+/** Модели из карточки провайдера — без сети. DeepSeek/Ollama/Yandex ими и живут. */
 function listedModels(p) {
-  return tagModels((p.models || []).map(id => ({ id, name: id, pricing: null })), p);
+  const labels = p.model_labels && typeof p.model_labels === 'object' ? p.model_labels : {};
+  return tagModels((p.models || []).map(id => ({
+    id,
+    name: labels[id] || id,
+    pricing: null,
+  })), p);
 }
 
 function dedupeModels(list) {
@@ -181,12 +187,11 @@ function sortModels(list, defaultId) {
   });
 }
 
-async function fetchProviderModels(p, { timeoutMs = 20_000 } = {}) {
-  const ep = providerEndpoint(p);
+async function fetchProviderModels(p, { timeoutMs = 20_000, settings } = {}) {
+  const ep = providerEndpoint(p, settings);
   const listed = listedModels(p);
   if (!p.models_path) return listed;
   const headers = { ...ep.headers };
-  if (ep.apiKey) headers.Authorization = `Bearer ${ep.apiKey}`;
   let r, text;
   try {
     r = await fetch(ep.modelsUrl, { headers, signal: AbortSignal.timeout(timeoutMs) });
@@ -224,7 +229,7 @@ async function models() {
       const listed = listedModels(p);
       // OpenRouter без своего списка не должен на 20 с блокировать DeepSeek.
       const timeoutMs = listed.length ? 2500 : (p.default ? 10_000 : 4000);
-      try { return await fetchProviderModels(p, { timeoutMs }); }
+      try { return await fetchProviderModels(p, { timeoutMs, settings }); }
       catch (e) {
         errors.push({ provider: p.id, name: p.name, error: e.message });
         return listed;
@@ -620,7 +625,7 @@ async function apiDictionaryImportSuggest(req, res, id) {
 
   const settings = loadSettings(ROOT);
   const prov = resolveProvider(settings, body?.provider);
-  const ep = providerEndpoint(prov);
+  const ep = providerEndpoint(prov, settings);
   const apiKey = ep.apiKey || API_KEY;
   if (!apiKey) {
     // Без ключа — эвристика, чтобы UI всё равно работал.
@@ -640,7 +645,11 @@ async function apiDictionaryImportSuggest(req, res, id) {
     });
   }
 
-  const model = String(body?.model || settings.run?.model || 'deepseek/deepseek-v3.2').trim();
+  const model = resolveProviderModel(
+    prov,
+    String(body?.model || settings.run?.model || 'deepseek/deepseek-v3.2').trim(),
+    settings,
+  );
   const system = buildImportSuggestPrompt(attrs, { categoryName: name, catId: id });
   const user = buildImportUserContent(items);
   const chatUrl = ep.chatUrl || `${String(ep.baseUrl || '').replace(/\/$/, '')}/chat/completions`;
@@ -653,7 +662,6 @@ async function apiDictionaryImportSuggest(req, res, id) {
     resHttp = await fetch(chatUrl, {
       method: 'POST',
       headers: {
-        Authorization: `Bearer ${apiKey}`,
         'Content-Type': 'application/json',
         ...(ep.headers || {}),
       },
@@ -1118,14 +1126,15 @@ async function apiQuality(req, res) {
 function filtersAgentOptions(body = {}) {
   const settings = loadSettings(ROOT);
   const prov = resolveProvider(settings, body?.provider);
-  const ep = providerEndpoint(prov);
+  const ep = providerEndpoint(prov, settings);
   const apiKey = ep.apiKey || API_KEY;
   const mode = body?.filters_agent === 'heuristic' || body?.mode === 'heuristic'
     ? 'heuristic'
     : (body?.filters_agent === 'ai' || body?.mode === 'ai' ? 'ai' : 'auto');
+  const rawModel = String(body?.model || settings.run?.model || '').trim();
   return {
     mode,
-    model: String(body?.model || settings.run?.model || '').trim(),
+    model: resolveProviderModel(prov, rawModel, settings),
     timeoutMs: Number(settings.run?.timeout_ms) || 90_000,
     maxTokens: Math.min(8000, Number(settings.run?.max_tokens) || 4000),
     categoryName: body?.category_name || '',
@@ -1134,7 +1143,7 @@ function filtersAgentOptions(body = {}) {
       baseUrl: ep.baseUrl,
       chatUrl: ep.chatUrl,
       headers: ep.headers,
-      model: settings.run?.model,
+      model: resolveProviderModel(prov, settings.run?.model, settings),
     } : null,
   };
 }
@@ -1362,7 +1371,7 @@ async function enrichOne(product, { model, category, provider, onNote = () => {}
   // category самого товара — её проставляет и фид, и обход раздела.
   const settings = loadSettings(ROOT);
   const prov = resolveProvider(settings, provider);
-  const ep = providerEndpoint(prov);
+  const ep = providerEndpoint(prov, settings);
   const apiKey = ep.apiKey || API_KEY;
   const note = (msg, meta) => { try { onNote(msg, meta); } catch { /* лог клиента не роняет прогон */ } };
   const productMeta = {
@@ -1528,6 +1537,22 @@ async function enrichOne(product, { model, category, provider, onNote = () => {}
     throw e;
   }
 
+  if (isYandexLlm(prov) && !providerFolderId(prov, settings)) {
+    const e = new Error('Yandex AI Studio: нет Folder ID — укажите в карточке провайдера или YANDEX_FOLDER_ID (тот же каталог Cloud, что у Search API)');
+    e.status = 400;
+    const dbg = modelNotCalledDebug(product, e.message);
+    e.detail = {
+      product: productMeta,
+      schema: schema.slug,
+      provider: prov.id,
+      model,
+      status: 'error',
+      error: e.message,
+      ...detailTrace(dbg, { enriched: null }),
+    };
+    throw e;
+  }
+
   // Опечатка в id модели иначе уходит в шлюз и возвращается как 404 —
   // и попутно плодит запись в limiters на каждую несуществующую строку.
   let entry = null;
@@ -1590,9 +1615,10 @@ async function enrichOne(product, { model, category, provider, onNote = () => {}
   else note(`Исходный текст готов, отправляем в модель`, { step: 'model' });
 
   note(`Отправляем в модель ${model}`, { step: 'model' });
+  const modelUri = resolveProviderModel(prov, model, settings);
   try {
     const { enriched, iT, oT, cost, costSource, attempts, debug, needs_review, validation_issues, raw_response, corrected } = await enrichProduct(filled, {
-      model, apiKey, schema,
+      model: modelUri, apiKey, schema,
       root: ROOT,
       limiter: limiterFor(`${prov.id}:${model}`),
       pricing: pricingOf(entry),

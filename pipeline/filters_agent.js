@@ -372,9 +372,11 @@ export async function runFiltersAgent({
       const resHttp = await fetchImpl(chatUrl, {
         method: 'POST',
         headers: {
-          Authorization: `Bearer ${provider.apiKey}`,
           'Content-Type': 'application/json',
           ...(provider.headers || {}),
+          ...(provider.apiKey && !(provider.headers?.Authorization || provider.headers?.authorization)
+            ? { Authorization: `Bearer ${provider.apiKey}` }
+            : {}),
         },
         body: JSON.stringify({
           model: model || provider.model || 'deepseek/deepseek-v3.2',

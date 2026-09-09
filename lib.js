@@ -2351,7 +2351,7 @@ export async function enrichProduct(product, opts) {
   const usage = () => ({ iT, oT, cost: costSource === 'нет данных' ? null : cost });
   const safeErr = (e) => {
     const msg = String(e?.message || e || 'unknown error').slice(0, 500);
-    return msg.replace(/Bearer\s+\S+/gi, 'Bearer ***').replace(/sk-[a-zA-Z0-9_-]+/g, 'sk-***');
+    return msg.replace(/Bearer\s+\S+/gi, 'Bearer ***').replace(/Api-Key\s+\S+/gi, 'Api-Key ***').replace(/sk-[a-zA-Z0-9_-]+/g, 'sk-***');
   };
   const debugOf = (extra = {}) => ({
     source_text: src,
@@ -2437,10 +2437,10 @@ export async function enrichProduct(product, opts) {
       res = await fetch(chatUrl, {
         method:  'POST',
         headers: {
-          Authorization:    `Bearer ${apiKey}`,
           'Content-Type':   'application/json',
           'HTTP-Referer':   referer,
           'X-Title':        title,
+          ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
           ...extraHeaders,
         },
         body:   JSON.stringify(requestBody),

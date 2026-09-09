@@ -222,8 +222,9 @@ button:focus-visible,input:focus-visible,textarea:focus-visible,[tabindex]:focus
 .step.done .step-sub{color:var(--green)}
 .step-b{padding:10px var(--pad) 14px;display:flex;flex-direction:column;gap:0}
 .step-b > .flbl:first-child{margin-top:0}
-.parser-kv{display:flex;justify-content:space-between;align-items:baseline;gap:var(--gap);font-size:12px;color:var(--t2);padding:3px 0}
-.parser-kv b{color:var(--t1);font-weight:650;font-size:12px;text-align:right;word-break:break-word;max-width:58%}
+.parser-kv{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.15fr);gap:8px;align-items:baseline;font-size:12px;color:var(--t2);padding:3px 0}
+.parser-kv span{min-width:0;overflow-wrap:anywhere}
+.parser-kv b{color:var(--t1);font-weight:650;font-size:12px;text-align:right;word-break:break-word;min-width:0}
 
 /* Источники товаров — вкладки, один способ за раз */
 .src-tabs{
@@ -732,7 +733,8 @@ input[type=range]::-moz-range-thumb{
 .set-panel.on{display:block}
 .set-h{font-size:22px;font-weight:600;letter-spacing:-.035em;margin-bottom:7px}
 .set-lead{font-size:12.5px;color:var(--t2);margin-bottom:var(--pad-sm);max-width:62ch;line-height:1.5}
-.set-grid{display:grid;grid-template-columns:1fr 1fr;gap:var(--gap)}
+.set-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:var(--gap)}
+.set-row-wide{grid-column:1/-1}
 .set-card{
   background:var(--bg2);border:1px solid var(--b1);border-radius:var(--r);padding:var(--pad-sm) var(--pad);
   box-shadow:var(--sh1);display:flex;flex-direction:column;gap:var(--gap);
@@ -741,8 +743,9 @@ input[type=range]::-moz-range-thumb{
 .set-card-h b{font-size:13.5px;font-weight:650}
 .set-badge{font-size:10px;font-weight:700;padding:2px 6px;border-radius:var(--r3);border:1px solid var(--gbd);background:var(--gbg);color:var(--green)}
 .set-badge.off{background:var(--bg3);border-color:var(--b1);color:var(--t3)}
-.set-row{display:flex;flex-direction:column;gap:4px}
+.set-row{display:flex;flex-direction:column;gap:4px;min-width:0}
 .set-row label{font-size:11.5px;color:var(--t2);font-weight:500}
+.set-row input,.set-row textarea,.set-row select{min-width:0}
 .set-check{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--t1)}
 .set-check input{width:auto;accent-color:var(--ac)}
 .set-actions{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
@@ -1075,7 +1078,7 @@ input[type=range]::-moz-range-thumb{
 @media(max-width:768px){
   .set-body{flex-direction:column;height:auto;overflow:visible;padding:12px}
   .set-nav{width:100%;flex-direction:row;flex-wrap:wrap;border-right:none}
-  .set-grid{grid-template-columns:1fr}
+  .set-grid{grid-template-columns:minmax(0,1fr)}
   .set-main{padding:0}
   .set-panel{padding:16px 14px}
   .set-foot{margin:0;padding:12px 14px}
@@ -1772,11 +1775,11 @@ input[type=range]::-moz-range-thumb{
             </div>
             <div class="set-row"><label for="setYaRegion">Регион (geo-id)</label><input type="text" id="setYaRegion" placeholder="225 — Россия"></div>
             <div class="set-row"><label for="setYaFolder">Folder ID</label><input type="text" id="setYaFolder" placeholder="из консоли Yandex Cloud" autocomplete="off"></div>
-            <div class="set-row"><label for="setYaKeyEnv">Переменная ключа</label><input type="text" id="setYaKeyEnv" placeholder="YANDEX_SEARCH_API_KEY"></div>
-            <div class="set-row"><label for="setYaFolderEnv">Переменная folder</label><input type="text" id="setYaFolderEnv" placeholder="YANDEX_FOLDER_ID"></div>
+            <div class="set-row"><label for="setYaKeyEnv">Переменная ключа</label><input type="text" id="setYaKeyEnv" name="yandex-search-api-key-env" placeholder="YANDEX_SEARCH_API_KEY" autocomplete="off"></div>
+            <div class="set-row"><label for="setYaFolderEnv">Переменная folder</label><input type="text" id="setYaFolderEnv" name="yandex-folder-id-env" placeholder="YANDEX_FOLDER_ID" autocomplete="off"></div>
           </div>
           <div class="set-row"><label for="setYaKey">Ключ API <span id="setYaKeyHint" class="set-badge off">нет ключа</span></label>
-            <input type="password" id="setYaKey" placeholder="оставьте пустым, чтобы не менять" autocomplete="off">
+            <input type="password" id="setYaKey" name="yandex-search-api-key" data-secret="1" placeholder="оставьте пустым, чтобы не менять" autocomplete="new-password" spellcheck="false" autocapitalize="off" data-lpignore="true" data-1p-ignore="true">
           </div>
           <div class="hint">Нужны API-ключ (scope <code>yc.search-api.execute</code>) и Folder ID каталога с ролью <code>search-api.editor</code>. Ключ остаётся на сервере. Без ключа или folder поиск идёт дальше — свой URL, затем DuckDuckGo.</div>
         </div>
@@ -3857,7 +3860,12 @@ function renderSettings(d){
       : 'нет ключа';
   }
   const yaKeyInput=document.getElementById('setYaKey');
-  if(yaKeyInput) yaKeyInput.placeholder=ya.has_key?'оставьте пустым, чтобы не менять':'Api-Key из Yandex Cloud';
+  if(yaKeyInput){
+    yaKeyInput.value='';
+    yaKeyInput.dataset.touched='';
+    yaKeyInput.placeholder=ya.has_key?'оставьте пустым, чтобы не менять':'Api-Key из Yandex Cloud';
+    bindSecretField(yaKeyInput);
+  }
   setC('setDdgOn', ddg.enabled!==false);
   setV('setDdgMethod', ddg.method||'POST');
   setV('setDdgEndpoint', ddg.endpoint||'html');
@@ -3906,11 +3914,11 @@ function renderProviderCards(){
         <div class="set-row"><label>Название</label><input type="text" data-pk="name" data-i="${i}" value="${esc(p.name||'')}"></div>
         <div class="set-row"><label>Id</label><input type="text" data-pk="id" data-i="${i}" value="${esc(p.id||'')}"></div>
         <div class="set-row"><label>Base URL</label><input type="url" data-pk="base_url" data-i="${i}" value="${esc(p.base_url||'')}"></div>
-        <div class="set-row"><label>Переменная ключа</label><input type="text" data-pk="api_key_env" data-i="${i}" value="${esc(p.api_key_env||'')}" placeholder="OPENROUTER_API_KEY"></div>
-        <div class="set-row"><label>Ключ API ${p.has_key?`<span class="set-badge">${esc(p.key_from==='env'?'из env':'в файле')} ${esc(p.key_hint||'')}</span>`:'<span class="set-badge off">нет ключа</span>'}</label>
-          <input type="password" data-pk="api_key" data-i="${i}" placeholder="${p.has_key?'оставьте пустым, чтобы не менять':'sk-...'}" autocomplete="off">
+        <div class="set-row"><label>Переменная ключа</label><input type="text" data-pk="api_key_env" data-i="${i}" name="provider-api-key-env-${esc(p.id)}" value="${esc(p.api_key_env||'')}" placeholder="OPENROUTER_API_KEY" autocomplete="off"></div>
+        <div class="set-row set-row-wide"><label>Ключ API ${p.has_key?`<span class="set-badge">${esc(p.key_from==='env'?'из env':'в файле')} ${esc(p.key_hint||'')}</span>`:'<span class="set-badge off">нет ключа</span>'}</label>
+          <input type="password" data-pk="api_key" data-i="${i}" data-secret="1" name="provider-api-key-${esc(p.id)}" placeholder="${p.has_key?'оставьте пустым, чтобы не менять':'sk-...'}" autocomplete="new-password" spellcheck="false" autocapitalize="off" data-lpignore="true" data-1p-ignore="true">
         </div>
-        <div class="set-row"><label>Модели вручную (по одной на строку)</label><textarea data-pk="models" data-i="${i}" style="min-height:64px" placeholder="если каталог /models недоступен">${esc((p.models||[]).join('\n'))}</textarea></div>
+        <div class="set-row set-row-wide"><label>Модели вручную (по одной на строку)</label><textarea data-pk="models" data-i="${i}" style="min-height:64px" placeholder="если каталог /models недоступен">${esc((p.models||[]).join('\n'))}</textarea></div>
       </div>
       <label class="set-check"><input type="checkbox" data-pk="enabled" data-i="${i}" ${p.enabled?'checked':''}> Включён</label>
       <label class="set-check"><input type="checkbox" data-pk="default" data-i="${i}" ${p.default?'checked':''}> Использовать по умолчанию</label>
@@ -3920,6 +3928,7 @@ function renderProviderCards(){
     </div>`).join('')||'<div class="est-note">Нет провайдеров — добавьте OpenRouter или свой endpoint.</div>';
   document.getElementById('setProvList').querySelectorAll('[data-del]').forEach(b=>
     b.addEventListener('click',()=>removeProvider(Number(b.dataset.del))));
+  document.getElementById('setProvList').querySelectorAll('input[data-secret]').forEach(bindSecretField);
 }
 
 function renderEngineCards(){
@@ -3937,6 +3946,20 @@ function renderEngineCards(){
     b.addEventListener('click',()=>removeEngine(Number(b.dataset.edel))));
 }
 
+function bindSecretField(el){
+  if(!el || el.dataset.secretBound==='1') return;
+  el.dataset.secretBound='1';
+  el.setAttribute('autocomplete','new-password');
+  el.setAttribute('readonly','readonly');
+  el.addEventListener('focus',()=>el.removeAttribute('readonly'));
+  el.addEventListener('input',()=>{ el.dataset.touched='1'; });
+}
+
+function secretInputValue(el){
+  if(!el || el.dataset.touched!=='1') return '';
+  return el.value||'';
+}
+
 function collectKeyed(sel, keyAttr){
   const nodes=[...document.querySelectorAll(sel)];
   if(!nodes.length) return null;
@@ -3946,6 +3969,7 @@ function collectKeyed(sel, keyAttr){
     if(!by[i]) by[i]={};
     const k=el.dataset[keyAttr];
     by[i][k]=el.type==='checkbox'?el.checked:el.value;
+    if(el.dataset.secret && el.dataset.touched!=='1') by[i][k]='';
   }
   return Object.keys(by).sort((a,b)=>a-b).map(k=>by[k]);
 }
@@ -4015,6 +4039,7 @@ function readSettingsPatch(){
     const prev=setPayload?.settings?.search?.engines?.[i]||{};
     return { id:prev.id||('e'+i), name:e.name||prev.name, url:e.url||prev.url, enabled:e.enabled??prev.enabled };
   });
+  const yaKey=secretInputValue(document.getElementById('setYaKey'));
   return {
     providers,
     search:{
@@ -4035,7 +4060,7 @@ function readSettingsPatch(){
         folder_id:getV('setYaFolder'),
         api_key_env:getV('setYaKeyEnv')||'YANDEX_SEARCH_API_KEY',
         folder_id_env:getV('setYaFolderEnv')||'YANDEX_FOLDER_ID',
-        ...(getV('setYaKey')?{api_key:getV('setYaKey')}:{}),
+        ...(yaKey?{api_key:yaKey}:{}),
       },
       duckduckgo:{
         enabled:getC('setDdgOn'),

@@ -446,6 +446,43 @@ t('собирает условия с формы в PATCH', () => {
   assert.ok(Array.isArray(patch.model.system_prompts), 'промпты уходят списком');
   assert.equal(patch.model.system_prompts[0].scope, 'all');
 });
+t('ключ DeepSeek не уезжает в Yandex Search API', () => {
+  api.renderSettings({
+    settings: {
+      providers: [
+        { id: 'deepseek', name: 'DeepSeek', enabled: true, default: true, api_key_env: 'DEEPSEEK_API_KEY', models: ['deepseek-v4-flash'] },
+      ],
+      search: { enabled: true, tries: 3, gap_ms: 3000, timeout_ms: 20000, query_suffix: 'характеристики', skip_hosts: ['mrmag.ru'], search_url: '', fallback_engines: ['mojeek'], engines: [], yandex: { enabled: true, search_type: 'ru', l10n: 'ru', region: '225', api_key_env: 'YANDEX_SEARCH_API_KEY', folder_id_env: 'YANDEX_FOLDER_ID', has_key: false, has_folder: false }, duckduckgo: { enabled: true, method: 'POST', endpoint: 'html', region: 'ru-ru' } },
+      conditions: { mismatch_policy: 'flag', min_source_chars: 100, min_attrs: 5, facet_min_coverage: 70, target_coverage: 90, fuzzy_min_score: 0.93 },
+      model: { name: 'deepseek-v4-flash', prompt_version: 'dict-v1' },
+    },
+    presets: [],
+    overrides: [],
+  });
+  assert.match(G('setProvList').innerHTML, /name="provider-api-key-deepseek"/);
+  assert.doesNotMatch(G('setProvList').innerHTML, /name="yandex-search-api-key"/);
+  const ds = new El('dsKey');
+  ds.dataset.pk = 'api_key';
+  ds.dataset.i = '0';
+  ds.dataset.secret = '1';
+  ds.dataset.touched = '1';
+  ds.value = 'sk-deepseek-secret';
+  const prevQS = document.querySelectorAll;
+  document.querySelectorAll = sel => sel === '#setProvList [data-pk]' ? [ds] : (prevQS(sel) || []);
+  try {
+    G('setYaKey').value = 'sk-deepseek-secret';
+    const patch = api.readSettingsPatch();
+    assert.equal(patch.providers.find(p => p.id === 'deepseek').api_key, 'sk-deepseek-secret');
+    assert.ok(!patch.search.yandex.api_key, 'автозаполнение чужого password-поля не должно писать ключ в Yandex');
+    G('setYaKey').dataset.touched = '1';
+    G('setYaKey').value = 'ya-search-secret';
+    const patch2 = api.readSettingsPatch();
+    assert.equal(patch2.search.yandex.api_key, 'ya-search-secret');
+    assert.equal(patch2.providers.find(p => p.id === 'deepseek').api_key, 'sk-deepseek-secret');
+  } finally {
+    document.querySelectorAll = prevQS;
+  }
+});
 t('промпт: все разделы или выбрать несколько', () => {
   st.categories = [
     { slug: 'kholodilniki', id: 523, name: 'Холодильники' },

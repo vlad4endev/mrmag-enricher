@@ -577,6 +577,14 @@ textarea{
 }
 .spec-title i{font-family:var(--mono);letter-spacing:0;font-weight:400;font-style:normal}
 .spec-title.mt{margin-top:26px}
+.parse-card{margin:0 0 22px}
+.parse-card .spec-title a{font-family:var(--mono);letter-spacing:0;text-transform:none;color:var(--ac);font-weight:600}
+.parse-src{
+  font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;
+  color:var(--t3);margin:4px 0 8px;
+}
+.parse-card .parse-specs{margin-bottom:14px}
+.parse-card .parse-specs:last-child{margin-bottom:0}
 
 /* Страница товара во вкладке «Поля»: как эталон, а не простыня JSON. */
 .pcard{margin:0 0 22px}
@@ -846,6 +854,15 @@ input[type=range]::-moz-range-thumb{
 .logs-steps .ls-err{color:var(--red)}
 .logs-steps .ls-warn{color:var(--amber)}
 .logs-steps .ls-skip{color:var(--t3)}
+.parse-hits{margin:0;padding:0;list-style:none;font-family:var(--mono);font-size:11px;line-height:1.45}
+.parse-hits li{
+  display:grid;grid-template-columns:minmax(72px,92px) minmax(0,1fr);gap:8px;
+  padding:3px 0;border-bottom:1px dashed var(--b1);color:var(--t2);
+}
+.parse-hits li:last-child{border-bottom:none}
+.parse-hits .ph-src{color:var(--t3);font-size:10px;font-weight:600}
+.parse-hits .ph-kv{min-width:0;word-break:break-word}
+.parse-hits .ph-kv b{color:var(--t1);font-weight:650}
 .logs-empty{padding:18px 12px;color:var(--t3);font-size:13px;line-height:1.5}
 @media(max-width:900px){.logs-layout{grid-template-columns:1fr}}
 .set-field-list{display:flex;flex-direction:column;gap:8px;margin:0 0 14px}
@@ -1220,7 +1237,7 @@ input[type=range]::-moz-range-thumb{
 
 /* Пайплайн шагов одного товара */
 .pipe{
-  display:grid;grid-template-columns:repeat(4,1fr);gap:4px;margin:0;padding:0;list-style:none;
+  display:grid;grid-template-columns:repeat(5,1fr);gap:4px;margin:0;padding:0;list-style:none;
 }
 .pipe li{
   position:relative;display:flex;flex-direction:column;align-items:center;gap:5px;
@@ -1305,7 +1322,7 @@ input[type=range]::-moz-range-thumb{
   font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--ac);
 }
 .livepipe-h{font-size:16px;font-weight:700;letter-spacing:-.03em;color:var(--t1);line-height:1.3}
-.livepipe .pipe{grid-template-columns:repeat(4,minmax(0,1fr))}
+.livepipe .pipe{grid-template-columns:repeat(5,minmax(0,1fr))}
 .livepipe-feed{
   display:flex;flex-direction:column;gap:6px;margin:0;padding:0;list-style:none;
 }
@@ -1321,6 +1338,8 @@ input[type=range]::-moz-range-thumb{
 .livepipe-feed li.ok::before{background:var(--green)}
 .livepipe-feed li.err::before{background:var(--red)}
 .livepipe-feed li.warn::before{background:var(--amber)}
+.livepipe .parse-card{margin:2px 0 0}
+.livepipe .parse-card .spec-title{margin-bottom:8px;padding-bottom:6px}
 
 /* Товар, который обрабатывается прямо сейчас — вращающийся «радар»
    по кромке. isolation держит z-index:-1 внутри обёртки, иначе конус
@@ -1908,6 +1927,7 @@ input[type=range]::-moz-range-thumb{
                 <div class="ae-tabs" role="group" aria-label="Фильтр">
                   <button type="button" class="ae-tab on" data-sch-filter="all" onclick="setSchemaListFilter('all',this)">Все <span id="aeCntAll">0</span></button>
                   <button type="button" class="ae-tab" data-sch-filter="facet" onclick="setSchemaListFilter('facet',this)">В фильтрах <span id="aeCntFacet">0</span></button>
+                  <button type="button" class="ae-tab" data-sch-filter="required" onclick="setSchemaListFilter('required',this)">Обязательные <span id="aeCntRequired">0</span></button>
                   <button type="button" class="ae-tab" data-sch-filter="problems" onclick="setSchemaListFilter('problems',this)">Проблемы <span id="aeCntProblems">0</span></button>
                   <button type="button" class="ae-tab" data-sch-filter="enum" onclick="setSchemaListFilter('enum',this)">ENUM <span id="aeCntEnum">0</span></button>
                 </div>
@@ -1915,6 +1935,8 @@ input[type=range]::-moz-range-thumb{
               <div class="ae-bulk" id="aeBulk" hidden>
                 <span id="aeBulkLabel">Выбрано 0</span>
                 <button type="button" onclick="aeBulkPatch({facet:true})">В фильтры</button>
+                <button type="button" onclick="aeBulkPatch({required:true})">В обязательные</button>
+                <button type="button" onclick="aeBulkPatch({required:false})">Снять обязательность</button>
                 <button type="button" onclick="aeBulkPatch({facet:false})">Убрать из фильтров</button>
                 <button type="button" onclick="aeBulkPatch({annotate:true})">Извлекать</button>
                 <button type="button" class="danger" onclick="aeBulkDelete()">Удалить</button>
@@ -5124,10 +5146,11 @@ function renderList(){
     const why=!results[i]&&isThin(i)?` · без данных: ${quality[i].reason}${quality[i].web?' · поищем описание в сети по названию':''}`
       :(confOf(i).length?` · каталог противоречит себе: ${confOf(i).map(c=>label(c.field)).join(', ')}`:'');
     const d=dateKey?dateOf(it):null;
+    const pn=(results[i]?.parse?.card?.hits?.length||0)+(results[i]?.parse?.web?.hits?.length||0);
     const row=`<button class="ri s-${st.cls}${i===curIdx?' on':''}" onclick="selectResult(${i})" title="${esc(String(name))}${why?esc(why):''}">`
       +`<span class="ri-st ${st.cls}">${st.cls==='run'?flake('spinning'):st.sym}</span>`
       +`<span class="ri-b"><span class="ri-n">${esc(String(name))}</span>`
-      +`<span class="ri-m">${i+1} · ${esc(st.txt)}${d!=null?` · ${dayStr(d)}`:''}${esc(why)}</span></span></button>`;
+      +`<span class="ri-m">${i+1} · ${esc(st.txt)}${pn?` · парсинг ${pn}`:''}${d!=null?` · ${dayStr(d)}`:''}${esc(why)}</span></span></button>`;
     return st.cls==='run'?`<div class="og-beam"><div class="row">${row}</div></div>`:row;
   }).join('');
 
@@ -5135,6 +5158,51 @@ function renderList(){
   const total=runQueue?runQueue.length:items.length;
   document.getElementById('midBarF').style.width=total?`${Math.round(done/total*100)}%`:'0';
   renderRunline();
+}
+
+function parseTraces(r){
+  const p=r?.parse;
+  if(!p) return [];
+  const out=[];
+  if(p.card?.hits?.length){
+    out.push({
+      label:p.card.origin||(p.card.dump?'дамп':'карточка'),
+      url:null,
+      hits:p.card.hits,
+    });
+  }
+  if(p.web?.hits?.length){
+    out.push({
+      label:p.web.origin||'сеть',
+      url:p.web.url||r.source||null,
+      hits:p.web.hits,
+    });
+  }
+  return out;
+}
+
+/** Источник и пары на карточке товара — как спецификация, не как лог. */
+function renderParseCard(r){
+  const traces=parseTraces(r);
+  if(!traces.length) return '';
+  return `<section class="parse-card">${traces.map((t,i)=>{
+    const groups=new Map();
+    for(const h of t.hits){
+      const g=h.where||'источник';
+      if(!groups.has(g)) groups.set(g,[]);
+      groups.get(g).push(h);
+    }
+    const link=t.url
+      ? ` · <a href="${esc(t.url)}" target="_blank" rel="noopener noreferrer">${esc(hostOf(t.url))}</a>`
+      : '';
+    return `<div class="spec-title${i?' mt':''}">Парсинг · ${esc(t.label)}${link} <i>${t.hits.length}</i></div>`
+      +[...groups.entries()].map(([g,list])=>
+        `<div class="parse-src">${esc(g)}</div>`
+        +`<div class="specs parse-specs">${list.map(h=>
+          `<div class="sp"><span class="sp-k">${esc(h.key)}</span><span class="sp-d"></span><span class="sp-v">${esc(h.value)}</span></div>`
+        ).join('')}</div>`
+      ).join('');
+  }).join('')}</section>`;
 }
 
 // ── ДЕТАЛИ ОДНОГО ТОВАРА ─────────────────────────────────────
@@ -5183,7 +5251,7 @@ function renderDetail(){
     return;
   }
   if(r.skipped){
-    setP('detail',conf+`<div class="warnbox"><div class="wt">⊘ Пропущен без обращения к модели</div><div class="wi">${esc(r.skipped)}</div></div>`
+    setP('detail',conf+renderParseCard(r)+`<div class="warnbox"><div class="wt">⊘ Пропущен без обращения к модели</div><div class="wi">${esc(r.skipped)}</div></div>`
       +`<div class="hint">Запрос не отправлялся, деньги не потрачены. Допишите описание товара в источнике.</div>`);
     return;
   }
@@ -5191,7 +5259,7 @@ function renderDetail(){
     const issues=Array.isArray(r.validation_issues)&&r.validation_issues.length
       ? r.validation_issues.map(i=>`${i.field}: ${i.reason}`).join('; ')
       : '';
-    setP('detail',conf+`<div class="errbox">${esc(r.error||(r.needs_review?'На проверку — карточка не собрана': 'Ошибка'))}</div>`
+    setP('detail',conf+renderParseCard(r)+`<div class="errbox">${esc(r.error||(r.needs_review?'На проверку — карточка не собрана': 'Ошибка'))}</div>`
       +(issues?`<div class="warnbox"><div class="wt">Валидация</div><div class="wi">${esc(issues)}</div></div>`:'')
       +`<div class="hint">Повторный запуск обработает товар заново.</div>`);
     return;
@@ -5203,11 +5271,12 @@ function renderDetail(){
   }
   // Откуда взялся исходный текст, видно на самой карточке: часть товаров
   // описана не магазином, а найденной страницей того же артикула.
-  const from=r.source?`<div class="hint">Исходного текста в карточке не было — описание добрано из сети: `
+  const parsed=renderParseCard(r);
+  const from=!parsed&&r.source?`<div class="hint">Исходного текста в карточке не было — описание добрано из сети: `
     +`<a href="${esc(r.source)}" target="_blank" rel="noopener noreferrer">${esc(hostOf(r.source))}</a></div>`
-    :(r.parser?`<div class="hint">Для этой карточки запускался парсер страницы.</div>`:'');
+    :(!parsed&&r.parser?`<div class="hint">Для этой карточки запускался парсер страницы.</div>`:'');
   const fix=r.corrected?`<div class="hint">Карточка исправлена после ошибок валидации.</div>`:'';
-  setP('detail',conf+from+fix+(curTab==='json'?`<div class="jv">${hl(r.enriched)}</div>`:renderVis(r.enriched)));
+  setP('detail',conf+from+parsed+fix+(curTab==='json'?`<div class="jv">${hl(r.enriched)}</div>`:renderVis(r.enriched)));
 }
 
 function showActions(){
@@ -5293,6 +5362,7 @@ let liveSnap=null;        // горячий снимок этапа с серв�
 /** Этапы одного товара — порядок важен для пайплайна в UI. */
 const PIPE_STEPS=[
   {id:'gate',  label:'Проверка', match:s=>s==='schema'||s==='gate'||s==='item'},
+  {id:'parse', label:'Парсинг',  match:s=>s==='parse'},
   {id:'web',   label:'Сеть',     match:s=>s==='web'},
   {id:'model', label:'Модель',   match:s=>s==='model'||s==='retry'},
   {id:'done',  label:'Готово',   match:s=>s==='done'||s==='skip'||s==='error'},
@@ -5302,7 +5372,7 @@ const PIPE_STEPS=[
 function stepTag(step){
   const map={
     job:'прогон', start:'прогон', finish:'итог', stop:'стоп', fail:'сбой',
-    item:'товар', schema:'схема', gate:'проверка', web:'сеть',
+    item:'товар', schema:'схема', gate:'проверка', parse:'парсинг', web:'сеть',
     model:'модель', retry:'повтор', note:'шаг',
     done:'готово', skip:'пропуск', error:'ошибка',
   };
@@ -5323,6 +5393,7 @@ function liveItemState(log){
     else if(step==='done'||step==='finish') phase='done';
     else if(step==='model'||step==='retry') phase='model';
     else if(step==='web') phase='web';
+    else if(step==='parse') phase='parse';
     else if(step==='gate'||step==='schema'||step==='item') phase='gate';
     else phase='model';
     const title=runIdx>=0
@@ -5336,6 +5407,7 @@ function liveItemState(log){
       note:liveSnap.msg||'',
       level:liveSnap.level||'info',
       at:liveSnap.at||Date.now(),
+      parse:liveSnap.parse||null,
       rows:[{msg:liveSnap.msg||'',level:liveSnap.level||'info'}],
     };
   };
@@ -5350,7 +5422,7 @@ function liveItemState(log){
     const snap=fromSnap();
     if(snap) return snap;
     const last=log[log.length-1];
-    return {pos:null,title:null,phase:'gate',rawStep:last.step,note:last.msg,level:last.level||'info',at:last.t||Date.now(),rows:log.slice(-6)};
+    return {pos:null,title:null,phase:'gate',rawStep:last.step,note:last.msg,level:last.level||'info',at:last.t||Date.now(),parse:liveSnap?.parse||null,rows:log.slice(-6)};
   }
   const rows=log.slice(start);
   const head=rows[0];
@@ -5367,6 +5439,7 @@ function liveItemState(log){
   else if(seen.has('done')||seen.has('finish')) phase='done';
   else if(seen.has('model')||seen.has('retry')) phase='model';
   else if(seen.has('web')) phase='web';
+  else if(seen.has('parse')) phase='parse';
   else if(seen.has('gate')||seen.has('schema')) phase='gate';
   return {
     pos:head.pos??null,
@@ -5376,13 +5449,14 @@ function liveItemState(log){
     note:tip.msg||last.msg,
     level:tip.level||last.level||'info',
     at:tip.at||tip.t||last.t||Date.now(),
-    rows:rows.filter(e=>e.step!=='item').slice(-8),
+    parse:liveSnap?.parse||null,
+    rows:rows.filter(e=>e.step!=='item').slice(-12),
   };
 }
 
 function pipeHtml(live){
   const phase=live?.phase||'gate';
-  const order=['gate','web','model','done'];
+  const order=['gate','parse','web','model','done'];
   const cur=phase==='error'||phase==='skip'?'done':phase;
   const ci=order.indexOf(cur);
   return `<ul class="pipe" aria-label="Этапы обогащения товара">`
@@ -5403,15 +5477,18 @@ function pipeHtml(live){
 
 function livePipeHtml(live){
   const title=live?.title||'Товар в обработке';
-  const feed=(live?.rows||[]).map(e=>{
+  const parsed=renderParseCard({parse:live?.parse});
+  const rows=(live?.rows||[]).filter(e=>!(parsed&&/^\s*← /.test(e.msg||'')));
+  const feed=rows.map(e=>{
     const cls=e.level==='ok'?'ok':e.level==='err'?'err':e.level==='warn'?'warn':'';
-    const on=e===live.rows[live.rows.length-1]?'on':'';
+    const on=e===rows[rows.length-1]?'on':'';
     return `<li class="${cls} ${on}">${esc(e.msg)}</li>`;
   }).join('')||`<li class="on">${esc(live?.note||'Ждём первый шаг…')}</li>`;
   return `<div class="livepipe">`
     +`<div class="livepipe-k">${flake('spinning')} Идёт огранка</div>`
     +`<div class="livepipe-h">${esc(String(title))}</div>`
     +pipeHtml(live)
+    +(parsed||'')
     +`<ul class="livepipe-feed">${feed}</ul>`
     +`</div>`;
 }
@@ -5659,6 +5736,46 @@ function logsBlock(title, body, copyId){
     +`</div>`;
 }
 
+function parseHitsText(parse){
+  if(!parse) return '';
+  const parts=[];
+  for(const [fallback,trace] of [['карточка / дамп', parse.card],['страница в сети', parse.web]]){
+    if(!trace?.hits?.length) continue;
+    const origin=trace.origin||fallback;
+    parts.push(`## ${origin} · ${trace.hits.length}`);
+    for(const h of trace.hits){
+      const how=h.how&&h.how!==h.where&&h.how!=='разделитель'?` [${h.how}]`:'';
+      parts.push(`${h.where||'?'}${how}: ${h.key} = ${h.value}`);
+    }
+    parts.push('');
+  }
+  return parts.join('\n').trim();
+}
+
+function parseHitsHtml(parse){
+  const text=parseHitsText(parse);
+  if(!text) return logsBlock('Парсинг — что нашли и откуда', '', 'logsParse');
+  const blocks=[['карточка / дамп', parse.card],['страница в сети', parse.web]]
+    .filter(([,t])=>t?.hits?.length)
+    .map(([,t])=>{
+      const label=t.origin||'источник';
+      const rows=t.hits.map(h=>{
+        const how=h.how&&h.how!==h.where&&h.how!=='разделитель'?` · ${esc(h.how)}`:'';
+        return `<li><span class="ph-src">${esc(h.where||'?')}${how}</span>`
+          +`<span class="ph-kv">${esc(h.key)} = <b>${esc(h.value)}</b></span></li>`;
+      }).join('');
+      const url=t.url?` · ${esc(t.url)}`:'';
+      return `<div class="hint" style="margin:6px 0 2px">${esc(label)}${url} · ${t.hits.length}</div>`
+        +`<ul class="parse-hits">${rows}</ul>`;
+    }).join('');
+  return `<div class="set-card logs-block">`
+    +`<div class="logs-block-h"><b>Парсинг — что нашли и откуда</b>`
+    +`<button type="button" class="sbtn ghost" onclick="copyLogsBlock('logsParse')">Копировать</button></div>`
+    +blocks
+    +`<pre class="set-pre" id="logsParse" hidden>${esc(text)}</pre>`
+    +`</div>`;
+}
+
 async function loadLogsDetail(pos){
   const detail=document.getElementById('logsDetail');
   if(!detail||!logsJobId) return;
@@ -5699,6 +5816,7 @@ async function loadLogsDetail(pos){
         :'')
       +`<div class="set-actions" style="margin-top:8px"><button type="button" class="sbtn" onclick="copyLogsAll()">Скопировать всё</button></div></div>`
       +`<div class="set-card logs-block"><div class="logs-block-h"><b>Шаги обработки</b></div>${stepsHtml}</div>`
+      +parseHitsHtml(x.parse)
       +logsBlock('1. Исходный текст для модели', x.source_text, 'logsSrc')
       +logsBlock('2. System prompt', x.system_prompt, 'logsSys')
       +logsBlock('3. User content (что ушло в модель)', x.user_content, 'logsUser')
@@ -5719,7 +5837,7 @@ async function copyLogsBlock(id){
 
 async function copyLogsAll(){
   const parts=['# Лог обогащения',`Прогон: ${logsJobId||'—'}`,`Позиция: ${logsPos==null?'—':logsPos+1}`,''];
-  for(const id of ['logsSrc','logsSys','logsUser','logsRaw','logsEnr']){
+  for(const id of ['logsParse','logsSrc','logsSys','logsUser','logsRaw','logsEnr']){
     const el=document.getElementById(id);
     if(!el) continue;
     const title=el.closest('.logs-block')?.querySelector('b')?.textContent||id;
@@ -5798,6 +5916,7 @@ function applyJob(d){
       validation_issues:r.validation_issues||null,
       source:r.source??null,parser:!!r.parser,corrected:!!r.corrected,iT:r.iT??0,oT:r.oT??0,
       cost:typeof r.cost==='number'?r.cost:null,
+      ...(r.parse?{parse:r.parse}:{}),
       ...(r.error?{error:r.error}:{})};
     // Результат привязан к товару, а не к позиции: смена окна и категории не
     // должна терять оплаченное (см. runStore).

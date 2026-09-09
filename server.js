@@ -79,6 +79,7 @@ import { CATEGORIES, findCategory, crawlCategory, loadFeed, buildFilters, ensure
 import { buildV2 } from './export_v2.js';
 import { buildCustomerExport, buildGoldShapeExport, buildFiltersOnly } from './pipeline/export.js';
 import { dictForProducts, expectedDictCatId } from './pipeline/schema.js';
+import { collectParseHits, formatParseNotes, slimParseTrace } from './pipeline/parse.js';
 import { createJobStore } from './jobs.js';
 import {
   loadConfig, loadDictionary, hasDictionary, listDictionaries,
@@ -1339,19 +1340,40 @@ async function enrichOne(product, { model, category, provider, onNote = () => {}
     category: product?.category || category || null,
   };
 
+  const parseTrace = { card: null, web: null, cardOrigin: null, webOrigin: null, webUrl: null };
+  const parseBundle = () => {
+    const card = slimParseTrace(parseTrace.card);
+    const web = slimParseTrace(parseTrace.web);
+    if (!card && !web) return null;
+    return {
+      ...(card ? { card: { ...card, origin: parseTrace.cardOrigin || 'карточка' } } : {}),
+      ...(web ? {
+        web: {
+          ...web,
+          origin: parseTrace.webOrigin || 'сеть',
+          url: parseTrace.webUrl || null,
+        },
+      } : {}),
+    };
+  };
+
   /** Поля раздела «Логи» из debug enrichProduct / modelNotCalledDebug. */
-  const detailTrace = (debug, extra = {}) => ({
-    source_text: debug?.source_text ?? null,
-    system_prompt: debug?.system_prompt ?? null,
-    user_content: debug?.user_content ?? null,
-    raw_response: debug?.raw_response ?? null,
-    enriched: extra.enriched !== undefined
-      ? extra.enriched
-      : (debug?.enriched_result ?? null),
-    model_status: debug?.model_status ?? null,
-    model_called: debug?.model_called ?? null,
-    ...(debug?.error ? { error: debug.error } : {}),
-  });
+  const detailTrace = (debug, extra = {}) => {
+    const parse = extra.parse !== undefined ? extra.parse : parseBundle();
+    return {
+      source_text: debug?.source_text ?? null,
+      system_prompt: debug?.system_prompt ?? null,
+      user_content: debug?.user_content ?? null,
+      raw_response: debug?.raw_response ?? null,
+      enriched: extra.enriched !== undefined
+        ? extra.enriched
+        : (debug?.enriched_result ?? null),
+      model_status: debug?.model_status ?? null,
+      model_called: debug?.model_called ?? null,
+      ...(debug?.error ? { error: debug.error } : {}),
+      ...(parse ? { parse } : {}),
+    };
+  };
 
   let schema;
   try {
@@ -1390,9 +1412,11 @@ async function enrichOne(product, { model, category, provider, onNote = () => {}
 
   const skip = reason => {
     const dbg = modelNotCalledDebug(product, reason);
+    const parse = parseBundle();
     return {
       enriched: null,
       skipped:  reason,
+      ...(parse ? { parse } : {}),
       usage:    { prompt_tokens: 0, completion_tokens: 0, cost: 0 },
       detail: {
         product: productMeta,
@@ -1402,7 +1426,7 @@ async function enrichOne(product, { model, category, provider, onNote = () => {}
         status: 'skip',
         skipped: reason,
         steps: [],
-        ...detailTrace(dbg, { enriched: null }),
+        ...detailTrace(dbg, { enriched: null, parse }),
       },
     };
   };
@@ -1416,6 +1440,21 @@ async function enrichOne(product, { model, category, provider, onNote = () => {}
   } else if (fromDump.dump) {
     note(`Дамп: ${fromDump.facts} характеристик`, { step: 'gate' });
   }
+
+  const publishParse = (msgs = []) => {
+    const parse = parseBundle();
+    if (!msgs.length) {
+      if (parse) note('', { step: 'parse', parse });
+      return;
+    }
+    msgs.forEach((msg, i) => {
+      note(msg, { step: 'parse', ...(i === msgs.length - 1 && parse ? { parse } : {}) });
+    });
+  };
+
+  parseTrace.card = collectParseHits(prepared, schema.dict);
+  parseTrace.cardOrigin = fromDump.dump ? 'дамп' : 'карточка';
+  publishParse(formatParseNotes(parseTrace.card, { origin: parseTrace.cardOrigin }));
 
   // Дешёвый вердикт без сети: своего текста нет и в названии не за что
   // зацепиться (нет ни артикула, ни бренда/модели) — искать нечего.
@@ -1484,9 +1523,20 @@ async function enrichOne(product, { model, category, provider, onNote = () => {}
   // страны по модели. ensureSource сам решает, что искать.
   note(`Готовим исходный текст (сеть при необходимости)`, { step: 'web' });
   const found = await ensureSource(prepared, schema, {
-    onNote: msg => note(msg, { step: 'web' }),
+    onNote: (msg, meta = {}) => note(msg, { step: meta.step || 'web', level: meta.level, parse: meta.parse }),
     root: ROOT,
   });
+  if (found.page_parse) {
+    parseTrace.web = found.page_parse;
+    parseTrace.webUrl = found.source || null;
+    if (found.source) {
+      try { parseTrace.webOrigin = new URL(found.source).hostname.replace(/^www\./, ''); }
+      catch { parseTrace.webOrigin = 'сеть'; }
+    } else {
+      parseTrace.webOrigin = 'сеть';
+    }
+    publishParse();
+  }
   if (!found.gate.ok) {
     note(`После поиска: пропуск — ${found.gate.reason}`, { step: 'gate', level: 'skip' });
     return skip(found.gate.reason);
@@ -1521,6 +1571,7 @@ async function enrichOne(product, { model, category, provider, onNote = () => {}
       ...(sourceUrl ? { source_url: sourceUrl } : {}),
       ...(parserUsed ? { parser: true } : {}),
       ...(corrected ? { corrected: true } : {}),
+      ...(parseBundle() ? { parse: parseBundle() } : {}),
     };
 
     if (needs_review && !enriched) {

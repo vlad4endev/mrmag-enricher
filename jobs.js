@@ -76,8 +76,26 @@ export function createJobStore({
    * Строка пошагового лога прогона. level: info | ok | warn | err | skip.
    * step — короткий код этапа (start, gate, web, model, retry, done…).
    */
+  function liveParse(job, entry) {
+    const fresh = entry.step === 'item' || entry.step === 'job' || entry.step === 'finish';
+    return entry.parse || (!fresh && job.live?.parse) || null;
+  }
+
   function pushLog(job, entry) {
     if (!Array.isArray(job.log)) job.log = [];
+    const parse = liveParse(job, entry);
+    // Пустое сообщение + parse — только снимок для карточки, без строки в журнале.
+    if (entry.parse && (entry.msg == null || entry.msg === '')) {
+      job.live = {
+        step: entry.step || job.live?.step || 'parse',
+        msg: job.live?.msg || '',
+        level: entry.level || job.live?.level || 'info',
+        pos: entry.pos ?? job.live?.pos ?? job.at_position ?? null,
+        at: now(),
+        ...(parse ? { parse } : {}),
+      };
+      return;
+    }
     const row = {
       t: now(),
       level: entry.level || 'info',
@@ -94,6 +112,7 @@ export function createJobStore({
       level: row.level,
       pos: row.pos ?? job.at_position ?? null,
       at: row.t,
+      ...(parse ? { parse } : {}),
     };
   }
 
@@ -155,6 +174,8 @@ export function createJobStore({
       has_user: Boolean(d.user_content),
       has_response: Boolean(d.raw_response),
       has_enriched: Boolean(d.enriched || d.enriched_text),
+      has_parse: Boolean(d.parse?.card?.hits?.length || d.parse?.web?.hits?.length),
+      parse_n: (d.parse?.card?.hits?.length || 0) + (d.parse?.web?.hits?.length || 0),
       usage: d.usage || null,
     };
   }
@@ -328,7 +349,8 @@ export function createJobStore({
               level: meta.level || 'info',
               step: meta.step || 'note',
               pos: k,
-              msg: String(msg),
+              msg: String(msg ?? ''),
+              ...(meta.parse ? { parse: meta.parse } : {}),
             });
             save(job);
           },
@@ -340,6 +362,7 @@ export function createJobStore({
           ...(d.source_url ? { source: d.source_url } : {}),
           ...(d.parser ? { parser: true } : {}),
           ...(d.corrected ? { corrected: true } : {}),
+          ...(d.parse || d.detail?.parse ? { parse: d.parse || d.detail.parse } : {}),
           iT:   d.usage?.prompt_tokens ?? 0,
           oT:   d.usage?.completion_tokens ?? 0,
           cost: typeof d.usage?.cost === 'number' ? d.usage.cost : null,
@@ -396,6 +419,7 @@ export function createJobStore({
           enriched: null, error: e.message,
           iT: e.usage?.iT ?? 0, oT: e.usage?.oT ?? 0,
           cost: typeof e.usage?.cost === 'number' ? e.usage.cost : null,
+          ...(e.detail?.parse ? { parse: e.detail.parse } : {}),
         };
         pushLog(job, { level: 'err', step: 'error', pos: k, msg: `✗ Ошибка: ${e.message}` });
         storeDetail(job, k, e.detail || {

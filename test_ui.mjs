@@ -144,7 +144,7 @@ export const api={syncSteps,setCnt,setCntFree,applyCnt,applySource,setSource,pic
   loadCategories,catOf,renderModelList,filterModels,renderParser,loadParser,
   applyDates,clearDates,renderDates,passesFilter,queued,onProdInput,apiJson,run,
   stopJob,follow,attachJob,resumeJob,applyJob,finishRun,
-  resetRunLog,applyLog,renderRunLog,copyRunLog,clearRunLog,toggleRunLog,logLineText,
+  resetRunLog,applyLog,applyLive,renderRunLog,copyRunLog,clearRunLog,toggleRunLog,logLineText,
   openEnrichLogs,refreshLogsJobs,onLogsJobChange,selectLogsItem,loadLogsDetail,copyLogsAll,
   loadFile,classifyPayload,normalizeCatalogProduct,catIdFromFilename,catNameFromId,
   productsFromPayload,isFiltersPayload,filtersForExport,
@@ -882,7 +882,79 @@ t('описание, добранное из сети, показывает ис
   assert.match(h, /shop\.example<\/a>/, 'в карточке домен, а не адрес целиком');
   assert.match(h, /href="https:\/\/shop\.example\/card\?utm=1"/);
 });
+t('готовая карточка показывает разобранные пары и источник', () => {
+  st.results = [{
+    ...ok(),
+    source: 'https://shop.example/card',
+    parse: {
+      card: {
+        origin: 'дамп',
+        hits: [
+          { key: 'Макс. загрузка', value: '6 кг', where: 'аннотация' },
+          { key: 'Цвет', value: 'белый', where: 'описание' },
+        ],
+      },
+      web: {
+        origin: 'shop.example',
+        url: 'https://shop.example/card',
+        hits: [{ key: 'Общий объём', value: '310 л', where: 'таблица' }],
+      },
+    },
+  }];
+  api.renderDetail();
+  const h = G('detail').innerHTML;
+  assert.match(h, /parse-card/);
+  assert.match(h, /Парсинг · дамп/);
+  assert.match(h, /Макс\. загрузка/);
+  assert.match(h, /6 кг/);
+  assert.match(h, /аннотация/);
+  assert.match(h, /описание/);
+  assert.match(h, /таблица/);
+  assert.match(h, /310 л/);
+  assert.match(h, /href="https:\/\/shop\.example\/card"/);
+  assert.doesNotMatch(h, /добрано из сети/, 'полный разбор заменяет краткую сноску');
+});
+t('пропуск всё равно показывает, что нашёл парсер', () => {
+  st.results = [{
+    skipped: 'пусто',
+    parse: { card: { origin: 'карточка', hits: [{ key: 'Цвет', value: 'белый', where: 'аннотация' }] } },
+  }];
+  api.renderDetail();
+  const h = G('detail').innerHTML;
+  assert.match(h, /Пропущен без обращения/);
+  assert.match(h, /Цвет/);
+  assert.match(h, /белый/);
+});
+t('пока модель думает, на карточке уже видны пары парсера', () => {
+  st.items = [{ name: 'Холодильник' }];
+  st.results = [null];
+  st.running = true;
+  st.runIdx = 0;
+  api.selectResult(0);
+  api.applyLive({
+    live: {
+      step: 'model',
+      msg: 'Отправляем в модель',
+      parse: {
+        card: {
+          origin: 'дамп',
+          hits: [{ key: 'Макс. загрузка', value: '6 кг', where: 'аннотация' }],
+        },
+      },
+    },
+  });
+  api.renderDetail();
+  const h = G('detail').innerHTML;
+  assert.match(h, /parse-card/);
+  assert.match(h, /Парсинг · дамп/);
+  assert.match(h, /Макс\. загрузка/);
+  assert.match(h, /6 кг/);
+  st.running = false;
+  st.runIdx = -1;
+});
 t('источник уезжает в выгрузку JSON', () => {
+  st.items = [{ name: 'X' }];
+  st.results = [{ ...ok(), source: 'https://shop.example/card?utm=1' }];
   let captured = null;
   const RealBlob = globalThis.Blob;
   globalThis.Blob = class { constructor(p) { captured = p[0]; } };

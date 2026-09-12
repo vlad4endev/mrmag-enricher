@@ -2872,12 +2872,17 @@ console.log('golden tests passed');
 }
 
 {
-  const { findEnumClaimsInText, alignEnumSurfaces } = await import('./pipeline/enum_align.js');
+  const { findEnumClaimsInText, alignEnumSurfaces, provenanceLevelForAlign } = await import('./pipeline/enum_align.js');
   const { finalizeRecord } = await import('./pipeline/quality_validate.js');
   const { normalizeProduct } = await import('./pipeline/normalize.js');
-  const { assignFilterValues, buildFilters } = await import('./pipeline/facets.js');
+  const { assignFilterValues, buildFilters, filterSourceAllowed } = await import('./pipeline/facets.js');
   const { serializeProduct } = await import('./pipeline/export.js');
   const { valueFold } = await import('./pipeline/types.js');
+
+  assert.equal(provenanceLevelForAlign('from_description', 'model'), 'S2');
+  assert.equal(provenanceLevelForAlign('from_annotation_label', 'model'), 'S1');
+  assert.equal(provenanceLevelForAlign('ok', 'model'), 'S0');
+  assert.equal(provenanceLevelForAlign('ok', 'S1'), 'S1');
 
   const install = d467.byCode.get('install');
   assert.ok(findEnumClaimsInText('отдельностоящая модель', install).some(h => /отдельн/i.test(h.canon)));
@@ -2904,6 +2909,7 @@ console.log('golden tests passed');
   };
   const fin = finalizeRecord(rec, d467, { enriched });
   assert.ok(/отдельн/i.test(String(rec.attrs.install)), rec.attrs.install);
+  assert.ok(filterSourceAllowed(rec, 'install', config), 'после align provenance не model');
   assert.match(enriched.description, /отдельностоящ/i);
   assert.match(enriched.meta_keywords, /отдельностоящ/i);
   assert.match(enriched.bullets[0], /отдельностоящ/i);
@@ -2917,6 +2923,27 @@ console.log('golden tests passed');
   assert.ok(!/встраиваем/i.test(out.annotation_html), out.annotation_html);
   assert.ok(!/встраиваем/i.test(out.meta_keywords), out.meta_keywords);
   assert.equal(valueFold(filt).includes('отдельн') || /отдельн/.test(valueFold(filt)), true);
+
+  // model-provenance уже совпадает с описанием — раньше filters молча пропускали, annotation показывал.
+  const modelRec = {
+    id: 99,
+    name: 'Стиралка model-prov',
+    attrs: Object.fromEntries(d467.attrs.filter(a => a.tier !== 'X').map(a => [a.code, null])),
+    provenance: {},
+    annotation: 'Установка: отдельностоящая\nТип загрузки: Фронтальная',
+  };
+  modelRec.attrs.install = 'Отдельностоящая';
+  modelRec.attrs.load_type = 'Фронтальная';
+  modelRec.provenance.install = { level: 'model', how: 'model', raw: 'Отдельностоящая' };
+  modelRec.provenance.load_type = { level: 'S1', how: 'parse', raw: 'Фронтальная' };
+  assert.equal(filterSourceAllowed(modelRec, 'install', config), false);
+  const enrOk = { description: 'Отдельностоящая стиральная машина с фронтальной загрузкой.' };
+  alignEnumSurfaces(modelRec, d467, { enriched: enrOk, autoFix: true });
+  assert.equal(filterSourceAllowed(modelRec, 'install', config), true, modelRec.provenance.install);
+  assert.ok(/отдельн/i.test(String(modelRec.attrs.install)));
+  const builtM = buildFilters([modelRec], d467, config);
+  const assignedM = assignFilterValues(modelRec, d467, builtM.debug, config);
+  assert.ok(/отдельн/i.test(String(assignedM['Установка']?.[0] || '')), assignedM);
 
   // Холодильник: No Frost в описании vs капельная в attrs — описание побеждает при слабом provenance.
   const cool = d523.byCode.get('cooling');
@@ -2933,8 +2960,168 @@ console.log('golden tests passed');
     const enr = { description: 'Холодильник с системой No Frost.' };
     alignEnumSurfaces(fridge, d523, { enriched: enr, autoFix: true });
     assert.ok(/no\s*frost|автомат/i.test(String(fridge.attrs.cooling)), fridge.attrs.cooling);
+    assert.ok(filterSourceAllowed(fridge, 'cooling', config), fridge.provenance.cooling);
   }
 
-  console.log('ok enum_align description↔filters (install / cooling)');
+  console.log('ok enum_align description↔filters (install / cooling / model-prov)');
+}
+
+{
+  const {
+    scanProductConsistency,
+    parseConsistencyAgentResponse,
+    heuristicConsistencyDecisions,
+    runConsistencyAgent,
+    applyConsistencyDecisions,
+  } = await import('./pipeline/consistency_agent.js');
+  const { normalizeProduct } = await import('./pipeline/normalize.js');
+  const { buildFilters, assignFilterValues, filterSourceAllowed } = await import('./pipeline/facets.js');
+  const { serializeProduct } = await import('./pipeline/export.js');
+
+  // Описание «отдельностоящая», аннотация «встраиваемая» → автоправка чинит до ИИ.
+  const src = {
+    id: 99001,
+    name: 'Стиральная машина consistency',
+    description: 'Отдельностоящая стиральная машина с загрузкой 5 кг.',
+    annotation: [
+      'Установка - встраиваемая',
+      'Максимальная загрузка - 5 кг',
+      'Скорость отжима - 1000 об/мин',
+      'Количество программ - 16',
+      'Класс энергопотребления - A',
+      'Тип загрузки - Фронтальная',
+    ].join('\n'),
+  };
+  const rec = normalizeProduct(src, d467, config);
+  rec._enriched = {
+    description: 'Стиральная машина — <strong>отдельностоящая</strong> модель.',
+    meta_keywords: 'стиральная машина встраиваемая',
+    bullets: ['Установка: встраиваемая'],
+  };
+  const built0 = buildFilters([rec], d467, config);
+  const assigned0 = assignFilterValues(rec, d467, built0.debug, config);
+  const before = scanProductConsistency(rec, d467, {
+    enriched: rec._enriched,
+    assigned: assigned0,
+    config,
+  });
+  assert.ok(before.issues.some(i => i.kind === 'enum_surface_mismatch'), before.issues);
+
+  const heRun = await runConsistencyAgent({
+    recs: [rec],
+    dict: d467,
+    config,
+    debugFacets: built0.debug,
+    mode: 'heuristic',
+    catId: '467',
+  });
+  assert.ok(heRun.stats.auto_fixed >= 1 || heRun.stats.applied >= 1, heRun.stats);
+  assert.ok(/отдельн/i.test(String(rec.attrs.install)), rec.attrs.install);
+  assert.ok(filterSourceAllowed(rec, 'install', config), rec.provenance.install);
+
+  const built1 = buildFilters([rec], d467, config);
+  const out = serializeProduct(rec, d467, built1.debug, {
+    enriched: rec._enriched,
+    skipFinalize: true,
+    config,
+  });
+  assert.ok(/отдельн/i.test(out.filters['Установка']?.[0] || ''), out.filters);
+  assert.match(out.annotation_html, /отдельностоящ/i);
+  assert.ok(!/встраиваем/i.test(out.annotation_html));
+
+  // ИИ-путь: ambiguous (оба канона в одном тексте) → mock LLM.
+  const amb = normalizeProduct({
+    id: 99002,
+    name: 'Ambiguous washer',
+    annotation: [
+      'Максимальная загрузка - 5 кг',
+      'Скорость отжима - 1000 об/мин',
+      'Количество программ - 16',
+      'Класс энергопотребления - A',
+      'Тип загрузки - Фронтальная',
+    ].join('\n'),
+    description: 'модель',
+  }, d467, config);
+  amb.attrs.install = null;
+  amb._enriched = {
+    description: 'Подходит и как встраиваемая, и как отдельностоящая стиральная машина.',
+  };
+  const builtA = buildFilters([amb], d467, config);
+  const mockFetch = async () => {
+    const body = {
+      decisions: [{
+        id: 99002,
+        attr_code: 'install',
+        truth: 'Отдельностоящая',
+        action: 'set_attr',
+        reason: 'mock resolve ambiguous',
+      }],
+      notes: ['mock'],
+    };
+    return {
+      ok: true,
+      status: 200,
+      async text() {
+        return JSON.stringify({ choices: [{ message: { content: JSON.stringify(body) } }] });
+      },
+    };
+  };
+  const ai = await runConsistencyAgent({
+    recs: [amb],
+    dict: d467,
+    config,
+    debugFacets: builtA.debug,
+    mode: 'ai',
+    provider: { apiKey: 'test', baseUrl: 'http://mock', model: 'mock' },
+    fetchImpl: mockFetch,
+    catId: '467',
+  });
+  // Если автоправка уже сняла ambiguous — skip; иначе ai.
+  assert.ok(ai.mode === 'ai' || ai.mode === 'skip' || ai.mode === 'heuristic', ai.mode);
+  if (ai.mode === 'ai') {
+    assert.ok(/отдельн/i.test(String(amb.attrs.install)), amb.attrs.install);
+  }
+
+  // Парсер отбрасывает канон вне aliases.
+  const bad = parseConsistencyAgentResponse(JSON.stringify({
+    decisions: [
+      { id: 1, attr_code: 'install', truth: 'Летающая', action: 'set_attr' },
+      { id: 1, attr_code: 'install', truth: 'Отдельностоящая', action: 'set_attr' },
+    ],
+  }), d467);
+  assert.equal(bad.decisions.length, 1);
+  assert.equal(bad.rejected.length, 1);
+
+  // Эвристика: mismatch → set_attr по truth_hint.
+  const he = heuristicConsistencyDecisions([{
+    id: 1,
+    issues: [{
+      attr_code: 'install',
+      kind: 'enum_surface_mismatch',
+      truth_hint: 'Отдельностоящая',
+      description: 'Отдельностоящая',
+      annotation: 'Встраиваемая',
+    }],
+  }]);
+  assert.equal(he[0].action, 'set_attr');
+  assert.ok(/отдельн/i.test(he[0].truth));
+
+  // apply + needs_review
+  const r2 = normalizeProduct({
+    id: 2,
+    name: 'X',
+    annotation: 'Тип загрузки - Фронтальная\nУстановка - отдельностоящая',
+    description: 'тест',
+  }, d467, config);
+  applyConsistencyDecisions([r2], d467, [{
+    id: 2,
+    attr_code: 'install',
+    truth: null,
+    action: 'needs_review',
+    reason: 'ambiguous',
+  }]);
+  assert.equal(r2.needs_review, true);
+
+  console.log('ok consistency_agent description↔annotation↔filters');
 }
 

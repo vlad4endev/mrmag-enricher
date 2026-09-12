@@ -29,6 +29,12 @@ export const PRIORITY_ENUM_CODES = new Set([
 /** Уровни provenance, которым не доверяем против явного claim в описании. */
 const WEAK_LEVELS = new Set(['model', 'review', 'other', 'distributor', 'retailer', 'S3']);
 
+/**
+ * Уровни, с которых filters НЕ берут значение (см. facets.filterSourceAllowed).
+ * После enum_align нельзя оставлять model/review — иначе annotation есть, а filter пустой.
+ */
+const FILTER_BLOCKED_LEVELS = new Set(['model', 'review', 'other', '']);
+
 function stripHtml(s) {
   return String(s || '')
     .replace(/<[^>]+>/g, ' ')
@@ -43,6 +49,38 @@ function isWeakProv(prov) {
   const how = String(prov.how || '');
   if (/^derived_/.test(how) || /^enum_align:/.test(how)) return true;
   return WEAK_LEVELS.has(String(prov.level || 'other'));
+}
+
+/**
+ * Уровень provenance после согласования — всегда допустим для filters.
+ * from_description* → S2, from_annotation* → S1, иначе S0 если старый level блокировал витрину.
+ */
+export function provenanceLevelForAlign(action, prevLevel) {
+  const prev = String(prevLevel || '');
+  if (action === 'from_description_label' || action === 'from_description') return 'S2';
+  if (action === 'from_annotation_label' || action === 'from_annotation') return 'S1';
+  if (action === 'from_meta') return 'S0';
+  if (action === 'keep_strong_attr' && prev && !FILTER_BLOCKED_LEVELS.has(prev)) return prev;
+  if (prev && !FILTER_BLOCKED_LEVELS.has(prev)) return prev;
+  return 'S0';
+}
+
+function needsFilterProvenanceElevate(prov) {
+  if (!prov || typeof prov !== 'object') return false;
+  const level = String(prov.level || '');
+  return !level || FILTER_BLOCKED_LEVELS.has(level);
+}
+
+/**
+ * Поднимать level в filters только если значение подтверждено текстом карточки
+ * (описание / аннотация / уже назначенный filter). Голый model без опоры — нет.
+ */
+function shouldElevateForFilters(action, sources) {
+  if (action === 'from_description' || action === 'from_description_label') return true;
+  if (action === 'from_annotation' || action === 'from_annotation_label') return true;
+  if (action === 'from_filter') return true;
+  if (action === 'ok' && (sources?.description || sources?.annotation)) return true;
+  return false;
 }
 
 /**
@@ -364,7 +402,12 @@ export function alignEnumSurfaces(rec, dict, {
       continue;
     }
 
-    if (!mismatchSurfaces.length && resolved.action === 'ok') continue;
+    const valueMismatch = !currentCanon
+      || valueFold(currentCanon) !== valueFold(resolved.truth);
+    const elevateProv = needsFilterProvenanceElevate(rec.provenance?.[attr.code])
+      && shouldElevateForFilters(resolved.action, resolved.sources);
+
+    if (!mismatchSurfaces.length && resolved.action === 'ok' && !elevateProv) continue;
 
     if (mismatchSurfaces.length) {
       issues.push({
@@ -380,34 +423,47 @@ export function alignEnumSurfaces(rec, dict, {
 
     if (!autoFix) continue;
 
-    // Attrs → канон.
-    if (!currentCanon || valueFold(currentCanon) !== valueFold(resolved.truth)) {
-      rec.attrs[attr.code] = resolved.truth;
+    // Attrs → канон; provenance → уровень, с которого filters реально возьмут значение.
+    if (valueMismatch || elevateProv) {
+      if (valueMismatch) rec.attrs[attr.code] = resolved.truth;
+      const prevLevel = rec.provenance?.[attr.code]?.level;
+      const nextLevel = provenanceLevelForAlign(resolved.action, prevLevel);
       rec.provenance = rec.provenance || {};
       rec.provenance[attr.code] = {
         ...(rec.provenance[attr.code] || {}),
-        level: rec.provenance[attr.code]?.level || 'S0',
+        level: nextLevel,
         raw: resolved.truth,
         how: `enum_align:${resolved.action}`,
         evidence: {
           ...(rec.provenance[attr.code]?.evidence || {}),
           normalized_value: resolved.truth,
           enum_align: resolved.action,
+          ...(elevateProv && !valueMismatch ? { elevated_from: prevLevel || 'empty' } : {}),
         },
       };
-      actions.push({
-        code: attr.code,
-        action: 'align_attr',
-        from: currentCanon,
-        to: resolved.truth,
-        reason: resolved.action,
-      });
-      enum_fixes.push({
-        code: attr.code,
-        field: 'attrs',
-        from: currentCanon,
-        to: resolved.truth,
-      });
+      if (valueMismatch) {
+        actions.push({
+          code: attr.code,
+          action: 'align_attr',
+          from: currentCanon,
+          to: resolved.truth,
+          reason: resolved.action,
+        });
+        enum_fixes.push({
+          code: attr.code,
+          field: 'attrs',
+          from: currentCanon,
+          to: resolved.truth,
+        });
+      } else if (elevateProv) {
+        actions.push({
+          code: attr.code,
+          action: 'elevate_prov',
+          from: prevLevel || null,
+          to: nextLevel,
+          reason: resolved.action,
+        });
+      }
     }
 
     // Проза enriched.

@@ -9,7 +9,9 @@ import { normalizeProduct, ingestPairs, deriveDimsFromAxes } from './normalize.j
 import { specDest } from './schema.js';
 import { buildDescriptionHtml } from './model_validate.js';
 import { finalizeRecord, checkFilterConsistency, stripHallucinationClaims, checkDescriptionClaims } from './quality_validate.js';
+import { alignEnumSurfaces } from './enum_align.js';
 import { runFiltersAgent, assertFiltersClean } from './filters_agent.js';
+import { runConsistencyAgent } from './consistency_agent.js';
 import { validateProducts } from './validate.js';
 import { markCategoryMismatch } from './category_mismatch.js';
 import { buildFilterCoverageReport } from './filter_report.js';
@@ -202,13 +204,34 @@ function reviewSource(rec) {
  * id, meta_keywords, description_html, annotation_html, filters, web_info.
  * name не выгружается: заказчик сопоставляет по id. description_html — из ответа модели.
  */
+/**
+ * После assignFilterValues ещё раз сверить enum с назначенными фильтрами:
+ * если attrs/provenance поправили — пересчитать filters (иначе annotation ≠ filters).
+ */
+function assignFiltersAligned(rec, dict, debugFacets, config = {}, unmapped = null, enriched = null) {
+  let assigned = assignFilterValues(rec, dict, debugFacets, config, unmapped);
+  if (rec.category_mismatch) return assigned;
+  const pass = alignEnumSurfaces(rec, dict, {
+    enriched: enriched || rec._enriched || null,
+    assigned,
+    autoFix: true,
+  });
+  if (pass.actions?.some(a => a.action === 'align_attr' || a.action === 'elevate_prov')) {
+    assigned = assignFilterValues(rec, dict, debugFacets, config, unmapped);
+  }
+  return assigned;
+}
+
 export function serializeProduct(rec, dict, debugFacets, opts = {}) {
   const enr = opts.enriched || null;
-  // Сначала снять неподтверждённые «нет», затем считать filters.
+  // Сначала снять неподтверждённые «нет» и согласовать enum (description↔attrs),
+  // затем считать filters; при смене provenance/attrs — пересчитать ещё раз.
   if (!opts.skipFinalize) {
     finalizeRecord(rec, dict, { enriched: enr, assigned: null });
   }
-  const assigned = assignFilterValues(rec, dict, debugFacets, opts.config || {});
+  const assigned = opts.skipFinalize
+    ? assignFilterValues(rec, dict, debugFacets, opts.config || {})
+    : assignFiltersAligned(rec, dict, debugFacets, opts.config || {}, null, enr);
   if (!opts.skipFinalize && assigned && !rec.category_mismatch) {
     const filterIssues = checkFilterConsistency(rec, dict, assigned);
     if (filterIssues.length) {
@@ -342,6 +365,7 @@ export async function buildCustomerExport(products, {
   config,
   root = '.',
   filtersAgent = null,
+  consistencyAgent = null,
 } = {}) {
   if (!dict) throw new Error('нет справочника категории');
   if (!config) throw new Error('нет config');
@@ -401,7 +425,48 @@ export async function buildCustomerExport(products, {
   };
   const unmapped = built.unmapped || {};
   for (const rec of exported) {
-    const assigned = assignFilterValues(rec, dict, built.debug, config, unmapped);
+    assignFiltersAligned(
+      rec, dict, built.debug, config, unmapped, rec._enriched,
+    );
+  }
+
+  // Сверка description ↔ annotation ↔ filters (эвристика или ИИ).
+  const consistencyOpts = consistencyAgent && typeof consistencyAgent === 'object'
+    ? consistencyAgent
+    : {};
+  const consistency = await runConsistencyAgent({
+    recs: exported,
+    dict,
+    config,
+    debugFacets: built.debug,
+    unmapped,
+    catId: dict.catId,
+    ...consistencyOpts,
+  });
+
+  // После правок attrs каталог фасетов мог устареть — пересобрать.
+  if ((consistency.stats?.applied || 0) > 0 || (consistency.stats?.auto_fixed || 0) > 0) {
+    const facetRecs2 = exported.filter(r => !r.category_mismatch);
+    let rebuilt = buildFilters(facetRecs2.length ? facetRecs2 : exported, dict, config);
+    const sanitized2 = sanitizeFilterCatalog(rebuilt.filters, dict);
+    built = {
+      ...rebuilt,
+      filters: sanitized2.filters,
+      debug: (rebuilt.debug || []).map(f => {
+        const hit = sanitized2.filters.find(x => x.name === f.name);
+        return hit ? { ...f, value: hit.value } : f;
+      }).filter(f => sanitized2.filters.some(x => x.name === f.name)),
+      sanitize_fixes: [
+        ...(built.sanitize_fixes || []),
+        ...(sanitized2.fixes || []),
+      ],
+    };
+  }
+
+  for (const rec of exported) {
+    const assigned = assignFiltersAligned(
+      rec, dict, built.debug, config, built.unmapped || {}, rec._enriched,
+    );
     if (rec.category_mismatch) continue;
     const filterIssues = checkFilterConsistency(rec, dict, assigned);
     if (filterIssues.length) {
@@ -415,7 +480,7 @@ export async function buildCustomerExport(products, {
     products: productsOut,
     recs,
     dict,
-    unmapped,
+    unmapped: built.unmapped || unmapped,
     threshold: config.facet_min_coverage ?? 70,
   });
   const clean = assertFiltersClean(built.filters, dict);
@@ -459,6 +524,14 @@ export async function buildCustomerExport(products, {
       notes: agent.notes || [],
       sanitize_fixes: built.sanitize_fixes?.length || 0,
     },
+    consistency_agent: {
+      mode: consistency.mode,
+      cards: consistency.cards?.length || 0,
+      decisions: consistency.decisions?.length || 0,
+      remaining: consistency.remaining?.length || 0,
+      stats: consistency.stats,
+      notes: consistency.notes || [],
+    },
     validation,
     coverage,
     quality: exported.map(r => ({
@@ -490,12 +563,14 @@ export async function buildFiltersOnly(products, opts = {}) {
     filters: out.validation?.ok ? out.filters : [],
     validation: out.validation,
     filters_agent: agentFull,
+    consistency_agent: out.consistency_agent || null,
     held: out.held,
     debug: {
       warnings: out._built?.warnings || [],
       excluded: out._built?.excluded || [],
       agent_notes: agentFull.notes || [],
       mode: agentFull.mode,
+      consistency: out.consistency_agent || null,
     },
     products_count: (out._productsOut || out.products || []).length,
     exported_count: out._exported?.length || 0,

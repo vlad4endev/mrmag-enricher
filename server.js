@@ -1120,7 +1120,7 @@ async function apiQuality(req, res) {
 }
 
 /**
- * Опции filters_agent для export / filters/build.
+ * Опции filters_agent / consistency_agent для export / filters/build.
  * mode=heuristic|ai|auto; без ключа — эвристика.
  */
 function filtersAgentOptions(body = {}) {
@@ -1146,6 +1146,15 @@ function filtersAgentOptions(body = {}) {
       model: resolveProviderModel(prov, settings.run?.model, settings),
     } : null,
   };
+}
+
+/** Те же провайдер/режим, что у filters_agent — сверка description↔annotation↔filters. */
+function consistencyAgentOptions(body = {}) {
+  const base = filtersAgentOptions(body);
+  const mode = body?.consistency_agent === 'heuristic' || body?.consistency_mode === 'heuristic'
+    ? 'heuristic'
+    : (body?.consistency_agent === 'ai' || body?.consistency_mode === 'ai' ? 'ai' : base.mode);
+  return { ...base, mode };
 }
 
 /** Убрать внутренние поля (_built…) из ответа клиенту. */
@@ -1217,12 +1226,17 @@ async function apiExportV2(req, res) {
     const out = await buildCustomerExport(products, {
       dict, config, root: ROOT,
       filtersAgent: filtersAgentOptions({ ...body, category_name: categoryName(dict.catId, ROOT) }),
+      consistencyAgent: consistencyAgentOptions({
+        ...body,
+        category_name: categoryName(dict.catId, ROOT),
+      }),
     });
     if (!out.validation?.ok) {
       return json(res, 422, {
         error: 'filters не прошли проверку чистоты',
         validation: out.validation,
         filters_agent: out.filters_agent,
+        consistency_agent: out.consistency_agent,
         held: out.held,
       });
     }
@@ -1284,12 +1298,17 @@ async function apiExport(req, res) {
     const out = await buildCustomerExport(products, {
       dict, config, root: ROOT,
       filtersAgent: filtersAgentOptions({ ...body, category_name: categoryName(dict.catId, ROOT) }),
+      consistencyAgent: consistencyAgentOptions({
+        ...body,
+        category_name: categoryName(dict.catId, ROOT),
+      }),
     });
     if (!out.validation?.ok) {
       return json(res, 422, {
         error: 'filters не прошли проверку чистоты',
         validation: out.validation,
         filters_agent: out.filters_agent,
+        consistency_agent: out.consistency_agent,
         held: out.held,
       });
     }
@@ -1351,6 +1370,10 @@ async function apiFiltersBuild(req, res) {
     config,
     root: ROOT,
     filtersAgent: filtersAgentOptions({ ...body, category_name: categoryName(dict.catId, ROOT) }),
+    consistencyAgent: consistencyAgentOptions({
+      ...body,
+      category_name: categoryName(dict.catId, ROOT),
+    }),
   });
   if (!out.validation?.ok) {
     return json(res, 422, {

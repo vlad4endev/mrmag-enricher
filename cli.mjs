@@ -14,6 +14,8 @@
  *   node cli.mjs fix-filters data_523.json
  *     → пересбор filters из характеристик + санитация под витрину
  *   node cli.mjs fix-filters --filters out/filters_523.json --cat 523
+ *   node cli.mjs check-consistency data_467.json
+ *     → сверка description ↔ annotation ↔ filters (эвристика / ИИ)
  *   node cli.mjs artifacts data_467.json data_523.json
  *     → dictionaries/attributes_*.json, categories.json
  *   node cli.mjs export    products_467.json
@@ -41,6 +43,7 @@ import { webInfoFrom } from './pipeline/reviews.js';
 import { enrichMissing } from './pipeline/external.js';
 import { resolveSearchSettings } from './pipeline/search.js';
 import { runFiltersAgent, assertFiltersClean } from './pipeline/filters_agent.js';
+import { runConsistencyAgent, scanProductConsistency } from './pipeline/consistency_agent.js';
 import { rebuildStorefrontFilters, sanitizeStorefrontFiltersFile } from './pipeline/fix_filters.js';
 import { loadSettings, resolveProvider, providerEndpoint, providerHasKey } from './settings.js';
 import { markCategoryMismatch, categoryMismatchOf } from './pipeline/category_mismatch.js';
@@ -459,6 +462,9 @@ async function exportCustomer(file) {
     config,
     root: ROOT,
     filtersAgent: { mode: 'heuristic' },
+    consistencyAgent: {
+      mode: process.env.CONSISTENCY_AGENT === '0' ? 'heuristic' : 'auto',
+    },
   });
   if (out.coverage && extraMismatch.length) {
     out.coverage.category_mismatch = [...new Set([
@@ -472,8 +478,13 @@ async function exportCustomer(file) {
   writeJson(path.join(OUT, `filters_coverage_${catId}.json`), out.coverage, 2);
   writeJson(path.join(OUT, `held_${catId}.json`), out.held, 2);
   writeJson(path.join(OUT, `validate_${catId}.json`), out.validation, 2);
+  writeJson(path.join(OUT, `consistency_${catId}.json`), out.consistency_agent || {}, 2);
   console.log(`export ${catId}: input=${products.length} products=${out.products.length} filters=${out.filters.length} held=${out.held.length}`);
   console.log(`  coverage → out/filters_coverage_${catId}.json`);
+  if (out.consistency_agent) {
+    const c = out.consistency_agent;
+    console.log(`  consistency_agent: mode=${c.mode} cards=${c.cards} decisions=${c.decisions} remaining=${c.remaining}`);
+  }
   if (out.coverage?.category_mismatch?.length) {
     console.log(`  category_mismatch: ${out.coverage.category_mismatch.join(', ')}`);
   }
@@ -482,6 +493,103 @@ async function exportCustomer(file) {
     process.exitCode = 1;
   }
   return out;
+}
+
+/**
+ * Сверка description ↔ annotation ↔ filters по файлу данных / products.
+ * Пишет out/consistency_{id}.json; при remaining > 0 — exitCode 2.
+ */
+async function checkConsistencyCmd(file) {
+  if (!file) {
+    console.error('укажите data_{id}.json или products_{id}.json');
+    process.exit(1);
+  }
+  const catId = catIdFromFile(file);
+  const dict = loadDictionary(catId, ROOT);
+  const config = loadConfig(ROOT);
+  const raw = JSON.parse(fs.readFileSync(file, 'utf-8'));
+  const products = Array.isArray(raw) ? raw : (raw.products || []);
+  const { toPipelineProduct, applyEnrichedSpecs } = await import('./pipeline/export.js');
+  const { normalizeProduct } = await import('./pipeline/normalize.js');
+  const { finalizeRecord } = await import('./pipeline/quality_validate.js');
+  const { buildFilters, assignFilterValues } = await import('./pipeline/facets.js');
+
+  const recs = [];
+  for (const p of products) {
+    const src = toPipelineProduct(p);
+    const rec = normalizeProduct(src, dict, config);
+    rec.name = p.name || src.name;
+    rec._enriched = p.enriched || {
+      description: p.description || p.description_html || '',
+      meta_keywords: p.meta_keywords || '',
+      bullets: p.bullets || [],
+    };
+    applyEnrichedSpecs(rec, p.enriched?.specs, dict, config);
+    finalizeRecord(rec, dict, { enriched: rec._enriched, assigned: null });
+    recs.push(rec);
+  }
+
+  const built = buildFilters(recs, dict, config);
+  const settings = loadSettings(ROOT);
+  const prov = resolveProvider(settings);
+  const ep = providerEndpoint(prov);
+  const mode = process.env.CONSISTENCY_AGENT === 'ai' ? 'ai'
+    : (process.env.CONSISTENCY_AGENT === '0' ? 'heuristic' : 'auto');
+
+  const report = await runConsistencyAgent({
+    recs,
+    dict,
+    config,
+    debugFacets: built.debug,
+    unmapped: built.unmapped,
+    catId,
+    categoryName: loadCategories(ROOT).find(c => Number(c.id) === Number(catId))?.name || '',
+    mode,
+    provider: providerHasKey(prov) ? {
+      apiKey: ep.apiKey,
+      baseUrl: ep.baseUrl,
+      chatUrl: ep.chatUrl,
+      headers: ep.headers,
+      model: settings.run?.model,
+    } : null,
+    model: settings.run?.model,
+    timeoutMs: Number(settings.run?.timeout_ms) || 90_000,
+    maxTokens: Number(settings.run?.max_tokens) || 4000,
+  });
+
+  const remainingDetail = [];
+  for (const rec of recs) {
+    const assigned = assignFilterValues(rec, dict, built.debug, config);
+    const scan = scanProductConsistency(rec, dict, {
+      enriched: rec._enriched,
+      assigned,
+      config,
+    });
+    if (scan.issues.length) remainingDetail.push(scan);
+  }
+
+  fs.mkdirSync(OUT, { recursive: true });
+  const outPath = path.join(OUT, `consistency_${catId}.json`);
+  writeJson(outPath, {
+    catId,
+    mode: report.mode,
+    stats: report.stats,
+    notes: report.notes,
+    decisions: report.decisions,
+    rejected: report.rejected,
+    cards: report.cards,
+    remaining: remainingDetail,
+  }, 2);
+
+  console.log(`check-consistency ${catId}: mode=${report.mode}`);
+  console.log(`  auto_fixed=${report.stats?.auto_fixed || 0} applied=${report.stats?.applied || 0} review=${report.stats?.review || 0}`);
+  console.log(`  cards=${report.cards?.length || 0} remaining=${remainingDetail.length}`);
+  console.log(`  → ${outPath}`);
+  for (const s of remainingDetail.slice(0, 10)) {
+    console.log(`  ! ${s.id}: ${s.issues.map(i => `${i.kind}/${i.attr_code}`).join(', ')}`);
+  }
+  if (remainingDetail.length) process.exitCode = 2;
+  return report;
 }
 
 const cmd = process.argv[2];
@@ -544,8 +652,9 @@ else if (cmd === 'fix-filters') {
 else if (cmd === 'config') showConfig();
 else if (cmd === 'validate') validateFile(files[0]);
 else if (cmd === 'report') reportCmd(files[0]);
+else if (cmd === 'check-consistency') await checkConsistencyCmd(files[0]);
 else if (cmd === 'export') await exportCustomer(files[0]);
 else {
-  console.error(`команды: inspect | normalize | enrich | lookup | config | facets | artifacts | validate | report | fix-filters | export`);
+  console.error(`команды: inspect | normalize | enrich | lookup | config | facets | artifacts | validate | report | fix-filters | check-consistency | export`);
   process.exit(1);
 }

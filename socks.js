@@ -1136,18 +1136,28 @@ export async function probeProxy(targetUrl = 'https://openrouter.ai') {
       runtime.reachable = false;
       runtime.lastError = e.message;
       steps.push({ id: 'proxy_tcp', ok: false, title: `TCP до ${mode} ${proxyHost}:${proxyPort}`, error: e.message, ms: Date.now() - t0 });
-      const tunnelHint = [
-        'Ссылка прокси, скорее всего, верная — с домашней сети она отвечает.',
-        'С этого сервера (датацентр) TCP до неё не проходит.',
-        '',
-        'Обход — туннель с Mac (окно не закрывать):',
-        `  ssh -N -R 0.0.0.0:11080:${proxyHost}:${proxyPort} skyputh@ЭТОТ_СЕРВЕР`,
-        'На сервере: GatewayPorts clientspecified (уже ок, если ss показывает 0.0.0.0:11080).',
-        'В «Сеть» (логин/пароль те же):',
-        '  http://USER:PASS@host.docker.internal:11080',
-        'или socks5://USER:PASS@host.docker.internal:11080',
-        'Сохранить → Проверить. Контейнер сам подберёт 172.17/18.0.1, если host.docker.internal молчит.',
-      ].join('\n');
+      const tunnelHint = needsDockerHostFallback(proxyHost)
+        ? [
+          'Контейнер не видит порт 11080 на хосте.',
+          '',
+          '1) На сервере: docker compose up -d proxy-bridge',
+          '   (мост: 0.0.0.0:11080 → 127.0.0.1:11079)',
+          '2) На Mac (окно не закрывать):',
+          '   ssh -N -R 127.0.0.1:11079:IP_ПРОКСИ:ПОРТ skyputh@ЭТОТ_СЕРВЕР',
+          '   или: ./scripts/mac-proxy-tunnel.sh skyputh@ЭТОТ_СЕРВЕР',
+          '3) ss -lntp | grep -E "11079|11080" — оба порта LISTEN',
+          '4) В «Сеть»: http://USER:PASS@host.docker.internal:11080',
+        ].join('\n')
+        : [
+          'С этого VPS прямой TCP до прокси не проходит (фильтр датацентра).',
+          '',
+          'Не указывайте IP прокси напрямую в «Сеть».',
+          '1) docker compose up -d proxy-bridge',
+          '2) На Mac: ssh -N -R 127.0.0.1:11079:' + `${proxyHost}:${proxyPort}` + ' skyputh@ЭТОТ_СЕРВЕР',
+          '3) В «Сеть» (логин/пароль те же):',
+          '   http://USER:PASS@host.docker.internal:11080',
+          'Сохранить → Проверить.',
+        ].join('\n');
       return {
         ok: false,
         kind: 'tcp_blocked',

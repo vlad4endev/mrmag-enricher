@@ -924,15 +924,12 @@ async function apiSettingsPut(req, res) {
     invalidateModelsCache();
     let proxy_error = null;
     try {
-      if (!process.env.SOCKS_PROXY) {
-        await setupProxy(() => {}, next.proxy);
-      } else {
-        mergeProviderBypassHosts(next.providers);
-      }
+      // setupProxy сам берёт SOCKS_PROXY из env с приоритетом над файлом.
+      await setupProxy(() => {}, next.proxy);
+      mergeProviderBypassHosts(next.providers);
     } catch (e) {
       proxy_error = e.message;
     }
-    mergeProviderBypassHosts(next.providers);
     const settings = loadSettings(ROOT);
     json(res, 200, {
       settings: publicSettings(settings),

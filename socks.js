@@ -418,7 +418,15 @@ export async function applyProxyConfig({
   bridge_port,
   source = 'settings',
 } = {}, log = () => {}) {
-  const port = Number(bridge_port || process.env.SOCKS_BRIDGE_PORT || 18080) || 18080;
+  let port = Number(bridge_port || process.env.SOCKS_BRIDGE_PORT || 18080) || 18080;
+  // Не слушаем на порту самого SOCKS (частая ошибка: 3443 из tg:// ссылки).
+  if (url) {
+    try {
+      const socks = parseProxy(url);
+      if (socks?.port && port === socks.port) port = 18080;
+    } catch { /* validate later */ }
+  }
+  if (port === 3443) port = 18080;
   runtime.bridgePort = port;
 
   if (!enabled || !String(url || '').trim()) {
@@ -493,10 +501,12 @@ export async function setupProxy(log = () => {}, settingsProxy = null) {
   const fromSettings = settingsProxy && settingsProxy.enabled !== false && settingsProxy.url;
 
   if (envSocks) {
+    // Порт моста: только SOCKS_BRIDGE_PORT из env, иначе 18080.
+    // settings.bridge_port сюда не берём — туда часто попадает порт SOCKS.
     const out = await applyProxyConfig({
       enabled: true,
       url: envSocks,
-      bridge_port: process.env.SOCKS_BRIDGE_PORT || settingsProxy?.bridge_port,
+      bridge_port: process.env.SOCKS_BRIDGE_PORT || 18080,
       source: 'env',
     }, log);
     const expected = `http://127.0.0.1:${runtime.bridgePort}`;
@@ -599,19 +609,43 @@ function connectHttpProxy(proxyUrl, targetHost, targetPort, timeoutMs) {
       },
       timeout: timeoutMs,
     });
+    let settled = false;
     const fail = e => {
+      if (settled) return;
+      settled = true;
       req.destroy();
       reject(e instanceof Error ? e : new Error(String(e)));
     };
+    // Не-200 на CONNECT (502 от моста, если SOCKS упал) приходит как
+    // «response», а не «connect» — без слушателя запрос висит до таймаута.
+    req.once('response', res => {
+      const chunks = [];
+      res.on('data', c => chunks.push(c));
+      res.on('end', () => {
+        const body = Buffer.concat(chunks).toString('utf8').trim().slice(0, 200);
+        fail(new Error(
+          body || `прокси CONNECT ${res.statusCode} (SOCKS недоступен или отклонил вход)`,
+        ));
+      });
+      res.on('error', fail);
+    });
     req.once('connect', (res, socket) => {
+      if (settled) {
+        socket.destroy();
+        return;
+      }
       if (res.statusCode !== 200) {
         socket.destroy();
         return fail(new Error(`прокси CONNECT ${res.statusCode}`));
       }
+      settled = true;
       socket.setTimeout(0);
       resolve(socket);
     });
-    req.once('timeout', () => fail(Object.assign(new Error(`прокси не отвечает ${timeoutMs}ms`), { name: 'TimeoutError' })));
+    req.once('timeout', () => fail(Object.assign(
+      new Error(`прокси не отвечает ${timeoutMs}ms (CONNECT ${proxy.hostname}:${proxy.port || 80} → ${targetHost}:${targetPort})`),
+      { name: 'TimeoutError' },
+    )));
     req.once('error', fail);
     req.end();
   });
@@ -927,7 +961,7 @@ export function providerFetch(url, init = {}, { useProxy = false } = {}) {
   });
 }
 
-/** Проверка: CONNECT до host:443 через текущий прокси. */
+/** Проверка: TCP до SOCKS → CONNECT через мост → HTTPS до цели. */
 export async function probeProxy(targetUrl = 'https://openrouter.ai') {
   const info = proxyRuntimeInfo();
   if (!info.active) {
@@ -935,26 +969,81 @@ export async function probeProxy(targetUrl = 'https://openrouter.ai') {
   }
   const host = hostFromUrl(targetUrl) || 'openrouter.ai';
   const started = Date.now();
+  const steps = [];
+
+  if (runtime.socksCfg) {
+    const { host: sh, port: sp } = runtime.socksCfg;
+    const t0 = Date.now();
+    try {
+      await new Promise((resolve, reject) => {
+        const s = net.connect(sp, sh);
+        const fail = e => { s.destroy(); reject(e); };
+        s.setTimeout(8_000, () => fail(Object.assign(new Error(`TCP ${sh}:${sp} таймаут`), { name: 'TimeoutError' })));
+        s.once('error', fail);
+        s.once('connect', () => { s.destroy(); resolve(); });
+      });
+      steps.push({ id: 'socks_tcp', ok: true, title: `TCP до SOCKS ${sh}:${sp}`, ms: Date.now() - t0 });
+    } catch (e) {
+      steps.push({ id: 'socks_tcp', ok: false, title: `TCP до SOCKS ${sh}:${sp}`, error: e.message, ms: Date.now() - t0 });
+      return {
+        ok: false,
+        error: `SOCKS ${sh}:${sp} недоступен: ${e.message}`,
+        ms: Date.now() - started,
+        target: host,
+        steps,
+        ...info,
+      };
+    }
+
+    const t1 = Date.now();
+    try {
+      const sock = await socksConnect(runtime.socksCfg, host, 443, 20_000);
+      sock.destroy();
+      steps.push({ id: 'socks_handshake', ok: true, title: `SOCKS CONNECT ${host}:443`, ms: Date.now() - t1 });
+    } catch (e) {
+      steps.push({ id: 'socks_handshake', ok: false, title: `SOCKS CONNECT ${host}:443`, error: e.message, ms: Date.now() - t1 });
+      return {
+        ok: false,
+        error: `SOCKS отклонил туннель до ${host}: ${e.message}`,
+        ms: Date.now() - started,
+        target: host,
+        steps,
+        ...info,
+      };
+    }
+  }
+
+  const t2 = Date.now();
   try {
     const res = await fetchHttp(`https://${host}/`, {
       method: 'GET',
       headers: { Accept: '*/*', 'User-Agent': 'Ogran-proxy-probe/1' },
-      timeoutMs: 15_000,
+      timeoutMs: 25_000,
       proxyUrl: getProxyHttpUrl(),
+    });
+    steps.push({
+      id: 'https',
+      ok: true,
+      title: `HTTPS через мост → ${host}`,
+      status: res.status,
+      ms: Date.now() - t2,
     });
     return {
       ok: true,
       status: res.status,
       ms: Date.now() - started,
       target: host,
+      steps,
       ...info,
     };
   } catch (e) {
+    steps.push({ id: 'https', ok: false, title: `HTTPS через мост → ${host}`, error: e.message, ms: Date.now() - t2 });
     return {
       ok: false,
       error: e.message || String(e),
       ms: Date.now() - started,
       target: host,
+      steps,
       ...info,
     };
   }

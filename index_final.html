@@ -1790,10 +1790,14 @@ input[type=range]::-moz-range-thumb{
           <div class="set-row" style="margin-top:10px"><label for="setProxyUrl">Адрес <span id="setProxyUrlHint" class="set-badge off">не задан</span></label>
             <input type="password" id="setProxyUrl" name="egress-proxy-url" data-secret="1" placeholder="socks5://user:pass@host:port или tg://socks?server=…&amp;port=…&amp;user=…&amp;pass=…" autocomplete="new-password" spellcheck="false" autocapitalize="off" data-lpignore="true" data-1p-ignore="true">
           </div>
-          <div class="set-grid" style="margin-top:10px">
-            <div class="set-row"><label for="setProxyBridge">Порт моста SOCKS→HTTP</label><input type="number" id="setProxyBridge" min="1" max="65535" placeholder="18080"></div>
-          </div>
-          <div class="hint" style="margin-top:10px">Поддерживаются <code>socks5://</code>, ссылка Telegram <code>tg://socks?…</code> и обычный <code>http://user:pass@host:port</code>. Пароль в браузер не отдаётся — оставьте поле пустым, чтобы не менять. Если задан <code>SOCKS_PROXY</code> в окружении контейнера, он имеет приоритет.</div>
+          <details class="hint" style="margin-top:10px">
+            <summary style="cursor:pointer;font-size:12px;color:var(--t2)">Дополнительно: локальный порт моста</summary>
+            <div class="set-row" style="margin-top:8px"><label for="setProxyBridge">Локальный порт HTTP-моста (не порт SOCKS)</label>
+              <input type="number" id="setProxyBridge" min="1024" max="65535" placeholder="18080">
+            </div>
+            <div class="hint" style="margin-top:6px">По умолчанию <code>18080</code>. Сюда <b>не</b> нужно писать порт из ссылки Telegram (например 3443) — тот уже внутри адреса прокси. Мост слушает на localhost и переводит CONNECT в SOCKS5.</div>
+          </details>
+          <div class="hint" style="margin-top:10px">Поддерживаются <code>socks5://</code>, ссылка Telegram <code>tg://socks?…</code> и обычный <code>http://user:pass@host:port</code>. Пароль в браузер не отдаётся — оставьте поле пустым, чтобы не менять. Если задан <code>SOCKS_PROXY</code> в окружении контейнера, он имеет приоритет над полем адреса.</div>
           <div class="set-actions" style="margin-top:12px">
             <button type="button" class="sbtn ghost" id="proxyProbeBtn" onclick="runProxyProbe()">Проверить прокси</button>
           </div>
@@ -3909,7 +3913,7 @@ function renderProxySettings(d){
   const px=d?.settings?.proxy||{};
   const rt=d?.proxy_runtime||{};
   setC('setProxyOn', px.enabled===true || (px.has_url && px.enabled!==false));
-  setV('setProxyBridge', px.bridge_port||18080);
+  setV('setProxyBridge', (px.bridge_port===3443?18080:px.bridge_port)||18080);
   const urlEl=document.getElementById('setProxyUrl');
   if(urlEl){
     urlEl.value='';
@@ -3948,14 +3952,21 @@ async function runProxyProbe(){
   btn.disabled=true;
   box.hidden=false;
   box.className='parser-probe';
-  box.innerHTML='<div class="parser-probe-h">Проверяю CONNECT через прокси…</div>';
+  box.innerHTML='<div class="parser-probe-h">Проверяю SOCKS и CONNECT…</div>';
   try{
     const d=await apiJson('/api/proxy/probe',{ method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ target:'https://openrouter.ai' }) });
     box.className='parser-probe '+(d.ok?'ok':'bad');
+    const steps=(d.steps||[]).map(s=>{
+      const detail=s.ok
+        ? `${s.status!=null?`HTTP ${s.status} · `:''}${s.ms!=null?s.ms+'ms':''}`
+        : esc(s.error||'ошибка');
+      return `<li>${s.ok?'✓':'✗'} ${esc(s.title||s.id)}: ${detail}</li>`;
+    }).join('');
     box.innerHTML=`<div class="parser-probe-h">${d.ok?'Прокси отвечает':'Прокси не прошёл проверку'}</div>`
       +`<ul class="parser-probe-list">`
-      +`<li>${esc(d.target||'openrouter.ai')}: ${d.ok?`HTTP ${d.status} · ${d.ms}ms`:(esc(d.error||'ошибка'))}</li>`
-      +`<li>режим: ${esc(d.mode||'—')} · источник: ${esc(d.source||'—')}</li>`
+      +(steps||`<li>${esc(d.target||'openrouter.ai')}: ${d.ok?`HTTP ${d.status} · ${d.ms}ms`:(esc(d.error||'ошибка'))}</li>`)
+      +`<li>режим: ${esc(d.mode||'—')} · источник: ${esc(d.source||'—')} · мост: ${esc(d.bridge_url||'—')}</li>`
+      +(!d.ok && d.error?`<li>${esc(d.error)}</li>`:'')
       +`</ul>`;
   }catch(e){
     box.className='parser-probe bad';

@@ -340,15 +340,45 @@ function normalizeProxy(raw = {}, prev = {}) {
     url = str(raw.url).trim();
   }
   const enabled = raw?.enabled === true || (raw?.enabled !== false && !!url);
+  let bridge = num(
+    raw?.bridge_port ?? prev?.bridge_port,
+    Number(process.env.SOCKS_BRIDGE_PORT) || 18080,
+    { min: 1, max: 65535 },
+  );
+  // Частая путаница: в «порт моста» вписывают порт SOCKS из tg://…&port=3443.
+  // Мост — локальный HTTP на 18080, не удалённый SOCKS.
+  if (url) {
+    try {
+      const socksPort = parseProxyPort(url);
+      if (socksPort && bridge === socksPort) bridge = 18080;
+    } catch { /* адрес проверим в validate */ }
+  }
+  if (bridge < 1024 || bridge === 3443) {
+    // 3443 — типичный порт Telegram SOCKS; привилегированные порты тоже не трогаем.
+    if (bridge === 3443) bridge = 18080;
+  }
   return {
     enabled: !!enabled && !!url,
     url,
-    bridge_port: num(
-      raw?.bridge_port ?? prev?.bridge_port,
-      Number(process.env.SOCKS_BRIDGE_PORT) || 18080,
-      { min: 1, max: 65535 },
-    ),
+    bridge_port: bridge,
   };
+}
+
+/** Порт из socks/tg URL без полного parseProxy (чтобы не тянуть socks.js сюда). */
+function parseProxyPort(raw) {
+  const s = String(raw || '').trim();
+  if (!s) return null;
+  if (/[?&]port=/i.test(s)) {
+    const q = new URLSearchParams(s.slice(s.indexOf('?') + 1));
+    const p = Number(q.get('port'));
+    return Number.isFinite(p) && p > 0 ? p : null;
+  }
+  try {
+    const u = new URL(s.includes('://') ? s : `socks5://${s}`);
+    return u.port ? Number(u.port) : null;
+  } catch {
+    return null;
+  }
 }
 
 function normalizeEngine(raw) {
@@ -692,30 +722,34 @@ function publicProxy(proxy = {}) {
   const envSocks = process.env.SOCKS_PROXY || '';
   const envHttp = process.env.HTTPS_PROXY || process.env.https_proxy || '';
   const stored = proxy.url || '';
-  const effective = stored || envSocks || '';
+  const fromEnv = !!envSocks;
   let url_hint = '';
-  if (stored) {
+  const mask = (s) => {
     try {
-      if (/[?&]pass=/i.test(stored) || /:\/\/[^/@]+:[^/@]+@/.test(stored)) {
-        url_hint = stored.replace(/pass=[^&]+/i, 'pass=••••').replace(/(:\/\/[^:/@]+:)([^@]+)@/, '$1••••@');
-      } else {
-        url_hint = stored.length > 48 ? stored.slice(0, 44) + '…' : stored;
+      if (/[?&]pass=/i.test(s) || /:\/\/[^/@]+:[^/@]+@/.test(s)) {
+        return s.replace(/pass=[^&]+/i, 'pass=••••').replace(/(:\/\/[^:/@]+:)([^@]+)@/, '$1••••@');
       }
+      return s.length > 48 ? s.slice(0, 44) + '…' : s;
     } catch {
-      url_hint = '••••';
+      return '••••';
     }
-  } else if (envSocks) {
-    url_hint = 'из SOCKS_PROXY';
-  } else if (envHttp) {
+  };
+  if (fromEnv) {
+    url_hint = mask(envSocks);
+  } else if (stored) {
+    url_hint = mask(stored);
+  } else if (envHttp && !/127\.0\.0\.1:\d+/.test(envHttp)) {
     url_hint = 'из HTTPS_PROXY';
   }
+  let bridge = proxy.bridge_port || 18080;
+  if (bridge === 3443) bridge = 18080;
   return {
-    enabled: proxy.enabled === true || (!!stored && proxy.enabled !== false),
-    bridge_port: proxy.bridge_port || 18080,
-    has_url: !!(stored || envSocks || (envHttp && !/127\.0\.0\.1:18080/.test(envHttp))),
+    enabled: fromEnv || proxy.enabled === true || (!!stored && proxy.enabled !== false),
+    bridge_port: bridge,
+    has_url: !!(stored || envSocks || (envHttp && !/127\.0\.0\.1:\d+/.test(envHttp))),
     url_hint,
-    url_from: stored ? 'file' : envSocks ? 'env' : envHttp ? 'env' : 'none',
-    // Пустое поле в UI — не менять секрет; наружу сам url не отдаём.
+    // env перекрывает файл — так и показываем, чтобы не казалось, что правите не то.
+    url_from: fromEnv ? 'env' : stored ? 'file' : envHttp ? 'env' : 'none',
     url: '',
   };
 }

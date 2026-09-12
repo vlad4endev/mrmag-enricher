@@ -1091,6 +1091,9 @@ export function defaultSystemPromptTemplate() {
 Не парси описание «на всякий случай» и не восстанавливай число из артикула
 модели. Нет данных → null, не выдумывай. В user-JSON смотри
 missing_required_filters: это дыры именно этой карточки.
+filter_checklist — сверка по каждой оси фильтра: filled / missing. Для missing
+не подставляй типичное значение категории и не угадывай по названию модели:
+если в attributes/facts/annotation/description нет подтверждения — null.
 
 5. НОРМАЛИЗАЦИЯ И ТЕРМИНОЛОГИЯ
 Ты не копируешь формулировку источника дословно — ты ПРИВОДИШЬ её к канону
@@ -1804,6 +1807,30 @@ export function seoPackageEmpty(data) {
   return cardTextsEmpty(data);
 }
 
+/**
+ * Оси витрины (обязательные + необязательные фильтры) без подтверждения
+ * в facts — ответ модели обнуляем. Нет в исходниках → null, не выдумка.
+ * Bounds (интервал атрибута без точного числа) считаем подтверждением.
+ */
+export function stripUnsupportedFilterSpecs(specs, facts, bounds = {}, schema = null) {
+  if (!specs || typeof specs !== 'object') return [];
+  const keys = new Set([
+    ...(schema?.requiredSpecKeys || []),
+    ...(schema?.optionalFilterSpecKeys || []),
+  ]);
+  if (!keys.size) return [];
+  const stripped = [];
+  for (const k of keys) {
+    if (!(k in specs)) continue;
+    if (specs[k] == null || specs[k] === '') continue;
+    if (facts?.[k] != null && facts[k] !== '') continue;
+    if (bounds?.[k] != null) continue;
+    specs[k] = null;
+    stripped.push(k);
+  }
+  return stripped;
+}
+
 export function normalizeResponse(data, sourceText = '', schemaKey, attributes = [], policy = MISMATCH_POLICY, product = null) {
   if (!data || typeof data !== 'object' || Array.isArray(data)) {
     throw new Error('Ответ не объект');
@@ -1886,6 +1913,9 @@ export function normalizeResponse(data, sourceText = '', schemaKey, attributes =
     specs[k] = factToSpec(facts[k]);
     filled_from_text.push(k);
   }
+
+  // Фильтры без подтверждения в attributes/annotation/description → null.
+  const stripped_no_source = stripUnsupportedFilterSpecs(specs, facts, bounds, schema);
 
   const arr = v => (Array.isArray(v) ? v.map(x => String(x).trim()).filter(Boolean) : []);
   const str = v => {
@@ -1986,6 +2016,7 @@ export function normalizeResponse(data, sourceText = '', schemaKey, attributes =
     source_facts: facts,
     source_conflicts: conflicts,
     filled_from_text,
+    stripped_no_source,
     prose_fixes: [...aligned.prose_fixes, ...enum_fixes],
     warnings,
   });
@@ -1998,8 +2029,18 @@ export function buildUserContent(product, facts = null, { benchmarks = null, sch
       const dest = specDest(a);
       return typeof dest === 'object' ? dest.key : dest;
     }).filter(Boolean) : []);
+  const optional = schema?.optionalFilterSpecKeys
+    || (schema?.dict ? optionalFilterAttrs(schema.dict).map((a) => {
+      const dest = specDest(a);
+      return typeof dest === 'object' ? dest.key : dest;
+    }).filter(Boolean) : []);
   const missing = required.filter((k) => facts?.[k] == null || facts[k] === '');
   const filledRequired = required.length - missing.length;
+  const checklistOf = (keys) => (keys || []).map((k) => ({
+    key: k,
+    status: (facts?.[k] != null && facts[k] !== '') ? 'filled' : 'missing',
+    value: (facts?.[k] != null && facts[k] !== '') ? facts[k] : null,
+  }));
   return JSON.stringify({
     facts:       facts && Object.keys(facts).length ? facts : undefined,
     name:        product.name,
@@ -2012,10 +2053,17 @@ export function buildUserContent(product, facts = null, { benchmarks = null, sch
     price:       product.price,
     benchmarks:  benchmarks || undefined,
     required_filters: required.length ? required : undefined,
+    optional_filters: optional.length ? optional : undefined,
     missing_required_filters: missing.length ? missing : undefined,
+    filter_checklist: {
+      required: checklistOf(required),
+      optional: checklistOf(optional),
+    },
     filter_task: missing.length
-      ? `Обязательные фильтры категории не заполнены (${filledRequired}/${required.length}). Шаг 1: возьми значение из facts/attributes/annotation (включая добор из сети по модели). Шаг 2: парсинг description/name — только если шаг 1 пуст по этой оси. Не восстанавливай число из артикула. Не выдумывай.`
-      : undefined,
+      ? `Обязательные фильтры категории не заполнены (${filledRequired}/${required.length}). Сверь filter_checklist и attributes: filled — возьми канон, missing — ищи только в facts/attributes/annotation, затем description/name. Нет подтверждения в исходниках → null. Не восстанавливай число из артикула. Не выдумывай.`
+      : (required.length || optional.length)
+        ? 'Сверь filter_checklist с attributes: для missing осей фильтров пиши null, если в исходниках нет подтверждения.'
+        : undefined,
   });
 }
 

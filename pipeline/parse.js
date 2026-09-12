@@ -357,15 +357,32 @@ function mappedAttrCodes(pairs, dict) {
  * фильтр. Маркетинг без таблицы характеристик не разбираем: иначе три
  * случайные пары из прозы попадают в ingest.
  */
-export function needDescriptionParse(fromAnn, dict, { format, dumpDesc } = {}) {
-  if (format === 'EMPTY') return true;
-  const mappedAnn = mappedPairCount(fromAnn, dict);
+export function needDescriptionParse(fromStep1, dict, { format, dumpDesc } = {}) {
+  const mapped = mappedPairCount(fromStep1, dict);
   const required = requiredFilterAttrs(dict);
   const missingRequired = required.length
-    ? required.some(a => !mappedAttrCodes(fromAnn, dict).has(a.code))
-    : (fromAnn?.length || 0) < 3 || mappedAnn < 3;
+    ? required.some(a => !mappedAttrCodes(fromStep1, dict).has(a.code))
+    : (fromStep1?.length || 0) < 3 || mapped < 3;
+  // Обязательные фильтры уже закрыты attributes/annotation — description не трогаем.
   if (!missingRequired) return false;
-  return Boolean(dumpDesc) || (fromAnn?.length || 0) < 3 || mappedAnn < 3;
+  // Пустая аннотация без attributes → шаг 2 обязателен.
+  if (format === 'EMPTY' && !(fromStep1?.length > 0)) return true;
+  return Boolean(dumpDesc) || (fromStep1?.length || 0) < 3 || mapped < 3;
+}
+
+/**
+ * Структурированные attributes магазина → пары до annotation.
+ * source S0: тот же уровень, что имя/фид; via attr — для лога «атрибуты».
+ */
+export function pairsFromAttributes(attributes) {
+  const pairs = [];
+  for (const a of Array.isArray(attributes) ? attributes : []) {
+    const key = String(a?.name ?? a?.key ?? '').replace(/\s+/g, ' ').trim();
+    const value = String(a?.value ?? '').replace(/\s+/g, ' ').trim();
+    if (!key || !value) continue;
+    pairs.push({ key, value, source: 'S0', via: 'attr' });
+  }
+  return pairs;
 }
 
 /** Две колонки Bootstrap/Bitrix: col-sm-5 + col-sm-7 на карточке магазина. */
@@ -478,22 +495,24 @@ export function detectDump(html) {
 
 export function parseProductFields(product, dict) {
   const format = annotationFormat(product.annotation);
-  // Два шага по приоритету. Шаг 1 — annotation (S1). Шаг 2 (парсинг
-  // description, S2) включается только если шаг 1 не закрыл обязательный
-  // фильтр: setAttr всё равно не перетирает, но чужие пары из прозы
-  // не должны попадать в ingest, когда ось уже заполнена.
+  // Три шага. Шаг 0 — attributes магазина (S0). Шаг 1 — annotation (S1).
+  // Шаг 2 (description, S2) — только если шаг 0+1 не закрыли обязательный
+  // фильтр: setAttr не перетирает, но чужие пары из прозы не должны
+  // попадать в ingest, когда ось уже заполнена.
+  const fromAttrs = pairsFromAttributes(product.attributes);
   const fromAnn = extractPairs(product.annotation, dict).map(p => ({ ...p, source: 'S1' }));
+  const step1 = fromAttrs.concat(fromAnn);
   let fromDesc = [];
   let dump = false;
   const dumpDesc = detectDump(product.description);
-  if (needDescriptionParse(fromAnn, dict, { format, dumpDesc })) {
+  if (needDescriptionParse(step1, dict, { format, dumpDesc })) {
     dump = dumpDesc;
     fromDesc = extractPairs(product.description, dict).map(p => ({ ...p, source: 'S2' }));
     if (!dump && fromDesc.length < 3) fromDesc = [];
     if (fromDesc.length >= 3) dump = true;
   }
-  const pairs = fromAnn.length ? fromAnn.concat(fromDesc) : fromDesc;
-  return { format, pairs, dump, fromAnn, fromDesc };
+  const pairs = step1.length ? step1.concat(fromDesc) : fromDesc;
+  return { format, pairs, dump, fromAnn, fromDesc, fromAttrs };
 }
 
 /** Откуда взялась пара — для лога и экрана хода обогащения. */
@@ -545,11 +564,14 @@ function hitFromPair(p, fallbackSource = 'S1') {
   if (!key || !value) return null;
   const source = p.source || fallbackSource;
   const via = p.via || 'sep';
-  const where = source === 'page' ? (viaLabel(via) || 'страница') : (sourceLabel(source) || 'карточка');
+  let where;
+  if (via === 'attr' || source === 'attributes') where = SOURCE_LABEL.attributes;
+  else if (source === 'page') where = viaLabel(via) || 'страница';
+  else where = sourceLabel(source) || 'карточка';
   return { key, value, where, how: viaLabel(via), source, via };
 }
 
-/** Пары annotation/description с подписью источника — то, что уходит в лог. */
+/** Пары attributes/annotation/description с подписью источника — то, что уходит в лог. */
 export function collectParseHits(product, dict) {
   const parsed = parseProductFields(product || {}, dict);
   const hits = [];
@@ -562,6 +584,7 @@ export function collectParseHits(product, dict) {
     dump: parsed.dump,
     hits,
     counts: {
+      attributes: parsed.fromAttrs?.length || 0,
       annotation: parsed.fromAnn.length,
       description: parsed.fromDesc.length,
     },

@@ -669,8 +669,8 @@ t('index_final: value колонка не схлопывается (min-width �
   assert.match(spK[0], /max-width:\s*40%/);
   assert.match(spK[0], /flex:\s*0\s+1\s+38%/);
   assert.doesNotMatch(spK[0], /white-space:\s*nowrap/);
-  assert.match(html, /Факты из источника/);
-  assert.match(html, /class="sp"/);
+  assert.match(html, /Факты источника/);
+  assert.match(html, /class="sp/);
 });
 t('index_final: на узком экране specs в одну колонку', () => {
   const html = fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), 'index_final.html'), 'utf8');
@@ -847,6 +847,7 @@ t('промпт учит обязательные фильтры категор�
   assert.match(p, /тип_загрузки/);
   assert.match(p, /максимальная_загрузка_кг/);
   assert.match(p, /missing_required_filters/);
+  assert.match(p, /filter_checklist/);
   assert.match(p, /по приоритету/);
   assert.match(p, /парсинг description/i);
   assert.match(p, /артикула/);
@@ -861,10 +862,12 @@ t('в запрос уезжают незаполненные обязатель�
   const empty = JSON.parse(buildUserContent({ name: 'X' }, {}, { schema }));
   assert.ok(Array.isArray(empty.required_filters) && empty.required_filters.includes('тип_загрузки'));
   assert.ok(empty.missing_required_filters.includes('тип_загрузки'));
-  assert.match(empty.filter_task, /обязательн/i);
-  assert.match(empty.filter_task, /Шаг 2: парсинг/);
+  assert.ok(empty.filter_checklist?.required?.some(x => x.key === 'тип_загрузки' && x.status === 'missing'));
+  assert.match(empty.filter_task, /обязательн|filter_checklist/i);
+  assert.match(empty.filter_task, /null|не выдумывай|исходник/i);
   const filled = JSON.parse(buildUserContent({ name: 'X' }, { тип_загрузки: 'Фронтальная' }, { schema }));
   assert.ok(!filled.missing_required_filters.includes('тип_загрузки'));
+  assert.ok(filled.filter_checklist.required.some(x => x.key === 'тип_загрузки' && x.status === 'filled'));
 });
 t('шаблон на все разделы, если нет привязки', () => {
   const prompts = [
@@ -885,11 +888,31 @@ t('пустой шаблон выбранных разделов перекры�
 });
 t('значение вне списка не попадает в фасет', () => {
   const r = normalizeResponse({ specs: { тип_загрузки: 'Фронтальная', сушка: 'есть', дисплей: 'иногда' } },
-    '', 'stiralnye_mashiny');
+    'Тип загрузки - Фронтальная<br>Сушка - есть<br>Дисплей - иногда', 'stiralnye_mashiny');
   assert.match(String(r.specs.тип_загрузки), /фронтальн/i, 'регистр не должен плодить фасеты');
   assert.ok(r.specs.сушка === 'да' || r.specs.сушка === 'Да' || r.specs.сушка === true);
   // «иногда» нет в справочнике — поле обнуляется или остаётся с предупреждением.
   assert.ok(r.specs.дисплей == null || r.warnings.some(w => w.field === 'дисплей'));
+});
+t('фильтр без подтверждения в исходниках обнуляется', () => {
+  const r = normalizeResponse(
+    { specs: { тип_загрузки: 'Фронтальная', сушка: 'да' } },
+    'Стиральная машина без характеристик',
+    'stiralnye_mashiny',
+  );
+  assert.strictEqual(r.specs.тип_загрузки, null);
+  assert.strictEqual(r.specs.сушка, null);
+  assert.ok(r.stripped_no_source.includes('тип_загрузки'));
+  assert.ok(r.stripped_no_source.includes('сушка'));
+});
+t('атрибуты магазина закрывают фильтр и не дают выдумывать чужое', () => {
+  const r = normalizeResponse(
+    { specs: { тип_загрузки: 'Вертикальная' } },
+    '',
+    'stiralnye_mashiny',
+    [attr('Тип загрузки', 'Фронтальная')],
+  );
+  assert.match(String(r.specs.тип_загрузки), /фронтальн/i);
 });
 t('валидатор: порог description зависит от числа specs', () => {
   const short = 'А'.repeat(130);
@@ -1112,7 +1135,7 @@ t('загрузка без единицы не берётся', () => {
 });
 t('нормализация берёт поля своей категории', () => {
   const r = normalizeResponse({ specs: { скорость_отжима_об_мин: '1200 об/мин' } },
-    'Тип загрузки - фронтальная', 'stiralnye_mashiny');
+    'Тип загрузки - фронтальная<br>Скорость отжима - 1200 об/мин', 'stiralnye_mashiny');
   assert.strictEqual(r.specs.скорость_отжима_об_мин, 1200);
   assert.match(String(r.specs.тип_загрузки), /фронтальн/i, 'факт должен добраться');
   assert.ok(!('объем_морозильной_камеры_л' in r.specs));
@@ -1370,13 +1393,25 @@ console.log('\nЗапрос к модели');
     record.length = 0;
     stub([reply(answer({ скорость_отжима_об_мин: 1200 }), { usage: { prompt_tokens: 10, completion_tokens: 5 } })]);
     const r = await run(
-      { name: 'Стиральная машина', description: 'Тип загрузки - фронтальная' },
+      { name: 'Стиральная машина', description: 'Тип загрузки - фронтальная<br>Скорость отжима - 1200 об/мин' },
       { schema: schemaFor('stiralnye_mashiny') },
     );
     assert.match(record[0].body.messages[0].content, /Категория: Стиральные машины/);
     assert.strictEqual(r.enriched.specs.скорость_отжима_об_мин, 1200);
     assert.match(String(r.enriched.specs.тип_загрузки), /фронтальн/i);
     assert.ok(!('объем_морозильной_камеры_л' in r.enriched.specs));
+  });
+  await tAsync('модель не заполняет фильтр без подтверждения в исходниках', async () => {
+    record.length = 0;
+    stub([reply(answer({ скорость_отжима_об_мин: 1200, тип_загрузки: 'Фронтальная' }),
+      { usage: { prompt_tokens: 10, completion_tokens: 5 } })]);
+    const r = await run(
+      { name: 'Стиральная машина', description: 'Короткое описание без характеристик' },
+      { schema: schemaFor('stiralnye_mashiny') },
+    );
+    assert.strictEqual(r.enriched.specs.скорость_отжима_об_мин, null);
+    assert.strictEqual(r.enriched.specs.тип_загрузки, null);
+    assert.ok(r.enriched.stripped_no_source.includes('скорость_отжима_об_мин'));
   });
 
   await tAsync('обрыв по длине поднимает лимит, а расход суммируется', async () => {

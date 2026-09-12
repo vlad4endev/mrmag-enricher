@@ -304,11 +304,13 @@ export function toPipelineProduct(p) {
     p?.description_html,
     p?.seo_description,
   );
+  const attributes = Array.isArray(p?.attributes) ? p.attributes : undefined;
   return {
     id,
     name: p?.name,
     description,
     annotation,
+    ...(attributes ? { attributes } : {}),
     web_info: p?.web_info
       ?? p?.review
       ?? p?.external?.web_info

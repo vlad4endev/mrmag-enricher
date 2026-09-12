@@ -361,7 +361,10 @@ export function normalizeProduct(product, dict, config) {
   for (const a of dict.attrs) {
     if (a.tier === 'X') continue;
     const syns = new Set([a.name, ...(a.synonyms || [])].map(s => normKey(s)).filter(Boolean));
-    const src = parsed.fromAnn.length ? parsed.fromAnn : [];
+    const src = [
+      ...(parsed.fromAttrs || []),
+      ...(parsed.fromAnn || []),
+    ];
     if (src.some(p => syns.has(normKey(p.key)))) rec.mapped.add(a.code);
   }
 

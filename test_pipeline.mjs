@@ -322,6 +322,50 @@ console.log('golden tests passed');
 }
 
 {
+  // Attributes магазина — шаг 0: закрывают обязательный фильтр без annotation.
+  const attrs = [
+    { name: 'Вид стиральной машины', value: 'Автоматическая' },
+    { name: 'Тип загрузки', value: 'Фронтальная' },
+    { name: 'Максимальная загрузка белья', value: '6 кг' },
+    { name: 'Максимальная скорость отжима', value: '1000 об/мин' },
+    { name: 'Класс энергоэффективности', value: 'A++' },
+    { name: 'Уровень шума при стирке', value: '59 дБ' },
+    { name: 'Количество программ', value: '16' },
+    { name: 'Ширина', value: '59.6 см' },
+    { name: 'Глубина', value: '45 см' },
+    { name: 'Тип двигателя', value: 'Инверторный' },
+  ];
+  const desc = 'Макс. загрузка - 9 кг<br>Скорость отжима - 800 об/мин<br>Цвет - белый';
+  const parsed = parseProductFields({ annotation: '', description: desc, attributes: attrs }, d467);
+  assert.ok(parsed.fromAttrs.length >= 10, `fromAttrs=${parsed.fromAttrs.length}`);
+  assert.equal(parsed.fromDesc.length, 0, 'шаг 2 не нужен, если attributes закрыли обязательные');
+  const r = normalizeProduct({
+    id: 4,
+    name: 'Стиральная машина Attr 6kg',
+    annotation: '',
+    description: desc,
+    attributes: attrs,
+  }, d467, config);
+  assert.equal(r.attrs.load_max, 6, `attrs S0 → load_max, got ${r.attrs.load_max}`);
+  assert.equal(r.attrs.spin_max, 1000);
+  assert.equal(r.provenance.load_max?.level, 'S0');
+  console.log('ok attributes close required filters before description parse');
+}
+
+{
+  const { toPipelineProduct } = await import('./pipeline/export.js');
+  const src = toPipelineProduct({
+    id: 5,
+    name: 'X',
+    annotation: '',
+    description: '',
+    attributes: [{ name: 'Тип загрузки', value: 'Фронтальная' }],
+  });
+  assert.ok(Array.isArray(src.attributes) && src.attributes[0].value === 'Фронтальная');
+  console.log('ok toPipelineProduct keeps attributes');
+}
+
+{
   assert.deepEqual(pairFromTableCells(['Ширина', '60 см']), ['Ширина', '60 см']);
   assert.deepEqual(pairFromTableCells(['★', 'Ширина', '60 см']), ['Ширина', '60 см']);
   assert.deepEqual(pairFromTableCells(['Высота', '85', 'см']), ['Высота', '85 см']);

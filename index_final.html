@@ -1788,7 +1788,7 @@ input[type=range]::-moz-range-thumb{
           </div>
           <label class="set-check"><input type="checkbox" id="setProxyOn"> Включить для провайдеров с «Через прокси»</label>
           <div class="set-row" style="margin-top:10px"><label for="setProxyUrl">Ссылка прокси <span id="setProxyUrlHint" class="set-badge off">не задана</span></label>
-            <input type="text" id="setProxyUrl" name="egress-proxy-url" data-secret="1" placeholder="http://user:pass@host.docker.internal:11080" autocomplete="off" spellcheck="false" autocapitalize="off" data-lpignore="true" data-1p-ignore="true" style="font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px">
+            <input type="text" id="setProxyUrl" name="egress-proxy-url" data-secret="1" placeholder="http://proxy:7890" autocomplete="off" spellcheck="false" autocapitalize="off" data-lpignore="true" data-1p-ignore="true" style="font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px">
           </div>
           <div class="hint" style="margin-top:8px">Рекомендуется VLESS в Docker: в <code>.env</code> задайте <code>VLESS_LINK=vless://…</code>, <code>docker compose up -d</code>, сюда — <code>http://proxy:7890</code> или <code>socks5://proxy:1080</code> (имя сервиса в той же сети). Прямой IP прокси с VPS часто недоступен. Альтернатива: <code>tg://socks?…</code> / HTTP или SSH-туннель (<code>--profile ssh-tunnel</code>). Сохранить → Проверить.</div>
           <input type="hidden" id="setProxyBridge" value="18080">

@@ -371,6 +371,63 @@ function isHttpProxyUrl(raw) {
   }
 }
 
+/** Хосты, с которых из контейнера часто не видно SSH -R на loopback хоста. */
+function needsDockerHostFallback(host) {
+  return /^(host\.docker\.internal|docker\.for\.(mac|win)\.localhost|localhost|127\.0\.0\.1)$/i.test(
+    String(host || ''),
+  );
+}
+
+function tcpOk(host, port, timeoutMs = 1_500) {
+  return new Promise(resolve => {
+    const s = net.connect({ port, host, family: 4 });
+    const done = ok => {
+      try { s.destroy(); } catch { /* */ }
+      resolve(ok);
+    };
+    s.setTimeout(timeoutMs, () => done(false));
+    s.once('error', () => done(false));
+    s.once('connect', () => done(true));
+  });
+}
+
+/**
+ * Из Docker host.docker.internal иногда резолвится «мимо» слушателя SSH -R.
+ * Перебираем типичные gateway bridge-сетей (и PROXY_HOST_CANDIDATES).
+ */
+async function pickReachableHost(preferred, port, log = () => {}) {
+  const host = String(preferred || '').trim();
+  if (!host || !port) return host;
+  if (!needsDockerHostFallback(host)) return host;
+  const fromEnv = String(process.env.PROXY_HOST_CANDIDATES || '')
+    .split(/[\s,]+/)
+    .map(s => s.trim())
+    .filter(Boolean);
+  const candidates = [...new Set([
+    host,
+    ...fromEnv,
+    'host.docker.internal',
+    '172.17.0.1',
+    '172.18.0.1',
+    '172.19.0.1',
+    '172.20.0.1',
+    '172.21.0.1',
+  ])];
+  for (const h of candidates) {
+    if (await tcpOk(h, port, 1_200)) {
+      if (h !== host) log(`  Прокси: ${host}:${port} недоступен из контейнера → ${h}:${port}`);
+      return h;
+    }
+  }
+  return host;
+}
+
+function withProxyHostname(proxyUrl, hostname) {
+  const u = new URL(proxyUrl);
+  u.hostname = hostname;
+  return u.toString();
+}
+
 /** SOCKS5 / tg://socks — не путать с обычным http://proxy.example:3128. */
 function isSocksLike(raw) {
   const s = String(raw || '').trim();
@@ -454,6 +511,7 @@ export async function applyProxyConfig({
 
   if (isSocksLike(raw)) {
     const cfg = parseProxy(raw);
+    cfg.host = await pickReachableHost(cfg.host, cfg.port, log);
     const expected = `http://127.0.0.1:${port}`;
     // Переиспользуем мост, если уже слушает тот же порт.
     if (!runtime.bridge || runtime.bridge.url !== expected) {
@@ -486,6 +544,8 @@ export async function applyProxyConfig({
   await closeOwnedBridge();
   runtime.socksCfg = null;
   const u = new URL(raw.includes('://') ? raw : `http://${raw}`);
+  const proxyPort = Number(u.port) || (u.protocol === 'https:' ? 443 : 80);
+  u.hostname = await pickReachableHost(u.hostname, proxyPort, log);
   runtime.httpProxyUrl = u.toString();
   runtime.enabled = true;
   runtime.source = source;
@@ -494,7 +554,7 @@ export async function applyProxyConfig({
     process.env.HTTPS_PROXY = runtime.httpProxyUrl;
   }
   applyDirectHosts();
-  log(`  Прокси: HTTP ${u.hostname}:${u.port || 80}${u.username ? ` (логин ${decodeURIComponent(u.username)})` : ''} [${source}]`);
+  log(`  Прокси: HTTP ${u.hostname}:${proxyPort}${u.username ? ` (логин ${decodeURIComponent(u.username)})` : ''} [${source}]`);
   log(`  Мимо прокси: ${process.env.NO_PROXY || process.env.no_proxy || ''}`);
   return { active: true, ...proxyRuntimeInfo() };
 }
@@ -606,6 +666,7 @@ function connectHttpProxy(proxyUrl, targetHost, targetPort, timeoutMs) {
     const req = http.request({
       host: proxy.hostname,
       port: Number(proxy.port) || (proxy.protocol === 'https:' ? 443 : 80),
+      family: 4, // иначе на VPS часто уходит в мёртвый AAAA → таймаут
       method: 'CONNECT',
       path: `${targetHost}:${targetPort}`,
       headers: {
@@ -1027,46 +1088,70 @@ async function fetchViaSocks(url, {
   return fetchResponse(msg.status, msg.headers, msg.body, u.href);
 }
 
-/** Проверка: TCP до SOCKS → SOCKS CONNECT → HTTPS до цели. */
+/** Проверка: TCP до прокси → (SOCKS CONNECT) → HTTPS до цели. */
 export async function probeProxy(targetUrl = 'https://openrouter.ai') {
   const info = proxyRuntimeInfo();
   if (!info.active) {
-    return { ok: false, error: 'прокси не настроен — вставьте tg://socks?… в Настройки → Сеть', ...info };
+    return {
+      ok: false,
+      error: 'прокси не настроен — вставьте socks5://…, tg://socks?… или http://user:pass@host:port в Сеть',
+      ...info,
+    };
   }
   const host = hostFromUrl(targetUrl) || 'openrouter.ai';
   const started = Date.now();
   const steps = [];
+  const mode = runtime.socksCfg ? 'SOCKS' : 'HTTP';
 
-  if (runtime.socksCfg) {
-    const { host: sh, port: sp } = runtime.socksCfg;
+  // Перед пробой ещё раз подобрать gateway, если UI сохранил host.docker.internal.
+  if (runtime.socksCfg && needsDockerHostFallback(runtime.socksCfg.host)) {
+    runtime.socksCfg.host = await pickReachableHost(runtime.socksCfg.host, runtime.socksCfg.port);
+  } else if (runtime.httpProxyUrl && !runtime.socksCfg) {
+    try {
+      const u = new URL(runtime.httpProxyUrl);
+      const pp = Number(u.port) || 80;
+      if (needsDockerHostFallback(u.hostname)) {
+        const picked = await pickReachableHost(u.hostname, pp);
+        if (picked !== u.hostname) {
+          runtime.httpProxyUrl = withProxyHostname(runtime.httpProxyUrl, picked);
+          if (process.env.HTTPS_PROXY) process.env.HTTPS_PROXY = runtime.httpProxyUrl;
+        }
+      }
+    } catch { /* */ }
+  }
+
+  const proxyHost = runtime.socksCfg?.host
+    || (runtime.httpProxyUrl ? hostFromUrl(runtime.httpProxyUrl) : null);
+  const proxyPort = runtime.socksCfg?.port
+    || (runtime.httpProxyUrl ? (Number(new URL(runtime.httpProxyUrl).port) || 80) : null);
+
+  if (proxyHost && proxyPort) {
     const t0 = Date.now();
     try {
-      await new Promise((resolve, reject) => {
-        const s = net.connect({ port: sp, host: sh, family: 4 });
-        const fail = e => { s.destroy(); reject(e); };
-        s.setTimeout(5_000, () => fail(Object.assign(new Error(`TCP ${sh}:${sp} таймаут`), { name: 'TimeoutError' })));
-        s.once('error', fail);
-        s.once('connect', () => { s.destroy(); resolve(); });
-      });
-      steps.push({ id: 'socks_tcp', ok: true, title: `TCP до SOCKS ${sh}:${sp}`, ms: Date.now() - t0 });
+      if (!(await tcpOk(proxyHost, proxyPort, 5_000))) {
+        throw Object.assign(new Error(`TCP ${proxyHost}:${proxyPort} таймаут`), { name: 'TimeoutError' });
+      }
+      steps.push({ id: 'proxy_tcp', ok: true, title: `TCP до ${mode} ${proxyHost}:${proxyPort}`, ms: Date.now() - t0 });
     } catch (e) {
       runtime.reachable = false;
       runtime.lastError = e.message;
-      steps.push({ id: 'socks_tcp', ok: false, title: `TCP до SOCKS ${sh}:${sp}`, error: e.message, ms: Date.now() - t0 });
+      steps.push({ id: 'proxy_tcp', ok: false, title: `TCP до ${mode} ${proxyHost}:${proxyPort}`, error: e.message, ms: Date.now() - t0 });
       const tunnelHint = [
-        'Ссылка прокси, скорее всего, верная — с домашней сети этот SOCKS отвечает.',
-        'С этого сервера (датацентр) TCP до него не проходит: фильтр провайдера или блок VPS у SOCKS.',
+        'Ссылка прокси, скорее всего, верная — с домашней сети она отвечает.',
+        'С этого сервера (датацентр) TCP до неё не проходит.',
         '',
-        'Обход — туннель с ПК, где SOCKS открывается:',
-        `  ssh -N -R 127.0.0.1:11080:${sh}:${sp} USER@ЭТОТ_СЕРВЕР`,
-        'Потом в «Сеть» вместо tg:// укажите (логин/пароль те же):',
-        '  socks5://USER:PASS@host.docker.internal:11080',
-        'и снова Сохранить → Проверить. В docker-compose уже есть host.docker.internal.',
+        'Обход — туннель с Mac (окно не закрывать):',
+        `  ssh -N -R 0.0.0.0:11080:${proxyHost}:${proxyPort} skyputh@ЭТОТ_СЕРВЕР`,
+        'На сервере: GatewayPorts clientspecified (уже ок, если ss показывает 0.0.0.0:11080).',
+        'В «Сеть» (логин/пароль те же):',
+        '  http://USER:PASS@host.docker.internal:11080',
+        'или socks5://USER:PASS@host.docker.internal:11080',
+        'Сохранить → Проверить. Контейнер сам подберёт 172.17/18.0.1, если host.docker.internal молчит.',
       ].join('\n');
       return {
         ok: false,
         kind: 'tcp_blocked',
-        error: `Сервер не может открыть TCP до ${sh}:${sp}`,
+        error: `Сервер не может открыть TCP до ${proxyHost}:${proxyPort}`,
         hint: tunnelHint,
         ms: Date.now() - started,
         target: host,
@@ -1074,7 +1159,9 @@ export async function probeProxy(targetUrl = 'https://openrouter.ai') {
         ...proxyRuntimeInfo(),
       };
     }
+  }
 
+  if (runtime.socksCfg) {
     const t1 = Date.now();
     try {
       const sock = await socksConnect(runtime.socksCfg, host, 443, 20_000);
@@ -1088,7 +1175,7 @@ export async function probeProxy(targetUrl = 'https://openrouter.ai') {
         ok: false,
         kind: 'socks_auth',
         error: `SOCKS отклонил туннель до ${host}: ${e.message}`,
-        hint: 'Проверьте user/pass в ссылке tg://socks?…',
+        hint: 'Проверьте user/pass в ссылке tg://socks?… / socks5://…',
         ms: Date.now() - started,
         target: host,
         steps,
@@ -1108,7 +1195,7 @@ export async function probeProxy(targetUrl = 'https://openrouter.ai') {
     steps.push({
       id: 'https',
       ok: true,
-      title: `HTTPS через SOCKS → ${host}`,
+      title: `HTTPS через ${mode} → ${host}`,
       status: res.status,
       ms: Date.now() - t2,
     });
@@ -1123,7 +1210,7 @@ export async function probeProxy(targetUrl = 'https://openrouter.ai') {
   } catch (e) {
     runtime.reachable = false;
     runtime.lastError = e.message || String(e);
-    steps.push({ id: 'https', ok: false, title: `HTTPS через SOCKS → ${host}`, error: e.message, ms: Date.now() - t2 });
+    steps.push({ id: 'https', ok: false, title: `HTTPS через ${mode} → ${host}`, error: e.message, ms: Date.now() - t2 });
     return {
       ok: false,
       error: e.message || String(e),

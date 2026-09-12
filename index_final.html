@@ -3955,7 +3955,7 @@ async function runProxyProbe(){
   btn.disabled=true;
   box.hidden=false;
   box.className='parser-probe';
-  box.innerHTML='<div class="parser-probe-h">Проверяю SOCKS с этого сервера…</div>';
+  box.innerHTML='<div class="parser-probe-h">Проверяю прокси с этого сервера…</div>';
   try{
     const d=await apiJson('/api/proxy/probe',{ method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ target:'https://openrouter.ai' }) });
     box.className='parser-probe '+(d.ok?'ok':'bad');
@@ -3968,7 +3968,7 @@ async function runProxyProbe(){
     const hint=d.hint
       ? `<pre class="set-pre" style="margin-top:10px;white-space:pre-wrap;font-size:12px">${esc(d.hint)}</pre>`
       : '';
-    box.innerHTML=`<div class="parser-probe-h">${d.ok?'Прокси доступен с сервера':'С сервера до SOCKS нет доступа'}</div>`
+    box.innerHTML=`<div class="parser-probe-h">${d.ok?'Прокси доступен с сервера':'С сервера до прокси нет доступа'}</div>`
       +`<ul class="parser-probe-list">`
       +(steps||`<li>${esc(d.error||'ошибка')}</li>`)
       +(!d.ok && d.error && !(d.steps||[]).length?`<li>${esc(d.error)}</li>`:'')

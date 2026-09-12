@@ -50,6 +50,8 @@ services:
       SETTINGS_PATH: /data/config.json
       DICTIONARIES_DIR: /data/dictionaries
       DUMPS_DIR: /data/dumps
+      # Если SSH -R на хосте, а host.docker.internal молчит — перебор gateway bridge.
+      PROXY_HOST_CANDIDATES: host.docker.internal,172.17.0.1,172.18.0.1,172.19.0.1,172.20.0.1
     volumes:
       - enricher-data:/data
     restart: unless-stopped

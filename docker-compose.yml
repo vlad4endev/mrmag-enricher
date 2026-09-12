@@ -38,6 +38,8 @@ services:
     extra_hosts:
       - "openrouter.ai:8.47.69.6"
       - "openrouter.ai:8.6.112.6"
+      # Доступ из контейнера к SOCKS на хосте (ssh -R 11080:… или локальный мост).
+      - "host.docker.internal:host-gateway"
     env_file: .env
     environment:
       HOST: 0.0.0.0                  # внутри контейнера — на всех интерфейсах

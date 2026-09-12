@@ -1790,7 +1790,7 @@ input[type=range]::-moz-range-thumb{
           <div class="set-row" style="margin-top:10px"><label for="setProxyUrl">Ссылка прокси <span id="setProxyUrlHint" class="set-badge off">не задана</span></label>
             <input type="text" id="setProxyUrl" name="egress-proxy-url" data-secret="1" placeholder="tg://socks?server=…&amp;port=3443&amp;user=…&amp;pass=…" autocomplete="off" spellcheck="false" autocapitalize="off" data-lpignore="true" data-1p-ignore="true" style="font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px">
           </div>
-          <div class="hint" style="margin-top:8px">Формат как в Telegram: <code>tg://socks?server=IP&amp;port=…&amp;user=…&amp;pass=…</code> или <code>socks5://user:pass@host:port</code>. После вставки нажмите «Сохранить», затем «Проверить».</div>
+          <div class="hint" style="margin-top:8px">Формат: <code>tg://socks?server=IP&amp;port=…&amp;user=…&amp;pass=…</code>. После вставки — «Сохранить», затем «Проверить». Если с сервера TCP-таймаут (часто на VPS), поднимите SSH-туннель с домашнего ПК — подсказка появится в результате проверки.</div>
           <input type="hidden" id="setProxyBridge" value="18080">
           <div class="set-actions" style="margin-top:12px">
             <button type="button" class="sbtn ghost" id="proxyProbeBtn" onclick="runProxyProbe()">Проверить прокси</button>
@@ -3932,12 +3932,18 @@ function renderProxySettings(d){
   }
   const badge=document.getElementById('setProxyBadge');
   if(badge){
-    if(rt.active){
-      badge.className='set-badge';
-      badge.textContent=`активен · ${rt.mode||'socks5'}${rt.host?' · '+rt.host:''}`;
-    }else{
+    if(!rt.active){
       badge.className='set-badge off';
       badge.textContent='выключен';
+    }else if(rt.reachable===false){
+      badge.className='set-badge off';
+      badge.textContent=`сохранён · нет TCP${rt.host?' · '+rt.host:''}`;
+    }else if(rt.reachable===true){
+      badge.className='set-badge';
+      badge.textContent=`доступен · ${rt.mode||'socks5'}${rt.host?' · '+rt.host:''}`;
+    }else{
+      badge.className='set-badge';
+      badge.textContent=`настроен · ${rt.mode||'socks5'}${rt.host?' · '+rt.host:''} · ждёт проверки`;
     }
   }
 }
@@ -3949,7 +3955,7 @@ async function runProxyProbe(){
   btn.disabled=true;
   box.hidden=false;
   box.className='parser-probe';
-  box.innerHTML='<div class="parser-probe-h">Проверяю SOCKS и CONNECT…</div>';
+  box.innerHTML='<div class="parser-probe-h">Проверяю SOCKS с этого сервера…</div>';
   try{
     const d=await apiJson('/api/proxy/probe',{ method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ target:'https://openrouter.ai' }) });
     box.className='parser-probe '+(d.ok?'ok':'bad');
@@ -3959,12 +3965,21 @@ async function runProxyProbe(){
         : esc(s.error||'ошибка');
       return `<li>${s.ok?'✓':'✗'} ${esc(s.title||s.id)}: ${detail}</li>`;
     }).join('');
-    box.innerHTML=`<div class="parser-probe-h">${d.ok?'Прокси отвечает':'Прокси не прошёл проверку'}</div>`
+    const hint=d.hint
+      ? `<pre class="set-pre" style="margin-top:10px;white-space:pre-wrap;font-size:12px">${esc(d.hint)}</pre>`
+      : '';
+    box.innerHTML=`<div class="parser-probe-h">${d.ok?'Прокси доступен с сервера':'С сервера до SOCKS нет доступа'}</div>`
       +`<ul class="parser-probe-list">`
-      +(steps||`<li>${esc(d.target||'openrouter.ai')}: ${d.ok?`HTTP ${d.status} · ${d.ms}ms`:(esc(d.error||'ошибка'))}</li>`)
-      +`<li>режим: ${esc(d.mode||'—')} · источник: ${esc(d.source||'—')} · мост: ${esc(d.bridge_url||'—')}</li>`
-      +(!d.ok && d.error?`<li>${esc(d.error)}</li>`:'')
-      +`</ul>`;
+      +(steps||`<li>${esc(d.error||'ошибка')}</li>`)
+      +(!d.ok && d.error && !(d.steps||[]).length?`<li>${esc(d.error)}</li>`:'')
+      +`</ul>`
+      +hint;
+    if(setPayload) setPayload.proxy_runtime=d;
+    const badge=document.getElementById('setProxyBadge');
+    if(badge){
+      if(d.ok){ badge.className='set-badge'; badge.textContent=`доступен · ${d.mode||'socks5'}${d.host?' · '+d.host:''}`; }
+      else if(d.active){ badge.className='set-badge off'; badge.textContent=`сохранён · нет TCP${d.host?' · '+d.host:''}`; }
+    }
   }catch(e){
     box.className='parser-probe bad';
     box.innerHTML=`<div class="parser-probe-h">Не удалось запустить проверку</div><ul class="parser-probe-list"><li>${esc(e.message)}</li></ul>`;

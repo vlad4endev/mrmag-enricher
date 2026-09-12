@@ -86,7 +86,8 @@ function reader(sock) {
 /** Открывает через SOCKS5 туннель до host:port и отдаёт готовый сокет. */
 export function socksConnect(cfg, host, port, timeoutMs = 20_000) {
   return new Promise((resolve, reject) => {
-    const s = net.connect(cfg.port, cfg.host);
+    // family:4 — на части VPS IPv6 «есть», но до чужих SOCKS не маршрутизируется.
+    const s = net.connect({ port: cfg.port, host: cfg.host, family: 4 });
     const fail = e => { s.destroy(); reject(e instanceof Error ? e : new Error(e)); };
     s.setTimeout(timeoutMs, () => fail(new Error(`прокси ${cfg.host}:${cfg.port} не отвечает`)));
     s.once('error', e => fail(new Error(`прокси ${cfg.host}:${cfg.port}: ${e.message}`)));
@@ -336,6 +337,8 @@ const runtime = {
   source: 'none',
   rawMasked: '',
   bridgePort: 18080,
+  reachable: null, // null | true | false — результат последней проверки
+  lastError: '',
 };
 
 function maskProxyUrl(raw) {
@@ -391,11 +394,14 @@ export function getProxyHttpUrl() {
 export function proxyRuntimeInfo() {
   return {
     active: isProxyActive(),
+    reachable: runtime.reachable,
+    last_error: runtime.lastError || '',
     source: runtime.source,
     mode: runtime.socksCfg ? 'socks5' : (runtime.httpProxyUrl ? 'http' : 'none'),
     bridge_url: runtime.bridge?.url || null,
     host: runtime.socksCfg?.host
       || (runtime.httpProxyUrl ? hostFromUrl(runtime.httpProxyUrl) : null),
+    socks_port: runtime.socksCfg?.port || null,
     url_hint: runtime.rawMasked || '',
     bridge_port: runtime.bridgePort,
   };
@@ -436,6 +442,8 @@ export async function applyProxyConfig({
     runtime.socksCfg = null;
     runtime.source = 'none';
     runtime.rawMasked = '';
+    runtime.reachable = null;
+    runtime.lastError = '';
     applyDirectHosts();
     log('  Прокси: выключен');
     return { active: false };
@@ -1019,11 +1027,11 @@ async function fetchViaSocks(url, {
   return fetchResponse(msg.status, msg.headers, msg.body, u.href);
 }
 
-/** Проверка: TCP до SOCKS → CONNECT через мост → HTTPS до цели. */
+/** Проверка: TCP до SOCKS → SOCKS CONNECT → HTTPS до цели. */
 export async function probeProxy(targetUrl = 'https://openrouter.ai') {
   const info = proxyRuntimeInfo();
   if (!info.active) {
-    return { ok: false, error: 'прокси не активен — включите в настройках или задайте SOCKS_PROXY', ...info };
+    return { ok: false, error: 'прокси не настроен — вставьте tg://socks?… в Настройки → Сеть', ...info };
   }
   const host = hostFromUrl(targetUrl) || 'openrouter.ai';
   const started = Date.now();
@@ -1034,22 +1042,36 @@ export async function probeProxy(targetUrl = 'https://openrouter.ai') {
     const t0 = Date.now();
     try {
       await new Promise((resolve, reject) => {
-        const s = net.connect(sp, sh);
+        const s = net.connect({ port: sp, host: sh, family: 4 });
         const fail = e => { s.destroy(); reject(e); };
-        s.setTimeout(8_000, () => fail(Object.assign(new Error(`TCP ${sh}:${sp} таймаут`), { name: 'TimeoutError' })));
+        s.setTimeout(5_000, () => fail(Object.assign(new Error(`TCP ${sh}:${sp} таймаут`), { name: 'TimeoutError' })));
         s.once('error', fail);
         s.once('connect', () => { s.destroy(); resolve(); });
       });
       steps.push({ id: 'socks_tcp', ok: true, title: `TCP до SOCKS ${sh}:${sp}`, ms: Date.now() - t0 });
     } catch (e) {
+      runtime.reachable = false;
+      runtime.lastError = e.message;
       steps.push({ id: 'socks_tcp', ok: false, title: `TCP до SOCKS ${sh}:${sp}`, error: e.message, ms: Date.now() - t0 });
+      const tunnelHint = [
+        'Ссылка прокси, скорее всего, верная — с домашней сети этот SOCKS отвечает.',
+        'С этого сервера (датацентр) TCP до него не проходит: фильтр провайдера или блок VPS у SOCKS.',
+        '',
+        'Обход — туннель с ПК, где SOCKS открывается:',
+        `  ssh -N -R 127.0.0.1:11080:${sh}:${sp} USER@ЭТОТ_СЕРВЕР`,
+        'Потом в «Сеть» вместо tg:// укажите (логин/пароль те же):',
+        '  socks5://USER:PASS@host.docker.internal:11080',
+        'и снова Сохранить → Проверить. В docker-compose уже есть host.docker.internal.',
+      ].join('\n');
       return {
         ok: false,
-        error: `SOCKS ${sh}:${sp} недоступен: ${e.message}`,
+        kind: 'tcp_blocked',
+        error: `Сервер не может открыть TCP до ${sh}:${sp}`,
+        hint: tunnelHint,
         ms: Date.now() - started,
         target: host,
         steps,
-        ...info,
+        ...proxyRuntimeInfo(),
       };
     }
 
@@ -1059,14 +1081,18 @@ export async function probeProxy(targetUrl = 'https://openrouter.ai') {
       sock.destroy();
       steps.push({ id: 'socks_handshake', ok: true, title: `SOCKS CONNECT ${host}:443`, ms: Date.now() - t1 });
     } catch (e) {
+      runtime.reachable = false;
+      runtime.lastError = e.message;
       steps.push({ id: 'socks_handshake', ok: false, title: `SOCKS CONNECT ${host}:443`, error: e.message, ms: Date.now() - t1 });
       return {
         ok: false,
+        kind: 'socks_auth',
         error: `SOCKS отклонил туннель до ${host}: ${e.message}`,
+        hint: 'Проверьте user/pass в ссылке tg://socks?…',
         ms: Date.now() - started,
         target: host,
         steps,
-        ...info,
+        ...proxyRuntimeInfo(),
       };
     }
   }
@@ -1077,6 +1103,8 @@ export async function probeProxy(targetUrl = 'https://openrouter.ai') {
       method: 'GET',
       headers: { Accept: '*/*', 'User-Agent': 'Ogran-proxy-probe/1' },
     }, { useProxy: true });
+    runtime.reachable = true;
+    runtime.lastError = '';
     steps.push({
       id: 'https',
       ok: true,
@@ -1090,9 +1118,11 @@ export async function probeProxy(targetUrl = 'https://openrouter.ai') {
       ms: Date.now() - started,
       target: host,
       steps,
-      ...info,
+      ...proxyRuntimeInfo(),
     };
   } catch (e) {
+    runtime.reachable = false;
+    runtime.lastError = e.message || String(e);
     steps.push({ id: 'https', ok: false, title: `HTTPS через SOCKS → ${host}`, error: e.message, ms: Date.now() - t2 });
     return {
       ok: false,
@@ -1100,7 +1130,7 @@ export async function probeProxy(targetUrl = 'https://openrouter.ai') {
       ms: Date.now() - started,
       target: host,
       steps,
-      ...info,
+      ...proxyRuntimeInfo(),
     };
   }
 }

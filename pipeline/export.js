@@ -354,6 +354,29 @@ export function applyEnrichedSpecs(rec, specs, dict, config) {
 }
 
 /**
+ * Поле filters карточки — только после обогащения.
+ * Парсинг/схема дают оси (что должно быть); сюда попадают уже собранные
+ * attrs + enriched.specs → assignFilterValues.
+ * Каталог filters_(id).json по-прежнему собирается на выгрузке по категории.
+ */
+export function fillCardFiltersAfterEnrich(product, enriched, dict, config) {
+  if (!dict || !config) return {};
+  if (!enriched || typeof enriched !== 'object') return {};
+  const src = toPipelineProduct(product || {});
+  const rec = normalizeProduct(src, dict, config);
+  rec.web_info = enriched.web_info ?? src.web_info;
+  if (product?.name) rec.name = product.name;
+  rec._enriched = enriched;
+  applyEnrichedSpecs(rec, enriched.specs, dict, config);
+  markCategoryMismatch(rec, dict.catId);
+  finalizeRecord(rec, dict, { enriched, assigned: null });
+  if (rec.category_mismatch) return {};
+  const built = buildFilters([rec], dict, config);
+  const assigned = assignFilterValues(rec, dict, built.debug || [], config);
+  return asFilterArrays(assigned);
+}
+
+/**
  * Шесть полей заказчика + фасеты. Неполные карточки (< 8 строк) остаются
  * в products и дублируются в held: потеря SKU хуже неполного фильтра.
  * Карточки с пометкой needs_review тоже в products: ИИ уже правил,

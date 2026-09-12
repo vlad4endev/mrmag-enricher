@@ -57,7 +57,7 @@
  * ищется описание в сети (ensureSource), и адрес найденной страницы
  * возвращается в source_url. Отключается WEB_LOOKUP=0.
  *
- * Ответ /api/enrich: { enriched, usage:{prompt_tokens, completion_tokens, cost,
+ * Ответ /api/enrich: { enriched, filters, usage:{prompt_tokens, completion_tokens, cost,
  * cost_source, attempts} }. Токены и стоимость — сумма по всем попыткам, включая
  * ретраи; при провале usage приходит вместе с полем error, чтобы потраченное
  * на неудачные попытки не терялось в отчёте.
@@ -78,7 +78,9 @@ import {
 } from './lib.js';
 import { CATEGORIES, findCategory, crawlCategory, loadFeed, buildFilters, ensureSource, WEB_LOOKUP, needsWebSpecs } from './catalog.js';
 import { buildV2 } from './export_v2.js';
-import { buildCustomerExport, buildGoldShapeExport, buildFiltersOnly } from './pipeline/export.js';
+import {
+  buildCustomerExport, buildGoldShapeExport, buildFiltersOnly, fillCardFiltersAfterEnrich,
+} from './pipeline/export.js';
 import { dictForProducts, expectedDictCatId } from './pipeline/schema.js';
 import { collectParseHits, formatParseNotes, slimParseTrace } from './pipeline/parse.js';
 import { createJobStore } from './jobs.js';
@@ -1732,11 +1734,26 @@ async function enrichOne(product, { model, category, provider, onNote = () => {}
       ...(parseBundle() ? { parse: parseBundle() } : {}),
     };
 
+    // filters карточки — только после обогащения, из specs/attrs (не при парсинге).
+    const cardFilters = (() => {
+      if (!schema.fromDictionary || !schema.dict) return {};
+      try {
+        const config = loadConfig(ROOT);
+        const payload = enriched || debug?.enriched_result;
+        if (!payload) return {};
+        return fillCardFiltersAfterEnrich(filled || product, payload, schema.dict, config);
+      } catch (e) {
+        note(`filters карточки не собраны: ${e.message}`, { step: 'filters', level: 'warn' });
+        return {};
+      }
+    })();
+
     if (needs_review && !enriched) {
       note(`needs_review: ${(validation_issues || []).map(i => i.field).join(', ')}`, { step: 'validate', level: 'warn' });
       const preview = debug?.enriched_result ?? null;
       return {
         enriched: preview,
+        filters: cardFilters,
         needs_review: true,
         validation_issues: validation_issues || [],
         schema: schema.slug,
@@ -1762,8 +1779,13 @@ async function enrichOne(product, { model, category, provider, onNote = () => {}
       };
     }
 
+    if (Object.keys(cardFilters).length) {
+      note(`filters карточки: ${Object.keys(cardFilters).length} осей`, { step: 'filters' });
+    }
+
     return {
       enriched,
+      filters: cardFilters,
       schema: schema.slug,
       provider: prov.id,
       ...origin,
@@ -1774,6 +1796,7 @@ async function enrichOne(product, { model, category, provider, onNote = () => {}
         provider: prov.id,
         model,
         status: 'ok',
+        filters: cardFilters,
         ...origin,
         usage: { prompt_tokens: iT, completion_tokens: oT, cost, cost_source: costSource, attempts },
         ...detailTrace(debug, { enriched }),

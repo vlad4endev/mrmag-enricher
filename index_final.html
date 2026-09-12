@@ -6151,7 +6151,9 @@ function renderDetail(){
     +`<a href="${esc(r.source)}" target="_blank" rel="noopener noreferrer">${esc(hostOf(r.source))}</a></div>`
     :(!r.parse&&r.parser?`<div class="hint">Для этой карточки запускался парсер страницы.</div>`:'');
   const fix=r.corrected?`<div class="hint">Карточка исправлена после ошибок валидации.</div>`:'';
-  setP('detail',conf+from+board+fix+(curTab==='json'?`<div class="jv">${hl(r.enriched)}</div>`:renderVis(r.enriched,r)));
+  setP('detail',conf+from+board+fix+(curTab==='json'
+    ?`<div class="jv">${hl({...r.enriched,...(r.filters?{filters:r.filters}:{})})}</div>`
+    :renderVis(r.enriched,r)));
 }
 
 function showActions(){
@@ -6815,6 +6817,7 @@ function applyJob(d){
     results[i]={original:items[i]??null,enriched:r.enriched?sanitizeEnriched(r.enriched):null,skipped:r.skipped,
       needs_review:r.needs_review||false,
       validation_issues:r.validation_issues||null,
+      ...(r.filters&&typeof r.filters==='object'?{filters:r.filters}:{}),
       source:r.source??null,parser:!!r.parser,corrected:!!r.corrected,iT:r.iT??0,oT:r.oT??0,
       cost:typeof r.cost==='number'?r.cost:null,
       ...(r.parse?{parse:r.parse}:{}),
@@ -7058,6 +7061,7 @@ function downloadAll(fmt='json'){
     // Необработанные позиции в выгрузку не попадают — их просто нет.
     content=JSON.stringify({model:selModel?.id||null,rub_per_usd:RUB,rub_rate_date:RUB_DATE,
       items:doneRes().map(r=>({original:r.original,enriched:r.enriched,skipped:r.skipped,error:r.error,
+        ...(r.filters&&typeof r.filters==='object'?{filters:r.filters}:{}),
         ...(r.source?{source_url:r.source}:{}),
         _meta:r.cost!=null?{input_tokens:r.iT,output_tokens:r.oT,cost_usd:+r.cost.toFixed(6)}:{}}))},null,2);
     filename=`enriched_${Date.now()}.json`;
@@ -7518,6 +7522,20 @@ function renderVis(d, r){
           return `<div class="sp${cls?' '+cls:''}"><span class="sp-k">${esc(specLabel(k))}</span>`
             +`<span class="sp-d"></span><span class="sp-v">${esc(String(v))}</span></div>`;
         }).join('')}</div>`;
+  }
+
+  // filters карточки — после обогащения (не парсинг). Показываем рядом со specs.
+  const cardFilters=r?.filters&&typeof r.filters==='object'&&!Array.isArray(r.filters)?r.filters:null;
+  if(cardFilters){
+    const fRows=Object.entries(cardFilters).filter(([,v])=>!isEmpty(v));
+    if(fRows.length){
+      out+=`<div class="spec-title mt">Filters <i>${fRows.length}</i></div>`
+        +`<div class="specs">${fRows.map(([k,v])=>{
+            const val=Array.isArray(v)?v.join(', '):String(v);
+            return `<div class="sp"><span class="sp-k">${esc(k)}</span>`
+              +`<span class="sp-d"></span><span class="sp-v">${esc(val)}</span></div>`;
+          }).join('')}</div>`;
+    }
   }
 
   if(Array.isArray(d.source_conflicts)&&d.source_conflicts.length){

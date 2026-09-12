@@ -359,6 +359,7 @@ export function createJobStore({
       });
       job.results[k] = {
         enriched: d.enriched ?? null,
+        ...(d.filters && typeof d.filters === 'object' ? { filters: d.filters } : {}),
         ...(d.skipped ? { skipped: d.skipped } : {}),
         ...(d.needs_review && !d.enriched ? { needs_review: true, validation_issues: d.validation_issues || [] } : {}),
         ...(d.source_url ? { source: d.source_url } : {}),

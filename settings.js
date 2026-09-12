@@ -339,6 +339,10 @@ function normalizeProxy(raw = {}, prev = {}) {
   } else {
     url = str(raw.url).trim();
   }
+  // host:port без схемы → HTTP (удобно для http://proxy:7890 без опечаток)
+  if (url && !/^[a-z][a-z0-9+.-]*:\/\//i.test(url) && /^[a-z0-9._-]+:\d{2,5}$/i.test(url)) {
+    url = `http://${url}`;
+  }
   const enabled = raw?.enabled === true || (raw?.enabled !== false && !!url);
   let bridge = num(
     raw?.bridge_port ?? prev?.bridge_port,
@@ -823,13 +827,22 @@ export function validateSettings(cfg) {
   const px = cfg.proxy;
   if (px?.enabled && px.url) {
     const u = String(px.url).trim();
-    const okSocks = /^socks5?:\/\//i.test(u)
-      || /^(tg|https?):\/\/socks\b/i.test(u)
-      || (/[?&]server=/i.test(u) && /socks/i.test(u))
-      || !/^[a-z][a-z0-9+.-]*:\/\//i.test(u);
-    const okHttp = /^https?:\/\//i.test(u);
-    if (!okSocks && !okHttp) {
-      errors.push('прокси: нужен socks5://, tg://socks?… или http(s)://host:port');
+    if (/^vless:\/\//i.test(u)) {
+      errors.push(
+        'прокси: vless:// укажите в .env как VLESS_LINK; в «Сеть» вставьте http://proxy:7890 или socks5://proxy:1080',
+      );
+    } else {
+      const okSocks = /^socks5?:\/\//i.test(u)
+        || /^(tg|https?):\/\/socks\b/i.test(u)
+        || (/[?&]server=/i.test(u) && /socks/i.test(u))
+        || !/^[a-z][a-z0-9+.-]*:\/\//i.test(u);
+      let okHttp = /^https?:\/\//i.test(u);
+      if (okHttp) {
+        try { new URL(u); } catch { okHttp = false; }
+      }
+      if (!okSocks && !okHttp) {
+        errors.push('прокси: нужен socks5://, tg://socks?…, http://proxy:7890 или http(s)://host:port');
+      }
     }
   }
   return errors;

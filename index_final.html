@@ -4125,13 +4125,28 @@ function bindSecretField(el){
   el.dataset.secretBound='1';
   el.setAttribute('autocomplete','new-password');
   el.setAttribute('readonly','readonly');
+  const mark=()=>{ el.dataset.touched='1'; };
   el.addEventListener('focus',()=>el.removeAttribute('readonly'));
-  el.addEventListener('input',()=>{ el.dataset.touched='1'; });
+  el.addEventListener('input', mark);
+  el.addEventListener('change', mark);
+  el.addEventListener('paste', ()=>{ setTimeout(mark, 0); });
 }
 
 function secretInputValue(el){
   if(!el || el.dataset.touched!=='1') return '';
   return el.value||'';
+}
+
+/** Прокси из формы: paste/http://proxy:7890 не теряем из‑за data-touched. */
+function proxyUrlFromForm(){
+  const el=document.getElementById('setProxyUrl');
+  if(!el) return '';
+  const v=String(el.value||'').trim();
+  if(!v) return '';
+  if(el.dataset.touched==='1') return v;
+  if(/^(socks5?|https?|tg|vless):\/\//i.test(v)) return v;
+  if(/^[a-z0-9._-]+:\d{2,5}$/i.test(v)) return v;
+  return '';
 }
 
 function collectKeyed(sel, keyAttr){
@@ -4221,7 +4236,7 @@ function readSettingsPatch(){
     return { id:prev.id||('e'+i), name:e.name||prev.name, url:e.url||prev.url, enabled:e.enabled??prev.enabled };
   });
   const yaKey=secretInputValue(document.getElementById('setYaKey'));
-  const proxyUrl=secretInputValue(document.getElementById('setProxyUrl')) || (document.getElementById('setProxyUrl')?.dataset.touched==='1' ? (document.getElementById('setProxyUrl').value||'') : '');
+  const proxyUrl=proxyUrlFromForm();
   return {
     providers,
     proxy:{

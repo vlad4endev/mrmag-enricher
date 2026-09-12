@@ -66,7 +66,7 @@
 import http from 'http';
 import crypto from 'crypto';
 import dns from 'dns';
-import { setupProxy } from './socks.js';
+import { setupProxy, providerFetch, probeProxy, proxyRuntimeInfo, mergeProviderBypassHosts } from './socks.js';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -107,7 +107,7 @@ import {
 import { publicParserStatus, probeParser } from './pipeline/search.js';
 import {
   loadSettings, saveSettings, publicSettings, applySettingsPatch,
-  resolveProvider, providerEndpoint, providerKey,
+  resolveProvider, providerEndpoint, providerKey, providerUsesProxy,
   bootstrapSettingsFile, PROVIDER_PRESETS, envOverrides,
   parsersView, conditionsView,
   isYandexLlm, resolveProviderModel, providerFolderId,
@@ -220,14 +220,15 @@ async function fetchProviderModels(p, { timeoutMs = 20_000, settings } = {}) {
   const listed = listedModels(p);
   if (!p.models_path) return listed;
   const headers = { ...ep.headers };
+  const viaProxy = providerUsesProxy(p);
   let r, text;
   try {
-    r = await fetch(ep.modelsUrl, { headers, signal: AbortSignal.timeout(timeoutMs) });
+    r = await providerFetch(ep.modelsUrl, { headers, signal: AbortSignal.timeout(timeoutMs) }, { useProxy: viaProxy });
     text = await r.text();
   } catch (e) {
     if (listed.length) return listed;
     const host = (() => { try { return new URL(ep.modelsUrl).hostname; } catch { return p.name; } })();
-    throw new Error(`не достучались до ${host} — ${netError(e)}`);
+    throw new Error(`не достучались до ${host} — ${netError(e, host)}`);
   }
   if (!r.ok) {
     if (listed.length) return listed;
@@ -309,7 +310,7 @@ function explainUpstream(res, text) {
     const edge = ray.split('-')[1];
     return `OpenRouter отклонил запрос с этого адреса (Cloudflare${edge ? `, узел ${edge}` : ''}). ` +
       'Ключ ни при чём — 403 приходит и без него. Нужен выход через сеть другой страны: ' +
-      'задайте HTTPS_PROXY в .env';
+      'включите прокси в Настройки → Сеть и отметьте «Через прокси» у OpenRouter';
   }
   if (res.status === 401) return 'OpenRouter не принял ключ — проверьте OPENROUTER_API_KEY';
   return `OpenRouter HTTP ${res.status}: ${text.slice(0, 200)}`;
@@ -700,7 +701,7 @@ async function apiDictionaryImportSuggest(req, res, id) {
   let resHttp;
   let bodyText;
   try {
-    resHttp = await fetch(chatUrl, {
+    resHttp = await providerFetch(chatUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -718,7 +719,7 @@ async function apiDictionaryImportSuggest(req, res, id) {
         ],
       }),
       signal: AbortSignal.timeout(timeoutMs),
-    });
+    }, { useProxy: providerUsesProxy(prov) });
     bodyText = await resHttp.text();
   } catch (e) {
     const timed = e.name === 'TimeoutError' || e.cause?.name === 'TimeoutError';
@@ -906,6 +907,7 @@ function apiSettingsGet(res) {
     overrides: envOverrides(),
     prompt: promptMeta(settings),
     export_templates: exportTemplatesView(settings.export_templates),
+    proxy_runtime: proxyRuntimeInfo(),
   });
 }
 
@@ -920,6 +922,17 @@ async function apiSettingsPut(req, res) {
     const next = applySettingsPatch(loadSettings(ROOT), patch);
     saveSettings(next, ROOT);
     invalidateModelsCache();
+    let proxy_error = null;
+    try {
+      if (!process.env.SOCKS_PROXY) {
+        await setupProxy(() => {}, next.proxy);
+      } else {
+        mergeProviderBypassHosts(next.providers);
+      }
+    } catch (e) {
+      proxy_error = e.message;
+    }
+    mergeProviderBypassHosts(next.providers);
     const settings = loadSettings(ROOT);
     json(res, 200, {
       settings: publicSettings(settings),
@@ -929,10 +942,25 @@ async function apiSettingsPut(req, res) {
       overrides: envOverrides(),
       prompt: promptMeta(settings),
       export_templates: exportTemplatesView(settings.export_templates),
+      proxy_runtime: proxyRuntimeInfo(),
+      ...(proxy_error ? { proxy_error } : {}),
     });
   } catch (e) {
     json(res, e.status || 400, { error: e.message, details: e.details });
   }
+}
+
+async function apiProxyProbe(req, res) {
+  let target = 'https://openrouter.ai';
+  if (req.method === 'POST') {
+    try {
+      const raw = await readBody(req, 8_000);
+      const body = JSON.parse(raw || '{}');
+      if (body?.target) target = String(body.target);
+    } catch { /* default */ }
+  }
+  const result = await probeProxy(target);
+  json(res, result.ok ? 200 : 502, result);
 }
 
 /**
@@ -1186,6 +1214,7 @@ function filtersAgentOptions(body = {}) {
       headers: ep.headers,
       model: resolveProviderModel(prov, settings.run?.model, settings),
     } : null,
+    fetchImpl: (url, init) => providerFetch(url, init, { useProxy: providerUsesProxy(prov) }),
   };
 }
 
@@ -1688,6 +1717,7 @@ async function enrichOne(product, { model, category, provider, onNote = () => {}
       pricing: pricingOf(entry),
       chatUrl: ep.chatUrl,
       headers: ep.headers,
+      fetchImpl: (url, init) => providerFetch(url, init, { useProxy: providerUsesProxy(prov) }),
       mismatchPolicy: process.env.MISMATCH_POLICY || settings.conditions.mismatch_policy,
       maxRetries: Math.min(2, settings.model.max_retries || 2),
       timeoutMs: settings.model.timeout_ms,
@@ -2050,9 +2080,11 @@ function deny(req, res, pathname) {
 // уже через прокси, иначе первый пользователь получит 403 на ровном месте.
 const proxyLines = [];
 try {
-  await setupProxy(l => proxyLines.push(l));
+  const bootProxy = loadSettings(ROOT);
+  await setupProxy(l => proxyLines.push(l), bootProxy.proxy);
+  mergeProviderBypassHosts(bootProxy.providers);
 } catch (e) {
-  console.error(`❌ SOCKS_PROXY: ${e.message}`);
+  console.error(`❌ прокси: ${e.message}`);
   process.exit(1);
 }
 
@@ -2089,6 +2121,9 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'POST' && u.pathname === '/api/parser/probe') return await apiParserProbe(req, res);
     if (req.method === 'GET'  && u.pathname === '/api/settings')   return apiSettingsGet(res);
     if (req.method === 'PUT'  && u.pathname === '/api/settings')   return await apiSettingsPut(req, res);
+    if ((req.method === 'GET' || req.method === 'POST') && u.pathname === '/api/proxy/probe') {
+      return await apiProxyProbe(req, res);
+    }
     if (req.method === 'POST' && u.pathname === '/api/prompt/preview') return await apiPromptPreview(req, res);
     if (req.method === 'GET'  && u.pathname === '/api/categories') return apiCategories(res);
     if (req.method === 'GET'  && u.pathname === '/api/dumps') return apiDumpsList(res);

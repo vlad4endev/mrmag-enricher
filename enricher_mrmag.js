@@ -212,9 +212,11 @@ async function main() {
   // До первого запроса: и каталог, и модель ходят через fetch.
   const proxyNotes = [];
   try {
-    await setupProxy(l => proxyNotes.push(l.trim()));
+    const { loadSettings } = await import('./settings.js');
+    const boot = loadSettings();
+    await setupProxy(l => proxyNotes.push(l.trim()), boot.proxy);
   } catch (err) {
-    console.error(`❌ SOCKS_PROXY: ${err.message}`);
+    console.error(`❌ прокси: ${err.message}`);
     process.exit(1);
   }
   for (const n of proxyNotes) console.log(n);

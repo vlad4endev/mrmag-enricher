@@ -1,5 +1,5 @@
 /**
- * socks.js — мост SOCKS5 → HTTP CONNECT.
+ * socks.js — мост SOCKS5 → HTTP CONNECT и маршрутизация LLM-запросов.
  *
  * Встроенная поддержка прокси в Node (NODE_USE_ENV_PROXY) понимает только
  * HTTP-прокси. Провайдеры же обычно выдают SOCKS5, в том числе ссылкой вида
@@ -9,9 +9,13 @@
  *
  * Трафик остаётся сквозным TLS: мост видит только имя хоста, но не содержимое,
  * поэтому ключ OpenRouter владельцу прокси не достаётся.
+ *
+ * LLM-вызовы идут через providerFetch(): явный выбор «через прокси / напрямую»
+ * на провайдера, без зависимости от того, успел ли Node зафиксировать HTTPS_PROXY.
  */
 
 import net from 'net';
+import tls from 'node:tls';
 import http from 'node:http';
 import https from 'node:https';
 import zlib from 'node:zlib';
@@ -297,61 +301,661 @@ export function mergeNoProxy(...hosts) {
   return process.env[envKey];
 }
 
-export function applyDirectHosts() {
-  const proxied = process.env.HTTPS_PROXY || process.env.https_proxy
+export function applyDirectHosts(extra = []) {
+  const proxied = isProxyActive()
+    || process.env.HTTPS_PROXY || process.env.https_proxy
     || process.env.HTTP_PROXY || process.env.http_proxy
     || process.env.SOCKS_PROXY;
   if (!proxied) return process.env.NO_PROXY || process.env.no_proxy || '';
-  return mergeNoProxy(...DIRECT_HOSTS);
+  return mergeNoProxy(...DIRECT_HOSTS, ...extra);
+}
+
+/** Хост провайдера для NO_PROXY, когда у него use_proxy=false. */
+export function hostFromUrl(url) {
+  try { return new URL(String(url || '')).hostname; }
+  catch { return ''; }
+}
+
+export function mergeProviderBypassHosts(providers = []) {
+  const hosts = [];
+  for (const p of providers) {
+    if (p?.use_proxy !== false) continue;
+    const h = hostFromUrl(p.base_url);
+    if (h) hosts.push(h, `.${h.replace(/^\./, '')}`);
+  }
+  return applyDirectHosts(hosts);
+}
+
+// ── Runtime proxy (настройки UI + .env) ───────────────────────
+
+const runtime = {
+  enabled: false,
+  httpProxyUrl: null,
+  socksCfg: null,
+  bridge: null,
+  source: 'none',
+  rawMasked: '',
+  bridgePort: 18080,
+};
+
+function maskProxyUrl(raw) {
+  const s = String(raw || '').trim();
+  if (!s) return '';
+  try {
+    if (/^(tg|https?):\/\/(socks|proxy)/i.test(s) || s.includes('?server=')) {
+      const q = new URLSearchParams(s.slice(s.indexOf('?') + 1));
+      const host = q.get('server') || '?';
+      const port = q.get('port') || '?';
+      const user = q.get('user');
+      return user
+        ? `tg://socks?server=${host}&port=${port}&user=${user}&pass=••••`
+        : `tg://socks?server=${host}&port=${port}`;
+    }
+    const u = new URL(s.includes('://') ? s : `socks5://${s}`);
+    if (u.password) u.password = '••••';
+    return u.toString();
+  } catch {
+    return s.slice(0, 24) + (s.length > 24 ? '…' : '');
+  }
+}
+
+function isHttpProxyUrl(raw) {
+  try {
+    const u = new URL(String(raw || '').includes('://') ? String(raw) : `http://${raw}`);
+    return u.protocol === 'http:' || u.protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
+/** SOCKS5 / tg://socks — не путать с обычным http://proxy.example:3128. */
+function isSocksLike(raw) {
+  const s = String(raw || '').trim();
+  if (!s) return false;
+  if (/^socks5?:\/\//i.test(s)) return true;
+  if (/^(tg|https?):\/\/socks\b/i.test(s)) return true;
+  if (/[?&]server=/i.test(s) && /socks/i.test(s)) return true;
+  // host:port или user:pass@host:port без схемы — SOCKS5
+  if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(s)) return true;
+  return false;
+}
+
+export function isProxyActive() {
+  return !!(runtime.enabled && runtime.httpProxyUrl);
+}
+
+export function getProxyHttpUrl() {
+  return isProxyActive() ? runtime.httpProxyUrl : null;
+}
+
+export function proxyRuntimeInfo() {
+  return {
+    active: isProxyActive(),
+    source: runtime.source,
+    mode: runtime.socksCfg ? 'socks5' : (runtime.httpProxyUrl ? 'http' : 'none'),
+    bridge_url: runtime.bridge?.url || null,
+    host: runtime.socksCfg?.host
+      || (runtime.httpProxyUrl ? hostFromUrl(runtime.httpProxyUrl) : null),
+    url_hint: runtime.rawMasked || '',
+    bridge_port: runtime.bridgePort,
+  };
+}
+
+async function closeOwnedBridge() {
+  if (!runtime.bridge) return;
+  try { await runtime.bridge.close(); } catch { /* */ }
+  runtime.bridge = null;
 }
 
 /**
- * Поднимает мост, если задан SOCKS_PROXY.
- *
- * Порт фиксированный, а не случайный, и это принципиально: Node фиксирует
- * настройки прокси не позже первого запроса, а разные версии делают это в
- * разный момент. Выставленный из кода HTTPS_PROXY может не подхватиться —
- * на Node 24 в контейнере запрос уходил мимо моста. Поэтому HTTPS_PROXY
- * должен стоять в .env и указывать сюда же, до старта процесса. То же нужно
- * и для CLI: docker exec не проходит через ENTRYPOINT и берёт окружение
- * контейнера как есть.
+ * Включает/выключает исходящий прокси для providerFetch.
+ * url: socks5://… | tg://socks?… | http://user:pass@host:port
+ * Пустой url при enabled=true — ошибка.
  */
-export async function setupProxy(log = () => {}) {
-  const raw = process.env.SOCKS_PROXY;
-  if (!raw) {
-    const bypass = applyDirectHosts();
-    if (bypass && (process.env.HTTPS_PROXY || process.env.https_proxy)) {
-      log(`  Мимо прокси: ${bypass}`);
+export async function applyProxyConfig({
+  enabled = false,
+  url = '',
+  bridge_port,
+  source = 'settings',
+} = {}, log = () => {}) {
+  const port = Number(bridge_port || process.env.SOCKS_BRIDGE_PORT || 18080) || 18080;
+  runtime.bridgePort = port;
+
+  if (!enabled || !String(url || '').trim()) {
+    await closeOwnedBridge();
+    runtime.enabled = false;
+    runtime.httpProxyUrl = null;
+    runtime.socksCfg = null;
+    runtime.source = 'none';
+    runtime.rawMasked = '';
+    applyDirectHosts();
+    log('  Прокси: выключен');
+    return { active: false };
+  }
+
+  const raw = String(url).trim();
+  runtime.rawMasked = maskProxyUrl(raw);
+
+  if (isSocksLike(raw)) {
+    const cfg = parseProxy(raw);
+    const expected = `http://127.0.0.1:${port}`;
+    // Переиспользуем мост, если уже слушает тот же порт.
+    if (!runtime.bridge || runtime.bridge.url !== expected) {
+      await closeOwnedBridge();
+      try {
+        runtime.bridge = await startBridge(cfg, port);
+      } catch (e) {
+        throw new Error(e.code === 'EADDRINUSE'
+          ? `порт моста ${port} занят — задайте другой bridge_port / SOCKS_BRIDGE_PORT`
+          : e.message);
+      }
     }
-    return null;
+    runtime.socksCfg = cfg;
+    runtime.httpProxyUrl = runtime.bridge.url;
+    runtime.enabled = true;
+    runtime.source = source;
+    process.env.NODE_USE_ENV_PROXY = '1';
+    // Не перетираем заранее заданный HTTPS_PROXY из .env, если он уже указывает на мост.
+    const preset = process.env.HTTPS_PROXY || process.env.https_proxy;
+    if (!preset || preset === expected) process.env.HTTPS_PROXY = runtime.bridge.url;
+    applyDirectHosts();
+    log(`  Прокси: SOCKS5 ${cfg.host}:${cfg.port}${cfg.user ? ` (логин ${cfg.user})` : ''} → ${runtime.bridge.url} [${source}]`);
+    log(`  Мимо прокси: ${process.env.NO_PROXY || process.env.no_proxy || ''}`);
+    return { active: true, ...proxyRuntimeInfo() };
   }
 
-  const cfg = parseProxy(raw);
-  const port = Number(process.env.SOCKS_BRIDGE_PORT || 18080);
-  const expected = `http://127.0.0.1:${port}`;
-  const preset = process.env.HTTPS_PROXY || process.env.https_proxy;
-
-  let bridge;
-  try {
-    bridge = await startBridge(cfg, port);
-  } catch (e) {
-    throw new Error(e.code === 'EADDRINUSE'
-      ? `порт моста ${port} занят — задайте другой в SOCKS_BRIDGE_PORT`
-      : e.message);
+  if (!isHttpProxyUrl(raw)) {
+    throw new Error('адрес прокси: нужен socks5://, tg://socks?… или http(s)://');
   }
-
+  await closeOwnedBridge();
+  runtime.socksCfg = null;
+  const u = new URL(raw.includes('://') ? raw : `http://${raw}`);
+  runtime.httpProxyUrl = u.toString();
+  runtime.enabled = true;
+  runtime.source = source;
   process.env.NODE_USE_ENV_PROXY = '1';
-  process.env.HTTPS_PROXY = bridge.url;
-  applyDirectHosts();
-
-  log(`  Прокси: SOCKS5 ${cfg.host}:${cfg.port}${cfg.user ? ` (логин ${cfg.user})` : ''} → ${bridge.url}`);
-  log(`  Мимо прокси: ${process.env.NO_PROXY || process.env.no_proxy}`);
-  if (!preset) {
-    log(`  ⚠  HTTPS_PROXY не был задан до старта. Часть версий Node это уже не`);
-    log(`     подхватит, и запросы уйдут мимо прокси. Добавьте в .env строку:`);
-    log(`       HTTPS_PROXY=${expected}`);
-  } else if (preset !== expected) {
-    log(`  ⚠  HTTPS_PROXY=${preset} не совпадает с мостом ${expected}`);
+  if (!process.env.HTTPS_PROXY && !process.env.https_proxy) {
+    process.env.HTTPS_PROXY = runtime.httpProxyUrl;
   }
-  return { cfg, ...bridge, ok: preset === expected };
+  applyDirectHosts();
+  log(`  Прокси: HTTP ${u.hostname}:${u.port || 80}${u.username ? ` (логин ${decodeURIComponent(u.username)})` : ''} [${source}]`);
+  log(`  Мимо прокси: ${process.env.NO_PROXY || process.env.no_proxy || ''}`);
+  return { active: true, ...proxyRuntimeInfo() };
+}
+
+/**
+ * Старт: сначала .env (SOCKS_PROXY / HTTPS_PROXY), затем настройки из файла,
+ * если в .env прокси не задан.
+ */
+export async function setupProxy(log = () => {}, settingsProxy = null) {
+  const envSocks = process.env.SOCKS_PROXY;
+  const envHttp = process.env.HTTPS_PROXY || process.env.https_proxy;
+  const fromSettings = settingsProxy && settingsProxy.enabled !== false && settingsProxy.url;
+
+  if (envSocks) {
+    const out = await applyProxyConfig({
+      enabled: true,
+      url: envSocks,
+      bridge_port: process.env.SOCKS_BRIDGE_PORT || settingsProxy?.bridge_port,
+      source: 'env',
+    }, log);
+    const expected = `http://127.0.0.1:${runtime.bridgePort}`;
+    if (!envHttp) {
+      log(`  ⚠  HTTPS_PROXY не был задан до старта. Часть версий Node это уже не`);
+      log(`     подхватит для системного fetch. LLM-запросы идут через явный маршрут.`);
+      log(`       HTTPS_PROXY=${expected}`);
+    } else if (envHttp !== expected && runtime.bridge) {
+      log(`  ⚠  HTTPS_PROXY=${envHttp} не совпадает с мостом ${expected}`);
+    }
+    return out;
+  }
+
+  if (envHttp && !fromSettings) {
+    // Чистый HTTP-прокси из .env без SOCKS.
+    const out = await applyProxyConfig({
+      enabled: true,
+      url: envHttp,
+      source: 'env',
+    }, log);
+    return out;
+  }
+
+  if (fromSettings) {
+    return applyProxyConfig({
+      enabled: settingsProxy.enabled !== false,
+      url: settingsProxy.url,
+      bridge_port: settingsProxy.bridge_port,
+      source: 'settings',
+    }, log);
+  }
+
+  await applyProxyConfig({ enabled: false }, log);
+  const bypass = applyDirectHosts();
+  if (bypass && (process.env.HTTPS_PROXY || process.env.https_proxy)) {
+    log(`  Мимо прокси: ${bypass}`);
+  }
+  return null;
+}
+
+// ── fetch с явным маршрутом (прокси / напрямую) ───────────────
+
+function headersFromNode(raw) {
+  const map = new Map();
+  for (const [k, v] of Object.entries(raw || {})) {
+    if (v == null) continue;
+    map.set(String(k).toLowerCase(), Array.isArray(v) ? v.join(', ') : String(v));
+  }
+  return {
+    get: name => map.get(String(name).toLowerCase()) || null,
+    has: name => map.has(String(name).toLowerCase()),
+    entries: () => map.entries(),
+  };
+}
+
+function fetchResponse(status, headers, buf, url) {
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    statusText: http.STATUS_CODES[status] || '',
+    headers: headersFromNode(headers),
+    url,
+    async text() {
+      return decodeHttpBody(buf, headers['content-encoding']);
+    },
+    async json() {
+      return JSON.parse(await this.text());
+    },
+  };
+}
+
+function proxyAuthHeader(proxyUrl) {
+  try {
+    const u = new URL(proxyUrl);
+    if (!u.username) return {};
+    const token = Buffer.from(
+      `${decodeURIComponent(u.username)}:${decodeURIComponent(u.password || '')}`,
+      'utf8',
+    ).toString('base64');
+    return { 'Proxy-Authorization': `Basic ${token}` };
+  } catch {
+    return {};
+  }
+}
+
+/** TCP через HTTP CONNECT до targetHost:targetPort. */
+function connectHttpProxy(proxyUrl, targetHost, targetPort, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    let proxy;
+    try { proxy = new URL(proxyUrl); }
+    catch { return reject(new Error(`не URL прокси: ${proxyUrl}`)); }
+    const req = http.request({
+      host: proxy.hostname,
+      port: Number(proxy.port) || (proxy.protocol === 'https:' ? 443 : 80),
+      method: 'CONNECT',
+      path: `${targetHost}:${targetPort}`,
+      headers: {
+        Host: `${targetHost}:${targetPort}`,
+        ...proxyAuthHeader(proxyUrl),
+      },
+      timeout: timeoutMs,
+    });
+    const fail = e => {
+      req.destroy();
+      reject(e instanceof Error ? e : new Error(String(e)));
+    };
+    req.once('connect', (res, socket) => {
+      if (res.statusCode !== 200) {
+        socket.destroy();
+        return fail(new Error(`прокси CONNECT ${res.statusCode}`));
+      }
+      socket.setTimeout(0);
+      resolve(socket);
+    });
+    req.once('timeout', () => fail(Object.assign(new Error(`прокси не отвечает ${timeoutMs}ms`), { name: 'TimeoutError' })));
+    req.once('error', fail);
+    req.end();
+  });
+}
+
+function readHttpMessage(socket, timeoutMs, signal) {
+  return new Promise((resolve, reject) => {
+    let head = Buffer.alloc(0);
+    let settled = false;
+    const onAbort = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      socket.destroy();
+      const e = new Error('aborted');
+      e.name = 'AbortError';
+      reject(e);
+    };
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      socket.destroy();
+      const e = new Error(`таймаут ${timeoutMs}ms`);
+      e.name = 'TimeoutError';
+      reject(e);
+    }, timeoutMs);
+    const cleanup = () => {
+      clearTimeout(timer);
+      socket.off('data', onData);
+      socket.off('error', onErr);
+      socket.off('end', onEnd);
+      if (signal) signal.removeEventListener('abort', onAbort);
+    };
+    const onErr = e => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(e);
+    };
+    const onEnd = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(new Error('соединение закрыто до ответа'));
+    };
+    const onData = chunk => {
+      head = Buffer.concat([head, chunk]);
+      const split = head.indexOf('\r\n\r\n');
+      if (split < 0) {
+        if (head.length > 1024 * 1024) {
+          settled = true;
+          cleanup();
+          socket.destroy();
+          reject(new Error('заголовки ответа слишком большие'));
+        }
+        return;
+      }
+      const rawHead = head.subarray(0, split).toString('latin1');
+      let body = head.subarray(split + 4);
+      const lines = rawHead.split('\r\n');
+      const statusLine = lines[0] || '';
+      const m = /^HTTP\/\d\.\d\s+(\d+)/i.exec(statusLine);
+      if (!m) {
+        settled = true;
+        cleanup();
+        socket.destroy();
+        return reject(new Error('не HTTP-ответ'));
+      }
+      const status = Number(m[1]);
+      const headers = {};
+      for (let i = 1; i < lines.length; i++) {
+        const idx = lines[i].indexOf(':');
+        if (idx < 0) continue;
+        const k = lines[i].slice(0, idx).trim().toLowerCase();
+        const v = lines[i].slice(idx + 1).trim();
+        headers[k] = headers[k] ? `${headers[k]}, ${v}` : v;
+      }
+      const len = headers['content-length'] != null ? Number(headers['content-length']) : null;
+      const chunked = /chunked/i.test(headers['transfer-encoding'] || '');
+
+      const finish = buf => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        resolve({ status, headers, body: buf });
+      };
+
+      if (Number.isFinite(len) && len >= 0) {
+        const take = () => {
+          if (body.length >= len) {
+            socket.pause();
+            const out = body.subarray(0, len);
+            const rest = body.subarray(len);
+            if (rest.length) socket.unshift(rest);
+            finish(out);
+            return true;
+          }
+          return false;
+        };
+        if (take()) return;
+        const more = c => {
+          body = Buffer.concat([body, c]);
+          if (body.length > MAX_DIRECT_BODY) {
+            settled = true;
+            cleanup();
+            socket.destroy();
+            reject(new Error(`ответ больше ${MAX_DIRECT_BODY} байт`));
+            return;
+          }
+          take();
+        };
+        socket.on('data', more);
+        socket.once('end', () => finish(body));
+        return;
+      }
+
+      if (chunked) {
+        const decode = () => {
+          const parts = [];
+          let pos = 0;
+          while (true) {
+            const nl = body.indexOf('\r\n', pos);
+            if (nl < 0) return null;
+            const sizeLine = body.subarray(pos, nl).toString('latin1').split(';')[0].trim();
+            const size = parseInt(sizeLine, 16);
+            if (!Number.isFinite(size)) return null;
+            const start = nl + 2;
+            const end = start + size;
+            if (body.length < end + 2) return null;
+            if (size === 0) {
+              return Buffer.concat(parts);
+            }
+            parts.push(body.subarray(start, end));
+            pos = end + 2;
+          }
+        };
+        const tryDecode = () => {
+          const out = decode();
+          if (out) finish(out);
+        };
+        tryDecode();
+        if (settled) return;
+        socket.on('data', c => {
+          body = Buffer.concat([body, c]);
+          if (body.length > MAX_DIRECT_BODY) {
+            settled = true;
+            cleanup();
+            socket.destroy();
+            reject(new Error(`ответ больше ${MAX_DIRECT_BODY} байт`));
+            return;
+          }
+          tryDecode();
+        });
+        socket.once('end', () => {
+          const out = decode();
+          finish(out || body);
+        });
+        return;
+      }
+
+      // Без длины — читаем до закрытия сокета.
+      socket.on('data', c => {
+        body = Buffer.concat([body, c]);
+        if (body.length > MAX_DIRECT_BODY) {
+          settled = true;
+          cleanup();
+          socket.destroy();
+          reject(new Error(`ответ больше ${MAX_DIRECT_BODY} байт`));
+        }
+      });
+      socket.once('end', () => finish(body));
+    };
+    if (signal) {
+      if (signal.aborted) return onAbort();
+      signal.addEventListener('abort', onAbort, { once: true });
+    }
+    socket.on('data', onData);
+    socket.on('error', onErr);
+    socket.on('end', onEnd);
+  });
+}
+
+/**
+ * Универсальный HTTP(S) запрос: напрямую или через HTTP CONNECT-прокси.
+ * Совместим с минимальным подмножеством fetch (ok/status/headers/text/json).
+ */
+export async function fetchHttp(url, {
+  method = 'GET',
+  headers = {},
+  body = null,
+  timeoutMs = 60_000,
+  signal = null,
+  proxyUrl = null,
+} = {}) {
+  let u;
+  try { u = new URL(url); }
+  catch { throw new Error(`не URL: ${url}`); }
+  if (u.protocol !== 'http:' && u.protocol !== 'https:') {
+    throw new Error(`схема ${u.protocol} не поддерживается`);
+  }
+
+  const payload = body == null ? null
+    : (Buffer.isBuffer(body) ? body : Buffer.from(String(body), 'utf8'));
+  const hdrs = { ...(headers || {}) };
+  if (payload && !Object.keys(hdrs).some(k => k.toLowerCase() === 'content-length')) {
+    hdrs['Content-Length'] = String(payload.length);
+  }
+  if (!Object.keys(hdrs).some(k => k.toLowerCase() === 'host')) {
+    hdrs.Host = u.host;
+  }
+  if (!Object.keys(hdrs).some(k => k.toLowerCase() === 'connection')) {
+    hdrs.Connection = 'close';
+  }
+
+  const head = Object.entries(hdrs)
+    .map(([k, v]) => `${k}: ${v}`)
+    .join('\r\n');
+  const path = `${u.pathname}${u.search}` || '/';
+  const reqLines = `${method.toUpperCase()} ${path} HTTP/1.1\r\n${head}\r\n\r\n`;
+
+  let socket;
+  if (proxyUrl) {
+    const tunnel = await connectHttpProxy(proxyUrl, u.hostname, Number(u.port) || (u.protocol === 'https:' ? 443 : 80), timeoutMs);
+    if (u.protocol === 'https:') {
+      socket = await new Promise((resolve, reject) => {
+        const s = tls.connect({
+          socket: tunnel,
+          servername: u.hostname,
+          ALPNProtocols: ['http/1.1'],
+        }, () => resolve(s));
+        s.once('error', reject);
+      });
+    } else {
+      socket = tunnel;
+    }
+  } else {
+    const lib = u.protocol === 'https:' ? https : http;
+    socket = await new Promise((resolve, reject) => {
+      const req = lib.request(u, {
+        method: method.toUpperCase(),
+        headers: hdrs,
+        agent: directAgents[u.protocol],
+        timeout: timeoutMs,
+        signal: signal || undefined,
+      }, res => {
+        const chunks = [];
+        let size = 0;
+        res.on('data', c => {
+          size += c.length;
+          if (size > MAX_DIRECT_BODY) {
+            req.destroy();
+            reject(new Error(`ответ больше ${MAX_DIRECT_BODY} байт`));
+            return;
+          }
+          chunks.push(c);
+        });
+        res.on('end', () => {
+          resolve({
+            kind: 'direct-res',
+            status: res.statusCode,
+            headers: res.headers,
+            body: Buffer.concat(chunks),
+          });
+        });
+        res.on('error', reject);
+      });
+      req.on('timeout', () => {
+        req.destroy();
+        const e = new Error(`таймаут ${timeoutMs}ms (${u.hostname})`);
+        e.name = 'TimeoutError';
+        reject(e);
+      });
+      req.on('error', reject);
+      if (payload) req.write(payload);
+      req.end();
+    });
+    if (socket.kind === 'direct-res') {
+      return fetchResponse(socket.status, socket.headers, socket.body, u.href);
+    }
+  }
+
+  socket.write(reqLines);
+  if (payload) socket.write(payload);
+  const msg = await readHttpMessage(socket, timeoutMs, signal);
+  try { socket.destroy(); } catch { /* */ }
+  return fetchResponse(msg.status, msg.headers, msg.body, u.href);
+}
+
+/**
+ * Запрос к API провайдера ИИ: useProxy=true → через активный прокси,
+ * иначе мимо (даже если в окружении стоит HTTPS_PROXY).
+ */
+export function providerFetch(url, init = {}, { useProxy = false } = {}) {
+  const timeoutMs = (() => {
+    if (init.signal?.timeout) return init.signal.timeout; // нестандартно
+    return 120_000;
+  })();
+  // AbortSignal.timeout() не отдаёт ms — берём большой запас; вызывающий
+  // передаёт свой signal, и readHttpMessage/https.request его уважают.
+  const proxyUrl = useProxy ? getProxyHttpUrl() : null;
+  if (useProxy && !proxyUrl) {
+    // Прокси запрошен, но не настроен — обычный fetch (как раньше).
+    return fetch(url, init);
+  }
+  return fetchHttp(url, {
+    method: init.method || 'GET',
+    headers: init.headers || {},
+    body: init.body ?? null,
+    signal: init.signal || null,
+    timeoutMs,
+    proxyUrl,
+  });
+}
+
+/** Проверка: CONNECT до host:443 через текущий прокси. */
+export async function probeProxy(targetUrl = 'https://openrouter.ai') {
+  const info = proxyRuntimeInfo();
+  if (!info.active) {
+    return { ok: false, error: 'прокси не активен — включите в настройках или задайте SOCKS_PROXY', ...info };
+  }
+  const host = hostFromUrl(targetUrl) || 'openrouter.ai';
+  const started = Date.now();
+  try {
+    const res = await fetchHttp(`https://${host}/`, {
+      method: 'GET',
+      headers: { Accept: '*/*', 'User-Agent': 'Ogran-proxy-probe/1' },
+      timeoutMs: 15_000,
+      proxyUrl: getProxyHttpUrl(),
+    });
+    return {
+      ok: true,
+      status: res.status,
+      ms: Date.now() - started,
+      target: host,
+      ...info,
+    };
+  } catch (e) {
+    return {
+      ok: false,
+      error: e.message || String(e),
+      ms: Date.now() - started,
+      target: host,
+      ...info,
+    };
+  }
 }

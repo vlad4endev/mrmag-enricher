@@ -106,10 +106,10 @@ export function netError(e, hostOrOpts) {
     const proxied = !!(process.env.HTTPS_PROXY || process.env.https_proxy || process.env.SOCKS_PROXY);
     // OpenRouter как раз должен идти через SOCKS — совет про NO_PROXY тут вреден.
     if (/openrouter\.ai/i.test(h)) {
-      return `запрос оборван (${detail}) — SOCKS закрыл CONNECT до OpenRouter; проверьте SOCKS_PROXY или выберите DeepSeek/Yandex`;
+      return `запрос оборван (${detail}) — SOCKS закрыл CONNECT до OpenRouter; проверьте прокси в Настройки → Сеть или выберите DeepSeek/Yandex`;
     }
     if (proxied && h && !envNoProxyBypasses(h)) {
-      return `запрос оборван (${detail}) — прокси закрыл CONNECT; добавьте ${h} в NO_PROXY, как DeepSeek`;
+      return `запрос оборван (${detail}) — прокси закрыл CONNECT; снимите «Через прокси» у провайдера или добавьте ${h} в NO_PROXY`;
     }
     return `запрос оборван (${detail})`;
   }

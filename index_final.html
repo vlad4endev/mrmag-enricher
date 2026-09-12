@@ -3905,6 +3905,66 @@ function promptsForSave(){
   }));
 }
 
+function renderProxySettings(d){
+  const px=d?.settings?.proxy||{};
+  const rt=d?.proxy_runtime||{};
+  setC('setProxyOn', px.enabled===true || (px.has_url && px.enabled!==false));
+  setV('setProxyBridge', px.bridge_port||18080);
+  const urlEl=document.getElementById('setProxyUrl');
+  if(urlEl){
+    urlEl.value='';
+    urlEl.dataset.touched='';
+    urlEl.placeholder=px.has_url
+      ? (px.url_from==='env' ? 'задан в окружении — введите новый, чтобы переопределить в файле' : 'оставьте пустым, чтобы не менять')
+      : 'socks5://user:pass@host:port';
+    bindSecretField(urlEl);
+  }
+  const hint=document.getElementById('setProxyUrlHint');
+  if(hint){
+    if(px.has_url){
+      hint.className='set-badge';
+      hint.textContent=(px.url_from==='env'?'env':'файл')+' '+(px.url_hint||'');
+    }else{
+      hint.className='set-badge off';
+      hint.textContent='не задан';
+    }
+  }
+  const badge=document.getElementById('setProxyBadge');
+  if(badge){
+    if(rt.active){
+      badge.className='set-badge';
+      badge.textContent=`активен · ${rt.mode||'proxy'}${rt.host?' · '+rt.host:''}`;
+    }else{
+      badge.className='set-badge off';
+      badge.textContent='выключен';
+    }
+  }
+}
+
+async function runProxyProbe(){
+  const box=document.getElementById('proxyProbe');
+  const btn=document.getElementById('proxyProbeBtn');
+  if(!box||!btn) return;
+  btn.disabled=true;
+  box.hidden=false;
+  box.className='parser-probe';
+  box.innerHTML='<div class="parser-probe-h">Проверяю CONNECT через прокси…</div>';
+  try{
+    const d=await apiJson('/api/proxy/probe',{ method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ target:'https://openrouter.ai' }) });
+    box.className='parser-probe '+(d.ok?'ok':'bad');
+    box.innerHTML=`<div class="parser-probe-h">${d.ok?'Прокси отвечает':'Прокси не прошёл проверку'}</div>`
+      +`<ul class="parser-probe-list">`
+      +`<li>${esc(d.target||'openrouter.ai')}: ${d.ok?`HTTP ${d.status} · ${d.ms}ms`:(esc(d.error||'ошибка'))}</li>`
+      +`<li>режим: ${esc(d.mode||'—')} · источник: ${esc(d.source||'—')}</li>`
+      +`</ul>`;
+  }catch(e){
+    box.className='parser-probe bad';
+    box.innerHTML=`<div class="parser-probe-h">Не удалось запустить проверку</div><ul class="parser-probe-list"><li>${esc(e.message)}</li></ul>`;
+  }finally{
+    btn.disabled=false;
+  }
+}
+
 function renderSettings(d){
   setPayload=d;
   const s=d.settings||{};
@@ -4078,6 +4138,7 @@ function addProvider(presetId){
   setPayload.settings.providers.push({
     ...preset, id, name:preset.name, enabled:true, default:!setPayload.settings.providers.length,
     api_key:'', models:preset.models||[], has_key:false, key_from:'none',
+    use_proxy:!(id==='deepseek'||id==='yandex'||id==='ollama'||(preset.base_url||'').includes('deepseek')||(preset.base_url||'').includes('yandex')||(preset.base_url||'').includes('127.0.0.1')),
   });
   renderProviderCards();
 }
@@ -4118,6 +4179,7 @@ function readSettingsPatch(){
       folder_id:p.folder_id??prev.folder_id??'',
       folder_id_env:p.folder_id_env??prev.folder_id_env??'',
       enabled:p.enabled??prev.enabled, default:p.default??prev.default,
+      use_proxy:p.use_proxy??prev.use_proxy,
       models_path:prev.models_path, chat_path:prev.chat_path, headers:prev.headers||{},
       models, model_labels:prev.model_labels||{}, notes:prev.notes||'',
     };
@@ -4136,8 +4198,14 @@ function readSettingsPatch(){
     return { id:prev.id||('e'+i), name:e.name||prev.name, url:e.url||prev.url, enabled:e.enabled??prev.enabled };
   });
   const yaKey=secretInputValue(document.getElementById('setYaKey'));
+  const proxyUrl=secretInputValue(document.getElementById('setProxyUrl'));
   return {
     providers,
+    proxy:{
+      enabled:getC('setProxyOn'),
+      bridge_port:Number(getV('setProxyBridge'))||18080,
+      ...(proxyUrl?{url:proxyUrl}:{}),
+    },
     search:{
       enabled:getC('setSearchOn'),
       tries:Number(getV('setTries'))||3,
@@ -4241,7 +4309,9 @@ async function saveSettings(){
   try{
     const saved=await apiJson('/api/settings',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(readSettingsPatch())});
     renderSettings(saved);
-    document.getElementById('setStatus').textContent='Сохранено. Новый прогон пойдёт с этими настройками.';
+    document.getElementById('setStatus').textContent=saved.proxy_error
+      ? 'Сохранено, но прокси не поднялся: '+saved.proxy_error
+      : 'Сохранено. Новый прогон пойдёт с этими настройками.';
     loadParser();
     await reloadModels();
   }catch(e){

@@ -184,11 +184,35 @@ export function defaultProvider() {
     api_key_env: 'OPENROUTER_API_KEY',
     enabled: true,
     default: true,
+    use_proxy: true,
     models_path: '/models',
     chat_path: '/chat/completions',
     headers: { 'HTTP-Referer': 'https://mrmag.ru', 'X-Title': 'Ogran' },
     models: [],
     notes: '',
+  };
+}
+
+/** Кому по умолчанию нужен заграничный выход (Cloudflare / OpenAI и т.п.). */
+export function defaultUseProxy(raw = {}) {
+  if (raw && Object.prototype.hasOwnProperty.call(raw, 'use_proxy')) {
+    return raw.use_proxy !== false;
+  }
+  const id = String(raw?.id || '').toLowerCase();
+  let host = '';
+  try { host = new URL(String(raw?.base_url || '')).hostname.toLowerCase(); }
+  catch { /* */ }
+  if (id === 'deepseek' || host.includes('deepseek.com')) return false;
+  if (id === 'yandex' || host.includes('yandex.net') || host.includes('yandex.ru')) return false;
+  if (id === 'ollama' || host === '127.0.0.1' || host === 'localhost') return false;
+  return true;
+}
+
+export function defaultProxy(raw = {}) {
+  return {
+    enabled: raw.enabled === true || (raw.enabled !== false && !!str(raw.url)),
+    url: str(raw.url),
+    bridge_port: num(raw.bridge_port, Number(process.env.SOCKS_BRIDGE_PORT) || 18080, { min: 1, max: 65535 }),
   };
 }
 
@@ -296,12 +320,34 @@ function normalizeProvider(raw, { keepKey = '', keepFolder = '' } = {}) {
     folder_id_env: str(raw?.folder_id_env ?? preset.folder_id_env).slice(0, 80),
     enabled: raw?.enabled !== false,
     default: raw?.default === true,
+    use_proxy: defaultUseProxy(raw?.use_proxy !== undefined ? raw : { ...preset, ...raw, id: raw?.id || preset.id }),
     models_path: str(raw?.models_path ?? preset.models_path, '/models'),
     chat_path: str(raw?.chat_path ?? preset.chat_path, '/chat/completions'),
     headers,
     models: models.length ? models : [...(preset.models || [])],
     model_labels: mapStringEntries(labelsSrc),
     notes: str(raw?.notes ?? preset.notes).slice(0, 500),
+  };
+}
+
+function normalizeProxy(raw = {}, prev = {}) {
+  let url;
+  if (raw && Object.prototype.hasOwnProperty.call(raw, 'url') && raw.url === null) {
+    url = '';
+  } else if (!raw?.url) {
+    url = str(prev?.url);
+  } else {
+    url = str(raw.url).trim();
+  }
+  const enabled = raw?.enabled === true || (raw?.enabled !== false && !!url);
+  return {
+    enabled: !!enabled && !!url,
+    url,
+    bridge_port: num(
+      raw?.bridge_port ?? prev?.bridge_port,
+      Number(process.env.SOCKS_BRIDGE_PORT) || 18080,
+      { min: 1, max: 65535 },
+    ),
   };
 }
 
@@ -525,6 +571,7 @@ export function normalizeSettings(raw = {}, prev = null) {
     model: normalizeModel(raw.model),
     search: normalizeSearch(raw.search, prev?.search),
     providers: normalizeProviders(raw.providers, prev?.providers),
+    proxy: normalizeProxy(raw.proxy, prev?.proxy),
     conditions,
     export_templates: normalizeExportTemplates(raw.export_templates),
   };
@@ -633,6 +680,7 @@ export function publicProvider(p, settings) {
     models: p.models,
     model_labels: p.model_labels || {},
     notes: p.notes,
+    use_proxy: p.use_proxy !== false,
     has_key: !!(stored || envKey),
     key_hint: hintOf(stored || envKey),
     key_from: stored ? 'file' : envKey ? 'env' : 'none',
@@ -640,10 +688,43 @@ export function publicProvider(p, settings) {
   };
 }
 
+function publicProxy(proxy = {}) {
+  const envSocks = process.env.SOCKS_PROXY || '';
+  const envHttp = process.env.HTTPS_PROXY || process.env.https_proxy || '';
+  const stored = proxy.url || '';
+  const effective = stored || envSocks || '';
+  let url_hint = '';
+  if (stored) {
+    try {
+      if (/[?&]pass=/i.test(stored) || /:\/\/[^/@]+:[^/@]+@/.test(stored)) {
+        url_hint = stored.replace(/pass=[^&]+/i, 'pass=••••').replace(/(:\/\/[^:/@]+:)([^@]+)@/, '$1••••@');
+      } else {
+        url_hint = stored.length > 48 ? stored.slice(0, 44) + '…' : stored;
+      }
+    } catch {
+      url_hint = '••••';
+    }
+  } else if (envSocks) {
+    url_hint = 'из SOCKS_PROXY';
+  } else if (envHttp) {
+    url_hint = 'из HTTPS_PROXY';
+  }
+  return {
+    enabled: proxy.enabled === true || (!!stored && proxy.enabled !== false),
+    bridge_port: proxy.bridge_port || 18080,
+    has_url: !!(stored || envSocks || (envHttp && !/127\.0\.0\.1:18080/.test(envHttp))),
+    url_hint,
+    url_from: stored ? 'file' : envSocks ? 'env' : envHttp ? 'env' : 'none',
+    // Пустое поле в UI — не менять секрет; наружу сам url не отдаём.
+    url: '',
+  };
+}
+
 export function publicSettings(settings) {
   return {
     ...settings,
     providers: (settings.providers || []).map(p => publicProvider(p, settings)),
+    proxy: publicProxy(settings.proxy || {}),
     search: {
       ...settings.search,
       yandex: publicYandex(settings.search?.yandex || {}),
@@ -666,6 +747,10 @@ export function envOverrides() {
   }
   if (process.env.MISMATCH_POLICY) out.push({ key: 'MISMATCH_POLICY', value: process.env.MISMATCH_POLICY, note: 'политика расхождений из окружения' });
   if (process.env.DDG_REGION) out.push({ key: 'DDG_REGION', value: process.env.DDG_REGION, note: 'регион DuckDuckGo из окружения' });
+  if (process.env.SOCKS_PROXY) out.push({ key: 'SOCKS_PROXY', value: '••••', note: 'SOCKS-прокси из окружения (приоритет над полем в настройках)' });
+  else if (process.env.HTTPS_PROXY || process.env.https_proxy) {
+    out.push({ key: 'HTTPS_PROXY', value: '••••', note: 'HTTP-прокси из окружения' });
+  }
   return out;
 }
 
@@ -697,6 +782,18 @@ export function validateSettings(cfg) {
   if (!['prefer_source', 'flag', 'strict'].includes(cfg.conditions?.mismatch_policy)) {
     errors.push('политика расхождений: prefer_source, flag или strict');
   }
+  const px = cfg.proxy;
+  if (px?.enabled && px.url) {
+    const u = String(px.url).trim();
+    const okSocks = /^socks5?:\/\//i.test(u)
+      || /^(tg|https?):\/\/socks\b/i.test(u)
+      || (/[?&]server=/i.test(u) && /socks/i.test(u))
+      || !/^[a-z][a-z0-9+.-]*:\/\//i.test(u);
+    const okHttp = /^https?:\/\//i.test(u);
+    if (!okSocks && !okHttp) {
+      errors.push('прокси: нужен socks5://, tg://socks?… или http(s)://host:port');
+    }
+  }
   return errors;
 }
 
@@ -710,6 +807,7 @@ function persistable(settings) {
     model: persistModel(settings.model),
     search: settings.search,
     providers: settings.providers,
+    proxy: settings.proxy,
     conditions: settings.conditions,
     ...(export_templates ? { export_templates } : {}),
   };
@@ -753,6 +851,7 @@ export function applySettingsPatch(current, patch = {}) {
   if (patch.model) next.model = { ...current.model, ...patch.model };
   if (patch.conditions) next.conditions = { ...current.conditions, ...patch.conditions };
   if (Array.isArray(patch.providers)) next.providers = patch.providers;
+  if (patch.proxy && typeof patch.proxy === 'object') next.proxy = { ...current.proxy, ...patch.proxy };
   if (patch.export_templates && typeof patch.export_templates === 'object') {
     const prev = current.export_templates || {};
     const two = patch.export_templates.two;
@@ -790,7 +889,14 @@ export function providerEndpoint(p, settings) {
     apiKey,
     folderId,
     auth: providerAuthSchemeOf(p),
+    useProxy: providerUsesProxy(p),
   };
+}
+
+/** Нужен ли прокси этому провайдеру (с учётом дефолтов по хосту). */
+export function providerUsesProxy(p) {
+  if (!p) return false;
+  return defaultUseProxy(p);
 }
 
 /** Список парсеров, который рисует интерфейс: Yandex, DuckDuckGo, запасные, свои URL. */

@@ -1,87 +1,20 @@
 {
   "facet_min_coverage": 70,
-  "filter_sources": ["S0", "S1", "S2", "S3", "source_json", "manufacturer", "official_product_page", "trusted_retailer", "major_retailer", "retailer"],
   "target_coverage": 90,
   "description": {
     "min_attrs": 5
   },
   "fuzzy": {
-    "min_score": 0.90
+    "min_score": 0.9
   },
   "model": {
     "name": "",
     "prompt_version": "dict-v1",
+    "system_prompt": "",
     "max_retries": 2,
     "timeout_ms": 60000,
     "max_tokens": 3200
   },
-  "conditions": {
-    "mismatch_policy": "prefer_source",
-    "min_source_chars": 100,
-    "min_attrs": 5,
-    "facet_min_coverage": 70,
-    "target_coverage": 90,
-    "fuzzy_min_score": 0.90
-  },
-  "providers": [
-    {
-      "id": "openrouter",
-      "name": "OpenRouter",
-      "kind": "openai",
-      "base_url": "https://openrouter.ai/api/v1",
-      "api_key": "",
-      "api_key_env": "OPENROUTER_API_KEY",
-      "enabled": true,
-      "default": true,
-      "models_path": "/models",
-      "chat_path": "/chat/completions",
-      "headers": {
-        "HTTP-Referer": "https://mrmag.ru",
-        "X-Title": "Ogran"
-      },
-      "models": [],
-      "notes": ""
-    },
-    {
-      "id": "deepseek",
-      "name": "DeepSeek",
-      "kind": "openai",
-      "base_url": "https://api.deepseek.com",
-      "api_key": "",
-      "api_key_env": "DEEPSEEK_API_KEY",
-      "enabled": true,
-      "default": false,
-      "models_path": "/models",
-      "chat_path": "/chat/completions",
-      "headers": {},
-      "models": ["deepseek-v4-flash", "deepseek-v4-pro"],
-      "notes": "Официальный API. Ключ — DEEPSEEK_API_KEY или поле ниже."
-    },
-    {
-      "id": "yandex",
-      "name": "Yandex AI Studio",
-      "kind": "openai",
-      "auth": "api-key",
-      "base_url": "https://ai.api.cloud.yandex.net/v1",
-      "api_key": "",
-      "api_key_env": "YANDEX_API_KEY",
-      "folder_id": "",
-      "folder_id_env": "YANDEX_FOLDER_ID",
-      "enabled": true,
-      "default": false,
-      "models_path": "",
-      "chat_path": "/chat/completions",
-      "headers": {},
-      "models": [
-        "yandexgpt-lite/latest",
-        "yandexgpt/latest",
-        "aliceai-llm/latest",
-        "qwen3-235b-a22b-fp8/latest",
-        "gpt-oss-120b/latest"
-      ],
-      "notes": "Ключ с правом yc.ai.foundationModels.execute (не Search API). Folder ID — тот же каталог Cloud, что у поиска."
-    }
-  ],
   "search": {
     "enabled": true,
     "tries": 3,
@@ -90,9 +23,14 @@
     "page_timeout_ms": 10000,
     "min_pairs": 3,
     "query_suffix": "характеристики",
-    "skip_hosts": ["mrmag.ru"],
+    "skip_hosts": [
+      "mrmag.ru"
+    ],
     "search_url": "",
-    "fallback_engines": ["mojeek", "brave"],
+    "fallback_engines": [
+      "mojeek",
+      "brave"
+    ],
     "engines": [],
     "yandex": {
       "enabled": true,
@@ -117,5 +55,98 @@
       "site_filter": "",
       "url": ""
     }
+  },
+  "providers": [
+    {
+      "id": "openrouter",
+      "name": "OpenRouter",
+      "kind": "openai",
+      "auth": "bearer",
+      "base_url": "https://openrouter.ai/api/v1",
+      "api_key": "",
+      "api_key_env": "OPENROUTER_API_KEY",
+      "folder_id": "",
+      "folder_id_env": "",
+      "enabled": true,
+      "default": true,
+      "use_proxy": true,
+      "models_path": "/models",
+      "chat_path": "/chat/completions",
+      "headers": {
+        "HTTP-Referer": "https://mrmag.ru",
+        "X-Title": "Ogran"
+      },
+      "models": [],
+      "model_labels": {},
+      "notes": ""
+    },
+    {
+      "id": "deepseek",
+      "name": "DeepSeek",
+      "kind": "openai",
+      "auth": "bearer",
+      "base_url": "https://api.deepseek.com",
+      "api_key": "",
+      "api_key_env": "DEEPSEEK_API_KEY",
+      "folder_id": "",
+      "folder_id_env": "",
+      "enabled": true,
+      "default": false,
+      "use_proxy": false,
+      "models_path": "/models",
+      "chat_path": "/chat/completions",
+      "headers": {},
+      "models": [
+        "deepseek-v4-flash",
+        "deepseek-v4-pro"
+      ],
+      "model_labels": {},
+      "notes": "Официальный API. Ключ — DEEPSEEK_API_KEY или поле ниже."
+    },
+    {
+      "id": "yandex",
+      "name": "Yandex AI Studio",
+      "kind": "openai",
+      "auth": "api-key",
+      "base_url": "https://ai.api.cloud.yandex.net/v1",
+      "api_key": "",
+      "api_key_env": "YANDEX_API_KEY",
+      "folder_id": "",
+      "folder_id_env": "YANDEX_FOLDER_ID",
+      "enabled": true,
+      "default": false,
+      "use_proxy": false,
+      "models_path": "",
+      "chat_path": "/chat/completions",
+      "headers": {},
+      "models": [
+        "yandexgpt-lite/latest",
+        "yandexgpt/latest",
+        "aliceai-llm/latest",
+        "qwen3-235b-a22b-fp8/latest",
+        "gpt-oss-120b/latest"
+      ],
+      "model_labels": {
+        "yandexgpt-lite/latest": "YandexGPT Lite",
+        "yandexgpt/latest": "YandexGPT Pro",
+        "aliceai-llm/latest": "Alice AI LLM",
+        "qwen3-235b-a22b-fp8/latest": "Qwen3 235B",
+        "gpt-oss-120b/latest": "GPT-OSS 120B"
+      },
+      "notes": "Ключ с правом yc.ai.foundationModels.execute (не Search API). Folder ID — тот же каталог Cloud, что у поиска."
+    }
+  ],
+  "proxy": {
+    "enabled": false,
+    "url": "",
+    "bridge_port": 18080
+  },
+  "conditions": {
+    "mismatch_policy": "prefer_source",
+    "min_source_chars": 100,
+    "min_attrs": 5,
+    "facet_min_coverage": 70,
+    "target_coverage": 90,
+    "fuzzy_min_score": 0.9
   }
 }

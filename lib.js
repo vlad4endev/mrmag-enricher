@@ -31,6 +31,7 @@ import { normalizeValue, aliasValue, enumValuesEqual, isGluedFactDump, displayEn
 import { optionalFilterAttrs, requiredFilterAttrs } from './pipeline/required_filters.js';
 import { loadBenchmarks, dictDebugInfo, formatDictDebug, resolveDictRoot } from './pipeline/dict.js';
 import { findDumpProduct } from './pipeline/dumps.js';
+import { inferProductKind } from './pipeline/category_mismatch.js';
 import {
   validateModelResponse, validationFeedbackLine, sourceCorrectionFeedback, softFixCardTexts, MODEL_KEYS,
   buildDescriptionHtml, matchLiteral,
@@ -1377,6 +1378,46 @@ export function attrFacts(attributes, schemaKey) {
   return { facts, bounds, sources };
 }
 
+
+/**
+ * Автомат / полуавтомат для стиралок: в дампе часто только «Тип — стиральная
+ * машина», без «Вид стиральной машины». Тот же вывод, что в pipeline/normalize,
+ * иначе stripUnsupportedFilterSpecs обнулит обязательный фильтр в карточке.
+ */
+export function deriveWasherTypeFact(product) {
+  if (!product || typeof product !== 'object') return null;
+  const kind = inferProductKind(product.name);
+  if (kind === 'dryer' || kind === 'accessory') return null;
+  const fold = (s) => String(s || '').toLowerCase().replace(/ё/g, 'е');
+  const n = fold(product.name);
+  const cat = fold(`${product.category || ''} ${product.category_id || ''}`);
+  const blob = fold([
+    product.name,
+    String(product.annotation || '').replace(/<[^>]+>/g, ' '),
+    String(product.description || '').replace(/<[^>]+>/g, ' '),
+    product.category,
+  ].filter(Boolean).join(' '));
+  if (
+    /полуавтомат/.test(n)
+    || /полуавтомат/.test(cat)
+    || /полуавтомат/.test(blob)
+    || String(product.category_id) === '953'
+    || String(product.category) === '953'
+  ) {
+    return 'Полуавтоматическая';
+  }
+  if (
+    /вид\s+стиральн\w*\s*[-–—:]\s*автомат/.test(blob)
+    || /автоматическ\w*\s+стиральн/.test(blob)
+    || /стиральн\w*\s+машин\w*[^\n.;]{0,40}автоматическ/.test(blob)
+    || kind === 'washer'
+    || /стиральн|стир\.?\s*маш/.test(blob)
+  ) {
+    return 'Автоматическая';
+  }
+  return null;
+}
+
 /**
  * Факты товара из обоих источников сразу. Расходятся — не утверждаем ничего:
  * тот же принцип, что и с «No Frost» рядом с «капельной» внутри одного текста.
@@ -1432,6 +1473,18 @@ export function productFacts(product, schemaKey) {
     if (withinBound(k, Number(facts[k]), b)) delete bounds[k];  // интервал уже подтверждён точным числом
     else drop(k, facts[k]);
   }
+
+  // Автомат/полуавтомат: derive, если ось есть в схеме и ещё пуста.
+  const schema = schemaFor(schemaKey);
+  if (
+    schema?.specKeys?.includes('вид_стиральной_машины')
+    && (facts.вид_стиральной_машины == null || facts.вид_стиральной_машины === '')
+    && !dropped.has('вид_стиральной_машины')
+  ) {
+    const wt = deriveWasherTypeFact(product);
+    if (wt) facts.вид_стиральной_машины = wt;
+  }
+
   return { facts, bounds, conflicts };
 }
 

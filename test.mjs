@@ -1045,6 +1045,42 @@ t('контракт нормализуется; пустая карточка о
 });
 
 console.log('\nФакты стиральных машин');
+t('вид стиральной машины: derive автомат и не strip в карточке', () => {
+  const p = {
+    id: 11391,
+    name: 'Стиральная машина ATLANT 60С1010',
+    annotation: '<ul><li>Тип - стиральная машина</li><li>Тип загрузки - фронтальная</li><li>Максимальная загрузка белья - 6 кг</li></ul>',
+    description: '',
+  };
+  const schema = schemaFor('stiralnye_mashiny');
+  assert.ok(schema.requiredSpecKeys.includes('вид_стиральной_машины'));
+  const { facts } = productFacts(p, schema);
+  assert.strictEqual(facts.вид_стиральной_машины, 'Автоматическая');
+  const semi = productFacts({
+    name: 'Стиральная машина полуавтомат Test',
+    annotation: '',
+    description: '',
+  }, schema);
+  assert.strictEqual(semi.facts.вид_стиральной_машины, 'Полуавтоматическая');
+  const dryer = productFacts({
+    name: 'Сушильная машина Haier HD90',
+    annotation: '',
+    description: '',
+  }, schema);
+  assert.strictEqual(dryer.facts.вид_стиральной_машины, undefined);
+  const r = normalizeResponse({
+    specs: {
+      тип_загрузки: 'Фронтальная',
+      вид_стиральной_машины: 'Автоматическая',
+      бренд: 'ATLANT',
+    },
+    short_description: 'Стиральная машина ATLANT 60С1010 с фронтальной загрузкой на 6 кг белья для семьи.'.padEnd(120, ' '),
+    description: '<p>Абзац про стиральную машину ATLANT с достаточным объёмом текста для прохождения валидации длины описания карточки товара в каталоге. Повтор для длины.</p><p>Второй абзац про корпус и установку отдельностоящей модели с электронным управлением.</p><p>Третий абзац про программы и отжим.</p><p>Четвёртый абзац про итог для покупателя.</p>',
+    bullets: ['Загрузка 6 кг', 'Отжим 1000', 'A++'],
+  }, '', schema, [], undefined, p);
+  assert.strictEqual(r.specs.вид_стиральной_машины, 'Автоматическая');
+  assert.ok(!r.stripped_no_source?.includes('вид_стиральной_машины'));
+});
 t('подписи магазина: тип загрузки и загрузка белья', () => {
   const f = extractFacts('Тип загрузки - фронтальная<br>Мax загрузка белья, (кг) - 7', 'stiralnye_mashiny');
   assert.match(String(f.тип_загрузки), /фронтальн/i);

@@ -366,6 +366,38 @@ console.log('golden tests passed');
 }
 
 {
+  // Нет нужных атрибутов/фильтров в annotation → допарсиваем description,
+  // даже если там одна пара (не полный dump).
+  const ann = [
+    'Тип загрузки - Фронтальная',
+    'Максимальная загрузка белья - 6 кг',
+    'Максимальная скорость отжима - 1000 об/мин',
+    'Класс энергоэффективности - A++',
+    'Уровень шума при стирке - 59 дБ',
+    'Количество программ - 16',
+    'Ширина - 59.6 см',
+    'Глубина - 45 см',
+  ].join('<br>');
+  const desc = 'Тип двигателя - Инверторный';
+  assert.equal(needDescriptionParse(
+    parseProductFields({ annotation: ann, description: '' }, d467).fromAnn,
+    d467,
+    { format: 'BR', dumpDesc: false },
+  ), true, 'дырка в обязательном фильтре → допарсить');
+  const parsed = parseProductFields({ annotation: ann, description: desc }, d467);
+  assert.ok(parsed.fromDesc.some(p => /двигател/i.test(p.key)),
+    `должен допарсить тип двигателя: ${parsed.fromDesc.map(x => x.key).join(' | ')}`);
+  const r = normalizeProduct({
+    id: 6,
+    name: 'Стиральная машина Hole 6kg',
+    annotation: ann,
+    description: desc,
+  }, d467, config);
+  assert.ok(r.attrs.motor_type, `допарс закрыл motor_type, got ${r.attrs.motor_type}`);
+  console.log('ok missing required filter → parse description further');
+}
+
+{
   assert.deepEqual(pairFromTableCells(['Ширина', '60 см']), ['Ширина', '60 см']);
   assert.deepEqual(pairFromTableCells(['★', 'Ширина', '60 см']), ['Ширина', '60 см']);
   assert.deepEqual(pairFromTableCells(['Высота', '85', 'см']), ['Высота', '85 см']);
@@ -2742,6 +2774,39 @@ console.log('golden tests passed');
   assert.deepEqual(assignedS3['Загрузка белья, кг'], ['7']);
   assert.deepEqual(assignedS3['Количество программ'], ['15-20']);
   assert.deepEqual(assignedS3['Габариты (ШхГхВ)'], ['60×54×85']);
+
+  // filters в карточке — только после обогащения, из enriched.specs.
+  const { fillCardFiltersAfterEnrich } = await import('./pipeline/export.js');
+  const cardFilters = fillCardFiltersAfterEnrich(
+    p467[460989],
+    {
+      specs: {
+        максимальная_загрузка_кг: 7,
+        скорость_отжима_об_мин: 1200,
+        класс_энергоэффективности: 'A+++',
+        уровень_шума_стирки_дб: 59,
+        высота_мм: 850,
+        ширина_мм: 600,
+        глубина_мм: 540,
+        количество_программ: 16,
+        тип_загрузки: 'фронтальная',
+        тип_управления: 'поворотный механизм',
+        установка: 'отдельно стоящая',
+        дисплей: 'есть',
+      },
+    },
+    d467,
+    config,
+  );
+  assert.ok(Object.keys(cardFilters).length >= 8, Object.keys(cardFilters).join(','));
+  assert.deepEqual(cardFilters['Загрузка белья, кг'], ['7']);
+  assert.deepEqual(cardFilters['Количество программ'], ['15-20']);
+  // Без обогащения — пусто. Пустой объект enriched: оси из исходника после
+  // прогона (тайминг «после»), но без specs модели.
+  assert.deepEqual(fillCardFiltersAfterEnrich(p467[460989], null, d467, config), {});
+  const afterEmpty = fillCardFiltersAfterEnrich(p467[460989], {}, d467, config);
+  assert.ok(typeof afterEmpty === 'object');
+  assert.ok(!('Загрузка белья, кг' in afterEmpty) || afterEmpty['Загрузка белья, кг']);
 
   const dryer = { id: 455270, name: 'Сушильная машина Pioneer DM-10701WH' };
   assert.ok(markCategoryMismatch(dryer, '467'));

@@ -353,9 +353,9 @@ function mappedAttrCodes(pairs, dict) {
 }
 
 /**
- * Шаг 2 (парсинг description) — только если шаг 1 не закрыл обязательный
- * фильтр. Маркетинг без таблицы характеристик не разбираем: иначе три
- * случайные пары из прозы попадают в ingest.
+ * Шаг 2 (парсинг description): атрибуты и фильтры справочника — какие
+ * характеристики ДОЛЖНЫ быть у товара. Если шаг 0+1 не закрыли обязательный
+ * фильтр — допарсиваем описание, чтобы найти дыры.
  */
 export function needDescriptionParse(fromStep1, dict, { format, dumpDesc } = {}) {
   const mapped = mappedPairCount(fromStep1, dict);
@@ -363,11 +363,9 @@ export function needDescriptionParse(fromStep1, dict, { format, dumpDesc } = {})
   const missingRequired = required.length
     ? required.some(a => !mappedAttrCodes(fromStep1, dict).has(a.code))
     : (fromStep1?.length || 0) < 3 || mapped < 3;
-  // Обязательные фильтры уже закрыты attributes/annotation — description не трогаем.
   if (!missingRequired) return false;
-  // Пустая аннотация без attributes → шаг 2 обязателен.
-  if (format === 'EMPTY' && !(fromStep1?.length > 0)) return true;
-  return Boolean(dumpDesc) || (fromStep1?.length || 0) < 3 || mapped < 3;
+  // Нет нужных атрибутов/фильтров → всегда пробуем description.
+  return true;
 }
 
 /**
@@ -496,9 +494,8 @@ export function detectDump(html) {
 export function parseProductFields(product, dict) {
   const format = annotationFormat(product.annotation);
   // Три шага. Шаг 0 — attributes магазина (S0). Шаг 1 — annotation (S1).
-  // Шаг 2 (description, S2) — только если шаг 0+1 не закрыли обязательный
-  // фильтр: setAttr не перетирает, но чужие пары из прозы не должны
-  // попадать в ingest, когда ось уже заполнена.
+  // Шаг 2 (description, S2): атрибуты/фильтры справочника — что ДОЛЖНО быть;
+  // если дырки — допарсиваем description.
   const fromAttrs = pairsFromAttributes(product.attributes);
   const fromAnn = extractPairs(product.annotation, dict).map(p => ({ ...p, source: 'S1' }));
   const step1 = fromAttrs.concat(fromAnn);
@@ -506,10 +503,24 @@ export function parseProductFields(product, dict) {
   let dump = false;
   const dumpDesc = detectDump(product.description);
   if (needDescriptionParse(step1, dict, { format, dumpDesc })) {
-    dump = dumpDesc;
     fromDesc = extractPairs(product.description, dict).map(p => ({ ...p, source: 'S2' }));
-    if (!dump && fromDesc.length < 3) fromDesc = [];
-    if (fromDesc.length >= 3) dump = true;
+    const have = mappedAttrCodes(step1, dict);
+    const required = new Set(requiredFilterAttrs(dict).map(a => a.code));
+    const closesHole = (p) => {
+      for (const code of mappedAttrCodes([p], dict)) {
+        if (required.has(code) && !have.has(code)) return true;
+      }
+      return false;
+    };
+    if (dumpDesc || step1.length === 0) {
+      // Dump-таблица или пустой шаг 1: description — основной источник.
+      dump = dumpDesc || fromDesc.length >= 3;
+      if (!dump && fromDesc.length < 3) fromDesc = [];
+    } else {
+      // Annotation есть, но дырки в обязательных фильтрах — добираем их.
+      dump = false;
+      fromDesc = fromDesc.filter(closesHole);
+    }
   }
   const pairs = step1.length ? step1.concat(fromDesc) : fromDesc;
   return { format, pairs, dump, fromAnn, fromDesc, fromAttrs };

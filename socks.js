@@ -492,17 +492,26 @@ export async function applyProxyConfig({
 }
 
 /**
- * Старт: сначала .env (SOCKS_PROXY / HTTPS_PROXY), затем настройки из файла,
- * если в .env прокси не задан.
+ * Старт: сначала прокси из настроек (вставил tg://socks?… — и работает),
+ * иначе SOCKS_PROXY / HTTPS_PROXY из окружения.
  */
 export async function setupProxy(log = () => {}, settingsProxy = null) {
   const envSocks = process.env.SOCKS_PROXY;
   const envHttp = process.env.HTTPS_PROXY || process.env.https_proxy;
-  const fromSettings = settingsProxy && settingsProxy.enabled !== false && settingsProxy.url;
+  const fromSettings = settingsProxy && settingsProxy.enabled !== false && String(settingsProxy.url || '').trim();
+
+  // UI / config.json важнее .env: иначе баннер «SOCKS_PROXY из окружения»
+  // перекрывает ссылку, которую только что вставили в «Сеть».
+  if (fromSettings) {
+    return applyProxyConfig({
+      enabled: true,
+      url: settingsProxy.url,
+      bridge_port: settingsProxy.bridge_port || process.env.SOCKS_BRIDGE_PORT || 18080,
+      source: 'settings',
+    }, log);
+  }
 
   if (envSocks) {
-    // Порт моста: только SOCKS_BRIDGE_PORT из env, иначе 18080.
-    // settings.bridge_port сюда не берём — туда часто попадает порт SOCKS.
     const out = await applyProxyConfig({
       enabled: true,
       url: envSocks,
@@ -511,8 +520,7 @@ export async function setupProxy(log = () => {}, settingsProxy = null) {
     }, log);
     const expected = `http://127.0.0.1:${runtime.bridgePort}`;
     if (!envHttp) {
-      log(`  ⚠  HTTPS_PROXY не был задан до старта. Часть версий Node это уже не`);
-      log(`     подхватит для системного fetch. LLM-запросы идут через явный маршрут.`);
+      log(`  ⚠  HTTPS_PROXY не был задан до старта. LLM идёт через явный SOCKS-маршрут.`);
       log(`       HTTPS_PROXY=${expected}`);
     } else if (envHttp !== expected && runtime.bridge) {
       log(`  ⚠  HTTPS_PROXY=${envHttp} не совпадает с мостом ${expected}`);
@@ -520,22 +528,11 @@ export async function setupProxy(log = () => {}, settingsProxy = null) {
     return out;
   }
 
-  if (envHttp && !fromSettings) {
-    // Чистый HTTP-прокси из .env без SOCKS.
-    const out = await applyProxyConfig({
+  if (envHttp && !/^https?:\/\/127\.0\.0\.1:\d+/i.test(envHttp)) {
+    return applyProxyConfig({
       enabled: true,
       url: envHttp,
       source: 'env',
-    }, log);
-    return out;
-  }
-
-  if (fromSettings) {
-    return applyProxyConfig({
-      enabled: settingsProxy.enabled !== false,
-      url: settingsProxy.url,
-      bridge_port: settingsProxy.bridge_port,
-      source: 'settings',
     }, log);
   }
 
@@ -936,21 +933,35 @@ export async function fetchHttp(url, {
 }
 
 /**
- * Запрос к API провайдера ИИ: useProxy=true → через активный прокси,
+ * Запрос к API провайдера ИИ: useProxy=true → через активный SOCKS/HTTP,
  * иначе мимо (даже если в окружении стоит HTTPS_PROXY).
+ *
+ * Для SOCKS5/tg:// идём напрямую в socksConnect (стиль Telegram-прокси),
+ * без лишнего прыжка через localhost-мост.
  */
 export function providerFetch(url, init = {}, { useProxy = false } = {}) {
-  const timeoutMs = (() => {
-    if (init.signal?.timeout) return init.signal.timeout; // нестандартно
-    return 120_000;
-  })();
-  // AbortSignal.timeout() не отдаёт ms — берём большой запас; вызывающий
-  // передаёт свой signal, и readHttpMessage/https.request его уважают.
-  const proxyUrl = useProxy ? getProxyHttpUrl() : null;
-  if (useProxy && !proxyUrl) {
-    // Прокси запрошен, но не настроен — обычный fetch (как раньше).
-    return fetch(url, init);
+  const timeoutMs = 120_000;
+  if (!useProxy || !isProxyActive()) {
+    return fetchHttp(url, {
+      method: init.method || 'GET',
+      headers: init.headers || {},
+      body: init.body ?? null,
+      signal: init.signal || null,
+      timeoutMs,
+      proxyUrl: null,
+    });
   }
+  if (runtime.socksCfg) {
+    return fetchViaSocks(url, {
+      method: init.method || 'GET',
+      headers: init.headers || {},
+      body: init.body ?? null,
+      signal: init.signal || null,
+      timeoutMs,
+    }, runtime.socksCfg);
+  }
+  const proxyUrl = getProxyHttpUrl();
+  if (!proxyUrl) return fetch(url, init);
   return fetchHttp(url, {
     method: init.method || 'GET',
     headers: init.headers || {},
@@ -959,6 +970,53 @@ export function providerFetch(url, init = {}, { useProxy = false } = {}) {
     timeoutMs,
     proxyUrl,
   });
+}
+
+/** HTTPS/HTTP через SOCKS5 напрямую (tg://socks / socks5://). */
+async function fetchViaSocks(url, {
+  method = 'GET',
+  headers = {},
+  body = null,
+  timeoutMs = 60_000,
+  signal = null,
+} = {}, socksCfg) {
+  let u;
+  try { u = new URL(url); }
+  catch { throw new Error(`не URL: ${url}`); }
+  if (u.protocol !== 'http:' && u.protocol !== 'https:') {
+    throw new Error(`схема ${u.protocol} не поддерживается`);
+  }
+  const targetPort = Number(u.port) || (u.protocol === 'https:' ? 443 : 80);
+  const tunnel = await socksConnect(socksCfg, u.hostname, targetPort, Math.min(timeoutMs, 25_000));
+  let socket = tunnel;
+  if (u.protocol === 'https:') {
+    socket = await new Promise((resolve, reject) => {
+      const s = tls.connect({
+        socket: tunnel,
+        servername: u.hostname,
+        ALPNProtocols: ['http/1.1'],
+      }, () => resolve(s));
+      s.once('error', reject);
+    });
+  }
+
+  const payload = body == null ? null
+    : (Buffer.isBuffer(body) ? body : Buffer.from(String(body), 'utf8'));
+  const hdrs = { ...(headers || {}) };
+  if (payload && !Object.keys(hdrs).some(k => k.toLowerCase() === 'content-length')) {
+    hdrs['Content-Length'] = String(payload.length);
+  }
+  if (!Object.keys(hdrs).some(k => k.toLowerCase() === 'host')) hdrs.Host = u.host;
+  if (!Object.keys(hdrs).some(k => k.toLowerCase() === 'connection')) hdrs.Connection = 'close';
+
+  const path = `${u.pathname}${u.search}` || '/';
+  const head = Object.entries(hdrs).map(([k, v]) => `${k}: ${v}`).join('\r\n');
+  socket.write(`${method.toUpperCase()} ${path} HTTP/1.1\r\n${head}\r\n\r\n`);
+  if (payload) socket.write(payload);
+
+  const msg = await readHttpMessage(socket, timeoutMs, signal);
+  try { socket.destroy(); } catch { /* */ }
+  return fetchResponse(msg.status, msg.headers, msg.body, u.href);
 }
 
 /** Проверка: TCP до SOCKS → CONNECT через мост → HTTPS до цели. */
@@ -1015,16 +1073,14 @@ export async function probeProxy(targetUrl = 'https://openrouter.ai') {
 
   const t2 = Date.now();
   try {
-    const res = await fetchHttp(`https://${host}/`, {
+    const res = await providerFetch(`https://${host}/`, {
       method: 'GET',
       headers: { Accept: '*/*', 'User-Agent': 'Ogran-proxy-probe/1' },
-      timeoutMs: 25_000,
-      proxyUrl: getProxyHttpUrl(),
-    });
+    }, { useProxy: true });
     steps.push({
       id: 'https',
       ok: true,
-      title: `HTTPS через мост → ${host}`,
+      title: `HTTPS через SOCKS → ${host}`,
       status: res.status,
       ms: Date.now() - t2,
     });
@@ -1037,7 +1093,7 @@ export async function probeProxy(targetUrl = 'https://openrouter.ai') {
       ...info,
     };
   } catch (e) {
-    steps.push({ id: 'https', ok: false, title: `HTTPS через мост → ${host}`, error: e.message, ms: Date.now() - t2 });
+    steps.push({ id: 'https', ok: false, title: `HTTPS через SOCKS → ${host}`, error: e.message, ms: Date.now() - t2 });
     return {
       ok: false,
       error: e.message || String(e),

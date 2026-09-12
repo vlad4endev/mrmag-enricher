@@ -1780,24 +1780,18 @@ input[type=range]::-moz-range-thumb{
 
       <section class="set-panel" id="setNet">
         <div class="set-h">Сеть и прокси</div>
-        <p class="set-lead">Один исходящий прокси для моделей, которым нужен иностранный IP (OpenRouter, OpenAI и т.п.). DeepSeek, Yandex и локальная Ollama по умолчанию идут напрямую — это переключается на карточке провайдера.</p>
+        <p class="set-lead">Вставьте ссылку Telegram-прокси — OpenRouter и другие шлюзы с «Через прокси» пойдут через неё. DeepSeek и Yandex по умолчанию напрямую.</p>
         <div class="set-card" style="margin-bottom:12px">
           <div class="set-card-h">
-            <b>Исходящий прокси</b>
+            <b>Telegram / SOCKS5</b>
             <span class="set-badge off" id="setProxyBadge">выключен</span>
           </div>
-          <label class="set-check"><input type="checkbox" id="setProxyOn"> Включить прокси для отмеченных провайдеров</label>
-          <div class="set-row" style="margin-top:10px"><label for="setProxyUrl">Адрес <span id="setProxyUrlHint" class="set-badge off">не задан</span></label>
-            <input type="password" id="setProxyUrl" name="egress-proxy-url" data-secret="1" placeholder="socks5://user:pass@host:port или tg://socks?server=…&amp;port=…&amp;user=…&amp;pass=…" autocomplete="new-password" spellcheck="false" autocapitalize="off" data-lpignore="true" data-1p-ignore="true">
+          <label class="set-check"><input type="checkbox" id="setProxyOn"> Включить для провайдеров с «Через прокси»</label>
+          <div class="set-row" style="margin-top:10px"><label for="setProxyUrl">Ссылка прокси <span id="setProxyUrlHint" class="set-badge off">не задана</span></label>
+            <input type="text" id="setProxyUrl" name="egress-proxy-url" data-secret="1" placeholder="tg://socks?server=…&amp;port=3443&amp;user=…&amp;pass=…" autocomplete="off" spellcheck="false" autocapitalize="off" data-lpignore="true" data-1p-ignore="true" style="font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px">
           </div>
-          <details class="hint" style="margin-top:10px">
-            <summary style="cursor:pointer;font-size:12px;color:var(--t2)">Дополнительно: локальный порт моста</summary>
-            <div class="set-row" style="margin-top:8px"><label for="setProxyBridge">Локальный порт HTTP-моста (не порт SOCKS)</label>
-              <input type="number" id="setProxyBridge" min="1024" max="65535" placeholder="18080">
-            </div>
-            <div class="hint" style="margin-top:6px">По умолчанию <code>18080</code>. Сюда <b>не</b> нужно писать порт из ссылки Telegram (например 3443) — тот уже внутри адреса прокси. Мост слушает на localhost и переводит CONNECT в SOCKS5.</div>
-          </details>
-          <div class="hint" style="margin-top:10px">Поддерживаются <code>socks5://</code>, ссылка Telegram <code>tg://socks?…</code> и обычный <code>http://user:pass@host:port</code>. Пароль в браузер не отдаётся — оставьте поле пустым, чтобы не менять. Если задан <code>SOCKS_PROXY</code> в окружении контейнера, он имеет приоритет над полем адреса.</div>
+          <div class="hint" style="margin-top:8px">Формат как в Telegram: <code>tg://socks?server=IP&amp;port=…&amp;user=…&amp;pass=…</code> или <code>socks5://user:pass@host:port</code>. После вставки нажмите «Сохранить», затем «Проверить».</div>
+          <input type="hidden" id="setProxyBridge" value="18080">
           <div class="set-actions" style="margin-top:12px">
             <button type="button" class="sbtn ghost" id="proxyProbeBtn" onclick="runProxyProbe()">Проверить прокси</button>
           </div>
@@ -1805,7 +1799,7 @@ input[type=range]::-moz-range-thumb{
         </div>
         <div class="set-card">
           <div class="set-card-h"><b>Кому нужен прокси</b></div>
-          <p class="hint" style="margin:8px 0 0">На вкладке «Провайдеры ИИ» у каждого шлюза есть переключатель «Через прокси». OpenRouter — обычно да (Cloudflare), DeepSeek и Yandex Cloud — нет (ломается CONNECT / проверка IP).</p>
+          <p class="hint" style="margin:8px 0 0">На вкладке «Провайдеры ИИ» у каждого шлюза — «Через прокси». OpenRouter — да (Cloudflare), DeepSeek и Yandex — нет.</p>
         </div>
       </section>
 
@@ -3913,31 +3907,34 @@ function renderProxySettings(d){
   const px=d?.settings?.proxy||{};
   const rt=d?.proxy_runtime||{};
   setC('setProxyOn', px.enabled===true || (px.has_url && px.enabled!==false));
-  setV('setProxyBridge', (px.bridge_port===3443?18080:px.bridge_port)||18080);
+  const bridgeEl=document.getElementById('setProxyBridge');
+  if(bridgeEl) bridgeEl.value='18080';
   const urlEl=document.getElementById('setProxyUrl');
   if(urlEl){
     urlEl.value='';
     urlEl.dataset.touched='';
     urlEl.placeholder=px.has_url
-      ? (px.url_from==='env' ? 'задан в окружении — введите новый, чтобы переопределить в файле' : 'оставьте пустым, чтобы не менять')
-      : 'socks5://user:pass@host:port';
+      ? (px.url_from==='env'
+        ? 'задан в окружении — вставьте tg://socks?… чтобы задать в настройках'
+        : 'оставьте пустым, чтобы не менять · '+((px.url_hint||'').slice(0,40)))
+      : 'tg://socks?server=…&port=3443&user=…&pass=…';
     bindSecretField(urlEl);
   }
   const hint=document.getElementById('setProxyUrlHint');
   if(hint){
     if(px.has_url){
       hint.className='set-badge';
-      hint.textContent=(px.url_from==='env'?'env':'файл')+' '+(px.url_hint||'');
+      hint.textContent=(px.url_from==='env'?'env':'сохранён')+' '+(px.url_hint||'');
     }else{
       hint.className='set-badge off';
-      hint.textContent='не задан';
+      hint.textContent='не задана';
     }
   }
   const badge=document.getElementById('setProxyBadge');
   if(badge){
     if(rt.active){
       badge.className='set-badge';
-      badge.textContent=`активен · ${rt.mode||'proxy'}${rt.host?' · '+rt.host:''}`;
+      badge.textContent=`активен · ${rt.mode||'socks5'}${rt.host?' · '+rt.host:''}`;
     }else{
       badge.className='set-badge off';
       badge.textContent='выключен';
@@ -4209,13 +4206,13 @@ function readSettingsPatch(){
     return { id:prev.id||('e'+i), name:e.name||prev.name, url:e.url||prev.url, enabled:e.enabled??prev.enabled };
   });
   const yaKey=secretInputValue(document.getElementById('setYaKey'));
-  const proxyUrl=secretInputValue(document.getElementById('setProxyUrl'));
+  const proxyUrl=secretInputValue(document.getElementById('setProxyUrl')) || (document.getElementById('setProxyUrl')?.dataset.touched==='1' ? (document.getElementById('setProxyUrl').value||'') : '');
   return {
     providers,
     proxy:{
-      enabled:getC('setProxyOn'),
-      bridge_port:Number(getV('setProxyBridge'))||18080,
-      ...(proxyUrl?{url:proxyUrl}:{}),
+      enabled:!!(getC('setProxyOn') || proxyUrl),
+      bridge_port:18080,
+      ...(proxyUrl?{url:proxyUrl.trim()}:{}),
     },
     search:{
       enabled:getC('setSearchOn'),

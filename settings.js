@@ -722,7 +722,10 @@ function publicProxy(proxy = {}) {
   const envSocks = process.env.SOCKS_PROXY || '';
   const envHttp = process.env.HTTPS_PROXY || process.env.https_proxy || '';
   const stored = proxy.url || '';
-  const fromEnv = !!envSocks;
+  const settingsOn = proxy.enabled !== false && !!stored;
+  // Как в setupProxy: файл важнее env.
+  const fromSettings = settingsOn;
+  const fromEnv = !fromSettings && !!envSocks;
   let url_hint = '';
   const mask = (s) => {
     try {
@@ -734,22 +737,18 @@ function publicProxy(proxy = {}) {
       return '••••';
     }
   };
-  if (fromEnv) {
-    url_hint = mask(envSocks);
-  } else if (stored) {
-    url_hint = mask(stored);
-  } else if (envHttp && !/127\.0\.0\.1:\d+/.test(envHttp)) {
-    url_hint = 'из HTTPS_PROXY';
-  }
+  if (fromSettings) url_hint = mask(stored);
+  else if (fromEnv) url_hint = mask(envSocks);
+  else if (envHttp && !/127\.0\.0\.1:\d+/.test(envHttp)) url_hint = 'из HTTPS_PROXY';
+
   let bridge = proxy.bridge_port || 18080;
   if (bridge === 3443) bridge = 18080;
   return {
-    enabled: fromEnv || proxy.enabled === true || (!!stored && proxy.enabled !== false),
+    enabled: fromSettings || fromEnv || (proxy.enabled === true && !!stored),
     bridge_port: bridge,
     has_url: !!(stored || envSocks || (envHttp && !/127\.0\.0\.1:\d+/.test(envHttp))),
     url_hint,
-    // env перекрывает файл — так и показываем, чтобы не казалось, что правите не то.
-    url_from: fromEnv ? 'env' : stored ? 'file' : envHttp ? 'env' : 'none',
+    url_from: fromSettings ? 'file' : fromEnv ? 'env' : envHttp ? 'env' : 'none',
     url: '',
   };
 }
@@ -781,9 +780,14 @@ export function envOverrides() {
   }
   if (process.env.MISMATCH_POLICY) out.push({ key: 'MISMATCH_POLICY', value: process.env.MISMATCH_POLICY, note: 'политика расхождений из окружения' });
   if (process.env.DDG_REGION) out.push({ key: 'DDG_REGION', value: process.env.DDG_REGION, note: 'регион DuckDuckGo из окружения' });
-  if (process.env.SOCKS_PROXY) out.push({ key: 'SOCKS_PROXY', value: '••••', note: 'SOCKS-прокси из окружения (приоритет над полем в настройках)' });
-  else if (process.env.HTTPS_PROXY || process.env.https_proxy) {
-    out.push({ key: 'HTTPS_PROXY', value: '••••', note: 'HTTP-прокси из окружения' });
+  if (process.env.SOCKS_PROXY) {
+    out.push({
+      key: 'SOCKS_PROXY',
+      value: '••••',
+      note: 'SOCKS в окружении — запасной, если в «Сеть» адрес не задан',
+    });
+  } else if (process.env.HTTPS_PROXY || process.env.https_proxy) {
+    out.push({ key: 'HTTPS_PROXY', value: '••••', note: 'HTTP-прокси из окружения (если в «Сеть» пусто)' });
   }
   return out;
 }

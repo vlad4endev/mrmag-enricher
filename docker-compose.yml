@@ -7,12 +7,26 @@
 name: enricher-docker
 
 services:
+  # Мост: контейнеры → :11080 на хосте → SSH -R на :11079 → Mac → внешний HTTP/SOCKS.
+  # Без этого SSH -R слушает только 127.0.0.1, и ai-enricher получает ECONNREFUSED
+  # на host.docker.internal / 172.x.0.1.
+  proxy-bridge:
+    image: alpine/socat
+    container_name: enricher-proxy-bridge
+    network_mode: host
+    restart: unless-stopped
+    command:
+      - TCP-LISTEN:11080,fork,reuseaddr,keepalive
+      - TCP:127.0.0.1:11079
+
   enricher:
     build:
       context: .
       args:
         NODE_IMAGE: ${NODE_IMAGE:-public.ecr.aws/docker/library/node:24-alpine}
     container_name: ai-enricher      # по этому имени NPM ходит внутри сети
+    depends_on:
+      - proxy-bridge
     ports:
       # Только loopback хоста: наружу сервис публикует nginx-proxy-manager, он
       # в той же сети и обращается по имени контейнера. Прежняя публикация на
@@ -38,7 +52,7 @@ services:
     extra_hosts:
       - "openrouter.ai:8.47.69.6"
       - "openrouter.ai:8.6.112.6"
-      # Доступ из контейнера к SOCKS на хосте (ssh -R 11080:… или локальный мост).
+      # Доступ к proxy-bridge на хосте (порт 11080).
       - "host.docker.internal:host-gateway"
     env_file: .env
     environment:
@@ -50,7 +64,7 @@ services:
       SETTINGS_PATH: /data/config.json
       DICTIONARIES_DIR: /data/dictionaries
       DUMPS_DIR: /data/dumps
-      # Если SSH -R на хосте, а host.docker.internal молчит — перебор gateway bridge.
+      # proxy-bridge слушает 0.0.0.0:11080 → перебор gateway на случай кривого DNS.
       PROXY_HOST_CANDIDATES: host.docker.internal,172.17.0.1,172.18.0.1,172.19.0.1,172.20.0.1
     volumes:
       - enricher-data:/data

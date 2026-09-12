@@ -6,6 +6,7 @@ import { normalizeValue, countUnitsInValues } from './types.js';
 import { parseDimensions, reconcileDimensions } from './dimensions.js';
 import { parseIdentity } from './identity.js';
 import { isPackingKey, normKey } from './text.js';
+import { inferProductKind } from './category_mismatch.js';
 
 /** Приоритет источников: исходный JSON важнее веб-страницы похожего товара. */
 export const SOURCE_RANK = Object.freeze({
@@ -321,6 +322,36 @@ export function normalizeProduct(product, dict, config) {
     }
   }
 
+  // Автомат / полуавтомат: из имени или раздела (953 — полуавтоматы).
+  // Чистые сушилки и аксессуары пропускаем (не путать с «сушкой» в описании СМА).
+  if (dict.byCode.has('washer_type') && rec.attrs.washer_type == null) {
+    const kind = inferProductKind(product.name);
+    if (kind !== 'dryer' && kind !== 'accessory') {
+      const n = String(product.name || '').toLowerCase().replace(/ё/g, 'е');
+      const cat = `${product.category || ''} ${product.category_id || ''}`.toLowerCase().replace(/ё/g, 'е');
+      let wt = null;
+      if (
+        /полуавтомат/.test(n)
+        || /полуавтомат/.test(cat)
+        || String(product.category_id) === '953'
+        || String(product.category) === '953'
+      ) {
+        wt = 'Полуавтоматическая';
+      } else if (/автоматическ/.test(n) && /стиральн/.test(n)) {
+        wt = 'Автоматическая';
+      }
+      if (wt) {
+        setAttr(rec, 'washer_type', wt, {
+          level: 'S0',
+          raw: product.name || product.category || String(product.category_id || ''),
+          model: null,
+          prompt: null,
+          how: 'name',
+        });
+      }
+    }
+  }
+
   const parsed = parseProductFields(product, dict);
   rec.format = parsed.format;
   rec.dump = parsed.dump;
@@ -447,6 +478,27 @@ function deriveLinkedAttrs(rec, dict, product) {
       setDerived(rec, dict, 'load_type', 'Вертикальная', 'derived_load_type', 'S0');
     } else if (/фронтал/.test(blob)) {
       setDerived(rec, dict, 'load_type', 'Фронтальная', 'derived_load_type', 'S0');
+    }
+  }
+
+  // Автомат vs полуавтомат: полуавтомат всегда сильнее; иначе явные маркеры
+  // или стиралка/СМА в имени → автоматическая. Сушилки/аксессуары — не трогаем.
+  if (dict.byCode.has('washer_type') && rec.attrs.washer_type == null) {
+    const kind = inferProductKind(product?.name || rec.name);
+    if (kind !== 'dryer' && kind !== 'accessory') {
+      let label = null;
+      if (/полуавтомат/.test(blob)) {
+        label = 'Полуавтоматическая';
+      } else if (
+        /вид\s+стиральн\w*\s*[-–—:]\s*автомат/.test(blob)
+        || /автоматическ\w*\s+стиральн/.test(blob)
+        || /стиральн\w*\s+машин\w*[^\n.;]{0,40}автоматическ/.test(blob)
+        || kind === 'washer'
+        || /стиральн|стир\.?\s*маш/.test(blob)
+      ) {
+        label = 'Автоматическая';
+      }
+      if (label) setDerived(rec, dict, 'washer_type', label, 'derived_washer_type', 'S0');
     }
   }
 

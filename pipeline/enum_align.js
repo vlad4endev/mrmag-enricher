@@ -17,6 +17,7 @@ import { aliasValue, hasStrictEnum, valueFold, annotationCase } from './types.js
 export const PRIORITY_ENUM_CODES = new Set([
   'install',
   'load_type',
+  'washer_type',
   'construction',
   'cooling',
   'fridge_type',

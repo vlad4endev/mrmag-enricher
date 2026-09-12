@@ -121,6 +121,67 @@ function run(id, dict, src) {
   console.log('ok displayEnum / valueFold');
 }
 
+{
+  // Автомат / полуавтомат: парсинг ключа магазина, имя, раздел 953, без путаницы с «Тип».
+  const { matchKey } = await import('./pipeline/match.js');
+  const { aliasValue } = await import('./pipeline/types.js');
+  const wt = d467.byCode.get('washer_type');
+  assert.ok(wt, 'washer_type in dictionary');
+  assert.equal(aliasValue(wt, 'автомат'), 'Автоматическая');
+  assert.equal(aliasValue(wt, 'полуавтомат'), 'Полуавтоматическая');
+  assert.equal(aliasValue(wt, 'semi-automatic'), 'Полуавтоматическая');
+  assert.equal(matchKey('Вид стиральной машины', d467).attr?.code, 'washer_type');
+  assert.equal(matchKey('Тип', d467).attr?.code !== 'washer_type', true, 'bare «Тип» ≠ washer_type');
+  assert.notEqual(matchKey('Тип загрузки', d467).attr?.code, 'washer_type');
+
+  const fromAnn = normalizeProduct({
+    id: 900101,
+    name: 'Стиральная машина Test Auto',
+    annotation: '<ul><li>Вид стиральной машины - Автоматическая</li><li>Тип загрузки - Фронтальная</li></ul>',
+    description: '',
+  }, d467, config);
+  assert.equal(fromAnn.attrs.washer_type, 'Автоматическая');
+  assert.equal(fromAnn.attrs.load_type, 'Фронтальная');
+
+  const fromName = normalizeProduct({
+    id: 900102,
+    name: 'Автоматическая стиральная машина RENOVA WAF-6010M1',
+    annotation: '',
+    description: '',
+  }, d467, config);
+  assert.equal(fromName.attrs.washer_type, 'Автоматическая');
+
+  const semi = normalizeProduct({
+    id: 900103,
+    name: 'Стиральная машина полуавтомат Test SM-2',
+    annotation: '<ul><li>Загрузка белья, кг - 6</li></ul>',
+    description: '',
+  }, d467, config);
+  assert.equal(semi.attrs.washer_type, 'Полуавтоматическая');
+
+  const fromCat = normalizeProduct({
+    id: 900104,
+    name: 'Стиральная машина Test Cat',
+    category: 'Полуавтоматические стиральные машины',
+    category_id: 953,
+    annotation: '',
+    description: '',
+  }, d467, config);
+  assert.equal(fromCat.attrs.washer_type, 'Полуавтоматическая');
+
+  const { r: lg } = run(52907, d467, p467);
+  assert.equal(lg.attrs.washer_type, 'Автоматическая', 'LG: ключ «Вид стиральной машины»');
+
+  const { r: renova } = run(355162, d467, p467);
+  assert.equal(renova.attrs.washer_type, 'Автоматическая', 'RENOVA: из имени');
+
+  // Обычная стиралка без маркера → автомат (раздел 467).
+  const { r: plain } = run(11391, d467, p467);
+  assert.equal(plain.attrs.washer_type, 'Автоматическая');
+
+  console.log('ok washer_type auto/semi');
+}
+
 console.log('golden tests passed');
 
 {
@@ -207,6 +268,7 @@ console.log('golden tests passed');
 
 {
   const requiredAnn = [
+    'Вид стиральной машины - Автоматическая',
     'Тип загрузки - Фронтальная',
     'Максимальная загрузка белья - 6 кг',
     'Максимальная скорость отжима - 1000 об/мин',
@@ -1545,10 +1607,11 @@ console.log('golden tests passed');
   const all = loadProducts('data_467.json').map(p => normalizeProduct(p, d467, config));
   const exported = all.filter(r => annotationRows(r, d467).length >= MIN_ANNOTATION_ROWS);
   const built = buildFilters(exported, d467, config);
-  assert.equal(expectedFilters(d467).length, 18);
+  assert.equal(expectedFilters(d467).length, 19);
   assert.equal(expectedFilters(d523).length, 20);
   {
     const { isRequiredFilter, requiredFilterAttrs, optionalFilterAttrs } = await import('./pipeline/required_filters.js');
+    assert.equal(isRequiredFilter(d467.byCode.get('washer_type')), true);
     assert.equal(isRequiredFilter(d467.byCode.get('load_type')), true);
     assert.equal(isRequiredFilter(d467.byCode.get('load_max')), true);
     assert.equal(isRequiredFilter(d467.byCode.get('color')), false);
@@ -2689,6 +2752,7 @@ console.log('golden tests passed');
   const w455270 = filt(455270, d467, p467);
   assert.equal(w455270.r.attrs.install, 'Отдельностоящая');
   assert.equal(w455270.r.attrs.load_type, null, 'сушилка: не подставлять фронтальную');
+  assert.equal(w455270.r.attrs.washer_type, null, 'сушилка: не ставить автомат/полуавтомат');
 
   const w458847 = filt(458847, d467, p467);
   assert.equal(w458847.r.attrs.height, 52.5);

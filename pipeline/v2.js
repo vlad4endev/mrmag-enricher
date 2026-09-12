@@ -134,6 +134,13 @@ function snapLoad(v) {
   return specText(v);
 }
 
+function snapWasherType(v) {
+  const t = String(v).toLowerCase().replace(/ё/g, 'е');
+  if (/полуавтомат/.test(t)) return 'полуавтоматическая';
+  if (/автомат/.test(t)) return 'автоматическая';
+  return specText(v);
+}
+
 function formatDimensions(v) {
   if (v == null || typeof v !== 'object' || Array.isArray(v)) return null;
   const w = v.width ?? v.w;
@@ -158,6 +165,7 @@ function specFromAttr(raw, attr) {
   if (attr?.code === 'install') return snapInstall(v);
   if (attr?.code === 'control_type') return snapControl(v);
   if (attr?.code === 'load_type') return snapLoad(v);
+  if (attr?.code === 'washer_type') return snapWasherType(v);
   if (attr?.code === 'color') return specText(String(v).split(/\s*\/\s*/)[0]);
   return specText(v);
 }

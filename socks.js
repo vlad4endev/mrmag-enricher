@@ -1136,27 +1136,30 @@ export async function probeProxy(targetUrl = 'https://openrouter.ai') {
       runtime.reachable = false;
       runtime.lastError = e.message;
       steps.push({ id: 'proxy_tcp', ok: false, title: `TCP до ${mode} ${proxyHost}:${proxyPort}`, error: e.message, ms: Date.now() - t0 });
-      const tunnelHint = needsDockerHostFallback(proxyHost)
+      const tunnelHint = needsDockerHostFallback(proxyHost) || proxyHost === 'proxy'
         ? [
-          'Контейнер не видит порт 11080 на хосте.',
+          'Не достучались до локального прокси в Docker.',
           '',
-          '1) На сервере: docker compose up -d proxy-bridge',
-          '   (мост: 0.0.0.0:11080 → 127.0.0.1:11079)',
-          '2) На Mac (окно не закрывать):',
-          '   ssh -N -R 127.0.0.1:11079:IP_ПРОКСИ:ПОРТ skyputh@ЭТОТ_СЕРВЕР',
-          '   или: ./scripts/mac-proxy-tunnel.sh skyputh@ЭТОТ_СЕРВЕР',
-          '3) ss -lntp | grep -E "11079|11080" — оба порта LISTEN',
-          '4) В «Сеть»: http://USER:PASS@host.docker.internal:11080',
+          'VLESS (рекомендуется):',
+          '1) В .env на сервере: VLESS_LINK=vless://UUID@host:port?…',
+          '2) docker compose up -d --build vless-proxy',
+          '3) docker logs enricher-vless — должен быть «Xray → …», не «жду ссылку»',
+          '4) В «Сеть»: http://proxy:7890   или   socks5://proxy:1080',
+          '',
+          'SSH-туннель (запасной):',
+          '  docker compose --profile ssh-tunnel up -d proxy-bridge',
+          '  на Mac: ssh -N -R 127.0.0.1:11079:IP:PORT skyputh@сервер',
+          '  в «Сеть»: http://USER:PASS@host.docker.internal:11080',
         ].join('\n')
         : [
           'С этого VPS прямой TCP до прокси не проходит (фильтр датацентра).',
           '',
-          'Не указывайте IP прокси напрямую в «Сеть».',
-          '1) docker compose up -d proxy-bridge',
-          '2) На Mac: ssh -N -R 127.0.0.1:11079:' + `${proxyHost}:${proxyPort}` + ' skyputh@ЭТОТ_СЕРВЕР',
-          '3) В «Сеть» (логин/пароль те же):',
-          '   http://USER:PASS@host.docker.internal:11080',
-          'Сохранить → Проверить.',
+          'Не указывайте внешний IP прокси в «Сеть».',
+          'Поднимите VLESS-клиент в той же Docker-сети:',
+          '1) VLESS_LINK=vless://… в .env',
+          '2) docker compose up -d --build',
+          '3) В «Сеть»: http://proxy:7890',
+          `Ваш текущий хост (${proxyHost}:${proxyPort}) с VPS часто недоступен — его должен видеть VLESS-сервер, не enricher.`,
         ].join('\n');
       return {
         ok: false,

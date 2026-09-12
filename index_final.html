@@ -1790,7 +1790,7 @@ input[type=range]::-moz-range-thumb{
           <div class="set-row" style="margin-top:10px"><label for="setProxyUrl">Ссылка прокси <span id="setProxyUrlHint" class="set-badge off">не задана</span></label>
             <input type="text" id="setProxyUrl" name="egress-proxy-url" data-secret="1" placeholder="http://user:pass@host.docker.internal:11080" autocomplete="off" spellcheck="false" autocapitalize="off" data-lpignore="true" data-1p-ignore="true" style="font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px">
           </div>
-          <div class="hint" style="margin-top:8px">С VPS до внешнего прокси часто нет TCP. Схема: на сервере <code>proxy-bridge</code>, с Mac <code>ssh -N -R 127.0.0.1:11079:IP:PORT user@сервер</code>, в поле — <code>http://user:pass@host.docker.internal:11080</code> (не IP прокси напрямую). Затем Сохранить → Проверить.</div>
+          <div class="hint" style="margin-top:8px">Рекомендуется VLESS в Docker: в <code>.env</code> задайте <code>VLESS_LINK=vless://…</code>, <code>docker compose up -d</code>, сюда — <code>http://proxy:7890</code> или <code>socks5://proxy:1080</code> (имя сервиса в той же сети). Прямой IP прокси с VPS часто недоступен. Альтернатива: <code>tg://socks?…</code> / HTTP или SSH-туннель (<code>--profile ssh-tunnel</code>). Сохранить → Проверить.</div>
           <input type="hidden" id="setProxyBridge" value="18080">
           <div class="set-actions" style="margin-top:12px">
             <button type="button" class="sbtn ghost" id="proxyProbeBtn" onclick="runProxyProbe()">Проверить прокси</button>

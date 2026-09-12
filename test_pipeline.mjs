@@ -1,4 +1,7 @@
-import { loadConfig, loadDictionary, loadProducts, attrsWithCoverage, loadCategories } from './pipeline/dict.js';
+import {
+  loadConfig, loadDictionary, loadProducts, attrsWithCoverage, loadCategories,
+  bootstrapDictionariesDir,
+} from './pipeline/dict.js';
 import { normalizeProduct, formatCounts } from './pipeline/normalize.js';
 import { bucketLabel, buildFilters, facetKind } from './pipeline/facets.js';
 import { renderCard, annotationRows, MIN_ANNOTATION_ROWS, verifyDescription } from './pipeline/generate.js';
@@ -1562,6 +1565,33 @@ console.log('golden tests passed');
   }
 
   console.log('ok P0 export path / facets / material / width / claims / dedup / dict-fail');
+}
+
+{
+  // Docker-том со старым attributes_*.json: bootstrap дописывает новые code, не затирая UI.
+  const prev = process.env.DICTIONARIES_DIR;
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'dict-merge-'));
+  const vol = path.join(tmp, 'dictionaries');
+  fs.mkdirSync(vol);
+  try {
+    const attrs = JSON.parse(fs.readFileSync(path.join('dictionaries', 'attributes_467.json'), 'utf8'))
+      .filter(a => a.code !== 'washer_type');
+    fs.writeFileSync(path.join(vol, 'attributes_467.json'), `${JSON.stringify(attrs, null, 2)}\n`);
+    const fspec = JSON.parse(fs.readFileSync(path.join('dictionaries', 'filters_spec_467.json'), 'utf8'));
+    fspec.filters = (fspec.filters || []).filter(f => f.code !== 'washer_type');
+    fs.writeFileSync(path.join(vol, 'filters_spec_467.json'), `${JSON.stringify(fspec, null, 2)}\n`);
+    process.env.DICTIONARIES_DIR = vol;
+    bootstrapDictionariesDir('.');
+    const mergedAttrs = JSON.parse(fs.readFileSync(path.join(vol, 'attributes_467.json'), 'utf8'));
+    assert.ok(mergedAttrs.some(a => a.code === 'washer_type'), 'attributes: дописан washer_type');
+    const mergedFs = JSON.parse(fs.readFileSync(path.join(vol, 'filters_spec_467.json'), 'utf8'));
+    assert.ok(mergedFs.filters.some(f => f.code === 'washer_type'), 'filters_spec: дописан washer_type');
+  } finally {
+    if (prev === undefined) delete process.env.DICTIONARIES_DIR;
+    else process.env.DICTIONARIES_DIR = prev;
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+  console.log('ok bootstrapDictionariesDir merges missing codes');
 }
 
 {

@@ -61,8 +61,61 @@ export function bundledDictionariesDir(root) {
 }
 
 /**
+ * Дописать в том недостающие записи из образа: правки UI на томе не трогаем,
+ * но новые code/ключи (например washer_type) всё же появляются после деплоя.
+ */
+function mergeMissingDictEntries(name, bundledPath, volumePath) {
+  let from;
+  let to;
+  try {
+    from = JSON.parse(fs.readFileSync(bundledPath, 'utf-8'));
+    to = JSON.parse(fs.readFileSync(volumePath, 'utf-8'));
+  } catch {
+    return false;
+  }
+  let changed = false;
+  if (/^attributes_\d+\.json$/i.test(name) && Array.isArray(from) && Array.isArray(to)) {
+    const have = new Set(to.map(a => a?.code).filter(Boolean));
+    for (const attr of from) {
+      if (attr?.code && !have.has(attr.code)) {
+        to.push(attr);
+        have.add(attr.code);
+        changed = true;
+      }
+    }
+  } else if (/^filters_spec_\d+\.json$/i.test(name)
+    && from && typeof from === 'object' && to && typeof to === 'object'
+    && Array.isArray(from.filters) && Array.isArray(to.filters)) {
+    const have = new Set(to.filters.map(f => f?.code).filter(Boolean));
+    for (const facet of from.filters) {
+      if (facet?.code && !have.has(facet.code)) {
+        to.filters.push(facet);
+        have.add(facet.code);
+        changed = true;
+      }
+    }
+  } else if (/^values_\d+\.json$/i.test(name)
+    && from && typeof from === 'object' && to && typeof to === 'object'
+    && !Array.isArray(from) && !Array.isArray(to)) {
+    for (const [key, val] of Object.entries(from)) {
+      if (key === 'category_id') continue;
+      if (to[key] == null && val != null) {
+        to[key] = val;
+        changed = true;
+      }
+    }
+  }
+  if (!changed) return false;
+  const tmp = `${volumePath}.${process.pid}.tmp`;
+  fs.writeFileSync(tmp, `${JSON.stringify(to, null, 2)}\n`, 'utf-8');
+  fs.renameSync(tmp, volumePath);
+  return true;
+}
+
+/**
  * Первый запуск в контейнере: каталог на томе + копия attributes_*.json
  * из образа, если файла ещё нет (правки с UI на томе не затираем).
+ * Существующие файлы: дописываем только отсутствующие code/ключи из образа.
  */
 export function bootstrapDictionariesDir(root) {
   const dest = dictionariesDir(root);
@@ -83,9 +136,18 @@ export function bootstrapDictionariesDir(root) {
   }
   for (const name of fs.readdirSync(bundled)) {
     if (!/^(attributes|benchmarks|filters_spec|values)_\d+\.json$/i.test(name)) continue;
+    const from = path.join(bundled, name);
     const to = path.join(dest, name);
-    if (fs.existsSync(to)) continue;
-    fs.copyFileSync(path.join(bundled, name), to);
+    if (!fs.existsSync(to)) {
+      fs.copyFileSync(from, to);
+      continue;
+    }
+    if (/^benchmarks_/i.test(name)) continue;
+    try {
+      mergeMissingDictEntries(name, from, to);
+    } catch {
+      // том мог быть битым JSON — не роняем старт сервера
+    }
   }
   return dest;
 }

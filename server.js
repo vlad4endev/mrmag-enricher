@@ -146,6 +146,17 @@ bootstrapDumpsDir(ROOT);
 const MODELS_TTL = Number(process.env.MODELS_TTL_MS || 5 * 60_000);
 let modelsCache = { at: 0, list: null, errors: [] };
 let modelsInflight = null;
+let modelsGen = 0;
+
+/** Пока openrouter.ai не отвечает (таймаут / Cloudflare) — не оставляем шаг модели пустым. */
+const OPENROUTER_FALLBACK = [
+  { id: 'deepseek/deepseek-chat', name: 'DeepSeek Chat' },
+  { id: 'deepseek/deepseek-v3.2', name: 'DeepSeek V3.2' },
+  { id: 'anthropic/claude-sonnet-4', name: 'Claude Sonnet 4' },
+  { id: 'openai/gpt-4o-mini', name: 'GPT-4o Mini' },
+  { id: 'google/gemini-2.0-flash-001', name: 'Gemini 2.0 Flash' },
+  { id: 'qwen/qwen-2.5-72b-instruct', name: 'Qwen 2.5 72B' },
+];
 
 function tagModels(raw, p) {
   return (raw || []).map(m => ({
@@ -164,6 +175,24 @@ function listedModels(p) {
     name: labels[id] || id,
     pricing: null,
   })), p);
+}
+
+function isOpenRouterProvider(p) {
+  return p?.id === 'openrouter' || /openrouter\.ai/i.test(p?.base_url || '');
+}
+
+/** Статический запас, если /models недоступен. */
+function seedModels(p) {
+  const listed = listedModels(p);
+  if (listed.length) return listed;
+  if (isOpenRouterProvider(p)) return tagModels(OPENROUTER_FALLBACK, p);
+  return [];
+}
+
+function invalidateModelsCache() {
+  modelsGen += 1;
+  modelsCache = { at: 0, list: null, errors: [] };
+  modelsInflight = null;
 }
 
 function dedupeModels(list) {
@@ -221,38 +250,51 @@ async function models() {
   const enabled = settings.providers.filter(p => p.enabled);
   if (!enabled.length) throw new Error('нет включённых провайдеров ИИ');
   const defaultId = (enabled.find(p => p.default) || enabled[0]).id;
-  const staticList = sortModels(dedupeModels(enabled.flatMap(listedModels)), defaultId);
+  // Сразу отдаём модели из карточек + запас OpenRouter — не ждём таймаут каталога.
+  const seedList = sortModels(dedupeModels(enabled.flatMap(seedModels)), defaultId);
+  const gen = modelsGen;
 
   const loadRemote = async () => {
     const errors = [];
     const chunks = await Promise.all(enabled.map(async p => {
       const listed = listedModels(p);
-      // OpenRouter без своего списка не должен на 20 с блокировать DeepSeek.
-      const timeoutMs = listed.length ? 2500 : (p.default ? 10_000 : 4000);
+      // OpenRouter без своего списка не должен надолго блокировать DeepSeek/Yandex.
+      const timeoutMs = listed.length ? 2500 : (isOpenRouterProvider(p) ? 4000 : (p.default ? 6000 : 4000));
       try { return await fetchProviderModels(p, { timeoutMs, settings }); }
       catch (e) {
         errors.push({ provider: p.id, name: p.name, error: e.message });
-        return listed;
+        return seedModels(p);
       }
     }));
+    if (gen !== modelsGen) return modelsCache.list || seedList;
     const list = sortModels(dedupeModels(chunks.flat()), defaultId);
-    if (!list.length) throw new Error(errors[0]?.error || 'ни один провайдер не отдал модели');
-    modelsCache = { at: Date.now(), list, errors };
-    return list;
+    const out = list.length ? list : seedList;
+    modelsCache = { at: Date.now(), list: out, errors };
+    return out;
   };
 
-  // Карточка DeepSeek уже знает id моделей — отдаём их сразу, каталог OpenRouter
-  // догоняет кэш, если ответит.
-  if (staticList.length) {
-    modelsCache = { at: Date.now(), list: staticList, errors: [] };
+  // Карточки / запас уже есть — отвечаем сразу, каталог OpenRouter догоняет кэш.
+  if (seedList.length) {
+    modelsCache = { at: Date.now(), list: seedList, errors: [] };
     if (!modelsInflight) {
-      modelsInflight = loadRemote().catch(() => staticList).finally(() => { modelsInflight = null; });
+      modelsInflight = loadRemote()
+        .catch(e => {
+          if (gen === modelsGen) {
+            modelsCache = {
+              at: Date.now(),
+              list: seedList,
+              errors: [{ provider: defaultId, name: enabled.find(p => p.id === defaultId)?.name || defaultId, error: e.message }],
+            };
+          }
+          return seedList;
+        })
+        .finally(() => { if (gen === modelsGen) modelsInflight = null; });
     }
-    return staticList;
+    return seedList;
   }
 
   if (!modelsInflight) {
-    modelsInflight = loadRemote().finally(() => { modelsInflight = null; });
+    modelsInflight = loadRemote().finally(() => { if (gen === modelsGen) modelsInflight = null; });
   }
   return modelsInflight;
 }
@@ -878,7 +920,7 @@ async function apiSettingsPut(req, res) {
   try {
     const next = applySettingsPatch(loadSettings(ROOT), patch);
     saveSettings(next, ROOT);
-    modelsCache = { at: 0, list: null, errors: [] };
+    invalidateModelsCache();
     const settings = loadSettings(ROOT);
     json(res, 200, {
       settings: publicSettings(settings),

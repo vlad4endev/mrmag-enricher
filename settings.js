@@ -494,10 +494,11 @@ function normalizeProviders(list, prev = []) {
     const firstOn = out.find(p => p.enabled) || out[0];
     firstOn.default = true;
   }
-  let seenDefault = false;
-  for (const p of out) {
-    if (p.default && seenDefault) p.default = false;
-    else if (p.default) seenDefault = true;
+  // Если отмечено несколько — оставляем последний (как в UI «по умолчанию»).
+  let lastDefault = -1;
+  for (let i = 0; i < out.length; i++) if (out[i].default) lastDefault = i;
+  if (lastDefault >= 0) {
+    for (let i = 0; i < out.length; i++) out[i].default = i === lastDefault;
   }
   return out;
 }

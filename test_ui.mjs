@@ -502,6 +502,28 @@ t('превью списка не прячет модели других про�
   assert.ok(prev.some(m => m.provider === 'yandex'), 'Yandex должен быть в превью');
   assert.ok(prev.length <= 60);
 });
+await tAsync('таймаут OpenRouter не блокирует список, если в настройках есть модели', async () => {
+  st.selModel = null;
+  st.allModels = [];
+  api.renderSettings({
+    settings: {
+      providers: [
+        { id: 'openrouter', name: 'OpenRouter', enabled: true, default: true, models: [] },
+        { id: 'deepseek', name: 'DeepSeek', enabled: true, default: false, models: ['deepseek-v4-flash', 'deepseek-v4-pro'] },
+      ],
+      search: { enabled: true, tries: 3, gap_ms: 0, timeout_ms: 20000, query_suffix: '', skip_hosts: [], search_url: '', fallback_engines: [], engines: [], duckduckgo: { enabled: false } },
+      conditions: { mismatch_policy: 'flag', min_source_chars: 100, min_attrs: 5, facet_min_coverage: 70, target_coverage: 90, fuzzy_min_score: 0.93 },
+      model: { name: '', prompt_version: 'dict-v1' },
+    },
+    presets: [],
+    overrides: [],
+  });
+  globalThis.fetch = () => reply({ error: 'не достучались до openrouter.ai — таймаут' }, false, 502);
+  await api.reloadModels();
+  assert.ok(st.allModels.some(m => m.id === 'deepseek-v4-flash'), 'модели DeepSeek из карточки остаются');
+  assert.ok(st.selModel, 'модель выбирается автоматически');
+  assert.doesNotMatch(G('step1').textContent, /Справочник моделей недоступен/);
+});
 t('собирает условия с формы в PATCH', () => {
   G('setMismatch').value = 'strict';
   G('setMinAttrs').value = '7';

@@ -4613,6 +4613,7 @@ function applyDefaultProviderModels(){
 /** Полная перезагрузка каталога с сервера (после сохранения провайдеров). */
 async function reloadModels(){
   setSt('ld','Загружаем модели...');
+  stepError(1,'');
   try{
     const data=await apiJson('/api/models');
     if(typeof data.rub_per_usd==='number'&&data.rub_per_usd>0){
@@ -4624,19 +4625,24 @@ async function reloadModels(){
     allModels=orderModels(onlyEnabledModels(mergeModels(data.data, modelsFromSettings())));
     setSt('ok',`${allModels.length} моделей`);
     renderModelList(previewModels(allModels));
-    const er=(data.errors||[]).find(e=>e.provider===defaultProviderId());
-    if(er) stepError(1, `${er.name}: ${er.error}`);
+    const er=(data.errors||[]).find(e=>e.provider===defaultProviderId())
+      ||(data.errors||[])[0];
+    // Каталог OpenRouter часто недоступен из РФ — это не стоп: модели из карточек / запас уже в списке.
+    if(er){
+      if(allModels.length) setSt('ok',`${allModels.length} моделей · ${er.name}: ${er.error}`);
+      else stepError(1, `${er.name}: ${er.error}`);
+    }
   }catch(e){
     allModels=orderModels(modelsFromSettings());
     if(allModels.length){
-      setSt('ok',`${allModels.length} моделей`);
+      setSt('ok',`${allModels.length} моделей · каталог временно недоступен`);
       renderModelList(previewModels(allModels));
     }else{
-      setSt('er','Список моделей не загружен');
-      setP('mdrop',`<div class="mi-empty">${esc(e.message)}<br>Модель можно ввести вручную: ${esc(catalogHint())}</div>`);
+      setSt('er','Каталог моделей недоступен');
+      setP('mdrop',`<div class="mi-empty">${esc(e.message)}<br>Введите id вручную, например ${esc(catalogHint())}</div>`);
       document.getElementById('mdrop').classList.add('open');
       document.getElementById('msearch').classList.add('open');
-      stepError(1,`Справочник моделей недоступен: ${e.message}. Работать можно — введите id модели вручную в поиске выше.`);
+      stepError(1,`Каталог недоступен (${e.message}). Можно ввести id модели вручную в поиске выше.`);
     }
   }
   const def=defaultProviderId();

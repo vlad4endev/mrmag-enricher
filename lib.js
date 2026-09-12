@@ -25,6 +25,7 @@
 import { nameKeyTokens } from './pipeline/identity.js';
 import { tryLoadDictSchema, extractFactsFromDictionary, loadConfigSafe, CRAWL_SLUGS, specDest, expectedDictCatId, resolveCatId, dictIdFromText, isMustHaveDict, formatFilterRoleLines } from './pipeline/schema.js';
 import { alignCardTextsToSpecs } from './pipeline/prose_align.js';
+import { alignEnumSurfaces } from './pipeline/enum_align.js';
 import { matchKey } from './pipeline/match.js';
 import { normalizeValue, aliasValue, enumValuesEqual, isGluedFactDump, displayEnum, valueFold, hasStrictEnum } from './pipeline/types.js';
 import { optionalFilterAttrs, requiredFilterAttrs } from './pipeline/required_filters.js';
@@ -1880,6 +1881,59 @@ export function normalizeResponse(data, sourceText = '', schemaKey, attributes =
   description = aligned.description;
   bullets = aligned.bullets;
 
+  // Enum-claim в description/meta ↔ specs (установка, тип загрузки, конструкция…).
+  let meta_out = meta_keywords;
+  let enum_fixes = [];
+  if (schema.dict) {
+    const attrs = {};
+    const provenance = {};
+    for (const a of schema.dict.attrs || []) {
+      if (a.tier === 'X') continue;
+      const dest = specDest(a);
+      const key = typeof dest === 'object' ? dest.key : dest;
+      const v = specs[key];
+      attrs[a.code] = v == null || v === '' ? null : v;
+      if (attrs[a.code] != null) {
+        provenance[a.code] = { level: 'S0', raw: String(attrs[a.code]), how: 'from_specs' };
+      }
+    }
+    const mini = {
+      attrs,
+      provenance,
+      annotation: product?.annotation || '',
+      description: sourceText || description,
+    };
+    const card = {
+      description,
+      short_description,
+      bullets,
+      meta_keywords: meta_out,
+    };
+    const enumAligned = alignEnumSurfaces(mini, schema.dict, {
+      enriched: card,
+      autoFix: true,
+    });
+    enum_fixes = enumAligned.enum_fixes || [];
+    description = card.description;
+    short_description = card.short_description;
+    bullets = card.bullets;
+    meta_out = card.meta_keywords || meta_out;
+    // Обратно в specs — чтобы filters потом совпали с описанием.
+    for (const a of schema.dict.attrs || []) {
+      if (a.tier === 'X' || mini.attrs[a.code] == null) continue;
+      const dest = specDest(a);
+      const key = typeof dest === 'object' ? dest.key : dest;
+      if (!key || !(key in specs)) continue;
+      const next = mini.attrs[a.code];
+      if (next != null && specs[key] != null
+        && valueFold(String(specs[key])) !== valueFold(String(next))) {
+        specs[key] = typeof next === 'string' ? (displayEnum(next) || next) : next;
+      } else if (specs[key] == null && next != null) {
+        specs[key] = typeof next === 'string' ? (displayEnum(next) || next) : next;
+      }
+    }
+  }
+
   // Регистр strong подтягиваем к (уже выровненному) description; фразы вне текста отбрасываем.
   const strong = arr(data.strong)
     .map(s => matchLiteral(description, s))
@@ -1896,12 +1950,12 @@ export function normalizeResponse(data, sourceText = '', schemaKey, attributes =
     description,
     bullets,
     strong,
-    meta_keywords,
+    meta_keywords: meta_out,
     web_info,
     source_facts: facts,
     source_conflicts: conflicts,
     filled_from_text,
-    prose_fixes: aligned.prose_fixes,
+    prose_fixes: [...aligned.prose_fixes, ...enum_fixes],
     warnings,
   });
 }

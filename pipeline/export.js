@@ -215,9 +215,14 @@ export function serializeProduct(rec, dict, debugFacets, opts = {}) {
       rec.validation_issues = [...(rec.validation_issues || []), ...filterIssues];
     }
   }
-  const meta = enr && typeof enr.meta_keywords === 'string' && enr.meta_keywords.trim()
+  const metaStale = Boolean(enr?._meta_keywords_stale);
+  const meta = (!metaStale && enr && typeof enr.meta_keywords === 'string' && enr.meta_keywords.trim())
     ? enr.meta_keywords.trim()
     : metaKeywords(rec, dict, opts);
+  if (enr && metaStale) {
+    enr.meta_keywords = meta;
+    delete enr._meta_keywords_stale;
+  }
   const descSrc = enr?.description != null
     ? stripHallucinationClaims(enr.description)
     : null;

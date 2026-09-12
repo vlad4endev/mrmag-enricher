@@ -2871,3 +2871,70 @@ console.log('golden tests passed');
   }
 }
 
+{
+  const { findEnumClaimsInText, alignEnumSurfaces } = await import('./pipeline/enum_align.js');
+  const { finalizeRecord } = await import('./pipeline/quality_validate.js');
+  const { normalizeProduct } = await import('./pipeline/normalize.js');
+  const { assignFilterValues, buildFilters } = await import('./pipeline/facets.js');
+  const { serializeProduct } = await import('./pipeline/export.js');
+  const { valueFold } = await import('./pipeline/types.js');
+
+  const install = d467.byCode.get('install');
+  assert.ok(findEnumClaimsInText('отдельностоящая модель', install).some(h => /отдельн/i.test(h.canon)));
+  assert.ok(findEnumClaimsInText('Установка: встраиваемая', install).some(h => h.labeled && /встраив/i.test(h.canon)));
+
+  const src = {
+    id: 44772,
+    name: 'Стиральная машина Indesit IWSB 5085',
+    description: 'Стиральная машина Indesit — отдельностоящая модель с загрузкой 5 кг.',
+    annotation: [
+      'Установка - встраиваемая',
+      'Максимальная загрузка - 5 кг',
+      'Скорость отжима - 1000 об/мин',
+      'Количество программ - 16',
+      'Класс энергопотребления - A',
+      'Тип загрузки - Фронтальная',
+    ].join('\n'),
+  };
+  const rec = normalizeProduct(src, d467, config);
+  const enriched = {
+    description: 'Стиральная машина Indesit — <strong>отдельностоящая модель</strong>.',
+    meta_keywords: 'стиральная машина встраиваемая, стиральная машина Indesit',
+    bullets: ['Установка: встраиваемая'],
+  };
+  const fin = finalizeRecord(rec, d467, { enriched });
+  assert.ok(/отдельн/i.test(String(rec.attrs.install)), rec.attrs.install);
+  assert.match(enriched.description, /отдельностоящ/i);
+  assert.match(enriched.meta_keywords, /отдельностоящ/i);
+  assert.match(enriched.bullets[0], /отдельностоящ/i);
+  assert.ok(fin.issues.some(i => i.kind === 'enum_surface_mismatch'));
+
+  const built = buildFilters([rec], d467, config);
+  const out = serializeProduct(rec, d467, built.debug, { enriched, skipFinalize: true, config });
+  const filt = out.filters['Установка']?.[0] || '';
+  assert.ok(/отдельн/i.test(filt), filt);
+  assert.match(out.annotation_html, /Установка:\s*отдельностоящ/i);
+  assert.ok(!/встраиваем/i.test(out.annotation_html), out.annotation_html);
+  assert.ok(!/встраиваем/i.test(out.meta_keywords), out.meta_keywords);
+  assert.equal(valueFold(filt).includes('отдельн') || /отдельн/.test(valueFold(filt)), true);
+
+  // Холодильник: No Frost в описании vs капельная в attrs — описание побеждает при слабом provenance.
+  const cool = d523.byCode.get('cooling');
+  if (cool) {
+    const fridge = {
+      id: 1,
+      name: 'Холодильник test',
+      attrs: Object.fromEntries(d523.attrs.filter(a => a.tier !== 'X').map(a => [a.code, null])),
+      provenance: {},
+      annotation: 'Система охлаждения: капельная',
+    };
+    fridge.attrs.cooling = 'Капельная';
+    fridge.provenance.cooling = { level: 'model', how: 'model', raw: 'Капельная' };
+    const enr = { description: 'Холодильник с системой No Frost.' };
+    alignEnumSurfaces(fridge, d523, { enriched: enr, autoFix: true });
+    assert.ok(/no\s*frost|автомат/i.test(String(fridge.attrs.cooling)), fridge.attrs.cooling);
+  }
+
+  console.log('ok enum_align description↔filters (install / cooling)');
+}
+

@@ -341,12 +341,13 @@ export function normalizeProduct(product, dict, config) {
 }
 
 function factBlob(rec, product) {
-  const ann = String(rec.annotation || '')
+  const strip = (s) => String(s || '')
     .replace(/<[^>]+>/g, ' ')
     .replace(/&nbsp;/gi, ' ');
   return [
     product?.name || rec.name,
-    ann,
+    strip(rec.annotation || product?.annotation),
+    strip(rec.description || product?.description),
     rec.attrs.fridge_type,
     rec.provenance?.fridge_type?.raw,
   ].filter(Boolean).join(' ').toLowerCase().replace(/ё/g, 'е');
@@ -417,8 +418,28 @@ function deriveLinkedAttrs(rec, dict, product) {
 
   if (dict.byCode.has('install') && rec.attrs.install == null) {
     const builtIn = /встраиваем|встроенн/.test(blob);
-    const label = builtIn ? 'Встраиваемая' : 'Отдельностоящая';
-    setDerived(rec, dict, 'install', label, 'derived_install', 'S0');
+    const freestanding = /отдельн(?:о\s*)?стоя|напольн|свободностоя/.test(blob);
+    // Явная строка «Установка: …» важнее свободных упоминаний в SEO/meta.
+    const labeled = blob.match(/установк[а-яё]*\s*[-–—:]\s*([^\n,;<]+)/i);
+    let label = null;
+    if (labeled) {
+      const raw = labeled[1];
+      if (/встраиваем|встроенн/.test(raw)) label = 'Встраиваемая';
+      else if (/отдельн|напольн|свободностоя/.test(raw)) label = 'Отдельностоящая';
+      else if (/встраиван/.test(raw)) label = 'С возможностью встраивания';
+    }
+    if (!label) {
+      if (builtIn && freestanding) {
+        // Конфликт поверхностей — не угадываем; enum_align разберёт позже.
+        label = null;
+      } else if (builtIn) {
+        label = 'Встраиваемая';
+      } else {
+        // Стиралки без явного «встраиваемая» — отдельностоящие.
+        label = 'Отдельностоящая';
+      }
+    }
+    if (label) setDerived(rec, dict, 'install', label, 'derived_install', 'S0');
   }
 
   if (dict.byCode.has('load_type') && rec.attrs.load_type == null && !/сушильн/.test(blob)) {

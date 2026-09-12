@@ -8,9 +8,10 @@
  */
 
 import { facetKind, bucketLabel, matchBucket, toIntEnum, coerceFacetNumber } from './facets.js';
-import { annotationText, formatAttrValue } from './types.js';
+import { annotationText, formatAttrValue, aliasValue, valueFold } from './types.js';
 import { annotationRows, verifyDescription } from './generate.js';
 import { SOURCE_RANK } from './normalize.js';
+import { alignEnumSurfaces } from './enum_align.js';
 
 const NEGATIVE_RE = /^(?:нет|отсутствует|не\s+поддерживается|не\s+предусмотрено|не\s+имеется)$/i;
 export const HALLUCINATION_RE = new RegExp(
@@ -153,7 +154,7 @@ export function checkFilterConsistency(rec, dict, assigned) {
           detail: `${name}: filter=${got}, expected=${expected}, exact=${n}`,
         });
       }
-    } else if (kind === 'enum' || (a.type === 'integer' && kind !== 'range')) {
+    } else if (kind === 'enum' || a.type === 'enum' || (a.type === 'integer' && kind !== 'range')) {
       // Дискретный атрибут: filter не должен быть бакетом «2-2.2».
       for (const v of (Array.isArray(filterVal) ? filterVal : [filterVal])) {
         if (/^\d+(?:\.\d+)?-\d/.test(String(v))) {
@@ -162,6 +163,20 @@ export function checkFilterConsistency(rec, dict, assigned) {
             kind: 'discrete_as_range',
             action: 'needs_review',
             detail: `${name}=${v}`,
+          });
+        }
+      }
+      // Enum: значение фильтра должно совпадать с attrs (канон / alias).
+      if (a.type === 'enum' || kind === 'enum') {
+        const got = Array.isArray(filterVal) ? filterVal[0] : filterVal;
+        const expectedCanon = aliasValue(a, exact) || String(exact);
+        const gotCanon = aliasValue(a, got) || String(got);
+        if (got != null && valueFold(expectedCanon) !== valueFold(gotCanon)) {
+          issues.push({
+            code: a.code,
+            kind: 'filter_mismatch',
+            action: 'needs_review',
+            detail: `${name}: filter=${got}, expected=${expectedCanon}, exact=${exact}`,
           });
         }
       }
@@ -317,6 +332,8 @@ export function qualityScore(rec, dict, issues = []) {
     || i.kind === 'discrete_as_range'
     || i.kind === 'annotation_bucketed'
     || i.kind === 'enum_not_in_dict'
+    || i.kind === 'enum_surface_mismatch'
+    || i.kind === 'enum_surface_ambiguous'
     || i.kind === 'width_install_mixed').length;
 
   const sources = {
@@ -360,10 +377,21 @@ export function finalizeRecord(rec, dict, { enriched = null, assigned = null } =
   const removed = stripUnconfirmedNegatives(rec, dict);
   for (const r of removed) actions.push(r);
 
+  // Сначала согласовать enum-поверхности (описание ↔ attrs ↔ фильтры),
+  // затем проверять факты — иначе annotation/filter ловят устаревшее значение.
+  const enr = enriched || rec._enriched || null;
+  const enumAligned = alignEnumSurfaces(rec, dict, {
+    enriched: enr,
+    assigned,
+    autoFix: true,
+  });
+  for (const a of enumAligned.actions) actions.push(a);
+
   const issues = [
+    ...enumAligned.issues,
     ...checkAnnotationFacts(rec, dict),
     ...checkFilterConsistency(rec, dict, assigned),
-    ...checkDescriptionClaims(enriched, rec, dict),
+    ...checkDescriptionClaims(enr, rec, dict),
     ...checkWidthSeparation(rec, dict),
   ];
 
@@ -422,6 +450,7 @@ export function finalizeRecord(rec, dict, { enriched = null, assigned = null } =
         || i.kind === 'number_not_in_attrs'
         || i.kind === 'discrete_as_range'
         || i.kind === 'width_install_mixed'
+        || i.kind === 'enum_surface_ambiguous'
         || i.kind === 'conflict'));
 
   if (needsReview) rec.needs_review = true;

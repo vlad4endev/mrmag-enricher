@@ -3979,6 +3979,17 @@ function renderProviderCards(){
   document.getElementById('setProvList').querySelectorAll('[data-del]').forEach(b=>
     b.addEventListener('click',()=>removeProvider(Number(b.dataset.del))));
   document.getElementById('setProvList').querySelectorAll('input[data-secret]').forEach(bindSecretField);
+  // «По умолчанию» — как radio: иначе первый в списке (часто OpenRouter) перебивает выбор.
+  document.getElementById('setProvList').querySelectorAll('input[data-pk="default"]').forEach(cb=>{
+    cb.addEventListener('change',()=>{
+      if(!cb.checked) return;
+      document.getElementById('setProvList').querySelectorAll('input[data-pk="default"]').forEach(o=>{
+        if(o!==cb) o.checked=false;
+      });
+      const en=cb.closest('.set-card')?.querySelector('input[data-pk="enabled"]');
+      if(en) en.checked=true;
+    });
+  });
 }
 
 function renderEngineCards(){
@@ -4083,9 +4094,11 @@ function readSettingsPatch(){
     if(p.api_key) out.api_key=p.api_key;
     return out;
   });
-  if(providers.filter(p=>p.default).length>1){
-    let first=true;
-    for(const p of providers){ if(p.default && !first) p.default=false; else if(p.default) first=false; }
+  // Если отмечено несколько — оставляем последний (тот, что пользователь выбрал позже).
+  const defIdxes=providers.map((p,i)=>p.default?i:-1).filter(i=>i>=0);
+  if(defIdxes.length>1){
+    const keep=defIdxes[defIdxes.length-1];
+    providers.forEach((p,i)=>{ p.default=i===keep; });
   }
   const engDom=collectKeyed('#setEngineList [data-ek]','ek');
   const engines=(engDom||setPayload?.settings?.search?.engines||[]).map((e,i)=>{
@@ -4200,7 +4213,7 @@ async function saveSettings(){
     renderSettings(saved);
     document.getElementById('setStatus').textContent='Сохранено. Новый прогон пойдёт с этими настройками.';
     loadParser();
-    applyDefaultProviderModels();
+    await reloadModels();
   }catch(e){
     document.getElementById('setStatus').textContent='Не сохранилось: '+e.message;
   }
@@ -4480,35 +4493,8 @@ function applyRate(){
 }
 
 async function init(){
-  setSt('ld','Загружаем модели...');
   try{ setPayload=await apiJson('/api/settings'); }catch{ /* шаг модели умеет жить без настроек */ }
-  try{
-    const data=await apiJson('/api/models');
-    if(typeof data.rub_per_usd==='number'&&data.rub_per_usd>0){
-      RUB=data.rub_per_usd;
-      RUB_DATE=data.rub_rate_date||'—';
-      applyRate();
-      calcUpdate();
-    }
-    allModels=orderModels(mergeModels(data.data, modelsFromSettings()));
-    setSt('ok',`${allModels.length} моделей`);
-    renderModelList(allModels.slice(0,60));
-    const er=(data.errors||[]).find(e=>e.provider===defaultProviderId());
-    if(er) stepError(1, `${er.name}: ${er.error}`);
-  }catch(e){
-    allModels=orderModels(modelsFromSettings());
-    if(allModels.length){
-      setSt('ok',`${allModels.length} моделей`);
-      renderModelList(allModels.slice(0,60));
-    }else{
-      setSt('er','Список моделей не загружен');
-      setP('mdrop',`<div class="mi-empty">${esc(e.message)}<br>Модель можно ввести вручную: ${esc(catalogHint())}</div>`);
-      document.getElementById('mdrop').classList.add('open');
-      document.getElementById('msearch').classList.add('open');
-      stepError(1,`Справочник моделей недоступен: ${e.message}. Работать можно — введите id модели вручную в поиске выше.`);
-    }
-  }
-  pickDefaultModel();
+  await reloadModels();
   await loadParser();
   await loadCategories();
   restoreResults();
@@ -4519,6 +4505,16 @@ async function init(){
 
 function defaultProviderId(){
   return (setPayload?.settings?.providers||[]).find(p=>p.default && p.enabled!==false)?.id||'';
+}
+
+function enabledProviderIds(d=setPayload){
+  return new Set((d?.settings?.providers||[]).filter(p=>p.enabled!==false).map(p=>p.id));
+}
+
+function onlyEnabledModels(list,d=setPayload){
+  const ids=enabledProviderIds(d);
+  if(!ids.size) return list||[];
+  return (list||[]).filter(m=>!m.provider || ids.has(m.provider));
 }
 
 function modelsFromSettings(d=setPayload){
@@ -4547,6 +4543,43 @@ function orderModels(list){
   });
 }
 
+/**
+ * Превью выпадающего списка: не обрезать чужих провайдеров за каталогом OpenRouter.
+ * Сначала по несколько моделей с каждого включённого, остаток — провайдеру по умолчанию.
+ */
+function previewModels(list, limit=80){
+  const src=list||[];
+  if(src.length<=limit) return src.slice();
+  const def=defaultProviderId();
+  const byProv=new Map();
+  for(const m of src){
+    const k=m.provider||'_';
+    if(!byProv.has(k)) byProv.set(k,[]);
+    byProv.get(k).push(m);
+  }
+  const keys=[...byProv.keys()].sort((a,b)=>(a===def?-1:b===def?1:0));
+  if(keys.length<=1) return src.slice(0,limit);
+  const minPer=Math.max(4, Math.min(12, Math.floor(limit/keys.length)));
+  const out=[];
+  const used=new Set();
+  const keyOf=m=>(m.provider||'')+'|'+(m.id||'');
+  for(const k of keys){
+    for(const m of byProv.get(k).slice(0,minPer)){
+      out.push(m); used.add(keyOf(m));
+    }
+  }
+  for(const k of keys){
+    if(out.length>=limit) break;
+    for(const m of byProv.get(k)){
+      if(out.length>=limit) break;
+      const id=keyOf(m);
+      if(used.has(id)) continue;
+      out.push(m); used.add(id);
+    }
+  }
+  return out;
+}
+
 function catalogHint(){
   const p=(setPayload?.settings?.providers||[]).find(x=>x.default && x.enabled!==false);
   return (p?.models&&p.models[0]) || 'deepseek-v4-flash';
@@ -4566,14 +4599,49 @@ function pickDefaultModel(){
 /** После смены провайдера по умолчанию список моделей должен совпасть с карточкой. */
 function applyDefaultProviderModels(){
   if(!setPayload) return;
-  allModels=orderModels(mergeModels(allModels, modelsFromSettings()));
+  allModels=orderModels(onlyEnabledModels(mergeModels(allModels, modelsFromSettings())));
   const def=defaultProviderId();
   if(def && selModel && selModel.provider && selModel.provider!==def) selModel=null;
   pickDefaultModel();
   if(allModels.length){
     setSt('ok',`${allModels.length} моделей`);
-    renderModelList(allModels.slice(0,60));
+    renderModelList(previewModels(allModels));
   }
+  syncSteps();
+}
+
+/** Полная перезагрузка каталога с сервера (после сохранения провайдеров). */
+async function reloadModels(){
+  setSt('ld','Загружаем модели...');
+  try{
+    const data=await apiJson('/api/models');
+    if(typeof data.rub_per_usd==='number'&&data.rub_per_usd>0){
+      RUB=data.rub_per_usd;
+      RUB_DATE=data.rub_rate_date||'—';
+      applyRate();
+      calcUpdate();
+    }
+    allModels=orderModels(onlyEnabledModels(mergeModels(data.data, modelsFromSettings())));
+    setSt('ok',`${allModels.length} моделей`);
+    renderModelList(previewModels(allModels));
+    const er=(data.errors||[]).find(e=>e.provider===defaultProviderId());
+    if(er) stepError(1, `${er.name}: ${er.error}`);
+  }catch(e){
+    allModels=orderModels(modelsFromSettings());
+    if(allModels.length){
+      setSt('ok',`${allModels.length} моделей`);
+      renderModelList(previewModels(allModels));
+    }else{
+      setSt('er','Список моделей не загружен');
+      setP('mdrop',`<div class="mi-empty">${esc(e.message)}<br>Модель можно ввести вручную: ${esc(catalogHint())}</div>`);
+      document.getElementById('mdrop').classList.add('open');
+      document.getElementById('msearch').classList.add('open');
+      stepError(1,`Справочник моделей недоступен: ${e.message}. Работать можно — введите id модели вручную в поиске выше.`);
+    }
+  }
+  const def=defaultProviderId();
+  if(def && selModel && selModel.provider && selModel.provider!==def) selModel=null;
+  pickDefaultModel();
   syncSteps();
 }
 
@@ -4591,8 +4659,10 @@ function closeDrop(){
 
 function filterModels(){
   const q=document.getElementById('msrch').value.toLowerCase().trim();
-  const list=q?allModels.filter(m=>(m.id+(m.name||'')+(m.provider_name||'')).toLowerCase().includes(q)):allModels.slice(0,60);
-  renderModelList(list.slice(0,80));
+  const list=q
+    ? allModels.filter(m=>(m.id+(m.name||'')+(m.provider_name||'')).toLowerCase().includes(q)).slice(0,80)
+    : previewModels(allModels);
+  renderModelList(list);
   document.getElementById('mdrop').classList.add('open');
 }
 

@@ -160,7 +160,7 @@ export const api={syncSteps,setCnt,setCntFree,applyCnt,applySource,setSource,pic
   showPage,setTab,renderSettings,addProvider,removeProvider,addEngine,readSettingsPatch,
   renderParserProbe,runParserProbe,
   renderExportTemplates,applyExportTemplate,shapeProductsFile,shapeFiltersFile,exportPack,
-  modelsFromSettings,pickDefaultModel,applyDefaultProviderModels,looksLikeModelId,catalogHint,
+  modelsFromSettings,pickDefaultModel,applyDefaultProviderModels,reloadModels,previewModels,looksLikeModelId,catalogHint,
   addDumpSection,openDumpDest,cancelDumpDest,dumpBodyWithName,matchDictCatalog,
   addPromptTemplate,selectPromptTab,onPromptScopeChange,onPromptSectionToggle,promptsForSave};
 export const st={get items(){return items},set items(v){items=v},
@@ -474,6 +474,33 @@ t('DeepSeek по умолчанию сразу стоит в шаге модел
   assert.strictEqual(st.selModel.provider, 'deepseek');
   assert.match(G('mselName').textContent, /DeepSeek/);
   assert.strictEqual(G('sub1').textContent, 'выбрана');
+});
+t('превью списка не прячет модели других провайдеров за OpenRouter', () => {
+  api.renderSettings({
+    settings: {
+      providers: [
+        { id: 'openrouter', name: 'OpenRouter', enabled: true, default: true, models: [] },
+        { id: 'deepseek', name: 'DeepSeek', enabled: true, default: false, models: ['deepseek-v4-flash'] },
+        { id: 'yandex', name: 'Yandex', enabled: true, default: false, models: ['yandexgpt/latest'] },
+      ],
+      search: { enabled: true, tries: 3, gap_ms: 0, timeout_ms: 20000, query_suffix: '', skip_hosts: [], search_url: '', fallback_engines: [], engines: [], duckduckgo: { enabled: false } },
+      conditions: { mismatch_policy: 'flag', min_source_chars: 100, min_attrs: 5, facet_min_coverage: 70, target_coverage: 90, fuzzy_min_score: 0.93 },
+      model: { name: '', prompt_version: 'dict-v1' },
+    },
+    presets: [],
+    overrides: [],
+  });
+  const huge = Array.from({ length: 200 }, (_, i) => ({
+    id: `vendor/model-${i}`, name: `Model ${i}`, provider: 'openrouter', provider_name: 'OpenRouter', pricing: null,
+  }));
+  huge.push(
+    { id: 'deepseek-v4-flash', name: 'deepseek-v4-flash', provider: 'deepseek', provider_name: 'DeepSeek', pricing: null },
+    { id: 'yandexgpt/latest', name: 'yandexgpt/latest', provider: 'yandex', provider_name: 'Yandex', pricing: null },
+  );
+  const prev = api.previewModels(huge, 60);
+  assert.ok(prev.some(m => m.provider === 'deepseek'), 'DeepSeek должен быть в превью');
+  assert.ok(prev.some(m => m.provider === 'yandex'), 'Yandex должен быть в превью');
+  assert.ok(prev.length <= 60);
 });
 t('собирает условия с формы в PATCH', () => {
   G('setMismatch').value = 'strict';

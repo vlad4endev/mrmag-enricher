@@ -464,10 +464,10 @@ textarea{
 }
 .ri-b{min-width:0;flex:1}
 .ri-n{
-  font-size:12px;color:var(--t2);line-height:1.4;overflow:hidden;
-  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;
+  font-size:12.5px;color:var(--t1);line-height:1.4;overflow:hidden;
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;font-weight:550;
 }
-.ri.on .ri-n{color:var(--t1);font-weight:550}
+.ri.on .ri-n{color:var(--t1);font-weight:650}
 .ri-m{font-size:10px;color:var(--t3);margin-top:3px}
 .mid-empty{
   margin:auto var(--gap-sm);padding:24px 14px;text-align:center;font-size:12px;color:var(--t3);
@@ -543,8 +543,8 @@ textarea{
   font-size:12.5px;width:100%;min-width:0;box-sizing:border-box;
 }
 .sp-k{
-  color:var(--t2);flex:0 1 38%;max-width:40%;min-width:0;
-  white-space:normal;overflow-wrap:break-word;line-height:1.35;
+  color:var(--t1);flex:0 1 38%;max-width:40%;min-width:0;
+  white-space:normal;overflow-wrap:break-word;line-height:1.35;font-weight:500;
 }
 .sp-d{
   flex:1 1 8px;min-width:8px;border-bottom:1px dotted var(--b2);
@@ -557,6 +557,16 @@ textarea{
 }
 /* Расхождение с источником помечено прямо у значения, а не только в блоке сверху */
 .sp.bad .sp-v{color:var(--amber);box-shadow:inset 0 -2px 0 var(--abd)}
+.sp.new .sp-v{color:var(--green);box-shadow:inset 0 -2px 0 var(--gbd)}
+.sp.chg .sp-v{color:var(--amber);box-shadow:inset 0 -2px 0 var(--abd)}
+.sp.match .sp-v{color:var(--t1)}
+.sp.new .sp-k::before,.sp.chg .sp-k::before,.sp.match .sp-k::before,.sp.bad .sp-k::before{
+  content:"";display:inline-block;width:6px;height:6px;border-radius:50%;
+  margin-right:6px;vertical-align:middle;transform:translateY(-1px);
+}
+.sp.new .sp-k::before{background:var(--green)}
+.sp.chg .sp-k::before,.sp.bad .sp-k::before{background:var(--amber)}
+.sp.match .sp-k::before{background:var(--b2)}
 
 /* Списки (синонимы, ключи) — блоками с подписью, без обрамления */
 .fgrid{display:flex;flex-direction:column;gap:16px}
@@ -584,16 +594,135 @@ textarea{
   margin:0 0 10px;display:flex;align-items:baseline;justify-content:space-between;gap:10px;
 }
 .parse-origin a{color:var(--ac)}
-.parse-origin i{font-family:var(--mono);letter-spacing:0;font-weight:400;font-style:normal;color:var(--t3)}
+.parse-origin i{font-family:var(--mono);letter-spacing:0;font-weight:400;font-style:normal;color:var(--t2)}
 .parse-file{color:var(--t2)}
 .parse-src{
   font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;
-  color:var(--t3);margin:4px 0 8px;
+  color:var(--t2);margin:4px 0 8px;
 }
 .parse-card .parse-specs{margin-bottom:14px}
 .parse-card .parse-block{margin-bottom:16px}
 .parse-card .parse-block:last-child{margin-bottom:0}
 .parse-card .parse-specs:last-child{margin-bottom:0}
+
+/* Дашборд парсинга / обогащения */
+.eboard{display:flex;flex-direction:column;gap:16px;margin:0 0 22px}
+.eboard-metrics{
+  display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;
+}
+.emetric{
+  display:flex;flex-direction:column;gap:4px;padding:10px 12px;
+  border:1px solid var(--b1);border-radius:var(--r2);background:var(--bg3);min-width:0;
+}
+.emetric.ok{border-color:var(--gbd);background:var(--gbg)}
+.emetric.warn{border-color:var(--abd);background:var(--abg)}
+.emetric.err{border-color:var(--rbd);background:var(--rbg)}
+.emetric-k{
+  font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--t2);line-height:1.2;
+}
+.emetric-v{
+  font-family:var(--mono);font-size:20px;font-weight:700;letter-spacing:-.03em;
+  color:var(--t1);line-height:1.15;font-variant-numeric:tabular-nums;
+}
+.emetric.ok .emetric-v{color:var(--green)}
+.emetric.warn .emetric-v{color:var(--amber)}
+.emetric.err .emetric-v{color:var(--red)}
+.emetric-s{font-size:11px;color:var(--t2);line-height:1.35;font-variant-numeric:tabular-nums}
+.eboard .pipe{margin:0}
+.eboard-sec{display:flex;flex-direction:column;gap:10px}
+.eboard-sec .spec-title{margin-bottom:0}
+.eboard-src{
+  border-left:3px solid var(--ac);padding:8px 0 8px 12px;margin:0 0 4px;
+  background:transparent;
+}
+.eboard-src.web{border-left-color:var(--amber)}
+.eboard-src-h{
+  display:flex;align-items:baseline;justify-content:space-between;gap:10px;
+  margin:0 0 8px;flex-wrap:wrap;
+}
+.eboard-src-h b{font-size:13px;font-weight:650;color:var(--t1)}
+.eboard-src-h .ebadge{margin-left:6px}
+.eboard-src-meta{
+  font-family:var(--mono);font-size:11px;color:var(--t2);display:flex;flex-wrap:wrap;gap:6px 10px;
+}
+.eboard-src-meta a{color:var(--ac);font-weight:600}
+.ebadge{
+  display:inline-flex;align-items:center;gap:4px;font-size:10px;font-weight:700;
+  padding:2px 7px;border-radius:var(--r3);border:1px solid var(--b1);
+  background:var(--bg3);color:var(--t2);letter-spacing:.02em;vertical-align:middle;
+}
+.ebadge.dump,.ebadge.card{border-color:var(--ac-b);background:var(--ac-w);color:var(--ac)}
+.ebadge.web{border-color:var(--abd);background:var(--abg);color:var(--amber)}
+.ebadge.where{font-weight:600;text-transform:none;letter-spacing:0}
+.eboard-pair{
+  display:grid;grid-template-columns:minmax(72px,auto) minmax(0,1fr) auto;
+  gap:8px 10px;align-items:baseline;padding:5px 0;border-bottom:1px dashed var(--b1);
+  font-size:12.5px;
+}
+.eboard-pair:last-child{border-bottom:none}
+.eboard-pair .ep-where{font-size:10px;font-weight:700;color:var(--t2);text-transform:uppercase;letter-spacing:.06em}
+.eboard-pair .ep-k{color:var(--t1);font-weight:550;min-width:0}
+.eboard-pair .ep-v{
+  font-family:var(--mono);font-weight:600;color:var(--t1);text-align:right;
+  overflow-wrap:break-word;font-variant-numeric:tabular-nums;
+}
+.eboard-diff{display:flex;flex-direction:column;gap:12px}
+.eboard-diff-g{display:flex;flex-direction:column;gap:4px}
+.eboard-diff-h{
+  font-size:11.5px;font-weight:650;color:var(--t1);display:flex;align-items:center;gap:8px;
+}
+.eboard-diff-h i{font-style:normal;font-family:var(--mono);color:var(--t2);font-weight:500}
+.eboard-diff-h.added{color:var(--green)}
+.eboard-diff-h.changed{color:var(--amber)}
+.eboard-diff-row{
+  display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;padding:4px 0;
+  font-size:12.5px;border-bottom:1px dashed var(--b1);align-items:baseline;
+}
+.eboard-diff-row:last-child{border-bottom:none}
+.eboard-diff-row .ed-k{color:var(--t1);font-weight:550}
+.eboard-diff-row .ed-v{font-family:var(--mono);font-weight:600;text-align:right;color:var(--t1)}
+.eboard-diff-row .ed-was{
+  font-family:var(--mono);font-size:11px;color:var(--t3);text-decoration:line-through;
+  text-align:right;grid-column:2;
+}
+.eboard-blocks{display:flex;flex-direction:column;gap:6px}
+.eblock{
+  display:grid;grid-template-columns:10px minmax(0,1fr) auto;gap:10px;align-items:center;
+  padding:8px 10px;border:1px solid var(--b1);border-radius:var(--r2);background:var(--bg3);
+  font-size:12.5px;
+}
+.eblock-dot{width:8px;height:8px;border-radius:50%;background:var(--b2)}
+.eblock.ok{border-color:var(--gbd);background:var(--gbg)}
+.eblock.ok .eblock-dot{background:var(--green)}
+.eblock.warn{border-color:var(--abd);background:var(--abg)}
+.eblock.warn .eblock-dot{background:var(--amber)}
+.eblock.err{border-color:var(--rbd);background:var(--rbg)}
+.eblock.err .eblock-dot{background:var(--red)}
+.eblock.pending .eblock-dot{background:var(--ac);box-shadow:0 0 0 3px var(--ac-w)}
+.eblock-n{font-weight:600;color:var(--t1)}
+.eblock-s{color:var(--t2);font-size:11.5px;margin-top:2px;line-height:1.35}
+.eblock-st{font-family:var(--mono);font-size:11px;font-weight:650;color:var(--t2)}
+.eblock.ok .eblock-st{color:var(--green)}
+.eblock.warn .eblock-st{color:var(--amber)}
+.eblock.err .eblock-st{color:var(--red)}
+.eblock.pending .eblock-st{color:var(--ac)}
+.eboard-empty{font-size:12.5px;color:var(--t2);line-height:1.45;padding:4px 0}
+.eboard-legend{
+  display:flex;flex-wrap:wrap;gap:10px 14px;font-size:11px;color:var(--t2);margin-top:2px;
+}
+.eboard-legend span{display:inline-flex;align-items:center;gap:5px}
+.eboard-legend i{
+  width:6px;height:6px;border-radius:50%;display:inline-block;font-style:normal;
+}
+.eboard-legend .lg-new i{background:var(--green)}
+.eboard-legend .lg-chg i{background:var(--amber)}
+.eboard-legend .lg-ok i{background:var(--b2)}
+@media(max-width:900px){
+  .eboard-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .eboard-pair{grid-template-columns:minmax(0,1fr) auto;gap:4px 10px}
+  .eboard-pair .ep-where{grid-column:1/-1}
+}
 
 /* Страница товара во вкладке «Поля»: как эталон, а не простыня JSON. */
 .pcard{margin:0 0 22px}
@@ -1161,6 +1290,7 @@ input[type=range]::-moz-range-thumb{
   .specs{columns:1;column-rule:none}
   .sp-k{max-width:38%}
   .sp-v{min-width:50%;max-width:62%}
+  .eboard-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}
 }
 
 /* ═══ АНИМАЦИЯ ПРОЦЕССА ═══════════════════════════════════════════
@@ -1363,6 +1493,10 @@ input[type=range]::-moz-range-thumb{
 .livepipe-feed li.warn::before{background:var(--amber)}
 .livepipe .parse-card{margin:2px 0 0}
 .livepipe .parse-card .spec-title{margin-bottom:8px;padding-bottom:6px}
+.livepipe .eboard{margin:2px 0 0}
+.livepipe .eboard-metrics{gap:6px}
+.livepipe .emetric{padding:8px 10px}
+.livepipe .emetric-v{font-size:17px}
 
 /* Товар, который обрабатывается прямо сейчас — вращающийся «радар»
    по кромке. isolation держит z-index:-1 внутри обёртки, иначе конус
@@ -2940,6 +3074,10 @@ async function openDumpInEnricher(id){
     const d=await apiJson('/api/dumps/'+encodeURIComponent(id));
     const name=d.name||catNameFromId(id);
     const loaded=(d.products||[]).map(p=>normalizeCatalogProduct(p, name));
+    const nameless=loaded.filter(p=>!String(p?.name||'').trim()).length;
+    if(nameless){
+      dumpStatus(`в дампе ${nameless} без названия — проверьте data_${id}.json`, false);
+    }
     setSource(loaded);
     document.getElementById('urlIn').value='';
     const extra=loaded.length!==items.length?` · в окне ${items.length} из ${loaded.length}`:'';
@@ -2947,7 +3085,7 @@ async function openDumpInEnricher(id){
     setSt('ok',`Дамп ${id}: в окне ${items.length} из ${loaded.length}`);
     setSrcTab('file');
     showPage('enricher');
-    dumpStatus('открыт в обогащении', true);
+    dumpStatus(nameless?`открыт, но ${nameless} без имени`:'открыт в обогащении', !nameless);
   }catch(e){ dumpStatus(e.message||'не удалось открыть', false); }
 }
 
@@ -4545,6 +4683,17 @@ function restoreResults(){
     runStore.set(k,r);
   }
   items=saved.items?.length?saved.items:done.map(([,r])=>r.original||{});
+  // Имена могли пропасть из урезанного сохранения — вернём из original прогона.
+  const byKey=new Map(done.map(([k,r])=>[k,r]));
+  items=items.map((p,i)=>{
+    const n=normalizeCatalogProduct(p,'');
+    if(String(n?.name||'').trim()) return n;
+    const orig=byKey.get(rowKey(n,i))?.original;
+    if(orig && String(orig.name||orig.title||'').trim()){
+      return normalizeCatalogProduct({...n, name:orig.name||orig.title}, n.category||'');
+    }
+    return n;
+  });
   results=items.map((p,i)=>runStore.get(rowKey(p,i)));
   srcItems=items; pickCat=null;
   renderDataCats();
@@ -5039,6 +5188,11 @@ function normalizeCatalogProduct(p, catName){
   if(out.id==null && id!=null) out.id=id;
   if(out.sku==null && id!=null) out.sku=id;
   if(!String(out.category||'').trim() && catName) out.category=catName;
+  // Название: не даём пустой строке или одному id вытеснить title/product_name.
+  const nm=String(out.name??out.title??out.product_name??out.label??'').trim();
+  if(nm) out.name=nm;
+  else if(out.title) out.name=String(out.title).trim();
+  else if(out.product_name) out.name=String(out.product_name).trim();
   // products_*.json заказчика: annotation_html / description_html без сырых полей
   if(!String(out.annotation||'').trim() && out.annotation_html)
     out.annotation=String(out.annotation_html);
@@ -5049,6 +5203,23 @@ function normalizeCatalogProduct(p, catName){
   // Старые filters на карточке не едут в повторную сборку — сервер пересоберёт.
   delete out.filters;
   return out;
+}
+
+/** Подпись товара в списке и шапке: имя, не артикул. */
+function productName(p, i){
+  if(p==null) return i!=null?`Товар №${i+1}`:'Товар';
+  const id=p.id??p.sku??p.article;
+  const idStr=id!=null?String(id).trim():'';
+  const candidates=[p.name,p.title,p.product_name,p.label];
+  for(const c of candidates){
+    const s=String(c??'').trim();
+    if(!s) continue;
+    // «name» = тот же id — это не название, ищем дальше.
+    if(idStr && s===idStr) continue;
+    return s;
+  }
+  if(idStr) return `Товар ${idStr}`;
+  return i!=null?`Товар №${i+1}`:'Товар';
 }
 
 function classifyPayload(parsed, filename){
@@ -5313,7 +5484,17 @@ function isRunningItem(i){
   return running&&!results[i]&&runningSet().includes(i);
 }
 function itemTitle(i){
-  return items[i]?.name||items[i]?.title||items[i]?.sku||`Товар №${i+1}`;
+  const p=items[i];
+  const fromItem=productName(p,i);
+  // Если в окне остался голый id — имя могло сохраниться в original прогона.
+  if(p && fromItem===`Товар ${p.id??p.sku??p.article}`){
+    const orig=results[i]?.original;
+    if(orig){
+      const alt=productName(orig,i);
+      if(alt!==fromItem) return alt;
+    }
+  }
+  return fromItem;
 }
 
 // ── СПИСОК ТОВАРОВ (он же прогресс) ──────────────────────────
@@ -5468,17 +5649,22 @@ function renderList(){
 
   el.innerHTML=visible.map(([it,i])=>{
     const st=statusOf(i);
-    const name=it.name||it.title||it.sku||`Товар №${i+1}`;
+    const name=itemTitle(i);
+    const art=it.sku??it.id??it.article;
     // Причину «без данных» пишем в строку: иначе непонятно, почему товар в
     // фильтре и что с ним делать — она же уйдёт в skipped при прогоне.
     const why=!results[i]&&isThin(i)?` · без данных: ${quality[i].reason}${quality[i].web?' · поищем описание в сети по названию':''}`
       :(confOf(i).length?` · каталог противоречит себе: ${confOf(i).map(c=>label(c.field)).join(', ')}`:'');
     const d=dateKey?dateOf(it):null;
     const pn=(results[i]?.parse?.card?.hits?.length||0)+(results[i]?.parse?.web?.hits?.length||0);
+    const metaBits=[`${i+1}`,esc(st.txt)];
+    if(art!=null && String(name)!==`Товар ${art}`) metaBits.push(`арт. ${esc(String(art))}`);
+    if(pn) metaBits.push(`парсинг ${pn}`);
+    if(d!=null) metaBits.push(dayStr(d));
     const row=`<button class="ri s-${st.cls}${i===curIdx?' on':''}" onclick="selectResult(${i})" title="${esc(String(name))}${why?esc(why):''}">`
       +`<span class="ri-st ${st.cls}">${st.cls==='run'?flake('spinning'):st.sym}</span>`
       +`<span class="ri-b"><span class="ri-n">${esc(String(name))}</span>`
-      +`<span class="ri-m">${i+1} · ${esc(st.txt)}${pn?` · парсинг ${pn}`:''}${d!=null?` · ${dayStr(d)}`:''}${esc(why)}</span></span></button>`;
+      +`<span class="ri-m">${metaBits.join(' · ')}${esc(why)}</span></span></button>`;
     return st.cls==='run'?`<div class="og-beam"><div class="row">${row}</div></div>`:row;
   }).join('');
 
@@ -5494,14 +5680,17 @@ function parseTraces(r){
   const out=[];
   if(p.card?.hits?.length){
     out.push({
+      kind:'card',
       label:p.card.origin||(p.card.dump?'дамп':'карточка'),
       file:p.card.file||null,
       url:null,
       hits:p.card.hits,
+      dump:!!p.card.dump,
     });
   }
   if(p.web && (p.web.hits?.length || p.web.query || p.web.error)){
     out.push({
+      kind:'web',
       label:p.web.origin||'сеть',
       file:null,
       url:p.web.url||r.source||null,
@@ -5523,31 +5712,374 @@ function parseOriginHtml(t){
   return bits.join(' · ')||'источник';
 }
 
-/** Источник данных при парсинге — откуда сняли пары, затем сами пары. */
-function renderParseCard(r){
-  const traces=parseTraces(r);
-  if(!traces.length) return '';
-  const n=traces.reduce((s,t)=>s+t.hits.length,0);
-  return `<section class="parse-card">`
-    +`<div class="spec-title">Источник данных при парсинге <i>${n}</i></div>`
-    +traces.map(t=>{
-      const groups=new Map();
-      for(const h of t.hits){
-        const g=h.where||'источник';
-        if(!groups.has(g)) groups.set(g,[]);
-        groups.get(g).push(h);
+/** Ключ для сравнения парсинга ↔ specs ↔ source_facts. */
+function normKey(k){
+  return String(k??'')
+    .trim()
+    .toLowerCase()
+    .replace(/ё/g,'е')
+    .replace(/[_\s]+/g,' ')
+    .replace(/[^\p{L}\p{N}\s+-]/gu,'')
+    .replace(/\s+/g,' ')
+    .trim();
+}
+
+function normVal(v){
+  if(v==null) return '';
+  if(Array.isArray(v)) return v.map(normVal).filter(Boolean).join(' × ');
+  return String(v).replace(/\s+/g,' ').trim().toLowerCase().replace(/ё/g,'е');
+}
+
+function displayVal(v){
+  if(v==null) return '';
+  if(Array.isArray(v)) return v.join(' × ');
+  return String(v);
+}
+
+function finalSpecsOf(d){
+  if(!d||typeof d!=='object') return {};
+  return {...(d.specs||{}),...(d.technical_specs||{}),...(d.dimensions||{}),...(d.thread||{})};
+}
+
+function metricTone(pct, invert){
+  if(pct==null) return '';
+  if(invert){
+    if(pct<=10) return 'ok';
+    if(pct<=30) return 'warn';
+    return 'err';
+  }
+  if(pct>=90) return 'ok';
+  if(pct>=70) return 'warn';
+  return 'err';
+}
+
+/**
+ * Оценка корректности карточки после обогащения (0–100).
+ * Веса — продуктовое решение: что важнее штрафовать.
+ */
+function scoreCorrectness({warnings=0, conflicts=0, review=false}={}){
+  // TODO(you): подстройте штрафы под ваш допуск к расхождениям.
+  // Сейчас: каждое warning −8, конфликт −12, needs_review −25.
+  const penalty=warnings*8+conflicts*12+(review?25:0);
+  return Math.max(0,100-Math.min(100,penalty));
+}
+
+/**
+ * Модель дашборда: парсинг с источниками, % обогащения, diff, корректность блоков.
+ * live — снимок хода прогона (parse ещё может доезжать).
+ */
+function enrichBoardModel(r, live){
+  const parseSrc=r?.parse||live?.parse||null;
+  const proxy={parse:parseSrc,source:r?.source||null};
+  const traces=parseTraces(proxy);
+  const parsedMap=new Map();
+  for(const t of traces){
+    for(const h of t.hits||[]){
+      const nk=normKey(h.key);
+      if(!nk) continue;
+      if(!parsedMap.has(nk)){
+        parsedMap.set(nk,{
+          key:h.key,
+          value:h.value,
+          where:h.where||'источник',
+          origin:t.label,
+          kind:t.kind,
+        });
       }
-      return `<div class="parse-block">`
-        +`<div class="parse-origin"><span>${parseOriginHtml(t)}</span><i>${t.hits.length}</i></div>`
-        +[...groups.entries()].map(([g,list])=>
-          `<div class="parse-src">${esc(g)}</div>`
-          +`<div class="specs parse-specs">${list.map(h=>
-            `<div class="sp"><span class="sp-k">${esc(h.key)}</span><span class="sp-d"></span><span class="sp-v">${esc(h.value)}</span></div>`
-          ).join('')}</div>`
-        ).join('')
-        +`</div>`;
-    }).join('')
+    }
+  }
+  const d=r?.enriched?sanitizeEnriched(r.enriched):null;
+  const facts=d?.source_facts&&typeof d.source_facts==='object'?d.source_facts:{};
+  const sourceMap=new Map();
+  for(const [k,v] of Object.entries(facts)){
+    if(isEmpty(v)) continue;
+    const nk=normKey(k);
+    if(!nk) continue;
+    sourceMap.set(nk,{key:k,value:v,from:'facts'});
+  }
+  for(const [nk,h] of parsedMap){
+    if(!sourceMap.has(nk)) sourceMap.set(nk,{key:h.key,value:h.value,from:'parse',where:h.where});
+  }
+
+  const final=finalSpecsOf(d);
+  const finalMap=new Map();
+  for(const [k,v] of Object.entries(final)){
+    if(isEmpty(v)) continue;
+    const nk=normKey(k);
+    if(!nk) continue;
+    finalMap.set(nk,{key:k,value:v});
+  }
+
+  const filledFrom=new Set((d?.filled_from_text||[]).map(normKey).filter(Boolean));
+  const warnFields=new Set((d?.warnings||[]).map(w=>normKey(w.field)).filter(Boolean));
+  const conflicts=Array.isArray(d?.source_conflicts)?d.source_conflicts:[];
+  const warnings=Array.isArray(d?.warnings)?d.warnings:[];
+
+  const allKeys=new Set([...sourceMap.keys(),...finalMap.keys()]);
+  const added=[], changed=[], matched=[], missing=[];
+  const fieldClass={};
+
+  for(const nk of allKeys){
+    const src=sourceMap.get(nk);
+    const fin=finalMap.get(nk);
+    if(fin && !src){
+      added.push({key:fin.key,value:fin.value,filled:filledFrom.has(nk)});
+      fieldClass[nk]=warnFields.has(nk)?'bad':'new';
+    }else if(fin && src){
+      if(normVal(fin.value)===normVal(src.value)){
+        matched.push({key:fin.key,value:fin.value});
+        fieldClass[nk]=warnFields.has(nk)?'bad':'match';
+      }else{
+        changed.push({key:fin.key,value:fin.value,was:src.value});
+        fieldClass[nk]=warnFields.has(nk)?'bad':'chg';
+      }
+    }else if(!fin && src){
+      missing.push({key:src.key,value:src.value});
+    }
+  }
+  for(const nk of warnFields){
+    if(fieldClass[nk]) fieldClass[nk]='bad';
+    else if(finalMap.has(nk)) fieldClass[nk]='bad';
+  }
+
+  const filledFinal=finalMap.size;
+  const universe=Math.max(allKeys.size,1);
+  const enrichPct=d?Math.round((filledFinal/universe)*100):null;
+  const webHits=traces.filter(t=>t.kind==='web').reduce((s,t)=>s+(t.hits?.length||0),0);
+  const parseHits=traces.reduce((s,t)=>s+(t.hits?.length||0),0);
+  const bonus=(d?.filled_from_text?.length||0)+webHits;
+
+  const diffCount=added.length+changed.length;
+  const review=!!(r?.needs_review||(Array.isArray(r?.validation_issues)&&r.validation_issues.length));
+  let correctPct=null;
+  if(d){
+    correctPct=scoreCorrectness({
+      warnings:warnings.length,
+      conflicts:conflicts.length,
+      review,
+    });
+  }else if(review){
+    correctPct=scoreCorrectness({review:true});
+  }
+
+  const livePhase=live?.phase||null;
+  const donePhase=d?'done':(r?.skipped?'skip':(r?.error||r?.needs_review?'error':null));
+  const phase=livePhase||donePhase||(parseHits?'parse':'gate');
+
+  const hasText=d&&(!isEmpty(d.short_description)||!isEmpty(cardText(d,'description'))
+    ||(Array.isArray(d.bullets)&&d.bullets.length));
+
+  const blocks=[];
+  if(!d){
+    blocks.push({
+      id:'parse',
+      name:'Парсинг',
+      status:parseHits?'ok':(live?'pending':'pending'),
+      label:parseHits?`${parseHits} пар`:(live?'ждём пары':'нет пар'),
+      detail:traces.map(t=>t.label).filter(Boolean).join(' · ')||'',
+    });
+    blocks.push({
+      id:'enrich',
+      name:'Обогащение',
+      status:live?'pending':(r?.skipped?'warn':(r?.error?'err':'pending')),
+      label:live?'в процессе':(r?.skipped?'пропуск':(r?.error?'ошибка':'ожидание')),
+      detail:live?.note||r?.skipped||r?.error||'',
+    });
+  }else{
+    blocks.push({
+      id:'specs',
+      name:'Характеристики',
+      status:warnings.length?(warnings.length>3?'err':'warn'):(filledFinal?'ok':'warn'),
+      label:warnings.length?`${warnings.length} расхожд.`: `${filledFinal} полей`,
+      detail:warnings.length?warnings.slice(0,3).map(w=>specLabel(w.field)).join(', '):'совпали с исходником',
+    });
+    blocks.push({
+      id:'facts',
+      name:'Факты источника',
+      status:Object.keys(facts).length?'ok':(parseHits?'ok':'warn'),
+      label:Object.keys(facts).length?`${Object.keys(facts).length} фактов`:`${parseHits} из парсинга`,
+      detail:conflicts.length?`${conflicts.length} конфликт(ов)`:'без конфликтов',
+    });
+    blocks.push({
+      id:'text',
+      name:'Текст карточки',
+      status:hasText?'ok':'warn',
+      label:hasText?'заполнен':'пусто',
+      detail:hasText?'описание / bullets':'модель не вернула текст',
+    });
+    blocks.push({
+      id:'check',
+      name:'Проверка',
+      status:review?'err':(conflicts.length?'warn':(warnings.length?'warn':'ok')),
+      label:review?'на проверку':(correctPct!=null?`${correctPct}%`:'ok'),
+      detail:review
+        ?(r.validation_issues||[]).slice(0,2).map(i=>`${i.field}: ${i.reason}`).join('; ')
+        :(conflicts.length?`${conflicts.length} конфликт(ов)`:'валидация пройдена'),
+    });
+  }
+
+  return {
+    traces,
+    parseHits,
+    webHits,
+    enrichPct,
+    bonus,
+    diffCount,
+    added,
+    changed,
+    matched,
+    missing,
+    correctPct,
+    review,
+    fieldClass,
+    blocks,
+    phase,
+    live:!!live,
+    hasEnriched:!!d,
+    confidence:d?.confidence??null,
+  };
+}
+
+function renderParseSources(traces){
+  if(!traces.length){
+    return `<div class="eboard-empty">Пока нет разобранных характеристик — ждут парсинг или сеть.</div>`;
+  }
+  return traces.map(t=>{
+    const badgeCls=t.kind==='web'?'web':(t.dump?'dump':'card');
+    const badgeTxt=t.kind==='web'?'сеть':(t.dump?'дамп':'карточка');
+    const meta=[];
+    if(t.file) meta.push(`<span>${esc(t.file)}</span>`);
+    if(t.url) meta.push(`<a href="${esc(t.url)}" target="_blank" rel="noopener noreferrer">${esc(hostOf(t.url))}</a>`);
+    if(t.query) meta.push(`<span>запрос: ${esc(t.query)}</span>`);
+    if(t.error) meta.push(`<span style="color:var(--red)">ошибка: ${esc(t.error)}</span>`);
+    const pairs=(t.hits||[]).map(h=>
+      `<div class="eboard-pair">`
+      +`<span class="ep-where">${esc(h.where||'источник')}</span>`
+      +`<span class="ep-k">${esc(h.key)}</span>`
+      +`<span class="ep-v">${esc(h.value)}</span>`
+      +`</div>`
+    ).join('');
+    return `<div class="eboard-src ${t.kind==='web'?'web':''}">`
+      +`<div class="eboard-src-h"><b>${esc(t.label||'источник')}`
+      +`<span class="ebadge ${badgeCls}">${esc(badgeTxt)}</span></b>`
+      +`<i style="font-style:normal;font-family:var(--mono);color:var(--t2)">${t.hits?.length||0}</i></div>`
+      +(meta.length?`<div class="eboard-src-meta">${meta.join('')}</div>`:'')
+      +(pairs||`<div class="eboard-empty">Пар не сняли</div>`)
+      +`</div>`;
+  }).join('');
+}
+
+function renderDiffSection(m){
+  if(!m.hasEnriched){
+    return m.live
+      ?`<div class="eboard-empty">Сравнение появится после ответа модели.</div>`
+      :'';
+  }
+  const parts=[];
+  if(m.added.length){
+    parts.push(`<div class="eboard-diff-g"><div class="eboard-diff-h added">Добавлено <i>${m.added.length}</i></div>`
+      +m.added.map(row=>
+        `<div class="eboard-diff-row"><span class="ed-k">${esc(specLabel(row.key))}${row.filled?' <span class="ebadge where">из текста</span>':''}</span>`
+        +`<span class="ed-v">${esc(displayVal(row.value))}</span></div>`
+      ).join('')
+      +`</div>`);
+  }
+  if(m.changed.length){
+    parts.push(`<div class="eboard-diff-g"><div class="eboard-diff-h changed">Изменено <i>${m.changed.length}</i></div>`
+      +m.changed.map(row=>
+        `<div class="eboard-diff-row"><span class="ed-k">${esc(specLabel(row.key))}</span>`
+        +`<span class="ed-v">${esc(displayVal(row.value))}</span>`
+        +`<span class="ed-was">${esc(displayVal(row.was))}</span></div>`
+      ).join('')
+      +`</div>`);
+  }
+  if(m.matched.length && !m.added.length && !m.changed.length){
+    parts.push(`<div class="eboard-empty">Все ${m.matched.length} полей совпали с исходником.</div>`);
+  }else if(m.matched.length){
+    parts.push(`<div class="eboard-diff-g"><div class="eboard-diff-h">Совпало с исходником <i>${m.matched.length}</i></div></div>`);
+  }
+  if(m.missing.length){
+    parts.push(`<div class="eboard-diff-g"><div class="eboard-diff-h changed">Не перенесено <i>${m.missing.length}</i></div>`
+      +m.missing.slice(0,8).map(row=>
+        `<div class="eboard-diff-row"><span class="ed-k">${esc(specLabel(row.key))}</span>`
+        +`<span class="ed-v" style="color:var(--t3)">${esc(displayVal(row.value))}</span></div>`
+      ).join('')
+      +(m.missing.length>8?`<div class="eboard-empty">… ещё ${m.missing.length-8}</div>`:'')
+      +`</div>`);
+  }
+  if(!parts.length) return `<div class="eboard-empty">Нечего сравнивать — нет финальных характеристик.</div>`;
+  return `<div class="eboard-diff">${parts.join('')}`
+    +`<div class="eboard-legend">`
+    +`<span class="lg-new"><i></i> добавлено</span>`
+    +`<span class="lg-chg"><i></i> изменено</span>`
+    +`<span class="lg-ok"><i></i> совпало</span>`
+    +`</div></div>`;
+}
+
+function renderBlocksSection(blocks){
+  const stLabel={ok:'ok',warn:'внимание',err:'ошибка',pending:'…'};
+  return `<div class="eboard-blocks">${blocks.map(b=>
+    `<div class="eblock ${b.status}">`
+    +`<span class="eblock-dot" aria-hidden="true"></span>`
+    +`<div><div class="eblock-n">${esc(b.name)}</div>`
+    +(b.detail?`<div class="eblock-s">${esc(b.detail)}</div>`:'')
+    +`</div>`
+    +`<span class="eblock-st">${esc(b.label||stLabel[b.status]||b.status)}</span>`
+    +`</div>`
+  ).join('')}</div>`;
+}
+
+function renderEnrichBoard(r, opts={}){
+  const live=opts.live||null;
+  const m=enrichBoardModel(r, live);
+  const enrichTone=metricTone(m.enrichPct);
+  const diffTone=m.hasEnriched?(m.diffCount===0?'ok':(m.changed.length>m.added.length?'warn':'ok')):'';
+  const correctTone=m.review?'err':metricTone(m.correctPct);
+  const parseTone=m.parseHits? 'ok' :(m.live?'':'warn');
+
+  const metrics=
+    `<div class="eboard-metrics">`
+    +`<div class="emetric ${enrichTone}">`
+    +`<span class="emetric-k">Обогащение</span>`
+    +`<span class="emetric-v">${m.enrichPct!=null?`${m.enrichPct}%`:(m.live?'…':'—')}</span>`
+    +`<span class="emetric-s">${m.bonus?`+${m.bonus} добрано`: (m.hasEnriched?'по полям финала':'ждём модель')}</span>`
+    +`</div>`
+    +`<div class="emetric ${diffTone}">`
+    +`<span class="emetric-k">Разница</span>`
+    +`<span class="emetric-v">${m.hasEnriched?m.diffCount:(m.live?'…':'—')}</span>`
+    +`<span class="emetric-s">${m.hasEnriched?`+${m.added.length} · ~${m.changed.length} · =${m.matched.length}`:'к исходнику'}</span>`
+    +`</div>`
+    +`<div class="emetric ${correctTone}">`
+    +`<span class="emetric-k">Корректность</span>`
+    +`<span class="emetric-v">${m.correctPct!=null?`${m.correctPct}%`:(m.review?'!':(m.live?'…':'—'))}</span>`
+    +`<span class="emetric-s">${m.review?'на проверку':(m.confidence!=null?`уверенность ${(m.confidence*100).toFixed(0)}%`:'по блокам')}</span>`
+    +`</div>`
+    +`<div class="emetric ${parseTone}">`
+    +`<span class="emetric-k">Парсинг</span>`
+    +`<span class="emetric-v">${m.parseHits||0}</span>`
+    +`<span class="emetric-s">${m.webHits?`сеть +${m.webHits}`:'пар характеристик'}</span>`
+    +`</div>`
+    +`</div>`;
+
+  const liveObj=live||(m.hasEnriched?{phase:'done'}:{phase:m.phase});
+
+  return `<section class="eboard" aria-label="Парсинг и обогащение">`
+    +metrics
+    +`<div class="eboard-sec"><div class="spec-title">Шаги обогащения</div>${pipeHtml(liveObj)}</div>`
+    +`<div class="eboard-sec"><div class="spec-title">Данные парсинга с источником <i>${m.parseHits}</i></div>`
+    +renderParseSources(m.traces)
+    +`</div>`
+    +(m.hasEnriched||m.live
+      ?`<div class="eboard-sec"><div class="spec-title">Разница с исходником</div>${renderDiffSection(m)}</div>`
+      :'')
+    +`<div class="eboard-sec"><div class="spec-title">Корректность блоков</div>${renderBlocksSection(m.blocks)}</div>`
     +`</section>`;
+}
+
+/** Совместимость: старые вызовы показывают тот же дашборд без live. */
+function renderParseCard(r){
+  if(!r?.parse && !r?.enriched) return '';
+  return renderEnrichBoard(r);
 }
 
 // ── ДЕТАЛИ ОДНОГО ТОВАРА ─────────────────────────────────────
@@ -5566,7 +6098,7 @@ function switchTab(tab,btn){
 
 function renderDetail(){
   const it=items[curIdx], r=results[curIdx];
-  const name=it?.name||it?.sku||`Товар №${curIdx+1}`;
+  const name=itemTitle(curIdx);
   const meta=[];
   if(it?.sku!=null)   meta.push(`арт. <b>${esc(String(it.sku))}</b>`);
   else if(it?.id!=null) meta.push(`id <b>${esc(String(it.id))}</b>`);
@@ -5596,7 +6128,7 @@ function renderDetail(){
     return;
   }
   if(r.skipped){
-    setP('detail',conf+renderParseCard(r)+`<div class="warnbox"><div class="wt">⊘ Пропущен без обращения к модели</div><div class="wi">${esc(r.skipped)}</div></div>`
+    setP('detail',conf+renderEnrichBoard(r)+`<div class="warnbox"><div class="wt">⊘ Пропущен без обращения к модели</div><div class="wi">${esc(r.skipped)}</div></div>`
       +`<div class="hint">Запрос не отправлялся, деньги не потрачены. Допишите описание товара в источнике.</div>`);
     return;
   }
@@ -5604,7 +6136,7 @@ function renderDetail(){
     const issues=Array.isArray(r.validation_issues)&&r.validation_issues.length
       ? r.validation_issues.map(i=>`${i.field}: ${i.reason}`).join('; ')
       : '';
-    setP('detail',conf+renderParseCard(r)+`<div class="errbox">${esc(r.error||(r.needs_review?'На проверку — карточка не собрана': 'Ошибка'))}</div>`
+    setP('detail',conf+renderEnrichBoard(r)+`<div class="errbox">${esc(r.error||(r.needs_review?'На проверку — карточка не собрана': 'Ошибка'))}</div>`
       +(issues?`<div class="warnbox"><div class="wt">Валидация</div><div class="wi">${esc(issues)}</div></div>`:'')
       +`<div class="hint">Повторный запуск обработает товар заново.</div>`);
     return;
@@ -5614,14 +6146,12 @@ function renderDetail(){
     b.textContent=`уверенность ${(r.enriched.confidence*100).toFixed(0)}%`;
     show('confBdg');
   }
-  // Откуда взялся исходный текст, видно на самой карточке: часть товаров
-  // описана не магазином, а найденной страницей того же артикула.
-  const parsed=renderParseCard(r);
-  const from=!parsed&&r.source?`<div class="hint">Исходного текста в карточке не было — описание добрано из сети: `
+  const board=renderEnrichBoard(r);
+  const from=!r.parse&&r.source?`<div class="hint">Исходного текста в карточке не было — описание добрано из сети: `
     +`<a href="${esc(r.source)}" target="_blank" rel="noopener noreferrer">${esc(hostOf(r.source))}</a></div>`
-    :(!parsed&&r.parser?`<div class="hint">Для этой карточки запускался парсер страницы.</div>`:'');
+    :(!r.parse&&r.parser?`<div class="hint">Для этой карточки запускался парсер страницы.</div>`:'');
   const fix=r.corrected?`<div class="hint">Карточка исправлена после ошибок валидации.</div>`:'';
-  setP('detail',conf+from+parsed+fix+(curTab==='json'?`<div class="jv">${hl(r.enriched)}</div>`:renderVis(r.enriched)));
+  setP('detail',conf+from+board+fix+(curTab==='json'?`<div class="jv">${hl(r.enriched)}</div>`:renderVis(r.enriched,r)));
 }
 
 function showActions(){
@@ -5834,8 +6364,8 @@ function pipeHtml(live){
 
 function livePipeHtml(live){
   const title=live?.title||'Товар в обработке';
-  const parsed=renderParseCard({parse:live?.parse});
-  const rows=(live?.rows||[]).filter(e=>!(parsed&&/^\s*← /.test(e.msg||'')));
+  const board=renderEnrichBoard({parse:live?.parse||null}, {live});
+  const rows=(live?.rows||[]).filter(e=>!(live?.parse&&/^\s*← /.test(e.msg||'')));
   const feed=rows.map(e=>{
     const cls=e.level==='ok'?'ok':e.level==='err'?'err':e.level==='warn'?'warn':'';
     const on=e===rows[rows.length-1]?'on':'';
@@ -5844,8 +6374,7 @@ function livePipeHtml(live){
   return `<div class="livepipe">`
     +`<div class="livepipe-k">${flake('spinning')} Идёт огранка</div>`
     +`<div class="livepipe-h">${esc(String(title))}</div>`
-    +pipeHtml(live)
-    +(parsed||'')
+    +board
     +`<ul class="livepipe-feed">${feed}</ul>`
     +`</div>`;
 }
@@ -6944,10 +7473,12 @@ function sanitizeEnriched(d){
   return d;
 }
 
-function renderVis(d){
+function renderVis(d, r){
   if(!d||typeof d!=='object') return '<div class="empty"><p>Нет данных</p></div>';
   d=sanitizeEnriched(d);
   let out=confBox(curIdx);
+  const board=r?enrichBoardModel(r):null;
+  const fieldClass=board?.fieldClass||{};
 
   const desc=cardText(d,'description');
   const hasCard=!isEmpty(d.short_description)||!isEmpty(desc)
@@ -6976,25 +7507,19 @@ function renderVis(d){
   const sp={...(d.specs||{}),...(d.technical_specs||{}),...(d.dimensions||{}),...(d.thread||{})};
   const rows=Object.entries(sp).filter(([,v])=>!isEmpty(v));
   if(rows.length){
-    const bad=new Set((d.warnings||[]).map(w=>w.field));
     out+=`<div class="spec-title">Характеристики <i>${rows.length}</i></div>`
-      +`<div class="specs">${rows.map(([k,v])=>
-          `<div class="sp${bad.has(k)?' bad':''}"><span class="sp-k">${esc(specLabel(k))}</span>`
-          +`<span class="sp-d"></span><span class="sp-v">${esc(String(v))}</span></div>`).join('')}</div>`;
+      +`<div class="eboard-legend" style="margin:0 0 10px">`
+      +`<span class="lg-new"><i></i> добавлено</span>`
+      +`<span class="lg-chg"><i></i> изменено</span>`
+      +`<span class="lg-ok"><i></i> совпало</span>`
+      +`</div>`
+      +`<div class="specs">${rows.map(([k,v])=>{
+          const cls=fieldClass[normKey(k)]||'';
+          return `<div class="sp${cls?' '+cls:''}"><span class="sp-k">${esc(specLabel(k))}</span>`
+            +`<span class="sp-d"></span><span class="sp-v">${esc(String(v))}</span></div>`;
+        }).join('')}</div>`;
   }
 
-  if(d.source_facts&&typeof d.source_facts==='object'&&!isEmpty(d.source_facts)){
-    const facts=Object.entries(d.source_facts).filter(([,v])=>!isEmpty(v));
-    if(facts.length){
-      out+=`<div class="spec-title mt">Факты из источника <i>${facts.length}</i></div>`
-        +`<div class="specs">${facts.map(([k,v])=>
-            `<div class="sp"><span class="sp-k">${esc(specLabel(k))}</span>`
-            +`<span class="sp-d"></span><span class="sp-v">${esc(Array.isArray(v)?v.join(' × '):String(v))}</span></div>`).join('')}</div>`;
-    }
-  }
-  if(Array.isArray(d.filled_from_text)&&d.filled_from_text.length){
-    out+=`<div class="spec-title mt">Добрано из текста</div>${tags(d.filled_from_text)}`;
-  }
   if(Array.isArray(d.source_conflicts)&&d.source_conflicts.length){
     out+=`<div class="warnbox" style="margin-top:16px"><div class="wt">Конфликты источника (${d.source_conflicts.length})</div>`
       +d.source_conflicts.map(w=>`<div class="wi">${esc(JSON.stringify(w))}</div>`).join('')+'</div>';

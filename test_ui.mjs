@@ -160,7 +160,7 @@ export const api={syncSteps,setCnt,setCntFree,applyCnt,applySource,setSource,pic
   showPage,setTab,renderSettings,addProvider,removeProvider,addEngine,readSettingsPatch,
   renderParserProbe,runParserProbe,
   renderExportTemplates,applyExportTemplate,shapeProductsFile,shapeFiltersFile,exportPack,
-  modelsFromSettings,pickDefaultModel,applyDefaultProviderModels,reloadModels,previewModels,looksLikeModelId,catalogHint,
+  modelsFromSettings,pickDefaultModel,applyDefaultProviderModels,reloadModels,previewModels,looksLikeModelId,catalogHint,TOP_ENRICH_IDS,
   addDumpSection,openDumpDest,cancelDumpDest,dumpBodyWithName,matchDictCatalog,
   addPromptTemplate,selectPromptTab,onPromptScopeChange,onPromptSectionToggle,promptsForSave};
 export const st={get items(){return items},set items(v){items=v},
@@ -475,12 +475,12 @@ t('DeepSeek по умолчанию сразу стоит в шаге модел
   assert.match(G('mselName').textContent, /DeepSeek/);
   assert.strictEqual(G('sub1').textContent, 'выбрана');
 });
-t('превью списка не прячет модели других провайдеров за OpenRouter', () => {
+t('превью показывает топ для обогащения с GPT и Claude', () => {
   api.renderSettings({
     settings: {
       providers: [
         { id: 'openrouter', name: 'OpenRouter', enabled: true, default: true, models: [] },
-        { id: 'deepseek', name: 'DeepSeek', enabled: true, default: false, models: ['deepseek-v4-flash'] },
+        { id: 'deepseek', name: 'DeepSeek', enabled: true, default: false, models: ['deepseek-v4-flash', 'deepseek-v4-pro'] },
         { id: 'yandex', name: 'Yandex', enabled: true, default: false, models: ['yandexgpt/latest'] },
       ],
       search: { enabled: true, tries: 3, gap_ms: 0, timeout_ms: 20000, query_suffix: '', skip_hosts: [], search_url: '', fallback_engines: [], engines: [], duckduckgo: { enabled: false } },
@@ -494,13 +494,20 @@ t('превью списка не прячет модели других про�
     id: `vendor/model-${i}`, name: `Model ${i}`, provider: 'openrouter', provider_name: 'OpenRouter', pricing: null,
   }));
   huge.push(
+    { id: 'deepseek/deepseek-v3.2', name: 'DeepSeek V3.2', provider: 'openrouter', provider_name: 'OpenRouter', pricing: null },
+    { id: 'deepseek/deepseek-chat', name: 'DeepSeek Chat', provider: 'openrouter', provider_name: 'OpenRouter', pricing: null },
+    { id: 'openai/gpt-4o-mini', name: 'GPT-4o Mini', provider: 'openrouter', provider_name: 'OpenRouter', pricing: null },
+    { id: 'anthropic/claude-sonnet-4', name: 'Claude Sonnet 4', provider: 'openrouter', provider_name: 'OpenRouter', pricing: null },
     { id: 'deepseek-v4-flash', name: 'deepseek-v4-flash', provider: 'deepseek', provider_name: 'DeepSeek', pricing: null },
+    { id: 'deepseek-v4-pro', name: 'deepseek-v4-pro', provider: 'deepseek', provider_name: 'DeepSeek', pricing: null },
     { id: 'yandexgpt/latest', name: 'yandexgpt/latest', provider: 'yandex', provider_name: 'Yandex', pricing: null },
   );
-  const prev = api.previewModels(huge, 60);
-  assert.ok(prev.some(m => m.provider === 'deepseek'), 'DeepSeek должен быть в превью');
-  assert.ok(prev.some(m => m.provider === 'yandex'), 'Yandex должен быть в превью');
-  assert.ok(prev.length <= 60);
+  const prev = api.previewModels(huge);
+  assert.strictEqual(prev.length, api.TOP_ENRICH_IDS.length);
+  assert.deepStrictEqual(prev.map(m => m.id), api.TOP_ENRICH_IDS);
+  assert.ok(prev.some(m => m.id === 'openai/gpt-4o-mini'));
+  assert.ok(prev.some(m => m.id === 'anthropic/claude-sonnet-4'));
+  assert.ok(!prev.some(m => String(m.id).startsWith('vendor/model-')), 'случайный каталог OpenRouter не должен попадать в топ');
 });
 await tAsync('таймаут OpenRouter не блокирует список, если в настройках есть модели', async () => {
   st.selModel = null;

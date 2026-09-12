@@ -1506,7 +1506,7 @@ input[type=range]::-moz-range-thumb{
           <i class="ti ti-chevron-down" aria-hidden="true" style="opacity:.4;font-size:11px;flex-shrink:0"></i><span class="ico-fb">▾</span>
         </div>
         <div class="msearch" id="msearch">
-          <input type="text" id="msrch" placeholder="Поиск: deepseek, claude, gpt..." oninput="filterModels()" autocomplete="off" aria-label="Поиск модели">
+          <input type="text" id="msrch" placeholder="Топ для обогащения · или поиск" oninput="filterModels()" autocomplete="off" aria-label="Поиск модели">
           <div class="mdrop" id="mdrop"></div>
         </div>
       </div>
@@ -1753,6 +1753,7 @@ input[type=range]::-moz-range-thumb{
     <nav class="set-nav" aria-label="Разделы настроек">
       <div class="g">Модели и данные</div>
       <button type="button" class="on" id="snProv" onclick="setTab('prov')"><i class="ti ti-brain"></i> Провайдеры ИИ</button>
+      <button type="button" id="snNet" onclick="setTab('net')"><i class="ti ti-network"></i> Сеть / прокси</button>
       <button type="button" id="snParse" onclick="setTab('parse')"><i class="ti ti-world-search"></i> Парсеры</button>
       <button type="button" id="snDumps" onclick="setTab('dumps')"><i class="ti ti-database"></i> Дампы</button>
       <div class="g">Правила</div>
@@ -1775,6 +1776,33 @@ input[type=range]::-moz-range-thumb{
           <div class="set-presets" id="setPresets"></div>
         </div>
         <div id="setProvList"></div>
+      </section>
+
+      <section class="set-panel" id="setNet">
+        <div class="set-h">Сеть и прокси</div>
+        <p class="set-lead">Один исходящий прокси для моделей, которым нужен иностранный IP (OpenRouter, OpenAI и т.п.). DeepSeek, Yandex и локальная Ollama по умолчанию идут напрямую — это переключается на карточке провайдера.</p>
+        <div class="set-card" style="margin-bottom:12px">
+          <div class="set-card-h">
+            <b>Исходящий прокси</b>
+            <span class="set-badge off" id="setProxyBadge">выключен</span>
+          </div>
+          <label class="set-check"><input type="checkbox" id="setProxyOn"> Включить прокси для отмеченных провайдеров</label>
+          <div class="set-row" style="margin-top:10px"><label for="setProxyUrl">Адрес <span id="setProxyUrlHint" class="set-badge off">не задан</span></label>
+            <input type="password" id="setProxyUrl" name="egress-proxy-url" data-secret="1" placeholder="socks5://user:pass@host:port или tg://socks?server=…&amp;port=…&amp;user=…&amp;pass=…" autocomplete="new-password" spellcheck="false" autocapitalize="off" data-lpignore="true" data-1p-ignore="true">
+          </div>
+          <div class="set-grid" style="margin-top:10px">
+            <div class="set-row"><label for="setProxyBridge">Порт моста SOCKS→HTTP</label><input type="number" id="setProxyBridge" min="1" max="65535" placeholder="18080"></div>
+          </div>
+          <div class="hint" style="margin-top:10px">Поддерживаются <code>socks5://</code>, ссылка Telegram <code>tg://socks?…</code> и обычный <code>http://user:pass@host:port</code>. Пароль в браузер не отдаётся — оставьте поле пустым, чтобы не менять. Если задан <code>SOCKS_PROXY</code> в окружении контейнера, он имеет приоритет.</div>
+          <div class="set-actions" style="margin-top:12px">
+            <button type="button" class="sbtn ghost" id="proxyProbeBtn" onclick="runProxyProbe()">Проверить прокси</button>
+          </div>
+          <div id="proxyProbe" hidden style="margin-top:10px"></div>
+        </div>
+        <div class="set-card">
+          <div class="set-card-h"><b>Кому нужен прокси</b></div>
+          <p class="hint" style="margin:8px 0 0">На вкладке «Провайдеры ИИ» у каждого шлюза есть переключатель «Через прокси». OpenRouter — обычно да (Cloudflare), DeepSeek и Yandex Cloud — нет (ломается CONNECT / проверка IP).</p>
+        </div>
       </section>
 
       <section class="set-panel" id="setParse">
@@ -2327,7 +2355,7 @@ function showPage(id, btn){
   if(id==='enricher') applyDefaultProviderModels();
 }
 
-const SET_TABS={prov:['setProv','snProv'],parse:['setParse','snParse'],cond:['setCond','snCond'],dict:['setDict','snDict'],dumps:['setDumps','snDumps'],run:['setRun','snRun'],prompt:['setPrompt','snPrompt'],export:['setExport','snExport'],logs:['setLogs','snLogs']};
+const SET_TABS={prov:['setProv','snProv'],net:['setNet','snNet'],parse:['setParse','snParse'],cond:['setCond','snCond'],dict:['setDict','snDict'],dumps:['setDumps','snDumps'],run:['setRun','snRun'],prompt:['setPrompt','snPrompt'],export:['setExport','snExport'],logs:['setLogs','snLogs']};
 function setTab(id){
   Object.entries(SET_TABS).forEach(([k,[panel,nav]])=>{
     document.getElementById(panel).classList.toggle('on',k===id);
@@ -3937,6 +3965,7 @@ function renderSettings(d){
   setV('setMaxTokens', model.max_tokens??3200);
   renderPromptEditor(d);
   renderExportTemplates(d);
+  renderProxySettings(d);
   const ov=d.overrides||[];
   document.getElementById('setOverrides').innerHTML=ov.length
     ? `<div class="set-warn">${ov.map(o=>`${esc(o.key)}=${esc(o.value)} — ${esc(o.note)}`).join('<br>')}</div>`
@@ -3972,6 +4001,7 @@ function renderProviderCards(){
       </div>
       <label class="set-check"><input type="checkbox" data-pk="enabled" data-i="${i}" ${p.enabled?'checked':''}> Включён</label>
       <label class="set-check"><input type="checkbox" data-pk="default" data-i="${i}" ${p.default?'checked':''}> Использовать по умолчанию</label>
+      <label class="set-check"><input type="checkbox" data-pk="use_proxy" data-i="${i}" ${p.use_proxy!==false?'checked':''}> Через прокси <span class="hint" style="font-size:11px;color:var(--t3)">${p.use_proxy!==false?'(заграничный выход)':'(напрямую с этого IP)'}</span></label>
       <div class="set-actions">
         <button type="button" class="sbtn danger" data-del="${i}">Удалить</button>
       </div>
@@ -4544,13 +4574,40 @@ function orderModels(list){
 }
 
 /**
- * Превью выпадающего списка: не обрезать чужих провайдеров за каталогом OpenRouter.
- * Сначала по несколько моделей с каждого включённого, остаток — провайдеру по умолчанию.
+ * Топ моделей для обогащения карточек. В пустом поиске показываем только их
+ * (если есть у включённых провайдеров) — не каталог OpenRouter на сотни строк.
  */
-function previewModels(list, limit=80){
+const TOP_ENRICH_IDS=[
+  'deepseek-v4-flash',
+  'deepseek-v4-pro',
+  'deepseek/deepseek-v3.2',
+  'deepseek/deepseek-chat',
+  'openai/gpt-4o-mini',
+  'anthropic/claude-sonnet-4',
+  'yandexgpt/latest',
+];
+
+/**
+ * Превью выпадающего списка: сначала топ для обогащения, иначе — с каждого
+ * провайдера поровну, чтобы OpenRouter не вытеснил DeepSeek/Yandex.
+ */
+function previewModels(list, limit=TOP_ENRICH_IDS.length){
   const src=list||[];
-  if(src.length<=limit) return src.slice();
+  if(!src.length) return [];
   const def=defaultProviderId();
+  const keyOf=m=>(m.provider||'')+'|'+(m.id||'');
+  const out=[];
+  const used=new Set();
+  for(const id of TOP_ENRICH_IDS){
+    if(out.length>=limit) break;
+    const hit=src.find(m=>m.id===id && (!def || m.provider===def))
+      || src.find(m=>m.id===id);
+    if(!hit) continue;
+    out.push(hit);
+    used.add(keyOf(hit));
+  }
+  if(out.length>=limit) return out;
+  // Добираем с каждого включённого провайдера, чтобы топ не был пустым при смене default.
   const byProv=new Map();
   for(const m of src){
     const k=m.provider||'_';
@@ -4558,16 +4615,6 @@ function previewModels(list, limit=80){
     byProv.get(k).push(m);
   }
   const keys=[...byProv.keys()].sort((a,b)=>(a===def?-1:b===def?1:0));
-  if(keys.length<=1) return src.slice(0,limit);
-  const minPer=Math.max(4, Math.min(12, Math.floor(limit/keys.length)));
-  const out=[];
-  const used=new Set();
-  const keyOf=m=>(m.provider||'')+'|'+(m.id||'');
-  for(const k of keys){
-    for(const m of byProv.get(k).slice(0,minPer)){
-      out.push(m); used.add(keyOf(m));
-    }
-  }
   for(const k of keys){
     if(out.length>=limit) break;
     for(const m of byProv.get(k)){
@@ -4575,7 +4622,14 @@ function previewModels(list, limit=80){
       const id=keyOf(m);
       if(used.has(id)) continue;
       out.push(m); used.add(id);
+      break;
     }
+  }
+  for(const m of src){
+    if(out.length>=limit) break;
+    const id=keyOf(m);
+    if(used.has(id)) continue;
+    out.push(m); used.add(id);
   }
   return out;
 }
@@ -4589,8 +4643,12 @@ function pickDefaultModel(){
   if(selModel) return;
   const defProv=defaultProviderId();
   const want=setPayload?.settings?.model?.name;
+  const fromTop=TOP_ENRICH_IDS
+    .map(id=>allModels.find(m=>m.id===id&&(!defProv||m.provider===defProv))||allModels.find(m=>m.id===id))
+    .find(Boolean);
   const def=(want&&allModels.find(m=>m.id===want&&(!defProv||m.provider===defProv)))
     ||(want&&allModels.find(m=>m.id===want))
+    ||fromTop
     ||allModels.find(m=>defProv&&m.provider===defProv)
     ||allModels[0];
   if(def) pick(def.id, def.provider);
@@ -4696,7 +4754,8 @@ function renderModelList(models){
     return;
   }
   const manyProv=new Set(allModels.map(m=>m.provider).filter(Boolean)).size>1;
-  el.innerHTML=manual+models.map(m=>{
+  const topHint=!q&&models.length?`<div class="mi-empty" style="padding:6px 10px;opacity:.7">Топ для обогащения · поиск покажет остальные</div>`:'';
+  el.innerHTML=topHint+manual+models.map(m=>{
     const {ip,op}=priceOf(m);
     const unknown=!m.pricing;
     const free=!unknown&&ip===0&&op===0;

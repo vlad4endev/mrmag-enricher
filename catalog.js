@@ -116,7 +116,7 @@ export async function fetchPage(url, { noCache = false, ua = UA, timeoutMs = 45_
     if (!res.ok) throw new Error(`HTTP ${res.status} на ${url}`);
     html = await res.text();
   } catch (e) {
-    throw new Error(/^HTTP /.test(e.message) ? e.message : `${url} — ${netError(e)}`);
+    throw new Error(/^HTTP /.test(e.message) ? e.message : `${url} — ${netError(e, (() => { try { return new URL(url).host; } catch { return ''; } })())}`);
   }
   fs.mkdirSync(CACHE_DIR, { recursive: true });
   fs.writeFileSync(file, html, 'utf-8');

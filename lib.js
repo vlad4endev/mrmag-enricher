@@ -70,9 +70,31 @@ function chainText(e) {
   return errorChain(e).map(x => `${x?.name || ''} ${x?.code || ''} ${x?.message || ''}`).join(' ');
 }
 
-export function netError(e) {
+function hostFromArg(hostOrOpts) {
+  if (typeof hostOrOpts === 'string') return hostOrOpts;
+  return hostOrOpts?.host || '';
+}
+
+function envNoProxyBypasses(host) {
+  const h = String(host || '').toLowerCase();
+  if (!h) return false;
+  return String(process.env.NO_PROXY || process.env.no_proxy || '').split(/[\s,]+/).some(raw => {
+    const x = String(raw || '').trim().toLowerCase();
+    if (!x) return false;
+    if (x === '*') return true;
+    if (x.startsWith('.')) return h === x.slice(1) || h.endsWith(x);
+    return h === x || h.endsWith('.' + x);
+  });
+}
+
+/**
+ * @param {unknown} e
+ * @param {string|{host?: string}} [hostOrOpts] хост запроса — от него зависит совет
+ */
+export function netError(e, hostOrOpts) {
   if (!e) return String(e);
   const text = chainText(e);
+  const host = hostFromArg(hostOrOpts);
   // AbortSignal.timeout() в Node — TimeoutError с английским
   // «The operation was aborted due to timeout». Это не прокси и не отмена.
   if (e.name === 'TimeoutError' || /TimeoutError|ETIMEDOUT|UND_ERR_CONNECT_TIMEOUT|aborted due to timeout/i.test(text)) {
@@ -80,7 +102,16 @@ export function netError(e) {
   }
   if (/AbortError|ABORT_ERR|UND_ERR_ABORTED|was cancelled/i.test(text)) {
     const detail = e.cause?.message || e.message;
-    return `запрос оборван (${detail}) — прокси закрыл CONNECT; хост из NO_PROXY идёт напрямую`;
+    const h = String(host || '').toLowerCase();
+    const proxied = !!(process.env.HTTPS_PROXY || process.env.https_proxy || process.env.SOCKS_PROXY);
+    // OpenRouter как раз должен идти через SOCKS — совет про NO_PROXY тут вреден.
+    if (/openrouter\.ai/i.test(h)) {
+      return `запрос оборван (${detail}) — SOCKS закрыл CONNECT до OpenRouter; проверьте SOCKS_PROXY или выберите DeepSeek/Yandex`;
+    }
+    if (proxied && h && !envNoProxyBypasses(h)) {
+      return `запрос оборван (${detail}) — прокси закрыл CONNECT; добавьте ${h} в NO_PROXY, как DeepSeek`;
+    }
+    return `запрос оборван (${detail})`;
   }
   const cause = e?.cause?.message || e?.cause?.code;
   return cause ? `${e.message} (${cause})` : String(e?.message || e);
@@ -2336,9 +2367,12 @@ export async function enrichProduct(product, opts) {
     onNote = () => {}, referer = 'https://mrmag.ru', title = 'Ogran',
     chatUrl = 'https://openrouter.ai/api/v1/chat/completions',
     headers: extraHeaders = {},
+    fetchImpl = null,
     mismatchPolicy = MISMATCH_POLICY,
     systemPrompt = '',
   } = opts;
+
+  const doFetch = typeof fetchImpl === 'function' ? fetchImpl : fetch;
 
   let schema;
   try {
@@ -2488,7 +2522,7 @@ export async function enrichProduct(product, opts) {
 
     let res, data, bodyText;
     try {
-      res = await fetch(chatUrl, {
+      res = await doFetch(chatUrl, {
         method:  'POST',
         headers: {
           'Content-Type':   'application/json',
@@ -2506,7 +2540,7 @@ export async function enrichProduct(product, opts) {
       let host = chatUrl;
       try { host = new URL(chatUrl).host; } catch { /* */ }
       const timed = e.name === 'TimeoutError' || e.cause?.name === 'TimeoutError';
-      lastErr = new Error(timed ? `таймаут ${timeoutMs}ms (${host})` : `${host}: ${netError(e)}`);
+      lastErr = new Error(timed ? `таймаут ${timeoutMs}ms (${host})` : `${host}: ${netError(e, host)}`);
       lastRaw = `MODEL_ERROR: ${safeErr(lastErr)}`;
       modelStatus = 'MODEL_ERROR';
       if (attempt < attemptsCap) { onNote(`сеть, retry ${attempt}`); await sleep(attempt * 3000); continue; }

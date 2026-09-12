@@ -148,14 +148,13 @@ let modelsCache = { at: 0, list: null, errors: [] };
 let modelsInflight = null;
 let modelsGen = 0;
 
-/** Пока openrouter.ai не отвечает (таймаут / Cloudflare) — не оставляем шаг модели пустым. */
+/** Пока openrouter.ai не отвечает (таймаут / Cloudflare) — топ для обогащения. */
 const OPENROUTER_FALLBACK = [
-  { id: 'deepseek/deepseek-chat', name: 'DeepSeek Chat' },
   { id: 'deepseek/deepseek-v3.2', name: 'DeepSeek V3.2' },
-  { id: 'anthropic/claude-sonnet-4', name: 'Claude Sonnet 4' },
+  { id: 'deepseek/deepseek-chat', name: 'DeepSeek Chat' },
   { id: 'openai/gpt-4o-mini', name: 'GPT-4o Mini' },
+  { id: 'anthropic/claude-sonnet-4', name: 'Claude Sonnet 4' },
   { id: 'google/gemini-2.0-flash-001', name: 'Gemini 2.0 Flash' },
-  { id: 'qwen/qwen-2.5-72b-instruct', name: 'Qwen 2.5 72B' },
 ];
 
 function tagModels(raw, p) {

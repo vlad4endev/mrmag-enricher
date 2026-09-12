@@ -1608,6 +1608,35 @@ t('обрыв CONNECT не маскируется под таймаут', () => 
   assert.match(s, /cancelled/i);
   assert.doesNotMatch(s, /^таймаут/);
 });
+t('обрыв CONNECT до OpenRouter не советует NO_PROXY', () => {
+  const e = Object.assign(new Error('fetch failed'), {
+    cause: Object.assign(new Error('Request was cancelled.'), { name: 'AbortError' }),
+  });
+  const s = netError(e, 'openrouter.ai');
+  assert.match(s, /SOCKS|OpenRouter/i);
+  assert.doesNotMatch(s, /NO_PROXY/);
+  assert.doesNotMatch(s, /напрямую/);
+});
+t('обрыв CONNECT до чужого хоста через прокси советует NO_PROXY', () => {
+  const prevH = process.env.HTTPS_PROXY;
+  const prevN = process.env.NO_PROXY;
+  const prevS = process.env.SOCKS_PROXY;
+  process.env.HTTPS_PROXY = 'http://127.0.0.1:18080';
+  process.env.NO_PROXY = 'mrmag.ru,localhost';
+  delete process.env.SOCKS_PROXY;
+  try {
+    const e = Object.assign(new Error('fetch failed'), {
+      cause: Object.assign(new Error('Request was cancelled.'), { name: 'AbortError' }),
+    });
+    const s = netError(e, 'api.deepseek.com');
+    assert.match(s, /api\.deepseek\.com/);
+    assert.match(s, /NO_PROXY/);
+  } finally {
+    if (prevH === undefined) delete process.env.HTTPS_PROXY; else process.env.HTTPS_PROXY = prevH;
+    if (prevN === undefined) delete process.env.NO_PROXY; else process.env.NO_PROXY = prevN;
+    if (prevS === undefined) delete process.env.SOCKS_PROXY; else process.env.SOCKS_PROXY = prevS;
+  }
+});
 t('AbortSignal.timeout не оставляет английскую формулировку', () => {
   const e = Object.assign(new Error('The operation was aborted due to timeout'), { name: 'TimeoutError' });
   assert.strictEqual(netError(e), 'таймаут');

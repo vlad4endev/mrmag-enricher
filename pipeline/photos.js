@@ -187,13 +187,17 @@ function publicAlbum(meta) {
 }
 
 function publicItem(item) {
+  const product_id = item.product_id || null;
+  const dump_category = item.dump_category || null;
   return {
     id: item.id,
     filename: item.filename,
     mime: item.mime,
     bytes: item.bytes,
-    product_id: item.product_id || null,
+    product_id,
     sku: item.sku || null,
+    dump_category,
+    dump_bound: Boolean(product_id && dump_category),
     status: item.status || 'uploaded',
     description: item.description || null,
     caption: item.caption || null,
@@ -310,6 +314,7 @@ export function uploadPhotos(albumId, files, root) {
       bytes: buf.length,
       product_id: file.product_id != null ? String(file.product_id).trim() || null : null,
       sku: file.sku != null ? String(file.sku).trim() || null : null,
+      dump_category: file.dump_category != null ? String(file.dump_category).trim() || null : null,
       status: 'uploaded',
       description: null,
       caption: null,
@@ -342,6 +347,17 @@ export function patchPhotoItem(albumId, itemId, patch, root) {
     }
     if ('sku' in patch) {
       item.sku = patch.sku != null ? String(patch.sku).trim() || null : null;
+    }
+    if ('dump_category' in patch) {
+      item.dump_category = patch.dump_category != null && String(patch.dump_category).trim()
+        ? String(patch.dump_category).trim()
+        : null;
+    }
+    // Явная отвязка: dump_bound=false сбрасывает и id, и раздел
+    if (patch.dump_bound === false) {
+      item.product_id = null;
+      item.sku = null;
+      item.dump_category = null;
     }
     if ('description' in patch && patch.description != null) {
       item.description = String(patch.description).slice(0, 8000);
@@ -444,6 +460,8 @@ export function buildMlExport(albumId, {
       mime: item.mime,
       product_id: item.product_id || null,
       sku: item.sku || null,
+      dump_category: item.dump_category || null,
+      dump_bound: Boolean(item.product_id && item.dump_category),
       caption: item.caption || '',
       description: item.description || '',
       alt: item.alt || '',

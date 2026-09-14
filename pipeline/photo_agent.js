@@ -1,21 +1,18 @@
 /**
  * Vision-агент: описание фото для витрины и ML-разметки.
- *
- * 1) multimodal LLM → caption / description / alt / tags / attributes
- * 2) если есть product_id — сверяем с дампом (consistency-lite)
- * 3) предупреждения, если картинка и текст товара расходятся
+ * По умолчанию — только картинка. Если фото привязано к дампу
+ * (dump_category + product_id), подмешиваем карточку для сверки.
  */
 
 import { RateLimiter } from '../lib.js';
 import { getDump } from './dumps.js';
 
 export const PHOTO_PROMPT_PLACEHOLDERS = [
-  { key: '{{product_id}}', note: 'id товара, если привязан к фото' },
-  { key: '{{sku}}', note: 'артикул / sku' },
   { key: '{{filename}}', note: 'имя файла изображения' },
-  { key: '{{category}}', note: 'id раздела дампа' },
-  { key: '{{dump_name}}', note: 'название товара из дампа' },
-  { key: '{{dump_annotation}}', note: 'annotation из дампа (без HTML)' },
+  { key: '{{product_id}}', note: 'id товара, если фото привязано к дампу' },
+  { key: '{{dump_category}}', note: 'id раздела дампа при привязке' },
+  { key: '{{dump_name}}', note: 'название из дампа (только при привязке)' },
+  { key: '{{dump_annotation}}', note: 'annotation из дампа (только при привязке)' },
 ];
 
 export function defaultPhotoSystemPrompt() {
@@ -35,18 +32,19 @@ export function defaultPhotoSystemPrompt() {
   },
   "warnings": ["если качество плохое / водяной знак / коллаж / не товар"]
 }
-Правила: только факты с фото; не выдумывай объём/мощность/габариты; язык русский; JSON без markdown.`;
+Правила: только факты с фото; не выдумывай объём/мощность/габариты; язык русский; JSON без markdown.
+Если в запросе передан dump — не противоречь известным полям, но не копируй текст дампа слепо и не выдумывай то, чего нет на фото.
+Без dump опирайся только на изображение.`;
 }
 
-/** Пустой или совпадающий со встроенным → встроенный шаблон. */
+/** Пустой шаблон → встроенный. */
 export function resolvePhotoSystemPrompt(template, vars = {}) {
   const raw = String(template || '').trim();
   const base = raw || defaultPhotoSystemPrompt();
   return base
-    .replaceAll('{{product_id}}', String(vars.product_id ?? ''))
-    .replaceAll('{{sku}}', String(vars.sku ?? ''))
     .replaceAll('{{filename}}', String(vars.filename ?? ''))
-    .replaceAll('{{category}}', String(vars.category ?? ''))
+    .replaceAll('{{product_id}}', String(vars.product_id ?? ''))
+    .replaceAll('{{dump_category}}', String(vars.dump_category ?? ''))
     .replaceAll('{{dump_name}}', String(vars.dump_name ?? ''))
     .replaceAll('{{dump_annotation}}', String(vars.dump_annotation ?? ''));
 }
@@ -227,7 +225,11 @@ function buildUserParts({ mime, base64, filename, productId, sku, dump }) {
     product_id: productId || null,
     sku: sku || null,
     dump: dump || null,
-    task: 'Опиши товар на фото. Если передан dump — не противоречь известным полям, но не копируй слепо текст дампа.',
+    task: dump
+      ? 'Опиши товар на фото. Передан dump — не противоречь известным полям, но не копируй текст дампа слепо.'
+      : (productId
+        ? 'Привязка к дампу задана, но товар в дампе не найден — опиши только то, что видно на фото.'
+        : 'Опиши только то, что видно на фото. Дамп не привязан.'),
   };
   return [
     { type: 'text', text: JSON.stringify(meta) },
@@ -240,6 +242,7 @@ function buildUserParts({ mime, base64, filename, productId, sku, dump }) {
 
 /**
  * Описать одно фото через vision-модель провайдера.
+ * dump/category подключаются только если фото явно привязано.
  */
 export async function describePhoto(itemFile, opts = {}) {
   const {
@@ -253,6 +256,7 @@ export async function describePhoto(itemFile, opts = {}) {
     maxTokens = 2000,
     category = null,
     root = undefined,
+    useDump = false,
     onNote = () => {},
     referer = 'https://mrmag.ru',
     title = 'Ogran Photos',
@@ -263,13 +267,19 @@ export async function describePhoto(itemFile, opts = {}) {
 
   const doFetch = typeof fetchImpl === 'function' ? fetchImpl : fetch;
   const rate = limiter || new RateLimiter(30);
-  const dump = dumpContext(itemFile.item?.product_id, itemFile.item?.sku, category, root);
+  const dump = useDump
+    ? dumpContext(itemFile.item?.product_id, itemFile.item?.sku, category, root)
+    : null;
+  if (useDump && !dump) {
+    onNote('привязка к дампу: товар не найден — описываем только фото');
+  } else if (dump) {
+    onNote(`дамп ${category} · id ${dump.id || itemFile.item?.product_id}`);
+  }
   const base64 = itemFile.buf.toString('base64');
   const system = resolvePhotoSystemPrompt(systemPrompt, {
-    product_id: itemFile.item?.product_id || '',
-    sku: itemFile.item?.sku || '',
     filename: itemFile.item?.filename || '',
-    category: category || '',
+    product_id: useDump ? (itemFile.item?.product_id || '') : '',
+    dump_category: useDump ? (category || '') : '',
     dump_name: dump?.name || '',
     dump_annotation: dump?.annotation || '',
   });
@@ -285,8 +295,8 @@ export async function describePhoto(itemFile, opts = {}) {
         mime: itemFile.mime,
         base64,
         filename: itemFile.item?.filename,
-        productId: itemFile.item?.product_id,
-        sku: itemFile.item?.sku,
+        productId: useDump ? itemFile.item?.product_id : null,
+        sku: useDump ? itemFile.item?.sku : null,
         dump,
       }),
     },

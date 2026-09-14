@@ -53,12 +53,12 @@
  *   POST /api/jobs/:id/stop   остановить прогон после текущего товара
  *   DELETE /api/jobs/:id      забыть прогон вместе с файлом на диске
  *   GET  /api/photos          альбомы фото
- *   POST /api/photos          создать альбом { name, category? }
+ *   POST /api/photos          создать альбом { name }
  *   GET  /api/photos/:id      альбом + items
- *   PATCH /api/photos/:id     переименовать / category { name?, category? }
+ *   PATCH /api/photos/:id     переименовать { name? }
  *   DELETE /api/photos/:id    удалить альбом
- *   POST /api/photos/:id/upload  массовая загрузка { files:[{name,data,product_id?}] }
- *   PATCH /api/photos/:id/items/:itemId  привязка / правка текста
+ *   POST /api/photos/:id/upload  массовая загрузка { files:[{name,data}] }
+ *   PATCH /api/photos/:id/items/:itemId  правка текста
  *   DELETE /api/photos/:id/items/:itemId
  *   GET  /api/photos/:id/file/:itemId    отдать бинарник изображения
  *   POST /api/photos/:id/describe        фоновый vision-прогон { model, item_ids? }
@@ -927,12 +927,11 @@ function promptMeta(settings, category = null) {
       custom: !!photoCustom && photoCustom !== photoBuiltin,
       placeholders: PHOTO_PROMPT_PLACEHOLDERS,
       preview: resolvePhotoSystemPrompt(photoCustom || photoBuiltin, {
-        product_id: '21670',
-        sku: '21670',
-        filename: '21670.jpg',
-        category: '467',
-        dump_name: 'Пример товара',
-        dump_annotation: 'Цвет: белый',
+        filename: 'photo.jpg',
+        product_id: '',
+        dump_category: '',
+        dump_name: '',
+        dump_annotation: '',
       }),
     },
   };
@@ -1019,12 +1018,11 @@ async function apiPromptPreview(req, res) {
       ? (String(fromBody).trim() ? fromBody : builtin)
       : (saved || builtin);
     const preview = resolvePhotoSystemPrompt(template, {
-      product_id: body?.product_id || '21670',
-      sku: body?.sku || '21670',
-      filename: body?.filename || '21670.jpg',
-      category: body?.category || '467',
-      dump_name: body?.dump_name || 'Пример товара',
-      dump_annotation: body?.dump_annotation || 'Цвет: белый',
+      filename: body?.filename || 'photo.jpg',
+      product_id: body?.product_id || '',
+      dump_category: body?.dump_category || body?.category || '',
+      dump_name: body?.dump_name || '',
+      dump_annotation: body?.dump_annotation || '',
     });
     return json(res, 200, {
       kind: 'photo',
@@ -1911,7 +1909,7 @@ async function apiEnrich(req, res) {
 // обрывает работу на середине. Подробности и формат — в jobs.js.
 const store = createJobStore({ enrichOne });
 
-async function describePhotoOne({ albumId, itemId, model, provider, category, onNote = () => {} }) {
+async function describePhotoOne({ albumId, itemId, model, provider, onNote = () => {} }) {
   const settings = loadSettings(ROOT);
   // Фото → только AITUNNEL (или тот же хост aitunnel.ru), другие шлюзы отклоняем.
   const PHOTO_PROVIDER = 'aitunnel';
@@ -1945,14 +1943,19 @@ async function describePhotoOne({ albumId, itemId, model, provider, category, on
   }
   const resolvedModel = resolveProviderModel(prov, model, settings) || model;
   const file = readPhotoFile(albumId, itemId, ROOT);
+  let albumCat = null;
+  try { albumCat = getAlbum(albumId, ROOT)?.category || null; } catch { /* */ }
+  const dumpCat = file.item?.dump_category || albumCat || null;
+  const useDump = Boolean(file.item?.product_id && dumpCat);
   const result = await describePhoto(file, {
     model: resolvedModel,
     apiKey: null, // auth уже в ep.headers
     chatUrl: ep.chatUrl,
     headers: ep.headers || {},
     fetchImpl: (url, init) => providerFetch(url, init, { useProxy: providerUsesProxy(prov) }),
-    category: category || null,
+    category: useDump ? dumpCat : null,
     root: ROOT,
+    useDump,
     onNote,
     limiter: limiterFor(`${prov.id}:${resolvedModel}`),
     systemPrompt: settings.model?.photo_system_prompt || '',
@@ -1976,7 +1979,7 @@ async function apiPhotoCreate(req, res) {
   let body;
   try { body = JSON.parse(raw || '{}'); } catch { return json(res, 400, { error: 'Тело не JSON' }); }
   try {
-    const album = createAlbum(body.name || 'Альбом', { category: body.category || null }, ROOT);
+    const album = createAlbum(body.name || 'Альбом', {}, ROOT);
     return json(res, 201, { album });
   } catch (e) {
     return json(res, e.status || 500, { error: e.message });
@@ -2051,7 +2054,7 @@ async function apiPhotoDescribe(req, res, id) {
   const raw = await readBody(req, 1_000_000);
   let body;
   try { body = JSON.parse(raw || '{}'); } catch { return json(res, 400, { error: 'Тело не JSON' }); }
-  const { model, item_ids, category } = body || {};
+  const { model, item_ids } = body || {};
   if (!model || typeof model !== 'string') return json(res, 400, { error: 'Не передана модель' });
   try {
     const job = photoStore.create({
@@ -2059,7 +2062,6 @@ async function apiPhotoDescribe(req, res, id) {
       model,
       provider: 'aitunnel',
       item_ids: item_ids || null,
-      category: category || null,
     });
     return json(res, 202, photoStore.summary(job));
   } catch (e) {

@@ -997,6 +997,14 @@ input[type=range]::-moz-range-thumb{
 .photo-attrs .pa:last-child{border-bottom:none}
 .photo-attrs .pa .k{color:var(--t3);font-weight:550}
 .photo-attrs .pa .v{color:var(--t1);word-break:break-word}
+.photo-dump-box{
+  display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:0 0 16px;
+  padding:10px 12px;border:1px solid var(--b1);border-radius:var(--r);background:var(--bg3);
+}
+.photo-dump-box .lbl{font-size:12.5px;color:var(--t2);flex:1;min-width:160px;line-height:1.4}
+.photo-dump-box .lbl b{color:var(--t1);font-weight:650}
+.photo-dump-box.on{border-color:var(--abd);background:var(--abg)}
+.photo-ri .ri-m .dump-tag{color:var(--amber);font-weight:650}
 @media(max-width:1100px){
   .photo-page .app{grid-template-columns:1fr;grid-template-rows:auto minmax(220px,32vh) minmax(320px,1fr);overflow:auto}
   .photo-page .left,.photo-page .mid,.photo-page .right{min-height:220px}
@@ -1881,7 +1889,7 @@ input[type=range]::-moz-range-thumb{
   <header class="head">
     <div>
       <h1>Фото</h1>
-      <div class="crumb">Альбом → модель → список · лог · полный текст описания · как в обогащении</div>
+      <div class="crumb">Альбом → модель → список · лог · текст · привязка к дампу по желанию</div>
     </div>
   </header>
 <div class="app">
@@ -1914,8 +1922,6 @@ input[type=range]::-moz-range-thumb{
           <input type="text" id="photoMsrch" placeholder="Поиск или id модели" oninput="photoFilterModels()" autocomplete="off" aria-label="Поиск модели AITUNNEL">
           <div class="mdrop" id="photoMdrop"></div>
         </div>
-        <label class="flbl stack-gap" for="photoCatId">Раздел дампа (сверка id)</label>
-        <input type="text" id="photoCatId" placeholder="например 467" inputmode="numeric" aria-label="Раздел дампа">
       </div>
 
       <div class="photo-block">
@@ -1923,7 +1929,7 @@ input[type=range]::-moz-range-thumb{
         <div class="photo-drop" id="photoZone" tabindex="0" role="button" aria-label="Загрузить фото">
           <i class="ti ti-cloud-upload" aria-hidden="true"></i>
           <b>Перетащите или выберите</b>
-          <div class="hint" style="margin:0">JPEG / PNG / WebP / GIF · <code>12345.jpg</code> → product_id</div>
+          <div class="hint" style="margin:0">JPEG / PNG / WebP / GIF · к дампу можно привязать позже</div>
         </div>
         <input type="file" id="photoFile" accept="image/jpeg,image/png,image/webp,image/gif,.jpg,.jpeg,.png,.webp,.gif" multiple hidden>
       </div>
@@ -1998,6 +2004,7 @@ input[type=range]::-moz-range-thumb{
       </div>
       <div class="ph-actions">
         <span class="bdg bdg-g" id="photoStatusBdg" style="display:none"></span>
+        <span class="bdg bdg-a" id="photoDumpBdg" style="display:none;cursor:pointer" onclick="photoToggleDumpBind()" title="Привязать или отвязать от дампа"></span>
         <span class="bdg bdg-b" id="photoCpyBtn" style="display:none;cursor:pointer" onclick="photoCopyDetail()" title="Скопировать полный текст"><i class="ti ti-copy" aria-hidden="true"></i> Копировать</span>
       </div>
     </div>
@@ -8372,11 +8379,10 @@ async function photoCreateAlbum(forcedName){
     ? forcedName
     : prompt('Название альбома','Фото '+new Date().toLocaleDateString('ru-RU'));
   if(name==null) return;
-  const category=String(document.getElementById('photoCatId')?.value||'').trim()||null;
   try{
     const data=await apiJson('/api/photos',{
       method:'POST', headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({ name: String(name).trim()||'Альбом', category }),
+      body:JSON.stringify({ name: String(name).trim()||'Альбом' }),
     });
     photoAlbum=data.album;
     photoSel=new Set();
@@ -8391,7 +8397,6 @@ async function photoOpenAlbum(id, quiet){
     const data=await apiJson('/api/photos/'+encodeURIComponent(id));
     photoAlbum=data.album;
     photoSel=new Set();
-    if(photoAlbum.category) document.getElementById('photoCatId').value=photoAlbum.category;
     document.getElementById('photoAlbumTitle').textContent=photoAlbum.name||photoAlbum.id;
     if(photoCurId && !photoItemById(photoCurId)) photoCurId=null;
     if(!photoCurId && photoAlbum.items[0]) photoCurId=photoAlbum.items[0].id;
@@ -8400,12 +8405,6 @@ async function photoOpenAlbum(id, quiet){
     photoRenderDetail();
     if(!quiet) photoStatus(`${photoAlbum.items.length} фото`, true);
   }catch(e){ photoStatus(e.message||'не открыт', false); }
-}
-
-function photoGuessProductId(filename){
-  const base=String(filename||'').replace(/^.*[\\/]/,'');
-  const m=base.match(/^(\d{3,})(?:[_-]|\.|$)/);
-  return m?m[1]:null;
 }
 
 function fileToDataUrl(file){
@@ -8432,7 +8431,7 @@ async function photoIngestFiles(files){
     const payload=[];
     for(const f of chunk){
       const data=await fileToDataUrl(f);
-      payload.push({ name:f.name, data, product_id:photoGuessProductId(f.name) });
+      payload.push({ name:f.name, data });
     }
     try{
       const out=await apiJson('/api/photos/'+encodeURIComponent(photoAlbum.id)+'/upload',{
@@ -8474,16 +8473,15 @@ function photoRenderList(){
   box.innerHTML=items.map(it=>{
     const st=photoStClass(it);
     const preview=it.caption||it.description||it.error||'';
-    const meta=[
-      it.product_id?('id '+it.product_id):'без id',
-      photoStLabel(it),
-    ].join(' · ');
+    const metaParts=[photoStLabel(it)];
+    if(photoIsDumpBound(it)) metaParts.push('дамп '+it.dump_category+'/'+it.product_id);
+    const meta=metaParts.join(' · ');
     return `<div class="ri photo-ri s-${st}${photoCurId===it.id?' on':''}${photoSel.has(it.id)?' sel':''}" data-id="${esc(it.id)}" role="button" tabindex="0" onclick="photoFocus('${esc(it.id)}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();photoFocus('${esc(it.id)}')}">
       <input type="checkbox" class="photo-check" ${photoSel.has(it.id)?'checked':''} onclick="photoToggleSel('${esc(it.id)}',event)" aria-label="Выбрать для прогона">
       <span class="ri-thumb"><img src="${photoFileUrl(it)}" alt="" loading="lazy"></span>
       <span class="ri-b">
         <span class="ri-n" title="${esc(it.filename)}">${esc(it.filename)}</span>
-        <span class="ri-m">${esc(meta)}${preview?` · ${esc(String(preview).slice(0,72))}`:''}</span>
+        <span class="ri-m">${esc(metaParts[0])}${photoIsDumpBound(it)?` · <span class="dump-tag">дамп ${esc(it.dump_category)}/${esc(it.product_id)}</span>`:''}${preview?` · ${esc(String(preview).slice(0,72))}`:''}</span>
       </span>
       <span class="ri-st ${st==='run'?'run':st}" aria-hidden="true">${st==='run'?'↻':''}</span>
     </div>`;
@@ -8522,6 +8520,88 @@ function photoSwitchTab(tab, btn){
   photoRenderDetail();
 }
 
+let photoDumpLastCat='';
+
+function photoGuessProductId(filename){
+  const base=String(filename||'').replace(/^.*[\\/]/,'');
+  const m=base.match(/^(\d{3,})(?:[_-]|\.|$)/);
+  return m?m[1]:null;
+}
+
+function photoIsDumpBound(it){
+  return Boolean(it && (it.dump_bound || (it.product_id && it.dump_category)));
+}
+
+async function photoPatchItem(id, patch){
+  if(!photoAlbum||!id) return null;
+  const out=await apiJson(
+    '/api/photos/'+encodeURIComponent(photoAlbum.id)+'/items/'+encodeURIComponent(id),
+    { method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify(patch) },
+  );
+  const item=out.item;
+  const idx=(photoAlbum.items||[]).findIndex(i=>i.id===id);
+  if(idx>=0) photoAlbum.items[idx]=item;
+  else photoAlbum.items.push(item);
+  return item;
+}
+
+async function photoBindDump(id){
+  const it=photoItemById(id||photoCurId);
+  if(!it||!photoAlbum){ photoStatus('Сначала выберите фото', false); return; }
+  let dumps=[];
+  try{
+    const d=await apiJson('/api/dumps');
+    dumps=(d.dumps||[]).filter(x=>x.has_file);
+  }catch{ /* */ }
+  const hint=dumps.length
+    ? ('Доступны: '+dumps.slice(0,8).map(x=>x.id+(x.name?(' '+x.name):'')).join(', ')+(dumps.length>8?'…':''))
+    : 'Сначала загрузите дамп в Настройки → Дампы';
+  const defCat=it.dump_category || photoAlbum.category || photoDumpLastCat || (dumps[0]?.id||'');
+  const cat=prompt('Раздел дампа (id)\n'+hint, String(defCat||''));
+  if(cat==null) return;
+  const catId=String(cat).trim();
+  if(!/^\d+$/.test(catId)){ photoStatus('Нужен числовой id раздела', false); return; }
+  const defPid=it.product_id || photoGuessProductId(it.filename) || '';
+  const pid=prompt('Id товара в дампе', String(defPid||''));
+  if(pid==null) return;
+  const productId=String(pid).trim();
+  if(!productId){ photoStatus('Укажите id товара', false); return; }
+  try{
+    await photoPatchItem(it.id, { product_id: productId, dump_category: catId });
+    try{
+      await apiJson('/api/photos/'+encodeURIComponent(photoAlbum.id),{
+        method:'PATCH', headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({ category: catId }),
+      });
+      photoAlbum.category=catId;
+    }catch{ /* */ }
+    photoDumpLastCat=catId;
+    photoCurId=it.id;
+    photoRenderList();
+    photoRenderDetail();
+    photoStatus(`Привязано: раздел ${catId} · id ${productId}`, true);
+  }catch(e){ photoStatus(e.message||'не привязалось', false); }
+}
+
+async function photoUnbindDump(id){
+  const it=photoItemById(id||photoCurId);
+  if(!it||!photoAlbum) return;
+  if(!confirm('Отвязать фото от дампа?')) return;
+  try{
+    await photoPatchItem(it.id, { dump_bound: false });
+    photoRenderList();
+    photoRenderDetail();
+    photoStatus('Отвязано от дампа', true);
+  }catch(e){ photoStatus(e.message||'не отвязалось', false); }
+}
+
+function photoToggleDumpBind(){
+  const it=photoItemById(photoCurId);
+  if(!it) return;
+  if(photoIsDumpBound(it)) photoUnbindDump(it.id);
+  else photoBindDump(it.id);
+}
+
 function photoCopyDetail(){
   const it=photoItemById(photoCurId);
   if(!it) return;
@@ -8543,18 +8623,20 @@ function photoRenderDetail(){
   const title=document.getElementById('photoDetailTitle');
   const tabs=document.getElementById('photoRtabs');
   const bdg=document.getElementById('photoStatusBdg');
+  const dumpBdg=document.getElementById('photoDumpBdg');
   const cpy=document.getElementById('photoCpyBtn');
   if(!box) return;
   const it=photoItemById(photoCurId);
   if(!it){
     if(tabs) tabs.style.display='none';
     if(bdg) bdg.style.display='none';
+    if(dumpBdg) dumpBdg.style.display='none';
     if(cpy) cpy.style.display='none';
     if(title) title.innerHTML='<i class="ti ti-photo" aria-hidden="true"></i> Результат';
     box.innerHTML=`<div class="empty"><div class="guide">
       <div class="guide-k">Описание фото</div>
       <h3>Выберите фото в списке</h3>
-      Справа появится полный caption, description, alt, теги и атрибуты — как поля результата в обогащении.
+      Справа появится полный текст. Привязку к дампу можно включить кнопкой, когда нужно.
     </div></div>`;
     return;
   }
@@ -8565,10 +8647,22 @@ function photoRenderDetail(){
     bdg.textContent=photoStLabel(it);
     bdg.className='bdg '+(it.status==='error'?'bdg-a':photoIsDescribed(it)?'bdg-g':'bdg-b');
   }
+  if(dumpBdg){
+    dumpBdg.style.display='';
+    if(photoIsDumpBound(it)){
+      dumpBdg.className='bdg bdg-a';
+      dumpBdg.innerHTML=`<i class="ti ti-link" aria-hidden="true"></i> Дамп ${esc(it.dump_category)}/${esc(it.product_id)}`;
+      dumpBdg.title='Отвязать от дампа';
+    }else{
+      dumpBdg.className='bdg bdg-b';
+      dumpBdg.innerHTML='<i class="ti ti-link-off" aria-hidden="true"></i> Привязать к дампу';
+      dumpBdg.title='Привязать к разделу дампа и id товара';
+    }
+  }
   if(title){
     title.innerHTML=`<span class="pt-name">${esc(it.filename||'Фото')}</span>`
-      +`<span class="pt-meta">${it.product_id?`<b>id</b> ${esc(it.product_id)}`:'без product_id'}`
-      +(it.bytes?` · <b>${Math.round(it.bytes/1024)} KB</b>`:'')
+      +`<span class="pt-meta">${it.bytes?`<b>${Math.round(it.bytes/1024)} KB</b>`:'фото'}`
+      +(photoIsDumpBound(it)?` · дамп <b>${esc(it.dump_category)}</b>/<b>${esc(it.product_id)}</b>`:'')
       +`</span>`;
   }
 
@@ -8580,18 +8674,26 @@ function photoRenderDetail(){
   const attrs=it.attributes&&typeof it.attributes==='object'?Object.entries(it.attributes):[];
   const tags=Array.isArray(it.tags)?it.tags:[];
   const warns=Array.isArray(it.warnings)?it.warnings:[];
+  const bound=photoIsDumpBound(it);
   let html=`<div class="photo-detail-hero">
     <div class="ph-img"><img src="${photoFileUrl(it)}" alt="${esc(it.alt||it.filename||'')}"></div>
     <div class="ph-meta">
       <div class="name">${esc(it.filename||'')}</div>
-      <div class="row"><span><b>Статус</b> ${esc(photoStLabel(it))}</span>`
-        +(it.product_id?`<span><b>product_id</b> ${esc(it.product_id)}</span>`:'')
-        +(it.sku?`<span><b>sku</b> ${esc(it.sku)}</span>`:'')
-        +`</div>
+      <div class="row"><span><b>Статус</b> ${esc(photoStLabel(it))}</span></div>
       <div class="row"><span><b>mime</b> ${esc(it.mime||'—')}</span>`
         +(it.described_at?`<span><b>описано</b> ${esc(new Date(it.described_at).toLocaleString('ru-RU'))}</span>`:'')
         +`</div>
     </div>
+  </div>`;
+
+  html+=`<div class="photo-dump-box${bound?' on':''}">
+    <div class="lbl">${bound
+      ? `Привязано к дампу: раздел <b>${esc(it.dump_category)}</b> · товар <b>${esc(it.product_id)}</b>. При описании будет сверка.`
+      : 'К дампу не привязано — описание только по картинке.'}</div>
+    ${bound
+      ? `<button type="button" class="sbtn ghost" onclick="photoUnbindDump('${esc(it.id)}')">Отвязать</button>
+         <button type="button" class="sbtn ghost" onclick="photoBindDump('${esc(it.id)}')">Изменить</button>`
+      : `<button type="button" class="sbtn primary" onclick="photoBindDump('${esc(it.id)}')"><i class="ti ti-link"></i> Привязать к дампу</button>`}
   </div>`;
 
   if(it.error){
@@ -8753,15 +8855,6 @@ async function photoStartDescribe(){
     return;
   }
   if(!photoModel){ photoStatus('Выберите модель AITUNNEL', false); return; }
-  const category=String(document.getElementById('photoCatId')?.value||'').trim()||null;
-  if(category){
-    try{
-      await apiJson('/api/photos/'+encodeURIComponent(photoAlbum.id),{
-        method:'PATCH', headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({ category }),
-      });
-    }catch{ /* */ }
-  }
   const item_ids=photoSel.size?[...photoSel]:null;
   try{
     const job=await apiJson('/api/photos/'+encodeURIComponent(photoAlbum.id)+'/describe',{
@@ -8770,7 +8863,6 @@ async function photoStartDescribe(){
         model:photoModel.id,
         provider:PHOTO_PROVIDER_ID,
         item_ids,
-        category,
       }),
     });
     photoJobId=job.id;

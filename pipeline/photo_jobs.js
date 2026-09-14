@@ -104,7 +104,7 @@ export function createPhotoJobStore({
     return true;
   }
 
-  function create({ album_id, model, provider = null, item_ids = null, category = null }) {
+  function create({ album_id, model, provider = null, item_ids = null }) {
     if (!album_id) throw Object.assign(new Error('Нет album_id'), { status: 400 });
     if (!model) throw Object.assign(new Error('Нет модели'), { status: 400 });
 
@@ -127,7 +127,6 @@ export function createPhotoJobStore({
       album_id,
       model,
       provider,
-      category: category || album.category || null,
       item_ids: ids,
       results: ids.map(() => null),
       done: 0,
@@ -163,7 +162,6 @@ export function createPhotoJobStore({
             itemId,
             model: job.model,
             provider: job.provider,
-            category: job.category,
             onNote: (msg) => pushLog(job, `  ${itemId}: ${msg}`),
           });
           job.results[idx] = { id: itemId, ok: true, ...result };
@@ -235,15 +233,14 @@ export function createPhotoJobStore({
 
 /** Обёртка одного фото для store — вызывается из server.js с провайдером. */
 export async function describeAlbumItem({
-  albumId, itemId, model, provider, category, onNote, describeImpl,
+  albumId, itemId, model, provider, onNote, describeImpl,
 }) {
   const file = readPhotoFile(albumId, itemId);
   const result = await (describeImpl || describePhoto)(file, {
     model,
     provider,
-    category,
     onNote,
   });
   const saved = applyDescribeResult(albumId, itemId, result);
-  return { item: saved, usage: result.usage, dump_linked: result.dump_linked };
+  return { item: saved, usage: result.usage };
 }

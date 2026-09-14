@@ -26,6 +26,10 @@ filters_*.json
 # Загруженные дампы заказчика (сид — data_*.json в корне репозитория)
 dumps/
 
+# Альбомы фото и vision-прогоны
+photos/
+photo_jobs/
+
 # Разметка: labelset.json и label.html генерируются, эталон храним
 labelset.json
 label.html

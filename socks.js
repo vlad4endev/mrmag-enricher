@@ -186,6 +186,7 @@ export function startBridge(cfg, port = 0, host = '127.0.0.1') {
 export const DIRECT_HOSTS = [
   'mrmag.ru', 'localhost', '127.0.0.1',
   'api.deepseek.com', '.deepseek.com',
+  'api.aitunnel.ru', '.aitunnel.ru',
   'searchapi.api.cloud.yandex.net', '.api.cloud.yandex.net',
 ];
 

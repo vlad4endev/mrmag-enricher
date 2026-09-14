@@ -940,6 +940,62 @@ input[type=range]::-moz-range-thumb{
 .dump-drop:hover,.dump-drop.on{border-color:var(--ac);background:var(--ac-w)}
 .dump-drop i{font-size:22px;color:var(--ac)}
 .dump-drop b{display:block;font-size:13.5px;margin:8px 0 4px}
+.photo-page .photo-body{
+  display:grid;grid-template-columns:280px minmax(0,1fr);gap:12px;padding:12px 16px 16px;
+  flex:1;min-height:0;overflow:hidden;
+}
+.photo-side{display:flex;flex-direction:column;gap:10px;overflow:auto;min-height:0}
+.photo-main{display:flex;flex-direction:column;gap:10px;min-width:0;min-height:0;overflow:hidden}
+.photo-toolbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.photo-toolbar .grow{flex:1;min-width:120px}
+.photo-grid{
+  display:grid;grid-template-columns:repeat(auto-fill,minmax(168px,1fr));gap:10px;
+  overflow:auto;flex:1;min-height:0;padding:2px;align-content:start;
+}
+.photo-card{
+  background:var(--panel);border:1px solid var(--b);border-radius:var(--r);overflow:hidden;
+  display:flex;flex-direction:column;min-width:0;
+}
+.photo-card.sel{outline:2px solid var(--ac);outline-offset:1px}
+.photo-card .thumb{
+  aspect-ratio:1;background:var(--bg3);display:flex;align-items:center;justify-content:center;
+  overflow:hidden;position:relative;
+}
+.photo-card .thumb img{width:100%;height:100%;object-fit:cover}
+.photo-card .meta{padding:8px 9px 10px;display:flex;flex-direction:column;gap:4px;font-size:12px}
+.photo-card .meta b{font-size:12.5px;font-weight:650;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.photo-card .st{
+  font-size:11px;color:var(--t3);display:flex;justify-content:space-between;gap:6px;
+}
+.photo-card .st .ok{color:var(--ok,#2a9d5c)}
+.photo-card .st .err{color:var(--red)}
+.photo-card .desc{
+  color:var(--t2);font-size:11.5px;line-height:1.35;max-height:3.9em;overflow:hidden;
+}
+.photo-drop{
+  border:1px dashed var(--b2);border-radius:var(--r);padding:18px 14px;background:var(--bg3);
+  text-align:center;cursor:pointer;transition:border-color .15s,background .15s;
+}
+.photo-drop:hover,.photo-drop.on{border-color:var(--ac);background:var(--ac-w)}
+.photo-drop i{font-size:22px;color:var(--ac)}
+.photo-drop b{display:block;font-size:13.5px;margin:8px 0 4px}
+.photo-album{
+  border:1px solid var(--b);border-radius:var(--r);padding:10px 11px;background:var(--panel);
+  cursor:pointer;display:flex;flex-direction:column;gap:4px;
+}
+.photo-album.on{border-color:var(--ac);box-shadow:0 0 0 1px var(--ac)}
+.photo-album strong{font-size:13.5px}
+.photo-album .sub{font-size:12px;color:var(--t2)}
+.photo-log{
+  font-family:var(--mono);font-size:11.5px;line-height:1.45;background:var(--bg3);
+  border:1px solid var(--b);border-radius:var(--r);padding:8px 10px;max-height:140px;overflow:auto;
+  white-space:pre-wrap;color:var(--t2);
+}
+@media(max-width:900px){
+  .photo-page .photo-body{grid-template-columns:1fr;overflow:auto}
+  .photo-main{overflow:visible}
+  .photo-grid{overflow:visible}
+}
 .dump-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap}
 .dump-title{display:flex;flex-direction:column;gap:2px;min-width:0}
 .dump-title strong{font-size:14.5px;font-weight:650}
@@ -1582,6 +1638,10 @@ input[type=range]::-moz-range-thumb{
     <i class="ti ti-sparkles" aria-hidden="true"></i><span class="ico-fb">✦</span>
     <span class="tip">Обогащение</span>
   </button>
+  <button class="ntab rbtn" data-page="photos" onclick="showPage('photos',this)" aria-label="Фото">
+    <i class="ti ti-photo" aria-hidden="true"></i><span class="ico-fb">▣</span>
+    <span class="tip">Фото</span>
+  </button>
   <button class="ntab rbtn" data-page="calc" onclick="showPage('calc',this)" aria-label="Калькулятор цен">
     <i class="ti ti-calculator" aria-hidden="true"></i><span class="ico-fb">≡</span>
     <span class="tip">Калькулятор цен</span>
@@ -1808,6 +1868,78 @@ input[type=range]::-moz-range-thumb{
 </div>
 
 
+<!-- ===== PAGE: PHOTOS ===== -->
+<div class="page photo-page" id="page-photos">
+  <header class="head">
+    <div>
+      <h1>Фото</h1>
+      <div class="crumb">Массовая загрузка → vision-описания → выгрузка в ML · сверка с дампом при привязке id</div>
+    </div>
+  </header>
+  <div class="photo-body">
+    <aside class="photo-side">
+      <div class="set-card" style="margin:0">
+        <div class="set-card-h"><b>Альбомы</b>
+          <button type="button" class="sbtn primary" onclick="photoCreateAlbum()"><i class="ti ti-plus"></i> Новый</button>
+        </div>
+        <div id="photoAlbumList" style="margin-top:10px;display:flex;flex-direction:column;gap:8px"></div>
+      </div>
+      <div class="set-card" style="margin:0">
+        <div class="set-card-h"><b>Модель vision</b></div>
+        <div class="hint" style="margin:6px 0 8px">Для фото удобен <b>AITUNNEL</b> (РФ, без VPN): добавьте в Настройки → Провайдеры, затем выберите Gemini / GPT / Claude с vision.</div>
+        <div class="msel none" id="photoMsel" onclick="photoToggleDrop()" role="button" tabindex="0"
+             aria-label="Выбрать vision-модель" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();photoToggleDrop()}">
+          <span class="msel-n" id="photoMselName">Выберите модель</span>
+          <span class="msel-p" id="photoMselPrice"></span>
+          <i class="ti ti-chevron-down" aria-hidden="true" style="opacity:.4;font-size:11px;flex-shrink:0"></i>
+        </div>
+        <div class="msearch" id="photoMsearch" hidden>
+          <input type="text" id="photoMsrch" placeholder="Поиск vision-модели" oninput="photoFilterModels()" autocomplete="off">
+          <div class="mdrop" id="photoMdrop"></div>
+        </div>
+        <label class="hint" style="display:block;margin-top:10px">Раздел дампа (для сверки id товара)
+          <input type="text" id="photoCatId" placeholder="например 467" style="width:100%;margin-top:4px" inputmode="numeric">
+        </label>
+      </div>
+      <div class="set-card" style="margin:0">
+        <div class="set-card-h"><b>Прогон</b></div>
+        <div class="set-actions" style="margin-top:8px">
+          <button type="button" class="sbtn primary" id="photoDescribeBtn" onclick="photoStartDescribe()"><i class="ti ti-sparkles"></i> Описать</button>
+          <button type="button" class="sbtn ghost" onclick="photoStopDescribe()">Стоп</button>
+        </div>
+        <div class="hint" id="photoJobHint" style="margin-top:8px">Загрузите фото и запустите описание.</div>
+        <div class="photo-log" id="photoLog" hidden></div>
+      </div>
+      <div class="set-card" style="margin:0">
+        <div class="set-card-h"><b>ML-выгрузка</b></div>
+        <div class="set-actions" style="margin-top:8px">
+          <button type="button" class="sbtn primary" onclick="photoExportMl('jsonl')"><i class="ti ti-download"></i> JSONL</button>
+          <button type="button" class="sbtn ghost" onclick="photoExportMl('json')">JSON</button>
+          <button type="button" class="sbtn ghost" onclick="photoExportMl('jsonl',true)">JSONL+base64</button>
+        </div>
+        <div class="hint" style="margin-top:8px">Схема <code>ogran.photo_ml.v1</code>: caption, description, tags, attributes, product_id.</div>
+      </div>
+    </aside>
+    <section class="photo-main">
+      <div class="photo-drop" id="photoZone" tabindex="0" role="button" aria-label="Загрузить фото">
+        <i class="ti ti-cloud-upload" aria-hidden="true"></i>
+        <b>Перетащите фото или выберите файлы</b>
+        <div class="hint" style="margin:0">JPEG / PNG / WebP / GIF · массово · имя вида <code>12345.jpg</code> само ставит product_id</div>
+      </div>
+      <input type="file" id="photoFile" accept="image/jpeg,image/png,image/webp,image/gif,.jpg,.jpeg,.png,.webp,.gif" multiple hidden>
+      <div class="photo-toolbar">
+        <strong id="photoAlbumTitle" class="grow">Выберите альбом</strong>
+        <button type="button" class="sbtn ghost" onclick="photoSelectUndescribed()">Без описания</button>
+        <button type="button" class="sbtn ghost" onclick="photoSelectAll()">Все</button>
+        <button type="button" class="sbtn danger" onclick="photoDeleteSelected()">Удалить</button>
+        <button type="button" class="sbtn ghost" onclick="photoDeleteAlbum()">Удалить альбом</button>
+      </div>
+      <div class="photo-grid" id="photoGrid"></div>
+      <div class="hint" id="photoStatus">Нет альбома</div>
+    </section>
+  </div>
+</div>
+
 <!-- ===== PAGE: CALCULATOR ===== -->
 <div class="page calc-page" id="page-calc">
   <header class="head">
@@ -1904,7 +2036,7 @@ input[type=range]::-moz-range-thumb{
 
       <section class="set-panel on" id="setProv">
         <div class="set-h">Провайдеры ИИ</div>
-        <p class="set-lead">Шлюзы с API в формате OpenAI: OpenRouter, OpenAI, DeepSeek, Groq, Together, Yandex AI Studio, локальная Ollama или свой endpoint. Ключ остаётся на сервере и в браузер не попадает.</p>
+        <p class="set-lead">Шлюзы с API в формате OpenAI: OpenRouter, AITUNNEL, OpenAI, DeepSeek, Groq, Together, Yandex AI Studio, локальная Ollama или свой endpoint. Ключ остаётся на сервере и в браузер не попадает.</p>
         <div class="set-actions" style="margin-bottom:12px">
           <span class="flbl" style="margin:0">Добавить</span>
           <div class="set-presets" id="setPresets"></div>
@@ -1914,7 +2046,7 @@ input[type=range]::-moz-range-thumb{
 
       <section class="set-panel" id="setNet">
         <div class="set-h">Сеть и прокси</div>
-        <p class="set-lead">SOCKS или HTTP-прокси для шлюзов с «Через прокси». DeepSeek и Yandex по умолчанию напрямую.</p>
+        <p class="set-lead">SOCKS или HTTP-прокси для шлюзов с «Через прокси». DeepSeek, AITUNNEL и Yandex по умолчанию напрямую.</p>
         <div class="set-card" style="margin-bottom:12px">
           <div class="set-card-h">
             <b>Telegram / SOCKS5 / HTTP</b>
@@ -1933,7 +2065,7 @@ input[type=range]::-moz-range-thumb{
         </div>
         <div class="set-card">
           <div class="set-card-h"><b>Кому нужен прокси</b></div>
-          <p class="hint" style="margin:8px 0 0">На вкладке «Провайдеры ИИ» у каждого шлюза — «Через прокси». OpenRouter — да (Cloudflare), DeepSeek и Yandex — нет.</p>
+          <p class="hint" style="margin:8px 0 0">На вкладке «Провайдеры ИИ» у каждого шлюза — «Через прокси». OpenRouter — да (Cloudflare), DeepSeek, AITUNNEL и Yandex — нет.</p>
         </div>
       </section>
 
@@ -2485,6 +2617,7 @@ function showPage(id, btn){
   if(id==='calc') calcUpdate();
   if(id==='settings') loadSettings();
   if(id==='enricher') applyDefaultProviderModels();
+  if(id==='photos') photoInit();
 }
 
 const SET_TABS={prov:['setProv','snProv'],net:['setNet','snNet'],parse:['setParse','snParse'],cond:['setCond','snCond'],dict:['setDict','snDict'],dumps:['setDumps','snDumps'],run:['setRun','snRun'],prompt:['setPrompt','snPrompt'],export:['setExport','snExport'],logs:['setLogs','snLogs']};
@@ -4314,7 +4447,7 @@ function addProvider(presetId){
   setPayload.settings.providers.push({
     ...preset, id, name:preset.name, enabled:true, default:!setPayload.settings.providers.length,
     api_key:'', models:preset.models||[], has_key:false, key_from:'none',
-    use_proxy:!(id==='deepseek'||id==='yandex'||id==='ollama'||(preset.base_url||'').includes('deepseek')||(preset.base_url||'').includes('yandex')||(preset.base_url||'').includes('127.0.0.1')),
+    use_proxy:!(id==='deepseek'||id==='yandex'||id==='aitunnel'||id==='ollama'||(preset.base_url||'').includes('deepseek')||(preset.base_url||'').includes('yandex')||(preset.base_url||'').includes('aitunnel')||(preset.base_url||'').includes('127.0.0.1')),
   });
   renderProviderCards();
 }
@@ -5741,6 +5874,52 @@ function finalSpecsOf(d){
   return {...(d.specs||{}),...(d.technical_specs||{}),...(d.dimensions||{}),...(d.thread||{})};
 }
 
+/** Единицы в хвосте ключа specs — не часть имени оси. */
+const SPEC_KEY_UNITS=new Set(['л','мл','кг','г','мм','см','дб','об','мин','вт','квт','сут','цикл']);
+
+function specKeyTokens(k){
+  return new Set(normKey(k).split(/[\s+-]+/).filter(t=>t && !SPEC_KEY_UNITS.has(t)));
+}
+
+function tokenSetsAlign(a, b){
+  if(!a.size || !b.size) return false;
+  if(a.size===b.size){
+    for(const t of a) if(!b.has(t)) return false;
+    return true;
+  }
+  const small=a.size<b.size?a:b;
+  const big=a.size<b.size?b:a;
+  if(small.size<2) return false;
+  for(const t of small) if(!big.has(t)) return false;
+  return true;
+}
+
+/**
+ * Ключ парсера («Макс. загрузка», «Общий объём») → ключ specs
+ * («макс_загрузка_кг», «объем_общий_л»). Чужой ключ («Гарантия») — null:
+ * он не ось схемы и не должен штрафовать процент обогащения.
+ */
+function alignParseKey(rawKey, specKeys){
+  const nk=normKey(rawKey);
+  if(!nk || !specKeys?.length) return null;
+  const parseTok=specKeyTokens(rawKey);
+  let best=null;
+  let bestScore=-1;
+  for(const sk of specKeys){
+    const skn=normKey(sk);
+    if(skn===nk) return sk;
+    const label=specLabel(sk);
+    if(normKey(label)===nk) return sk;
+    const specTok=specKeyTokens(sk);
+    const labelTok=specKeyTokens(label);
+    if(tokenSetsAlign(parseTok, specTok) || tokenSetsAlign(parseTok, labelTok)){
+      const score=Math.min(parseTok.size, specTok.size||labelTok.size);
+      if(score>bestScore){ best=sk; bestScore=score; }
+    }
+  }
+  return best;
+}
+
 function metricTone(pct, invert){
   if(pct==null) return '';
   if(invert){
@@ -5790,6 +5969,8 @@ function enrichBoardModel(r, live){
   }
   const d=r?.enriched?sanitizeEnriched(r.enriched):null;
   const facts=d?.source_facts&&typeof d.source_facts==='object'?d.source_facts:{};
+  const specBag=finalSpecsOf(d);
+  const specKeyList=[...new Set([...Object.keys(specBag),...Object.keys(facts)])];
   const sourceMap=new Map();
   for(const [k,v] of Object.entries(facts)){
     if(isEmpty(v)) continue;
@@ -5797,11 +5978,17 @@ function enrichBoardModel(r, live){
     if(!nk) continue;
     sourceMap.set(nk,{key:k,value:v,from:'facts'});
   }
-  for(const [nk,h] of parsedMap){
-    if(!sourceMap.has(nk)) sourceMap.set(nk,{key:h.key,value:h.value,from:'parse',where:h.where});
+  // Пары парсера — в ту же ось, что specs. Иначе «Макс. загрузка» и
+  // макс_загрузка_кг считаются двумя полями, и 17/30 даёт ложные 57%.
+  for(const h of parsedMap.values()){
+    const aligned=alignParseKey(h.key, specKeyList);
+    if(!aligned) continue;
+    const ak=normKey(aligned);
+    if(!ak || sourceMap.has(ak)) continue;
+    sourceMap.set(ak,{key:aligned,value:h.value,from:'parse',where:h.where});
   }
 
-  const final=finalSpecsOf(d);
+  const final=specBag;
   const finalMap=new Map();
   for(const [k,v] of Object.entries(final)){
     if(isEmpty(v)) continue;
@@ -6066,7 +6253,7 @@ function renderEnrichBoard(r, opts={}){
   return `<section class="eboard" aria-label="Парсинг и обогащение">`
     +metrics
     +`<div class="eboard-sec"><div class="spec-title">Шаги обогащения</div>${pipeHtml(liveObj)}</div>`
-    +`<div class="eboard-sec"><div class="spec-title">Данные парсинга с источником <i>${m.parseHits}</i></div>`
+    +`<div class="eboard-sec parse-card"><div class="spec-title">Данные парсинга с источником <i>${m.parseHits}</i></div>`
     +renderParseSources(m.traces)
     +`</div>`
     +(m.hasEnriched||m.live
@@ -7693,6 +7880,392 @@ async function checkIconFont(){
     if(!document.fonts.check('16px "tabler-icons"')) document.documentElement.classList.add('no-icons');
   }catch{ document.documentElement.classList.add('no-icons'); }
 }
+
+// ── PHOTOS: mass upload → vision describe → ML export ─────────
+let photoAlbums=[];
+let photoAlbum=null;
+let photoSel=new Set();
+let photoModel=null;
+let photoJobId=null;
+let photoPoll=null;
+let photoInited=false;
+let photoLimits={ MAX_BATCH_FILES:40 };
+
+function photoStatus(msg, ok){
+  const el=document.getElementById('photoStatus');
+  if(!el) return;
+  el.textContent=msg||'';
+  el.style.color=ok===false?'var(--red)':ok===true?'var(--ok,#2a9d5c)':'';
+}
+
+async function photoInit(){
+  if(!photoInited){
+    photoBindZone();
+    photoInited=true;
+  }
+  if(!allModels.length){
+    try{ await reloadModels(); }catch{ /* */ }
+  }
+  photoRenderModel();
+  await photoLoadAlbums();
+}
+
+function photoBindZone(){
+  const zone=document.getElementById('photoZone');
+  const inp=document.getElementById('photoFile');
+  if(!zone||!inp||zone.dataset.bound) return;
+  zone.dataset.bound='1';
+  zone.addEventListener('click',()=>inp.click());
+  zone.addEventListener('keydown',e=>{ if(e.key==='Enter'||e.key===' '){ e.preventDefault(); inp.click(); } });
+  zone.addEventListener('dragover',e=>{ e.preventDefault(); zone.classList.add('on'); });
+  zone.addEventListener('dragleave',()=>zone.classList.remove('on'));
+  zone.addEventListener('drop',e=>{
+    e.preventDefault();
+    zone.classList.remove('on');
+    if(e.dataTransfer?.files?.length) photoIngestFiles([...e.dataTransfer.files]);
+  });
+  inp.addEventListener('change',()=>{
+    const files=[...inp.files||[]];
+    inp.value='';
+    if(files.length) photoIngestFiles(files);
+  });
+}
+
+async function photoLoadAlbums(){
+  try{
+    const data=await apiJson('/api/photos');
+    photoAlbums=data.albums||[];
+    photoLimits=data.limits||photoLimits;
+    if(photoAlbum){
+      const still=photoAlbums.find(a=>a.id===photoAlbum.id);
+      if(!still) photoAlbum=null;
+    }
+    photoRenderAlbums();
+    if(photoAlbum) await photoOpenAlbum(photoAlbum.id, true);
+    else if(photoAlbums[0]) await photoOpenAlbum(photoAlbums[0].id);
+    else{
+      document.getElementById('photoAlbumTitle').textContent='Создайте альбом';
+      document.getElementById('photoGrid').innerHTML='';
+      photoStatus('Нет альбомов — создайте новый');
+    }
+  }catch(e){
+    photoStatus(e.message||'не удалось загрузить альбомы', false);
+  }
+}
+
+function photoRenderAlbums(){
+  const box=document.getElementById('photoAlbumList');
+  if(!box) return;
+  if(!photoAlbums.length){
+    box.innerHTML='<p class="dump-empty">Пока пусто</p>';
+    return;
+  }
+  box.innerHTML=photoAlbums.map(a=>`<div class="photo-album${photoAlbum&&photoAlbum.id===a.id?' on':''}" onclick="photoOpenAlbum('${esc(a.id)}')">
+    <strong>${esc(a.name||a.id)}</strong>
+    <div class="sub">${a.items||0} фото · описано ${a.described||0}${a.errors?` · ошибок ${a.errors}`:''}</div>
+  </div>`).join('');
+}
+
+async function photoCreateAlbum(forcedName){
+  const name=forcedName!=null
+    ? forcedName
+    : prompt('Название альбома','Фото '+new Date().toLocaleDateString('ru-RU'));
+  if(name==null) return;
+  const category=String(document.getElementById('photoCatId')?.value||'').trim()||null;
+  try{
+    const data=await apiJson('/api/photos',{
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({ name: String(name).trim()||'Альбом', category }),
+    });
+    photoAlbum=data.album;
+    photoSel=new Set();
+    await photoLoadAlbums();
+    photoStatus('Альбом создан', true);
+  }catch(e){ photoStatus(e.message||'не создан', false); }
+}
+
+async function photoOpenAlbum(id, quiet){
+  try{
+    const data=await apiJson('/api/photos/'+encodeURIComponent(id));
+    photoAlbum=data.album;
+    photoSel=new Set();
+    if(photoAlbum.category) document.getElementById('photoCatId').value=photoAlbum.category;
+    document.getElementById('photoAlbumTitle').textContent=photoAlbum.name||photoAlbum.id;
+    photoRenderAlbums();
+    photoRenderGrid();
+    if(!quiet) photoStatus(`${photoAlbum.items.length} фото`, true);
+  }catch(e){ photoStatus(e.message||'не открыт', false); }
+}
+
+function photoGuessProductId(filename){
+  const base=String(filename||'').replace(/^.*[\\/]/,'');
+  const m=base.match(/^(\d{3,})(?:[_-]|\.|$)/);
+  return m?m[1]:null;
+}
+
+function fileToDataUrl(file){
+  return new Promise((resolve,reject)=>{
+    const r=new FileReader();
+    r.onload=()=>resolve(r.result);
+    r.onerror=()=>reject(new Error('не удалось прочитать '+file.name));
+    r.readAsDataURL(file);
+  });
+}
+
+async function photoIngestFiles(files){
+  if(!photoAlbum){
+    await photoCreateAlbum('Загрузка '+new Date().toLocaleString('ru-RU'));
+    if(!photoAlbum) return;
+  }
+  const images=files.filter(f=>/^image\/(jpeg|png|webp|gif)$/i.test(f.type)||/\.(jpe?g|png|webp|gif)$/i.test(f.name));
+  if(!images.length){ photoStatus('Нужны JPEG/PNG/WebP/GIF', false); return; }
+  const max=photoLimits.MAX_BATCH_FILES||40;
+  let uploaded=0;
+  for(let i=0;i<images.length;i+=max){
+    const chunk=images.slice(i,i+max);
+    photoStatus(`Загрузка ${i+1}–${Math.min(i+chunk.length,images.length)} из ${images.length}…`);
+    const payload=[];
+    for(const f of chunk){
+      const data=await fileToDataUrl(f);
+      payload.push({ name:f.name, data, product_id:photoGuessProductId(f.name) });
+    }
+    try{
+      const out=await apiJson('/api/photos/'+encodeURIComponent(photoAlbum.id)+'/upload',{
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({ files:payload }),
+      });
+      photoAlbum=out.album;
+      uploaded+=(out.added||[]).length;
+    }catch(e){
+      photoStatus(e.message||'ошибка загрузки', false);
+      await photoOpenAlbum(photoAlbum.id, true);
+      return;
+    }
+  }
+  photoRenderGrid();
+  await photoLoadAlbums();
+  photoStatus(`Загружено ${uploaded} фото`, true);
+}
+
+function photoRenderGrid(){
+  const box=document.getElementById('photoGrid');
+  if(!box||!photoAlbum){ if(box) box.innerHTML=''; return; }
+  if(!photoAlbum.items.length){
+    box.innerHTML='<p class="dump-empty">Перетащите фото выше</p>';
+    return;
+  }
+  box.innerHTML=photoAlbum.items.map(it=>{
+    const st=it.status==='described'||it.status==='ready'
+      ?'<span class="ok">описано</span>'
+      :(it.status==='error'?`<span class="err">ошибка</span>`:'<span>ожидает</span>');
+    const src='/api/photos/'+encodeURIComponent(photoAlbum.id)+'/file/'+encodeURIComponent(it.id);
+    const desc=it.caption||it.description||it.error||'';
+    return `<div class="photo-card${photoSel.has(it.id)?' sel':''}" data-id="${esc(it.id)}" onclick="photoToggleSel('${esc(it.id)}',event)">
+      <div class="thumb"><img src="${src}" alt="${esc(it.alt||it.filename||'')}" loading="lazy"></div>
+      <div class="meta">
+        <b title="${esc(it.filename)}">${esc(it.filename)}</b>
+        <div class="st"><span>${it.product_id?('id '+esc(it.product_id)):'без id'}</span>${st}</div>
+        ${desc?`<div class="desc">${esc(String(desc).slice(0,160))}</div>`:''}
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function photoToggleSel(id, e){
+  if(e) e.stopPropagation();
+  if(photoSel.has(id)) photoSel.delete(id); else photoSel.add(id);
+  photoRenderGrid();
+}
+function photoSelectAll(){
+  if(!photoAlbum) return;
+  photoSel=new Set(photoAlbum.items.map(i=>i.id));
+  photoRenderGrid();
+}
+function photoSelectUndescribed(){
+  if(!photoAlbum) return;
+  photoSel=new Set(photoAlbum.items.filter(i=>i.status!=='described'&&i.status!=='ready').map(i=>i.id));
+  photoRenderGrid();
+}
+
+async function photoDeleteSelected(){
+  if(!photoAlbum||!photoSel.size){ photoStatus('Ничего не выбрано'); return; }
+  if(!confirm('Удалить '+photoSel.size+' фото?')) return;
+  for(const id of [...photoSel]){
+    try{
+      await apiJson('/api/photos/'+encodeURIComponent(photoAlbum.id)+'/items/'+encodeURIComponent(id),{method:'DELETE'});
+    }catch(e){ photoStatus(e.message||'ошибка удаления', false); }
+  }
+  photoSel=new Set();
+  await photoOpenAlbum(photoAlbum.id);
+}
+
+async function photoDeleteAlbum(){
+  if(!photoAlbum) return;
+  if(!confirm('Удалить альбом «'+photoAlbum.name+'» со всеми фото?')) return;
+  try{
+    await apiJson('/api/photos/'+encodeURIComponent(photoAlbum.id),{method:'DELETE'});
+    photoAlbum=null;
+    await photoLoadAlbums();
+    photoStatus('Альбом удалён', true);
+  }catch(e){ photoStatus(e.message||'не удалён', false); }
+}
+
+function photoToggleDrop(){
+  const box=document.getElementById('photoMsearch');
+  if(!box) return;
+  box.hidden=!box.hidden;
+  if(!box.hidden){ photoFilterModels(); document.getElementById('photoMsrch')?.focus(); }
+}
+function photoFilterModels(){
+  const q=String(document.getElementById('photoMsrch')?.value||'').toLowerCase();
+  const drop=document.getElementById('photoMdrop');
+  if(!drop) return;
+  const visionHint=/gpt-4o|gpt-5|gemini|claude|vision|llava|qwen.*vl|flash|aitunnel/i;
+  const score=m=>{
+    const id=String(m.id||'');
+    const name=String(m.name||'');
+    const prov=String(m.provider||m.provider_name||'');
+    let s=0;
+    if(/aitunnel/i.test(prov)||/aitunnel/i.test(id)) s+=50;
+    if(visionHint.test(id)||visionHint.test(name)) s+=20;
+    if(/gemini|gpt-5|claude|gpt-4o/i.test(id)) s+=10;
+    if(/flash-lite|flash/i.test(id)) s+=5;
+    return s;
+  };
+  let list=allModels.slice();
+  if(q) list=list.filter(m=>((m.name||'')+' '+(m.id||'')+' '+(m.provider_name||'')+' '+(m.provider||'')).toLowerCase().includes(q));
+  else list=list.slice().sort((a,b)=>score(b)-score(a)).slice(0,80);
+  drop.innerHTML=list.slice(0,80).map(m=>{
+    const {ip,op}=priceOf(m);
+    const pr=(ip||op)?`<span class="mi-p">$${(ip||0).toFixed?.(2)||ip}</span>`:'';
+    const prov=m.provider_name?`<span class="mi-pr">${esc(m.provider_name)}</span>`:'';
+    return `<div class="mitem${photoModel?.id===m.id&&photoModel?.provider===m.provider?' on':''}" data-id="${esc(m.id)}" data-provider="${esc(m.provider||'')}"><span class="mi-n">${esc(m.name||m.id)}</span>${prov}${pr}</div>`;
+  }).join('')||'<div class="mitem">Нет моделей</div>';
+  drop.querySelectorAll('.mitem[data-id]').forEach(x=>x.addEventListener('click',()=>photoPick(x.dataset.id,x.dataset.provider)));
+}
+function photoPick(id, provider){
+  photoModel=allModels.find(m=>m.id===id && (!provider || m.provider===provider))
+    ||{ id, provider:provider||null, name:id };
+  photoRenderModel();
+  document.getElementById('photoMsearch').hidden=true;
+}
+function photoRenderModel(){
+  const name=document.getElementById('photoMselName');
+  const price=document.getElementById('photoMselPrice');
+  const wrap=document.getElementById('photoMsel');
+  if(!name) return;
+  if(!photoModel){
+    name.textContent='Выберите модель';
+    if(price) price.textContent='';
+    wrap?.classList.add('none');
+    return;
+  }
+  wrap?.classList.remove('none');
+  name.textContent=(photoModel.provider_name?photoModel.provider_name+' · ':'')+(photoModel.name||photoModel.id);
+  if(price){
+    const {ip,op}=priceOf(photoModel);
+    price.textContent=(ip||op)?`$${(ip||0).toFixed?.(4)||ip} / $${(op||0).toFixed?.(4)||op}`:'';
+  }
+}
+
+async function photoStartDescribe(){
+  if(!photoAlbum){ photoStatus('Сначала альбом', false); return; }
+  if(!photoModel){ photoStatus('Выберите vision-модель', false); return; }
+  const category=String(document.getElementById('photoCatId')?.value||'').trim()||null;
+  if(category){
+    try{
+      await apiJson('/api/photos/'+encodeURIComponent(photoAlbum.id),{
+        method:'PATCH', headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({ category }),
+      });
+    }catch{ /* */ }
+  }
+  const item_ids=photoSel.size?[...photoSel]:null;
+  try{
+    const job=await apiJson('/api/photos/'+encodeURIComponent(photoAlbum.id)+'/describe',{
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({
+        model:photoModel.id,
+        provider:photoModel.provider||null,
+        item_ids,
+        category,
+      }),
+    });
+    photoJobId=job.id;
+    document.getElementById('photoLog').hidden=false;
+    document.getElementById('photoLog').textContent='';
+    photoStatus(`Прогон ${job.id}: 0/${job.total}`, true);
+    photoPollJob();
+  }catch(e){ photoStatus(e.message||'не запущен', false); }
+}
+
+async function photoStopDescribe(){
+  if(!photoJobId) return;
+  try{ await apiJson('/api/photo-jobs/'+encodeURIComponent(photoJobId)+'/stop',{method:'POST'}); }
+  catch(e){ photoStatus(e.message||'стоп не принят', false); }
+}
+
+function photoPollJob(){
+  if(photoPoll) clearInterval(photoPoll);
+  let logFrom=0;
+  photoPoll=setInterval(async()=>{
+    if(!photoJobId){ clearInterval(photoPoll); return; }
+    try{
+      const st=await apiJson('/api/photo-jobs/'+encodeURIComponent(photoJobId)+'?logFrom='+logFrom);
+      document.getElementById('photoJobHint').textContent=
+        `${st.status}: ${st.done}/${st.total} · ok ${st.ok} · err ${st.err}`
+        +(st.cost?` · $${Number(st.cost).toFixed(4)}`:'');
+      const logEl=document.getElementById('photoLog');
+      if(st.log?.length){
+        logFrom=st.log_from+(st.log.length);
+        logEl.textContent+=(logEl.textContent?'\n':'')+st.log.map(l=>l.message).join('\n');
+        logEl.scrollTop=logEl.scrollHeight;
+      }
+      if(st.status==='done'||st.status==='stopped'||st.status==='interrupted'){
+        clearInterval(photoPoll); photoPoll=null;
+        await photoOpenAlbum(photoAlbum.id);
+        await photoLoadAlbums();
+        photoStatus(st.status==='done'?'Описание готово':'Прогон остановлен', st.err?false:true);
+      }
+    }catch(e){
+      clearInterval(photoPoll); photoPoll=null;
+      photoStatus(e.message||'опрос упал', false);
+    }
+  }, 1200);
+}
+
+async function photoExportMl(format, includeImages){
+  if(!photoAlbum){ photoStatus('Нет альбома', false); return; }
+  photoStatus('Собираем ML-выгрузку…');
+  try{
+    const res=await fetch('/api/photos/'+encodeURIComponent(photoAlbum.id)+'/export-ml',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      credentials:'same-origin',
+      body:JSON.stringify({ format, include_images:!!includeImages }),
+    });
+    if(!res.ok){
+      let err='ошибка выгрузки';
+      try{ err=(await res.json()).error||err; }catch{ /* */ }
+      throw new Error(err);
+    }
+    const blob=await res.blob();
+    const cd=res.headers.get('Content-Disposition')||'';
+    const m=cd.match(/filename="([^"]+)"/);
+    const a=document.createElement('a');
+    a.href=URL.createObjectURL(blob);
+    a.download=m?m[1]:`photos_ml_${photoAlbum.id}.${format==='json'?'json':'jsonl'}`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+    photoStatus('Выгрузка скачана', true);
+  }catch(e){ photoStatus(e.message||'не выгрузилось', false); }
+}
+
+document.addEventListener('click',e=>{
+  const box=document.getElementById('photoMsearch');
+  const sel=document.getElementById('photoMsel');
+  if(box && !box.hidden && sel && !sel.contains(e.target) && !box.contains(e.target)) box.hidden=true;
+});
 
 initTheme();
 checkIconFont();

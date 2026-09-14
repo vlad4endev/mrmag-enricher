@@ -98,6 +98,35 @@ export const PROVIDER_PRESETS = [
     models: ['llama3.1', 'qwen2.5'],
   },
   {
+    id: 'aitunnel',
+    name: 'AITUNNEL',
+    kind: 'openai',
+    // OpenAI-совместимый шлюз в РФ: vision + chat без VPN.
+    // POST https://api.aitunnel.ru/v1/chat/completions
+    base_url: 'https://api.aitunnel.ru/v1',
+    api_key_env: 'AITUNNEL_API_KEY',
+    models_path: '/models',
+    chat_path: '/chat/completions',
+    headers: {},
+    models: [
+      'gemini-3.1-flash-lite-preview',
+      'gemini-2.5-flash',
+      'gemini-2.5-pro',
+      'gpt-5.2',
+      'claude-sonnet-4.6',
+      'claude-sonnet-4.5',
+    ],
+    model_labels: {
+      'gemini-3.1-flash-lite-preview': 'Gemini 3.1 Flash Lite (preview)',
+      'gemini-2.5-flash': 'Gemini 2.5 Flash',
+      'gemini-2.5-pro': 'Gemini 2.5 Pro',
+      'gpt-5.2': 'GPT-5.2',
+      'claude-sonnet-4.6': 'Claude Sonnet 4.6',
+      'claude-sonnet-4.5': 'Claude Sonnet 4.5',
+    },
+    notes: 'Ключ с aitunnel.ru (Bearer). Для раздела «Фото» берите модели с image во входе: Gemini / GPT / Claude. Без VPN, оплата в ₽.',
+  },
+  {
     id: 'yandex',
     name: 'Yandex AI Studio',
     kind: 'openai',
@@ -204,6 +233,7 @@ export function defaultUseProxy(raw = {}) {
   catch { /* */ }
   if (id === 'deepseek' || host.includes('deepseek.com')) return false;
   if (id === 'yandex' || host.includes('yandex.net') || host.includes('yandex.ru')) return false;
+  if (id === 'aitunnel' || host.includes('aitunnel.ru')) return false;
   if (id === 'ollama' || host === '127.0.0.1' || host === 'localhost') return false;
   return true;
 }

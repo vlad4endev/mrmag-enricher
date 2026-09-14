@@ -52,6 +52,21 @@
  *                             у клиента, отдаётся только хвост
  *   POST /api/jobs/:id/stop   остановить прогон после текущего товара
  *   DELETE /api/jobs/:id      забыть прогон вместе с файлом на диске
+ *   GET  /api/photos          альбомы фото
+ *   POST /api/photos          создать альбом { name, category? }
+ *   GET  /api/photos/:id      альбом + items
+ *   PATCH /api/photos/:id     переименовать / category { name?, category? }
+ *   DELETE /api/photos/:id    удалить альбом
+ *   POST /api/photos/:id/upload  массовая загрузка { files:[{name,data,product_id?}] }
+ *   PATCH /api/photos/:id/items/:itemId  привязка / правка текста
+ *   DELETE /api/photos/:id/items/:itemId
+ *   GET  /api/photos/:id/file/:itemId    отдать бинарник изображения
+ *   POST /api/photos/:id/describe        фоновый vision-прогон { model, item_ids? }
+ *   GET  /api/photo-jobs                 список vision-прогонов
+ *   GET  /api/photo-jobs/:id             прогресс
+ *   POST /api/photo-jobs/:id/stop
+ *   DELETE /api/photo-jobs/:id
+ *   POST /api/photos/:id/export-ml       выгрузка ML { format, include_images? }
  *
  * Товар без description и annotation не пропускается молча: по имени
  * ищется описание в сети (ensureSource), и адрес найденной страницы
@@ -115,6 +130,13 @@ import {
   isYandexLlm, resolveProviderModel, providerFolderId,
 } from './settings.js';
 import { exportTemplatesView } from './pipeline/export_template.js';
+import {
+  bootstrapPhotosDir, listAlbums, createAlbum, getAlbum, deleteAlbum,
+  uploadPhotos, patchPhotoItem, deletePhotoItem, readPhotoFile, buildMlExport,
+  applyDescribeResult, patchAlbum, photosDir, PHOTO_LIMITS,
+} from './pipeline/photos.js';
+import { describePhoto } from './pipeline/photo_agent.js';
+import { createPhotoJobStore } from './pipeline/photo_jobs.js';
 const API_KEY = process.env.OPENROUTER_API_KEY || '';
 const PORT    = Number(process.env.PORT || 3000);
 const HOST    = process.env.HOST || '0.0.0.0';
@@ -135,6 +157,7 @@ const ALLOWED_HOSTS = (process.env.ALLOWED_HOSTS || 'mrmag.ru,adn-avto.ru')
 bootstrapSettingsFile(ROOT);
 bootstrapDictionariesDir(ROOT);
 bootstrapDumpsDir(ROOT);
+bootstrapPhotosDir(ROOT);
 {
   const boot = loadSettings(ROOT);
   const def = resolveProvider(boot);
@@ -1849,6 +1872,158 @@ async function apiEnrich(req, res) {
 // обрывает работу на середине. Подробности и формат — в jobs.js.
 const store = createJobStore({ enrichOne });
 
+async function describePhotoOne({ albumId, itemId, model, provider, category, onNote = () => {} }) {
+  const settings = loadSettings(ROOT);
+  const prov = resolveProvider(settings, provider);
+  const ep = providerEndpoint(prov, settings);
+  const apiKey = ep.apiKey || API_KEY;
+  if (!apiKey) {
+    throw Object.assign(new Error('Нет API-ключа провайдера'), { status: 400 });
+  }
+  const resolvedModel = resolveProviderModel(prov, model, settings) || model;
+  const file = readPhotoFile(albumId, itemId, ROOT);
+  const result = await describePhoto(file, {
+    model: resolvedModel,
+    apiKey: null, // auth уже в ep.headers (Bearer / Api-Key / Yandex)
+    chatUrl: ep.chatUrl,
+    headers: ep.headers || {},
+    fetchImpl: (url, init) => providerFetch(url, init, { useProxy: providerUsesProxy(prov) }),
+    category: category || null,
+    root: ROOT,
+    onNote,
+    limiter: limiterFor(resolvedModel),
+  });
+  const saved = applyDescribeResult(albumId, itemId, result, ROOT);
+  return { item: saved, usage: result.usage, dump_linked: result.dump_linked };
+}
+
+const photoStore = createPhotoJobStore({
+  describeOne: describePhotoOne,
+  dir: process.env.PHOTO_JOBS_DIR
+    || (process.env.SETTINGS_PATH?.startsWith('/data/') ? '/data/photo_jobs' : path.join(ROOT, 'photo_jobs')),
+});
+
+function apiPhotosList(res) {
+  return json(res, 200, { albums: listAlbums(ROOT), limits: PHOTO_LIMITS });
+}
+
+async function apiPhotoCreate(req, res) {
+  const raw = await readBody(req, 64_000);
+  let body;
+  try { body = JSON.parse(raw || '{}'); } catch { return json(res, 400, { error: 'Тело не JSON' }); }
+  try {
+    const album = createAlbum(body.name || 'Альбом', { category: body.category || null }, ROOT);
+    return json(res, 201, { album });
+  } catch (e) {
+    return json(res, e.status || 500, { error: e.message });
+  }
+}
+
+function apiPhotoGet(res, id) {
+  try { return json(res, 200, { album: getAlbum(id, ROOT) }); }
+  catch (e) { return json(res, e.status || 500, { error: e.message }); }
+}
+
+async function apiPhotoPatch(req, res, id) {
+  const raw = await readBody(req, 64_000);
+  let body;
+  try { body = JSON.parse(raw || '{}'); } catch { return json(res, 400, { error: 'Тело не JSON' }); }
+  try {
+    return json(res, 200, { album: patchAlbum(id, body || {}, ROOT) });
+  } catch (e) {
+    return json(res, e.status || 500, { error: e.message });
+  }
+}
+
+function apiPhotoDelete(res, id) {
+  try { return json(res, 200, deleteAlbum(id, ROOT)); }
+  catch (e) { return json(res, e.status || 500, { error: e.message }); }
+}
+
+async function apiPhotoUpload(req, res, id) {
+  const raw = await readBody(req, BULK_BODY_LIMIT);
+  let body;
+  try { body = JSON.parse(raw || '{}'); } catch { return json(res, 400, { error: 'Тело не JSON' }); }
+  try {
+    const out = uploadPhotos(id, body.files || [], ROOT);
+    return json(res, 200, out);
+  } catch (e) {
+    return json(res, e.status || 500, { error: e.message });
+  }
+}
+
+async function apiPhotoItemPatch(req, res, albumId, itemId) {
+  const raw = await readBody(req, 1_000_000);
+  let body;
+  try { body = JSON.parse(raw || '{}'); } catch { return json(res, 400, { error: 'Тело не JSON' }); }
+  try {
+    return json(res, 200, { item: patchPhotoItem(albumId, itemId, body || {}, ROOT) });
+  } catch (e) {
+    return json(res, e.status || 500, { error: e.message });
+  }
+}
+
+function apiPhotoItemDelete(res, albumId, itemId) {
+  try { return json(res, 200, deletePhotoItem(albumId, itemId, ROOT)); }
+  catch (e) { return json(res, e.status || 500, { error: e.message }); }
+}
+
+function apiPhotoFile(res, albumId, itemId) {
+  try {
+    const { mime, buf } = readPhotoFile(albumId, itemId, ROOT);
+    res.writeHead(200, {
+      'Content-Type': mime,
+      'Content-Length': buf.length,
+      'Cache-Control': 'private, max-age=3600',
+      'X-Content-Type-Options': 'nosniff',
+    });
+    return res.end(buf);
+  } catch (e) {
+    return json(res, e.status || 500, { error: e.message });
+  }
+}
+
+async function apiPhotoDescribe(req, res, id) {
+  const raw = await readBody(req, 1_000_000);
+  let body;
+  try { body = JSON.parse(raw || '{}'); } catch { return json(res, 400, { error: 'Тело не JSON' }); }
+  const { model, provider, item_ids, category } = body || {};
+  if (!model || typeof model !== 'string') return json(res, 400, { error: 'Не передана модель' });
+  try {
+    const job = photoStore.create({
+      album_id: id,
+      model,
+      provider: provider || null,
+      item_ids: item_ids || null,
+      category: category || null,
+    });
+    return json(res, 202, photoStore.summary(job));
+  } catch (e) {
+    return json(res, e.status || 500, { error: e.message });
+  }
+}
+
+async function apiPhotoExportMl(req, res, id) {
+  const raw = await readBody(req, 64_000);
+  let body;
+  try { body = JSON.parse(raw || '{}'); } catch { return json(res, 400, { error: 'Тело не JSON' }); }
+  try {
+    const pack = buildMlExport(id, {
+      format: body.format === 'json' ? 'json' : 'jsonl',
+      include_images: Boolean(body.include_images),
+      only_described: body.only_described !== false,
+    }, ROOT);
+    res.writeHead(200, {
+      'Content-Type': pack.mime,
+      'Content-Disposition': `attachment; filename="${pack.filename}"`,
+      'X-Content-Type-Options': 'nosniff',
+    });
+    return res.end(pack.body);
+  } catch (e) {
+    return json(res, e.status || 500, { error: e.message });
+  }
+}
+
 async function apiJobCreate(req, res) {
   // Прогон на 259 товаров — это больше мегабайта тела: общий лимит здесь мал.
   const raw = await readBody(req, BULK_BODY_LIMIT);
@@ -2111,6 +2286,7 @@ try {
 // Прерванные прогоны поднимаем с диска до приёма запросов: перезапуск сервера
 // не должен стоить оплаченных товаров.
 const resumedJobs = store.restore();
+const resumedPhotoJobs = photoStore.restore();
 
 const server = http.createServer(async (req, res) => {
   const started = Date.now();
@@ -2195,6 +2371,55 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'GET'  && u.pathname === '/api/product')    return await apiProduct(res, u.searchParams.get('url'));
     if (req.method === 'POST' && u.pathname === '/api/enrich')     return await apiEnrich(req, res);
 
+    // Фото: альбомы, mass-upload, vision-описания, ML-выгрузка
+    if (req.method === 'GET'  && u.pathname === '/api/photos') return apiPhotosList(res);
+    if (req.method === 'POST' && u.pathname === '/api/photos') return await apiPhotoCreate(req, res);
+    if (req.method === 'GET'  && u.pathname === '/api/photo-jobs') {
+      return json(res, 200, { jobs: photoStore.list() });
+    }
+    const photoJob = u.pathname.match(/^\/api\/photo-jobs\/([\w-]+)(\/stop)?$/);
+    if (photoJob) {
+      const [, id, stopping] = photoJob;
+      if (req.method === 'GET' && !stopping) {
+        const job = photoStore.get(id);
+        if (!job) return json(res, 404, { error: 'Прогон фото не найден' });
+        return json(res, 200, photoStore.state(job, {
+          from: u.searchParams.get('from'),
+          logFrom: u.searchParams.get('logFrom'),
+        }));
+      }
+      if (req.method === 'POST' && stopping) {
+        return photoStore.stop(id)
+          ? json(res, 200, { ok: true })
+          : json(res, 404, { error: 'Прогон фото не найден' });
+      }
+      if (req.method === 'DELETE' && !stopping) {
+        return photoStore.remove(id)
+          ? json(res, 200, { ok: true })
+          : json(res, 404, { error: 'Прогон фото не найден' });
+      }
+    }
+    const photoFile = u.pathname.match(/^\/api\/photos\/([^/]+)\/file\/([^/]+)$/);
+    if (photoFile && req.method === 'GET') return apiPhotoFile(res, photoFile[1], photoFile[2]);
+    const photoUpload = u.pathname.match(/^\/api\/photos\/([^/]+)\/upload$/);
+    if (photoUpload && req.method === 'POST') return await apiPhotoUpload(req, res, photoUpload[1]);
+    const photoDescribe = u.pathname.match(/^\/api\/photos\/([^/]+)\/describe$/);
+    if (photoDescribe && req.method === 'POST') return await apiPhotoDescribe(req, res, photoDescribe[1]);
+    const photoExport = u.pathname.match(/^\/api\/photos\/([^/]+)\/export-ml$/);
+    if (photoExport && req.method === 'POST') return await apiPhotoExportMl(req, res, photoExport[1]);
+    const photoItem = u.pathname.match(/^\/api\/photos\/([^/]+)\/items\/([^/]+)$/);
+    if (photoItem) {
+      if (req.method === 'PATCH') return await apiPhotoItemPatch(req, res, photoItem[1], photoItem[2]);
+      if (req.method === 'DELETE') return apiPhotoItemDelete(res, photoItem[1], photoItem[2]);
+    }
+    const photoAlbum = u.pathname.match(/^\/api\/photos\/([^/]+)$/);
+    if (photoAlbum) {
+      const id = photoAlbum[1];
+      if (req.method === 'GET') return apiPhotoGet(res, id);
+      if (req.method === 'PATCH') return await apiPhotoPatch(req, res, id);
+      if (req.method === 'DELETE') return apiPhotoDelete(res, id);
+    }
+
     // Фоновый прогон: поставить, посмотреть, остановить, забыть.
     if (req.method === 'POST' && u.pathname === '/api/jobs')        return await apiJobCreate(req, res);
     if (req.method === 'GET'  && u.pathname === '/api/jobs')        return json(res, 200, { jobs: store.list() });
@@ -2229,6 +2454,8 @@ server.listen(PORT, HOST, () => {
   console.log(`  Курс: ${RUB_PER_USD} ₽/$ на ${RUB_RATE_DATE} | политика расхождений: ${loadSettings(ROOT).conditions.mismatch_policy}`);
   console.log(`  Вход: ${APP_PASSWORD ? `форма + Basic, пользователь ${APP_USER}` : 'ОТКРЫТ'}`);
   console.log(`  Дампы: ${dumpsDir(ROOT)}`);
+  console.log(`  Фото: ${photosDir(ROOT)}`);
+  if (resumedPhotoJobs) console.log(`  Фото-прогоны на диске: ${resumedPhotoJobs}`);
   try {
     const settings = loadSettings(ROOT);
     const on = settings.providers.filter(p => p.enabled);

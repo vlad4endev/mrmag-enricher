@@ -90,6 +90,8 @@ services:
       SETTINGS_PATH: /data/config.json
       DICTIONARIES_DIR: /data/dictionaries
       DUMPS_DIR: /data/dumps
+      PHOTOS_DIR: /data/photos
+      PHOTO_JOBS_DIR: /data/photo_jobs
     volumes:
       - enricher-data:/data
     restart: unless-stopped

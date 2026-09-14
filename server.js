@@ -1874,24 +1874,48 @@ const store = createJobStore({ enrichOne });
 
 async function describePhotoOne({ albumId, itemId, model, provider, category, onNote = () => {} }) {
   const settings = loadSettings(ROOT);
-  const prov = resolveProvider(settings, provider);
+  // Фото → только AITUNNEL (или тот же хост aitunnel.ru), другие шлюзы отклоняем.
+  const PHOTO_PROVIDER = 'aitunnel';
+  let prov = (settings.providers || []).find(p => p.id === PHOTO_PROVIDER)
+    || (settings.providers || []).find(p => /aitunnel\.ru/i.test(p.base_url || ''));
+  if (!prov) {
+    throw Object.assign(
+      new Error('Для фото нужен провайдер AITUNNEL — добавьте его в Настройки → Провайдеры'),
+      { status: 400 },
+    );
+  }
+  if (provider && provider !== prov.id && !/aitunnel/i.test(String(provider))) {
+    throw Object.assign(
+      new Error(`Для фото разрешён только AITUNNEL, получен «${provider}»`),
+      { status: 400 },
+    );
+  }
+  if (prov.enabled === false) {
+    throw Object.assign(new Error('AITUNNEL выключен в настройках'), { status: 400 });
+  }
   const ep = providerEndpoint(prov, settings);
   const apiKey = ep.apiKey || API_KEY;
   if (!apiKey) {
-    throw Object.assign(new Error('Нет API-ключа провайдера'), { status: 400 });
+    throw Object.assign(new Error('Нет API-ключа AITUNNEL'), { status: 400 });
+  }
+  if (!/aitunnel\.ru/i.test(ep.chatUrl || prov.base_url || '')) {
+    throw Object.assign(
+      new Error('Провайдер AITUNNEL должен указывать на api.aitunnel.ru'),
+      { status: 400 },
+    );
   }
   const resolvedModel = resolveProviderModel(prov, model, settings) || model;
   const file = readPhotoFile(albumId, itemId, ROOT);
   const result = await describePhoto(file, {
     model: resolvedModel,
-    apiKey: null, // auth уже в ep.headers (Bearer / Api-Key / Yandex)
+    apiKey: null, // auth уже в ep.headers
     chatUrl: ep.chatUrl,
     headers: ep.headers || {},
     fetchImpl: (url, init) => providerFetch(url, init, { useProxy: providerUsesProxy(prov) }),
     category: category || null,
     root: ROOT,
     onNote,
-    limiter: limiterFor(resolvedModel),
+    limiter: limiterFor(`${prov.id}:${resolvedModel}`),
   });
   const saved = applyDescribeResult(albumId, itemId, result, ROOT);
   return { item: saved, usage: result.usage, dump_linked: result.dump_linked };
@@ -1987,13 +2011,13 @@ async function apiPhotoDescribe(req, res, id) {
   const raw = await readBody(req, 1_000_000);
   let body;
   try { body = JSON.parse(raw || '{}'); } catch { return json(res, 400, { error: 'Тело не JSON' }); }
-  const { model, provider, item_ids, category } = body || {};
+  const { model, item_ids, category } = body || {};
   if (!model || typeof model !== 'string') return json(res, 400, { error: 'Не передана модель' });
   try {
     const job = photoStore.create({
       album_id: id,
       model,
-      provider: provider || null,
+      provider: 'aitunnel',
       item_ids: item_ids || null,
       category: category || null,
     });

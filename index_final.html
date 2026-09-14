@@ -1885,16 +1885,17 @@ input[type=range]::-moz-range-thumb{
         <div id="photoAlbumList" style="margin-top:10px;display:flex;flex-direction:column;gap:8px"></div>
       </div>
       <div class="set-card" style="margin:0">
-        <div class="set-card-h"><b>Модель vision</b></div>
-        <div class="hint" style="margin:6px 0 8px">Для фото удобен <b>AITUNNEL</b> (РФ, без VPN): добавьте в Настройки → Провайдеры, затем выберите Gemini / GPT / Claude с vision.</div>
+        <div class="set-card-h"><b>Модель AITUNNEL</b></div>
+        <div class="hint" style="margin:6px 0 8px">Для фото используется <b>только AITUNNEL</b> (РФ, без VPN). Другие провайдеры здесь недоступны.</div>
+        <div id="photoProvStatus" class="hint" style="margin:0 0 8px">Провайдер: AITUNNEL</div>
         <div class="msel none" id="photoMsel" onclick="photoToggleDrop()" role="button" tabindex="0"
-             aria-label="Выбрать vision-модель" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();photoToggleDrop()}">
+             aria-label="Выбрать vision-модель AITUNNEL" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();photoToggleDrop()}">
           <span class="msel-n" id="photoMselName">Выберите модель</span>
           <span class="msel-p" id="photoMselPrice"></span>
           <i class="ti ti-chevron-down" aria-hidden="true" style="opacity:.4;font-size:11px;flex-shrink:0"></i>
         </div>
-        <div class="msearch" id="photoMsearch" hidden>
-          <input type="text" id="photoMsrch" placeholder="Поиск vision-модели" oninput="photoFilterModels()" autocomplete="off">
+        <div class="msearch" id="photoMsearch">
+          <input type="text" id="photoMsrch" placeholder="Поиск или id (gemini-3.1-flash-lite-preview)" oninput="photoFilterModels()" autocomplete="off" aria-label="Поиск модели AITUNNEL">
           <div class="mdrop" id="photoMdrop"></div>
         </div>
         <label class="hint" style="display:block;margin-top:10px">Раздел дампа (для сверки id товара)
@@ -7886,10 +7887,20 @@ let photoAlbums=[];
 let photoAlbum=null;
 let photoSel=new Set();
 let photoModel=null;
+const PHOTO_PROVIDER_ID='aitunnel';
+let photoProvId=PHOTO_PROVIDER_ID;
 let photoJobId=null;
 let photoPoll=null;
 let photoInited=false;
 let photoLimits={ MAX_BATCH_FILES:40 };
+
+/** Только AITUNNEL — для фото другие шлюзы запрещены. */
+function photoAitunnelSettings(){
+  const list=setPayload?.settings?.providers||[];
+  return list.find(p=>p.id===PHOTO_PROVIDER_ID)
+    || list.find(p=>/aitunnel\.ru/i.test(p.base_url||''))
+    || null;
+}
 
 function photoStatus(msg, ok){
   const el=document.getElementById('photoStatus');
@@ -7898,14 +7909,93 @@ function photoStatus(msg, ok){
   el.style.color=ok===false?'var(--red)':ok===true?'var(--ok,#2a9d5c)':'';
 }
 
+function photoRenderProviders(){
+  photoProvId=PHOTO_PROVIDER_ID;
+  const box=document.getElementById('photoProvStatus');
+  if(!box) return;
+  const p=photoAitunnelSettings();
+  if(!p){
+    box.innerHTML='AITUNNEL не добавлен. Откройте <b>Настройки → Провайдеры → + AITUNNEL</b> и вставьте ключ.';
+    box.style.color='var(--red)';
+    return;
+  }
+  if(p.enabled===false){
+    box.innerHTML='AITUNNEL выключен в настройках — включите провайдер, иначе описания не пойдут.';
+    box.style.color='var(--red)';
+    return;
+  }
+  const hasKey=p.has_key || p.key_from==='env' || p.key_from==='file';
+  box.style.color='';
+  box.innerHTML=hasKey
+    ? `Провайдер: <b>AITUNNEL</b> · ключ есть`
+    : `Провайдер: <b>AITUNNEL</b> · <span style="color:var(--red)">нет ключа</span> — задайте в Настройках`;
+}
+
+function photoModelsForProv(){
+  const p=photoAitunnelSettings();
+  const id=p?.id||PHOTO_PROVIDER_ID;
+  photoProvId=id;
+  let list=(allModels||[]).filter(m=>{
+    const pid=String(m.provider||'');
+    return pid===id || pid===PHOTO_PROVIDER_ID || /aitunnel/i.test(pid);
+  });
+  // Модели из карточки AITUNNEL в настройках (если /models пуст)
+  if(p){
+    const labels=p.model_labels||{};
+    const seeded=(p.models||[]).map(mid=>({
+      id:mid,
+      name:labels[mid]||mid,
+      provider:id,
+      provider_name:p.name||'AITUNNEL',
+      pricing:null,
+      manual:true,
+    }));
+    const seen=new Set(list.map(m=>m.id));
+    for(const m of seeded) if(!seen.has(m.id)){ list.push(m); seen.add(m.id); }
+  }
+  // Жёсткий запас vision-моделей AITUNNEL, если справочник пуст
+  if(!list.length){
+    const fallback=[
+      'gemini-3.1-flash-lite-preview',
+      'gemini-2.5-flash',
+      'gemini-2.5-pro',
+      'gpt-5.2',
+      'claude-sonnet-4.6',
+    ];
+    list=fallback.map(mid=>({
+      id:mid, name:mid, provider:PHOTO_PROVIDER_ID, provider_name:'AITUNNEL', pricing:null, manual:true,
+    }));
+  }
+  return list;
+}
+
+function photoPickDefaultModel(){
+  const list=photoModelsForProv();
+  if(!list.length) return;
+  if(photoModel && list.some(m=>m.id===photoModel.id)){
+    photoModel={ ...photoModel, provider:photoProvId, provider_name:'AITUNNEL' };
+    photoRenderModel();
+    return;
+  }
+  const prefer=/gemini-3\.1-flash-lite|gemini-2\.5-flash|gpt-5|claude-sonnet/i;
+  const hit=list.find(m=>prefer.test(m.id||''))||list[0];
+  if(hit) photoPick(hit.id, PHOTO_PROVIDER_ID, true);
+}
+
 async function photoInit(){
   if(!photoInited){
     photoBindZone();
     photoInited=true;
   }
+  if(!setPayload){
+    try{ setPayload=await apiJson('/api/settings'); }catch{ /* */ }
+  }
   if(!allModels.length){
     try{ await reloadModels(); }catch{ /* */ }
   }
+  photoProvId=PHOTO_PROVIDER_ID;
+  photoRenderProviders();
+  photoPickDefaultModel();
   photoRenderModel();
   await photoLoadAlbums();
 }
@@ -8112,42 +8202,74 @@ async function photoDeleteAlbum(){
 
 function photoToggleDrop(){
   const box=document.getElementById('photoMsearch');
-  if(!box) return;
-  box.hidden=!box.hidden;
-  if(!box.hidden){ photoFilterModels(); document.getElementById('photoMsrch')?.focus(); }
+  const drop=document.getElementById('photoMdrop');
+  if(!box||!drop) return;
+  const open=box.classList.toggle('open');
+  drop.classList.toggle('open', open);
+  if(open){
+    photoFilterModels();
+    document.getElementById('photoMsrch')?.focus();
+  }
+}
+function photoCloseDrop(){
+  document.getElementById('photoMsearch')?.classList.remove('open');
+  document.getElementById('photoMdrop')?.classList.remove('open');
 }
 function photoFilterModels(){
-  const q=String(document.getElementById('photoMsrch')?.value||'').toLowerCase();
+  const q=String(document.getElementById('photoMsrch')?.value||'').toLowerCase().trim();
   const drop=document.getElementById('photoMdrop');
   if(!drop) return;
-  const visionHint=/gpt-4o|gpt-5|gemini|claude|vision|llava|qwen.*vl|flash|aitunnel/i;
+  drop.classList.add('open');
+  document.getElementById('photoMsearch')?.classList.add('open');
+
+  const visionHint=/gpt-4o|gpt-5|gemini|claude|vision|llava|qwen.*vl|flash/i;
   const score=m=>{
     const id=String(m.id||'');
     const name=String(m.name||'');
-    const prov=String(m.provider||m.provider_name||'');
     let s=0;
-    if(/aitunnel/i.test(prov)||/aitunnel/i.test(id)) s+=50;
     if(visionHint.test(id)||visionHint.test(name)) s+=20;
     if(/gemini|gpt-5|claude|gpt-4o/i.test(id)) s+=10;
     if(/flash-lite|flash/i.test(id)) s+=5;
     return s;
   };
-  let list=allModels.slice();
+  let list=photoModelsForProv();
   if(q) list=list.filter(m=>((m.name||'')+' '+(m.id||'')+' '+(m.provider_name||'')+' '+(m.provider||'')).toLowerCase().includes(q));
-  else list=list.slice().sort((a,b)=>score(b)-score(a)).slice(0,80);
-  drop.innerHTML=list.slice(0,80).map(m=>{
+  else list=list.slice().sort((a,b)=>score(b)-score(a));
+
+  const manual=looksLikeModelId(q)&&!list.some(m=>m.id===q)
+    ? `<div class="mitem" data-id="${esc(q)}" data-provider="${esc(PHOTO_PROVIDER_ID)}" data-manual="1"><span class="mi-n">Использовать «${esc(q)}» как есть</span><span class="mi-p">AITUNNEL</span></div>`
+    : '';
+
+  if(!list.length&&!manual){
+    drop.innerHTML=!photoAitunnelSettings()
+      ? `<div class="mi-empty">Добавьте AITUNNEL в Настройки → Провайдеры и вставьте ключ.</div>`
+      : `<div class="mi-empty">Нет моделей. Введите id вроде gemini-3.1-flash-lite-preview.</div>`;
+    return;
+  }
+
+  drop.innerHTML=manual+list.slice(0,80).map(m=>{
     const {ip,op}=priceOf(m);
     const pr=(ip||op)?`<span class="mi-p">$${(ip||0).toFixed?.(2)||ip}</span>`:'';
-    const prov=m.provider_name?`<span class="mi-pr">${esc(m.provider_name)}</span>`:'';
-    return `<div class="mitem${photoModel?.id===m.id&&photoModel?.provider===m.provider?' on':''}" data-id="${esc(m.id)}" data-provider="${esc(m.provider||'')}"><span class="mi-n">${esc(m.name||m.id)}</span>${prov}${pr}</div>`;
-  }).join('')||'<div class="mitem">Нет моделей</div>';
-  drop.querySelectorAll('.mitem[data-id]').forEach(x=>x.addEventListener('click',()=>photoPick(x.dataset.id,x.dataset.provider)));
+    return `<div class="mitem${photoModel?.id===m.id?' on':''}" data-id="${esc(m.id)}" data-provider="${esc(PHOTO_PROVIDER_ID)}"><span class="mi-n">${esc(m.name||m.id)}</span><span class="mi-prov">AITUNNEL</span>${pr}</div>`;
+  }).join('');
+  drop.querySelectorAll('.mitem[data-id]').forEach(x=>x.addEventListener('click',()=>photoPick(x.dataset.id, PHOTO_PROVIDER_ID)));
 }
-function photoPick(id, provider){
-  photoModel=allModels.find(m=>m.id===id && (!provider || m.provider===provider))
-    ||{ id, provider:provider||null, name:id };
+function photoPick(id, provider, quiet){
+  const fromList=photoModelsForProv().find(m=>m.id===id);
+  photoProvId=PHOTO_PROVIDER_ID;
+  photoModel=fromList||{
+    id,
+    provider:PHOTO_PROVIDER_ID,
+    provider_name:'AITUNNEL',
+    name:id,
+    pricing:null,
+    manual:true,
+  };
+  photoModel.provider=PHOTO_PROVIDER_ID;
+  photoModel.provider_name='AITUNNEL';
   photoRenderModel();
-  document.getElementById('photoMsearch').hidden=true;
+  photoCloseDrop();
+  if(!quiet) photoStatus('AITUNNEL · '+(photoModel.name||photoModel.id), true);
 }
 function photoRenderModel(){
   const name=document.getElementById('photoMselName');
@@ -8161,16 +8283,22 @@ function photoRenderModel(){
     return;
   }
   wrap?.classList.remove('none');
-  name.textContent=(photoModel.provider_name?photoModel.provider_name+' · ':'')+(photoModel.name||photoModel.id);
+  name.textContent='AITUNNEL · '+(photoModel.name||photoModel.id);
   if(price){
     const {ip,op}=priceOf(photoModel);
-    price.textContent=(ip||op)?`$${(ip||0).toFixed?.(4)||ip} / $${(op||0).toFixed?.(4)||op}`:'';
+    price.textContent=photoModel.manual&&!(ip||op)
+      ? 'вручную'
+      :((ip||op)?`$${(ip||0).toFixed?.(4)||ip} / $${(op||0).toFixed?.(4)||op}`:'');
   }
 }
 
 async function photoStartDescribe(){
   if(!photoAlbum){ photoStatus('Сначала альбом', false); return; }
-  if(!photoModel){ photoStatus('Выберите vision-модель', false); return; }
+  if(!photoAitunnelSettings()){
+    photoStatus('Добавьте AITUNNEL в Настройки → Провайдеры', false);
+    return;
+  }
+  if(!photoModel){ photoStatus('Выберите модель AITUNNEL', false); return; }
   const category=String(document.getElementById('photoCatId')?.value||'').trim()||null;
   if(category){
     try{
@@ -8186,7 +8314,7 @@ async function photoStartDescribe(){
       method:'POST', headers:{'Content-Type':'application/json'},
       body:JSON.stringify({
         model:photoModel.id,
-        provider:photoModel.provider||null,
+        provider:PHOTO_PROVIDER_ID,
         item_ids,
         category,
       }),
@@ -8264,7 +8392,9 @@ async function photoExportMl(format, includeImages){
 document.addEventListener('click',e=>{
   const box=document.getElementById('photoMsearch');
   const sel=document.getElementById('photoMsel');
-  if(box && !box.hidden && sel && !sel.contains(e.target) && !box.contains(e.target)) box.hidden=true;
+  if(box && box.classList.contains('open') && sel && !sel.contains(e.target) && !box.contains(e.target)){
+    photoCloseDrop();
+  }
 });
 
 initTheme();

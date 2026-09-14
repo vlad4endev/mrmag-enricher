@@ -940,27 +940,156 @@ input[type=range]::-moz-range-thumb{
 .dump-drop:hover,.dump-drop.on{border-color:var(--ac);background:var(--ac-w)}
 .dump-drop i{font-size:22px;color:var(--ac)}
 .dump-drop b{display:block;font-size:13.5px;margin:8px 0 4px}
-.photo-page .app{grid-template-columns:260px minmax(240px,280px) minmax(0,1fr)}
-.photo-page .left-body{display:flex;flex-direction:column;gap:12px;padding:12px 12px 14px}
-.photo-page .photo-block{display:flex;flex-direction:column;gap:8px}
-.photo-page .photo-block-h{
-  font-size:11.5px;font-weight:650;color:var(--t2);letter-spacing:-.01em;
+.photo-page .app{grid-template-columns:minmax(280px,300px) minmax(240px,280px) minmax(0,1fr)}
+.photo-page .left{background:linear-gradient(180deg,var(--bg2) 0%,color-mix(in srgb,var(--bg3) 55%,var(--bg2)) 100%)}
+.photo-page .left-head{
+  padding:14px 14px 12px;border-bottom:1px solid var(--b1);
+  background:color-mix(in srgb,var(--ac-w) 35%,var(--bg2));
+}
+.photo-page .left-title{font-size:14px;font-weight:700;letter-spacing:-.03em}
+.photo-page .left-lead{font-size:11.5px;color:var(--t3);margin-top:4px;line-height:1.45}
+.photo-page .left-flow{
+  margin-top:10px;display:inline-flex;align-items:center;gap:6px;
+  padding:5px 9px;border-radius:999px;background:var(--bg2);border:1px solid var(--b1);
+  font-size:11px;font-weight:600;color:var(--t3);
+}
+.photo-page .left-flow span{color:var(--t2)}
+.photo-page .left-flow i{font-style:normal;opacity:.45}
+.photo-page .left-body{
+  display:flex;flex-direction:column;gap:10px;padding:12px;overflow:auto;min-height:0;
+  scrollbar-width:thin;scrollbar-color:var(--b2) transparent;
+}
+.photo-page .left-body::-webkit-scrollbar{width:6px}
+.photo-page .left-body::-webkit-scrollbar-thumb{background:var(--b2);border-radius:999px}
+.photo-page .photo-card{
+  display:flex;flex-direction:column;gap:10px;padding:12px;
+  background:color-mix(in srgb,var(--bg2) 88%,transparent);
+  border:1px solid color-mix(in srgb,var(--b1) 85%,transparent);
+  border-radius:16px;
+  backdrop-filter:blur(10px);
+  box-shadow:
+    0 1px 0 color-mix(in srgb,var(--t1) 4%,transparent),
+    0 8px 20px color-mix(in srgb,var(--t1) 3%,transparent);
+}
+.photo-page .photo-card-h{
   display:flex;align-items:center;justify-content:space-between;gap:8px;
 }
-.photo-drop{
-  border:1px dashed var(--b2);border-radius:var(--r);padding:14px 12px;background:var(--bg3);
-  text-align:center;cursor:pointer;transition:border-color .15s,background .15s;
+.photo-page .photo-card-h b{
+  font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--t3);
 }
-.photo-drop:hover,.photo-drop.on{border-color:var(--ac);background:var(--ac-w)}
-.photo-drop i{font-size:20px;color:var(--ac)}
-.photo-drop b{display:block;font-size:12.5px;margin:6px 0 4px}
+.photo-page .photo-card-h .sbtn{padding:5px 10px;font-size:11.5px;border-radius:8px}
+.photo-page .photo-card .hint{margin:0;font-size:11px;line-height:1.4;color:var(--t3)}
+.photo-page .photo-card .hint b{color:var(--t2);font-weight:650}
+.photo-page .photo-pill{
+  display:inline-flex;align-items:center;gap:6px;width:fit-content;
+  padding:4px 9px;border-radius:999px;font-size:11px;font-weight:600;
+  background:var(--bg3);border:1px solid var(--b1);color:var(--t2);
+}
+.photo-page .photo-pill.ok{background:var(--gbg);border-color:var(--gbd);color:var(--green)}
+.photo-page .photo-pill.warn{background:var(--abg);border-color:var(--abd);color:var(--amber)}
+.photo-page .photo-pill.err{background:var(--rbg);border-color:var(--rbd);color:var(--red)}
+.photo-page .photo-pill i{font-size:13px}
+.photo-page .photo-albums{display:flex;flex-direction:column;gap:6px;max-height:132px;overflow:auto}
 .photo-album{
-  border:1px solid var(--b1);border-radius:var(--r);padding:9px 10px;background:var(--bg2);
-  cursor:pointer;display:flex;flex-direction:column;gap:3px;
+  border:1px solid var(--b1);border-radius:12px;padding:9px 11px;background:var(--bg3);
+  cursor:pointer;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:2px 10px;align-items:center;
+  transition:border-color .15s,background .15s,transform .12s;
 }
-.photo-album.on{border-color:var(--ac);background:var(--ac-w)}
-.photo-album strong{font-size:12.5px;font-weight:650}
-.photo-album .sub{font-size:11px;color:var(--t3)}
+.photo-album:hover{border-color:var(--b2);background:var(--bg2)}
+.photo-album.on{
+  border-color:var(--ac);background:var(--ac-w);
+  box-shadow:0 0 0 1px color-mix(in srgb,var(--ac) 25%,transparent);
+}
+.photo-album strong{font-size:12.5px;font-weight:650;grid-column:1;color:var(--t1)}
+.photo-album .sub{font-size:11px;color:var(--t3);grid-column:1}
+.photo-album .chip{
+  grid-column:2;grid-row:1 / span 2;align-self:center;
+  font-size:10.5px;font-weight:700;font-variant-numeric:tabular-nums;
+  padding:4px 7px;border-radius:999px;background:var(--bg2);border:1px solid var(--b1);color:var(--t2);
+}
+.photo-album.on .chip{background:var(--bg2);border-color:var(--ac-b);color:var(--ac)}
+.photo-page #photoMsel{
+  min-height:42px;border-radius:12px;padding:0 12px;
+  background:var(--bg3);border:1px solid var(--b1);
+}
+.photo-page #photoMsel:hover{border-color:var(--ac-b);background:var(--bg2)}
+.photo-page #photoMsearch{border-radius:12px;overflow:hidden}
+.photo-drop{
+  border:1.5px dashed color-mix(in srgb,var(--ac) 35%,var(--b2));
+  border-radius:14px;padding:16px 12px;
+  background:
+    radial-gradient(120% 80% at 50% 0%, color-mix(in srgb,var(--ac) 10%,transparent), transparent 60%),
+    var(--bg3);
+  text-align:center;cursor:pointer;
+  transition:border-color .15s,background .15s,transform .12s,box-shadow .15s;
+}
+.photo-drop:hover,.photo-drop.on{
+  border-color:var(--ac);background:var(--ac-w);
+  box-shadow:0 8px 24px color-mix(in srgb,var(--ac) 12%,transparent);
+  transform:translateY(-1px);
+}
+.photo-drop .photo-drop-ico{
+  width:38px;height:38px;margin:0 auto 8px;border-radius:12px;
+  display:grid;place-items:center;background:var(--bg2);border:1px solid var(--b1);color:var(--ac);
+}
+.photo-drop .photo-drop-ico i{font-size:18px}
+.photo-drop b{display:block;font-size:13px;margin:0 0 4px;letter-spacing:-.02em}
+.photo-drop .hint{margin:0}
+.photo-page .photo-run{
+  display:grid;grid-template-columns:1fr auto;gap:8px;
+}
+.photo-page .photo-run .sbtn.primary{
+  min-height:40px;justify-content:center;border-radius:11px;font-size:13px;
+}
+.photo-page .photo-run .sbtn.ghost{
+  min-height:40px;padding:0 14px;border-radius:11px;
+}
+.photo-page .photo-status{
+  display:flex;flex-direction:column;gap:4px;padding:9px 11px;border-radius:12px;
+  background:var(--bg3);border:1px solid var(--b1);
+  transition:border-color .15s,background .15s;
+}
+.photo-page .photo-status.ok{background:var(--gbg);border-color:var(--gbd)}
+.photo-page .photo-status.err{background:var(--rbg);border-color:var(--rbd)}
+.photo-page .photo-status #photoJobHint{margin:0;font-size:11px;line-height:1.4;color:var(--t3)}
+.photo-page .photo-status #photoStatus{
+  margin:0;font-size:12px;line-height:1.35;font-weight:600;color:var(--t1);
+}
+.photo-page .photo-status.ok #photoStatus{color:var(--green)}
+.photo-page .photo-status.err #photoStatus{color:var(--red)}
+.photo-page .photo-chiprow{
+  display:flex;flex-wrap:wrap;gap:6px;
+}
+.photo-page .photo-chiprow .sbtn{
+  padding:6px 11px;border-radius:999px;font-size:11.5px;font-weight:600;
+  background:var(--bg3);
+}
+.photo-page .photo-chiprow .sbtn:hover{background:var(--bg2)}
+.photo-page .photo-chiprow .sbtn.danger{
+  background:color-mix(in srgb,var(--rbg) 70%,var(--bg2));
+}
+.photo-page .photo-export{
+  display:grid;grid-template-columns:1fr 1fr;gap:7px;
+}
+.photo-page .photo-export .sbtn{
+  min-height:36px;justify-content:center;border-radius:10px;font-size:12px;
+}
+.photo-page .photo-export .wide{grid-column:1 / -1}
+.photo-page .photo-schema{
+  font-family:var(--mono);font-size:10.5px;color:var(--t3);
+  padding:6px 8px;border-radius:8px;background:var(--bg3);border:1px dashed var(--b1);
+}
+.photo-page .photo-dock{
+  position:sticky;bottom:0;z-index:2;margin-top:2px;
+  display:flex;flex-direction:column;gap:10px;
+  padding:12px;border-radius:16px;
+  background:color-mix(in srgb,var(--bg2) 92%,transparent);
+  border:1px solid var(--b1);
+  backdrop-filter:blur(12px);
+  box-shadow:0 -10px 28px color-mix(in srgb,var(--bg2) 70%,transparent);
+}
+.photo-page .photo-dock .photo-card-h b{color:var(--t2)}
+.photo-page .photo-dock .photo-run{margin:0}
 .photo-ri{grid-template-columns:auto auto minmax(0,1fr) auto}
 .photo-ri .photo-check{
   width:16px;height:16px;margin:0;accent-color:var(--ac);cursor:pointer;flex-shrink:0;
@@ -1897,21 +2026,25 @@ input[type=range]::-moz-range-thumb{
   <aside class="left">
     <header class="left-head">
       <div class="left-title" id="photoAlbumTitle">Прогон фото</div>
-      <div class="left-lead">Модель AITUNNEL, загрузка и описание — затем полный текст справа.</div>
-      <div class="left-flow" aria-hidden="true"><span>1 альбом</span><i>→</i><span>2 модель</span><i>→</i><span>описать</span></div>
+      <div class="left-lead">Модель → загрузка → описание. Дамп — только если привяжете.</div>
+      <div class="left-flow" aria-hidden="true"><span>альбом</span><i>→</i><span>модель</span><i>→</i><span>описать</span></div>
     </header>
     <div class="left-body">
-      <div class="photo-block">
-        <div class="photo-block-h"><span>Альбомы</span>
-          <button type="button" class="sbtn primary" onclick="photoCreateAlbum()"><i class="ti ti-plus"></i> Новый</button>
+      <section class="photo-card">
+        <div class="photo-card-h">
+          <b>Альбомы</b>
+          <div style="display:flex;gap:6px">
+            <button type="button" class="sbtn ghost" onclick="photoDeleteAlbum()" title="Удалить текущий альбом"><i class="ti ti-trash"></i></button>
+            <button type="button" class="sbtn primary" onclick="photoCreateAlbum()"><i class="ti ti-plus"></i> Новый</button>
+          </div>
         </div>
-        <div id="photoAlbumList" style="display:flex;flex-direction:column;gap:6px"></div>
-      </div>
+        <div class="photo-albums" id="photoAlbumList"></div>
+      </section>
 
-      <div class="photo-block">
-        <div class="photo-block-h"><span>Модель AITUNNEL</span></div>
-        <div class="hint" style="margin:0">Только AITUNNEL (РФ, без VPN).</div>
-        <div id="photoProvStatus" class="hint" style="margin:0">Провайдер: AITUNNEL</div>
+      <section class="photo-card">
+        <div class="photo-card-h"><b>Модель</b></div>
+        <div class="photo-pill" id="photoProvStatus">AITUNNEL</div>
+        <div class="hint">Только AITUNNEL · РФ, без VPN</div>
         <div class="msel none" id="photoMsel" onclick="photoToggleDrop()" role="button" tabindex="0"
              aria-label="Выбрать vision-модель AITUNNEL" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();photoToggleDrop()}">
           <span class="msel-n" id="photoMselName">Выберите модель</span>
@@ -1922,48 +2055,49 @@ input[type=range]::-moz-range-thumb{
           <input type="text" id="photoMsrch" placeholder="Поиск или id модели" oninput="photoFilterModels()" autocomplete="off" aria-label="Поиск модели AITUNNEL">
           <div class="mdrop" id="photoMdrop"></div>
         </div>
-      </div>
+      </section>
 
-      <div class="photo-block">
-        <div class="photo-block-h"><span>Загрузка</span></div>
+      <section class="photo-card">
+        <div class="photo-card-h"><b>Загрузка</b></div>
         <div class="photo-drop" id="photoZone" tabindex="0" role="button" aria-label="Загрузить фото">
-          <i class="ti ti-cloud-upload" aria-hidden="true"></i>
+          <div class="photo-drop-ico" aria-hidden="true"><i class="ti ti-cloud-upload"></i></div>
           <b>Перетащите или выберите</b>
-          <div class="hint" style="margin:0">JPEG / PNG / WebP / GIF · к дампу можно привязать позже</div>
+          <div class="hint">JPEG · PNG · WebP · GIF</div>
         </div>
         <input type="file" id="photoFile" accept="image/jpeg,image/png,image/webp,image/gif,.jpg,.jpeg,.png,.webp,.gif" multiple hidden>
-      </div>
+      </section>
 
-      <div class="photo-block">
-        <div class="photo-block-h"><span>Прогон</span></div>
-        <div class="set-actions" style="margin:0">
-          <button type="button" class="sbtn primary" id="photoDescribeBtn" onclick="photoStartDescribe()"><i class="ti ti-sparkles"></i> Описать</button>
-          <button type="button" class="sbtn ghost" onclick="photoStopDescribe()">Стоп</button>
-        </div>
-        <div class="hint" id="photoJobHint" style="margin:0">Отметьте фото слева или опишите все без текста.</div>
-        <div class="hint" id="photoStatus" style="margin:0">Нет альбома</div>
-      </div>
-
-      <div class="photo-block">
-        <div class="photo-block-h"><span>Выборка</span></div>
-        <div class="set-actions" style="margin:0;flex-wrap:wrap">
+      <section class="photo-card">
+        <div class="photo-card-h"><b>Выборка</b></div>
+        <div class="photo-chiprow">
           <button type="button" class="sbtn ghost" onclick="photoSelectUndescribed()">Без описания</button>
           <button type="button" class="sbtn ghost" onclick="photoSelectAll()">Все</button>
           <button type="button" class="sbtn ghost" onclick="photoSelectClear()">Снять</button>
           <button type="button" class="sbtn danger" onclick="photoDeleteSelected()">Удалить</button>
-          <button type="button" class="sbtn ghost" onclick="photoDeleteAlbum()">Альбом ✕</button>
         </div>
-      </div>
+      </section>
 
-      <div class="photo-block">
-        <div class="photo-block-h"><span>ML-выгрузка</span></div>
-        <div class="set-actions" style="margin:0">
+      <section class="photo-card">
+        <div class="photo-card-h"><b>ML-выгрузка</b></div>
+        <div class="photo-export">
           <button type="button" class="sbtn primary" onclick="photoExportMl('jsonl')"><i class="ti ti-download"></i> JSONL</button>
           <button type="button" class="sbtn ghost" onclick="photoExportMl('json')">JSON</button>
-          <button type="button" class="sbtn ghost" onclick="photoExportMl('jsonl',true)">+base64</button>
+          <button type="button" class="sbtn ghost wide" onclick="photoExportMl('jsonl',true)">+ base64</button>
         </div>
-        <div class="hint" style="margin:0">Схема <code>ogran.photo_ml.v1</code></div>
-      </div>
+        <div class="photo-schema">ogran.photo_ml.v1</div>
+      </section>
+
+      <section class="photo-dock" aria-label="Прогон">
+        <div class="photo-card-h"><b>Прогон</b></div>
+        <div class="photo-run">
+          <button type="button" class="sbtn primary" id="photoDescribeBtn" onclick="photoStartDescribe()"><i class="ti ti-sparkles"></i> Описать</button>
+          <button type="button" class="sbtn ghost" onclick="photoStopDescribe()">Стоп</button>
+        </div>
+        <div class="photo-status" id="photoStatusBox">
+          <div id="photoJobHint">Отметьте фото в списке или опишите все без текста.</div>
+          <div id="photoStatus">Нет альбома</div>
+        </div>
+      </section>
     </div>
   </aside>
 
@@ -8104,9 +8238,14 @@ function photoAitunnelSettings(){
 
 function photoStatus(msg, ok){
   const el=document.getElementById('photoStatus');
+  const box=document.getElementById('photoStatusBox');
   if(!el) return;
   el.textContent=msg||'';
-  el.style.color=ok===false?'var(--red)':ok===true?'var(--ok,#2a9d5c)':'';
+  el.style.color='';
+  if(box){
+    box.classList.toggle('ok', ok===true);
+    box.classList.toggle('err', ok===false);
+  }
 }
 
 function photoItemById(id){
@@ -8231,21 +8370,25 @@ function photoRenderProviders(){
   const box=document.getElementById('photoProvStatus');
   if(!box) return;
   const p=photoAitunnelSettings();
+  box.className='photo-pill';
   if(!p){
-    box.innerHTML='AITUNNEL не добавлен. Откройте <b>Настройки → Провайдеры → + AITUNNEL</b> и вставьте ключ.';
-    box.style.color='var(--red)';
+    box.classList.add('err');
+    box.innerHTML='<i class="ti ti-alert-circle"></i> AITUNNEL не добавлен';
     return;
   }
   if(p.enabled===false){
-    box.innerHTML='AITUNNEL выключен в настройках — включите провайдер, иначе описания не пойдут.';
-    box.style.color='var(--red)';
+    box.classList.add('warn');
+    box.innerHTML='<i class="ti ti-player-pause"></i> AITUNNEL выключен';
     return;
   }
   const hasKey=p.has_key || p.key_from==='env' || p.key_from==='file';
-  box.style.color='';
-  box.innerHTML=hasKey
-    ? `Провайдер: <b>AITUNNEL</b> · ключ есть`
-    : `Провайдер: <b>AITUNNEL</b> · <span style="color:var(--red)">нет ключа</span> — задайте в Настройках`;
+  if(hasKey){
+    box.classList.add('ok');
+    box.innerHTML='<i class="ti ti-check"></i> AITUNNEL · ключ есть';
+  }else{
+    box.classList.add('err');
+    box.innerHTML='<i class="ti ti-key-off"></i> AITUNNEL · нет ключа';
+  }
 }
 
 function photoModelsForProv(){
@@ -8365,12 +8508,13 @@ function photoRenderAlbums(){
   const box=document.getElementById('photoAlbumList');
   if(!box) return;
   if(!photoAlbums.length){
-    box.innerHTML='<p class="dump-empty">Пока пусто</p>';
+    box.innerHTML='<p class="dump-empty" style="padding:10px 4px">Пока пусто — создайте альбом</p>';
     return;
   }
   box.innerHTML=photoAlbums.map(a=>`<div class="photo-album${photoAlbum&&photoAlbum.id===a.id?' on':''}" onclick="photoOpenAlbum('${esc(a.id)}')">
     <strong>${esc(a.name||a.id)}</strong>
-    <div class="sub">${a.items||0} фото · описано ${a.described||0}${a.errors?` · ошибок ${a.errors}`:''}</div>
+    <div class="sub">описано ${a.described||0}${a.errors?` · ошибок ${a.errors}`:''}</div>
+    <span class="chip">${a.items||0}</span>
   </div>`).join('');
 }
 

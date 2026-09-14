@@ -221,7 +221,7 @@ function isOpenRouterProvider(p) {
 /** Статический запас, если /models недоступен. */
 function seedModels(p) {
   const listed = listedModels(p);
-  if (listed.length) return listed;
+  if (listed.length) return priceModels(listed, p);
   if (isOpenRouterProvider(p)) return priceModels(tagModels(OPENROUTER_FALLBACK, p), p);
   return [];
 }

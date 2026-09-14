@@ -218,6 +218,12 @@ try {
     const d = await r.json();
     assert.ok(d.data.some(m => m.id === 'deepseek-v4-flash' && m.provider === 'deepseek'));
     assert.ok(d.data.some(m => m.id === 'yandexgpt-lite/latest' && m.provider === 'yandex'));
+    const flash = d.data.find(m => m.id === 'deepseek-v4-flash' && m.provider === 'deepseek');
+    assert.ok(flash.pricing && Number(flash.pricing.prompt) > 0, 'у DeepSeek из карточки должен быть запасной тариф');
+    assert.equal(flash.pricing_source, 'fallback');
+    const lite = d.data.find(m => m.id === 'yandexgpt-lite/latest' && m.provider === 'yandex');
+    assert.equal(lite.pricing_currency, 'RUB');
+    assert.ok(lite.pricing_rub && lite.pricing_rub.prompt > 0);
     assert.ok(ms < 3000, `справочник ждал сеть ${ms} мс`);
   });
   await t('PUT /api/settings сохраняет условие и не затирает ключ пустой строкой', async () => {

@@ -5713,6 +5713,8 @@ function applyDefaultProviderModels(){
     setSt('ok',`${allModels.length} моделей`);
     renderModelList(previewModels(allModels));
   }
+  syncCalcModels();
+  calcUpdate();
   syncSteps();
 }
 
@@ -8386,78 +8388,123 @@ function calcCost(m, inT, outT){
 }
 
 function calcUpdate(){
-  const inT=parseInt(document.getElementById('sl-in').value);
-  const outT=parseInt(document.getElementById('sl-out').value);
-  const cnt=parseInt(document.getElementById('sl-cnt').value);
+  const inEl=document.getElementById('sl-in');
+  const outEl=document.getElementById('sl-out');
+  const cntEl=document.getElementById('sl-cnt');
+  if(!inEl||!outEl||!cntEl) return;
+  const inT=parseInt(inEl.value,10)||1000;
+  const outT=parseInt(outEl.value,10)||500;
+  const cnt=parseInt(cntEl.value,10)||10000;
   document.getElementById('sl-in-val').textContent=inT.toLocaleString('ru');
   document.getElementById('sl-out-val').textContent=outT.toLocaleString('ru');
   document.getElementById('sl-cnt-val').textContent=cnt.toLocaleString('ru');
 
-  // render model cards
-  const cards=document.getElementById('calc-model-cards');
-  const minC=Math.min(...CALC_MODELS.map(m=>calcCost(m,inT,outT)));
-  cards.innerHTML=CALC_MODELS.map((m,i)=>{
-    const cost=calcCost(m,inT,outT)*cnt;
-    const isCheapest=calcCost(m,inT,outT)===minC;
-    const badgeCls=m.badge==='cheap'?'mb-cheap':m.badge==='best'?'mb-best':m.badge==='ru'?'mb-ru':'';
-    const priceStr=m.rub
-      ? `${m.inp_rub} ₽ / ${m.out_rub} ₽ за 1M`
-      : `$${m.inp} / $${m.out} за 1M`;
-    return `<div class="mcard${calcSelModel===m?' on':''}" onclick="calcSelect(${i})">
-      ${m.badge?`<span class="mcard-badge ${badgeCls}">${m.badgeText}</span>`:''}
-      <div class="mcard-prov">${m.prov}</div>
-      <div class="mcard-name">${m.name}${m.unverified?' <span title="Цена не сверена с прайсом провайдера" style="color:var(--amber)">⚠</span>':''}</div>
-      <div class="mcard-price">${priceStr}</div>
-      <div class="mcard-cost${isCheapest?' cheap':''}">$${cost.toFixed(2)}</div>
-      <div class="mcard-rub">${Math.round(cost*RUB)} ₽</div>
-    </div>`;
-  }).join('');
+  const visible=calcVisible();
+  const priced=visible.filter(m=>!m.unknown);
+  const minC=priced.length?Math.min(...priced.map(m=>calcCost(m,inT,outT))):0;
 
-  // render comparison table
-  const sorted=[...CALC_MODELS].sort((a,b)=>calcCost(a,inT,outT)-calcCost(b,inT,outT));
-  const minCost=calcCost(sorted[0],inT,outT)*cnt;
-  document.getElementById('calc-tbody').innerHTML=sorted.map(m=>{
+  const provs=document.getElementById('calc-provs');
+  if(provs){
+    const names=[];
+    const seen=new Set();
+    for(const m of CALC_MODELS){
+      if(!m.provider||seen.has(m.provider)) continue;
+      seen.add(m.provider);
+      names.push({id:m.provider,name:m.prov});
+    }
+    provs.innerHTML=`<button type="button" class="calc-chip${calcProvFilter?'':' on'}" onclick="calcSetProv('')">Все</button>`
+      +names.map(p=>`<button type="button" class="calc-chip${calcProvFilter===p.id?' on':''}" onclick="calcSetProv('${esc(p.id)}')">${esc(p.name)}</button>`).join('');
+  }
+
+  const cards=document.getElementById('calc-model-cards');
+  if(!CALC_MODELS.length){
+    cards.innerHTML='<div class="hint">Нет моделей у включённых провайдеров — добавьте их в Настройках или нажмите «Актуализировать».</div>';
+  }else if(!visible.length){
+    cards.innerHTML='<div class="hint">Ничего не найдено по фильтру.</div>';
+  }else{
+    cards.innerHTML=visible.map(m=>{
+      const unit=calcCost(m,inT,outT);
+      const cost=unit*cnt;
+      const isCheapest=!m.unknown && priced.length && unit===minC;
+      const badgeCls=m.badge==='cheap'?'mb-cheap':m.badge==='best'?'mb-best':m.badge==='ru'?'mb-ru':'';
+      const priceStr=m.unknown?'цена неизвестна'
+        :m.rub?`${Math.round(m.inp_rub)} ₽ / ${Math.round(m.out_rub)} ₽ за 1M`
+        :`$${m.inp.toFixed(2)} / $${m.out.toFixed(2)} за 1M`;
+      const costStr=m.unknown?'—':`$${cost.toFixed(2)}`;
+      const rubStr=m.unknown?'':`${Math.round(cost*RUB)} ₽`;
+      return `<div class="mcard${calcSelModel===m?' on':''}${m.unknown?' unknown':''}" onclick="calcSelect('${esc(m.key)}')">
+      ${m.badge?`<span class="mcard-badge ${badgeCls}">${esc(m.badgeText)}</span>`:''}
+      <div class="mcard-prov">${esc(m.prov)}</div>
+      <div class="mcard-name">${esc(m.name)}${m.unverified?' <span title="Запасной прайс, каталог провайдера цену не отдал" style="color:var(--amber)">⚠</span>':''}</div>
+      <div class="mcard-price">${esc(priceStr)}</div>
+      <div class="mcard-cost${isCheapest?' cheap':''}${m.unknown?' unknown':''}">${costStr}</div>
+      <div class="mcard-rub">${rubStr}</div>
+    </div>`;
+    }).join('');
+  }
+
+  const sorted=[...priced].sort((a,b)=>calcCost(a,inT,outT)-calcCost(b,inT,outT));
+  const minCost=sorted.length?calcCost(sorted[0],inT,outT)*cnt:0;
+  const tableRows=visible.length?visible.slice().sort((a,b)=>{
+    if(a.unknown!==b.unknown) return a.unknown?1:-1;
+    return calcCost(a,inT,outT)-calcCost(b,inT,outT);
+  }):[];
+  document.getElementById('calc-tbody').innerHTML=tableRows.map(m=>{
     const cost=calcCost(m,inT,outT)*cnt;
-    const ratio=minCost>0?cost/minCost:1;
+    const ratio=!m.unknown && minCost>0?cost/minCost:1;
     const barW=Math.min(120,Math.round(ratio*8));
     const isSel=calcSelModel===m;
-    const isCheap=m===sorted[0];
+    const isCheap=sorted[0]===m;
+    const inStr=m.unknown?'—':`$${m.inp.toFixed(2)}`;
+    const outStr=m.unknown?'—':`$${m.out.toFixed(2)}`;
     return `<tr class="${isSel?'selected':isCheap?'cheapest':''}">
-      <td>${m.prov}</td>
-      <td><strong>${m.name}</strong>${m.unverified?' <span title="Цена не сверена с прайсом провайдера" style="color:var(--amber)">⚠</span>':''}</td>
-      <td class="r" style="font-family:var(--mono);font-size:11px">$${m.inp}</td>
-      <td class="r" style="font-family:var(--mono);font-size:11px">$${m.out}</td>
-      <td class="r"><strong class="tcost${isCheap?' cheap':''}">$${cost.toFixed(2)}</strong></td>
-      <td class="r" style="font-family:var(--mono);font-size:11px">${Math.round(cost*RUB)} ₽</td>
-      <td><div class="bar-wrap"><div class="cbar" style="width:${barW}px"></div><span style="font-size:10px;color:var(--t3)">${ratio<1.05?'—':'×'+ratio.toFixed(1)}</span></div></td>
+      <td>${esc(m.prov)}</td>
+      <td><strong>${esc(m.name)}</strong>${m.unverified?' <span title="Запасной прайс, каталог провайдера цену не отдал" style="color:var(--amber)">⚠</span>':''}</td>
+      <td class="r" style="font-family:var(--mono);font-size:11px">${inStr}</td>
+      <td class="r" style="font-family:var(--mono);font-size:11px">${outStr}</td>
+      <td class="r"><strong class="tcost${isCheap?' cheap':''}${m.unknown?' unknown':''}">${m.unknown?'—':'$'+cost.toFixed(2)}</strong></td>
+      <td class="r" style="font-family:var(--mono);font-size:11px">${m.unknown?'—':Math.round(cost*RUB)+' ₽'}</td>
+      <td>${m.unknown?'':`<div class="bar-wrap"><div class="cbar" style="width:${barW}px"></div><span style="font-size:10px;color:var(--t3)">${ratio<1.05?'—':'×'+ratio.toFixed(1)}</span></div>`}</td>
     </tr>`;
-  }).join('');
+  }).join('')||'<tr><td colspan="7" style="color:var(--t3);padding:12px">Нет моделей для сравнения</td></tr>';
 
-  // provenance: откуда цифры и что им нельзя доверять «как есть»
+  const names=[...new Set(CALC_MODELS.map(m=>m.prov).filter(Boolean))];
   const unv=CALC_MODELS.filter(m=>m.unverified);
+  const when=calcPricedAt?new Date(calcPricedAt).toLocaleString('ru-RU'):'ещё не обновлялось';
+  const err=calcErrors.length?` ${calcErrors.map(e=>`${e.name}: ${e.error}`).join('; ')}.`:'';
   document.getElementById('calc-provenance').innerHTML=
-    `Цены внесены вручную ${PRICES_EDITED} и не обновляются автоматически — сверяйтесь с прайсом провайдера. `+
-    `Курс ${RUB} ₽/$ на ${RUB_DATE}. `+
-    `Живые цены моделей OpenRouter — на странице «Обогащение».`+
-    (unv.length?`<br>⚠ Требуют проверки: ${unv.map(m=>esc(m.name)).join(', ')} — единицы в исходной таблице были несогласованы.`:'');
+    (names.length
+      ?`Тарифы с ваших провайдеров: ${names.map(esc).join(', ')}. `
+      :'Провайдеры не загружены. ')+
+    `Обновлено ${esc(when)}. Курс ${RUB} ₽/$ на ${esc(RUB_DATE)}. `+
+    `Кнопка «Актуализировать» заново спрашивает каталоги.`+
+    (unv.length?`<br>⚠ Запасной прайс (каталог цену не отдал): ${unv.map(m=>esc(m.name)).join(', ')}.`:'')+
+    (err?`<br>${esc(err)}`:'');
 
-  // update selected model info
   if(calcSelModel){
-    const cost1=calcCost(calcSelModel,inT,outT);
-    const costAll=cost1*cnt;
+    const cost1=calcSelModel.unknown?null:calcCost(calcSelModel,inT,outT);
+    const costAll=cost1==null?null:cost1*cnt;
+    const rateLine=calcSelModel.unknown?'цена неизвестна — сверьте прайс провайдера'
+      :calcSelModel.rub
+        ?`вход: ${Math.round(calcSelModel.inp_rub)} ₽/1M · выход: ${Math.round(calcSelModel.out_rub)} ₽/1M`
+        :`вход: $${calcSelModel.inp.toFixed(2)}/1M · выход: $${calcSelModel.out.toFixed(2)}/1M`;
     document.getElementById('calc-sel-model').innerHTML=`
-      <div style="font-weight:600;margin-bottom:4px">${calcSelModel.prov} · ${calcSelModel.name}</div>
-      <div style="font-size:11px;color:var(--t3);font-family:var(--mono)">вход: $${calcSelModel.inp}/1M · выход: $${calcSelModel.out}/1M</div>`;
-    document.getElementById('calc-result-box').innerHTML=`
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+      <div style="font-weight:600;margin-bottom:4px">${esc(calcSelModel.prov)} · ${esc(calcSelModel.name)}</div>
+      <div style="font-size:11px;color:var(--t3);font-family:var(--mono)">${esc(rateLine)}</div>`;
+    document.getElementById('calc-result-box').innerHTML=cost1==null
+      ?'<div style="color:var(--t3)">Нет тарифа — выберите другую модель или актуализируйте каталог</div>'
+      :`<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
         <div class="tk"><div class="tk-lbl">1 товар</div><div class="tk-val cst" style="font-size:13px">$${cost1.toFixed(6)}</div><div class="tk-sub">${(cost1*RUB).toFixed(5)} ₽</div></div>
         <div class="tk"><div class="tk-lbl">${cnt.toLocaleString('ru')} товаров</div><div class="tk-val cst" style="font-size:13px">$${costAll.toFixed(2)}</div><div class="tk-sub">${Math.round(costAll*RUB)} ₽</div></div>
       </div>`;
+  }else{
+    document.getElementById('calc-sel-model').innerHTML='<div style="color:var(--t3)">Кликните на модель справа</div>';
+    document.getElementById('calc-result-box').innerHTML='<div style="color:var(--t3)">Выберите модель</div>';
   }
 }
 
-function calcSelect(idx){
-  calcSelModel=CALC_MODELS[idx];
+function calcSelect(key){
+  calcSelModel=CALC_MODELS.find(m=>m.key===key)||null;
   calcUpdate();
 }
 

@@ -136,6 +136,7 @@ function fakeJobs(make, { status = 'done', tail = 0, id = 'job-test', seed = nul
   return fn;
 }
 globalThis.Blob = class { constructor(a) { this.parts = a; } };
+globalThis.CSS = { escape: s => String(s).replace(/\\/g, '\\\\').replace(/"/g, '\\"') };
 Object.defineProperty(globalThis, 'navigator', {
   value: { clipboard: { writeText: () => Promise.resolve() } }, configurable: true,
 });
@@ -161,6 +162,7 @@ export const api={syncSteps,setCnt,setCntFree,applyCnt,applySource,setSource,pic
   renderParserProbe,runParserProbe,
   renderExportTemplates,applyExportTemplate,shapeProductsFile,shapeFiltersFile,exportPack,
   modelsFromSettings,pickDefaultModel,applyDefaultProviderModels,reloadModels,previewModels,looksLikeModelId,catalogHint,TOP_ENRICH_IDS,
+  calcModelsFromCatalog,syncCalcModels,toCalcModel,
   addDumpSection,openDumpDest,cancelDumpDest,dumpBodyWithName,matchDictCatalog,
   addPromptTemplate,selectPromptTab,onPromptScopeChange,onPromptSectionToggle,promptsForSave,
   enrichBoardModel,alignParseKey};
@@ -493,6 +495,38 @@ t('превью показывает топ для обогащения с GPT �
   assert.ok(prev.some(m => m.id === 'openai/gpt-4o-mini'));
   assert.ok(prev.some(m => m.id === 'anthropic/claude-sonnet-4'));
   assert.ok(!prev.some(m => String(m.id).startsWith('vendor/model-')), 'случайный каталог OpenRouter не должен попадать в топ');
+});
+t('калькулятор берёт модели включённых провайдеров, а не зашитый OpenAI', () => {
+  const settings = {
+    settings: {
+      providers: [
+        { id: 'openrouter', name: 'OpenRouter', enabled: true, default: true, models: [] },
+        { id: 'deepseek', name: 'DeepSeek', enabled: true, default: false, models: ['deepseek-v4-flash', 'deepseek-v4-pro'] },
+        { id: 'yandex', name: 'Yandex AI Studio', enabled: true, default: false, models: ['yandexgpt-lite/latest', 'yandexgpt/latest'] },
+      ],
+    },
+  };
+  const list = [
+    { id: 'openai/gpt-4o-mini', name: 'GPT-4o Mini', provider: 'openrouter', provider_name: 'OpenRouter',
+      pricing: { prompt: 1.5e-7, completion: 6e-7 }, pricing_source: 'catalog', pricing_currency: 'USD' },
+    { id: 'deepseek-v4-flash', name: 'deepseek-v4-flash', provider: 'deepseek', provider_name: 'DeepSeek',
+      pricing: { prompt: 3e-7, completion: 1.2e-6 }, pricing_source: 'fallback', pricing_currency: 'USD' },
+    { id: 'deepseek-v4-pro', name: 'deepseek-v4-pro', provider: 'deepseek', provider_name: 'DeepSeek',
+      pricing: { prompt: 3e-7, completion: 1.2e-6 }, pricing_source: 'fallback', pricing_currency: 'USD' },
+    { id: 'yandexgpt-lite/latest', name: 'YandexGPT Lite', provider: 'yandex', provider_name: 'Yandex AI Studio',
+      pricing: { prompt: 2.5e-6, completion: 2.5e-6 }, pricing_rub: { prompt: 200, completion: 200 },
+      pricing_source: 'fallback', pricing_currency: 'RUB' },
+    { id: 'yandexgpt/latest', name: 'YandexGPT Pro', provider: 'yandex', provider_name: 'Yandex AI Studio',
+      pricing: { prompt: 1e-5, completion: 1e-5 }, pricing_rub: { prompt: 800, completion: 800 },
+      pricing_source: 'fallback', pricing_currency: 'RUB' },
+    { id: 'gpt-5.4', name: 'GPT-5.4', provider: 'openai', provider_name: 'OpenAI', pricing: { prompt: 2.5e-6, completion: 1.5e-5 } },
+  ];
+  const rows = api.calcModelsFromCatalog(list, settings);
+  assert.ok(rows.some(m => m.id === 'deepseek-v4-flash' && m.prov === 'DeepSeek'));
+  assert.ok(rows.some(m => m.id === 'yandexgpt-lite/latest' && m.rub));
+  assert.ok(rows.some(m => m.id === 'openai/gpt-4o-mini'));
+  assert.ok(!rows.some(m => m.provider === 'openai'), 'выключенный OpenAI не должен попадать в калькулятор');
+  assert.ok(!rows.some(m => m.name === 'GPT-5.4 Nano'));
 });
 await tAsync('таймаут OpenRouter не блокирует список, если в настройках есть модели', async () => {
   st.selModel = null;

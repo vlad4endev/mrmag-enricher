@@ -2853,4 +2853,59 @@ console.log('\nТовар без описания: поиск в сети');
   fs.rmSync(dir, { recursive: true, force: true });
 }
 
+{
+  const {
+    extractCatalogPricing, fallbackPricing, decorateModelPricing, decorateModels,
+  } = await import('./pipeline/model_pricing.js');
+
+  console.log('\nТарифы моделей');
+  t('OpenRouter pricing.prompt — $ за токен', () => {
+    const got = extractCatalogPricing({ pricing: { prompt: '0.00000015', completion: '0.0000006' } });
+    assert.equal(got.kind, 'usd_token');
+    assert.ok(Math.abs(got.prompt - 1.5e-7) < 1e-12);
+  });
+  t('AITUNNEL prompt_cost — ₽ за 1M', () => {
+    const got = extractCatalogPricing({ prompt_cost: 600, completion_cost: 3000 });
+    assert.equal(got.kind, 'rub_1m');
+    assert.equal(got.prompt, 600);
+  });
+  t('DeepSeek v4-flash — запасной peak cache-miss', () => {
+    const pack = fallbackPricing({ id: 'deepseek' }, 'deepseek-v4-flash', 80);
+    assert.equal(pack.pricing_source, 'fallback');
+    assert.ok(Math.abs(pack.pricing.prompt - 0.30 / 1e6) < 1e-12);
+    assert.ok(Math.abs(pack.pricing.completion - 1.20 / 1e6) < 1e-12);
+  });
+  t('deepseek-v4-pro после 14.09.2026 считается как Flash', () => {
+    const pack = fallbackPricing({ id: 'deepseek' }, 'deepseek-v4-pro', 80);
+    assert.ok(Math.abs(pack.pricing.prompt - 0.30 / 1e6) < 1e-12);
+  });
+  t('YandexGPT Lite — ₽/1M', () => {
+    const pack = fallbackPricing({ id: 'yandex' }, 'yandexgpt-lite/latest', 80);
+    assert.equal(pack.pricing_currency, 'RUB');
+    assert.equal(pack.pricing_rub.prompt, 200);
+    assert.equal(pack.pricing_source, 'fallback');
+  });
+  t('живой каталог не затирается запасом', () => {
+    const live = decorateModelPricing({
+      id: 'claude-sonnet-4.6',
+      pricing: null,
+    }, { id: 'aitunnel', base_url: 'https://api.aitunnel.ru/v1' }, {
+      rubPerUsd: 80,
+      catalogRow: { prompt_cost: 600, completion_cost: 3000 },
+    });
+    assert.equal(live.pricing_source, 'catalog');
+    assert.equal(live.pricing_currency, 'RUB');
+    assert.equal(live.pricing_rub.prompt, 600);
+  });
+  t('decorateModels навешивает тариф на список карточки', () => {
+    const out = decorateModels(
+      [{ id: 'deepseek-v4-flash', name: 'flash' }],
+      { id: 'deepseek' },
+      { rubPerUsd: 80 },
+    );
+    assert.equal(out[0].pricing_source, 'fallback');
+    assert.ok(out[0].pricing.prompt > 0);
+  });
+}
+
 console.log(`\n✅ ${n} проверок пройдено\n`);

@@ -123,7 +123,7 @@ export function fallbackPricing(provider, modelId, rubPerUsd) {
   }
   if (pid === 'deepseek' || /deepseek\.com/i.test(url)) {
     const hit = FALLBACK_USD_PER_1M.find(x => x.test(id));
-    if (hit) return packUsd({ prompt: hit.prompt, completion: hit.completion }, 'fallback', rubPerUsd);
+    if (hit) return packUsd(usdPerTokenFrom1M({ prompt: hit.prompt, completion: hit.completion }), 'fallback', rubPerUsd);
   }
   if (isYandexProvider(provider)) {
     const hit = FALLBACK_RUB_PER_1M.find(x => x.test(id));

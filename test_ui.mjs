@@ -162,7 +162,8 @@ export const api={syncSteps,setCnt,setCntFree,applyCnt,applySource,setSource,pic
   renderExportTemplates,applyExportTemplate,shapeProductsFile,shapeFiltersFile,exportPack,
   modelsFromSettings,pickDefaultModel,applyDefaultProviderModels,reloadModels,previewModels,looksLikeModelId,catalogHint,TOP_ENRICH_IDS,
   addDumpSection,openDumpDest,cancelDumpDest,dumpBodyWithName,matchDictCatalog,
-  addPromptTemplate,selectPromptTab,onPromptScopeChange,onPromptSectionToggle,promptsForSave};
+  addPromptTemplate,selectPromptTab,onPromptScopeChange,onPromptSectionToggle,promptsForSave,
+  enrichBoardModel,alignParseKey};
 export const st={get items(){return items},set items(v){items=v},
   get srcItems(){return srcItems},set srcItems(v){srcItems=v},
   get pickCat(){return pickCat},set pickCat(v){pickCat=v},get selCnt(){return selCnt},get results(){return results},
@@ -1002,7 +1003,7 @@ t('готовая карточка показывает разобранные �
   api.renderDetail();
   const h = G('detail').innerHTML;
   assert.match(h, /parse-card/);
-  assert.match(h, /Источник данных при парсинге/);
+  assert.match(h, /Данные парсинга/);
   assert.match(h, /дамп/);
   assert.match(h, /data_467\.json/);
   assert.match(h, /Макс\. загрузка/);
@@ -1014,6 +1015,73 @@ t('готовая карточка показывает разобранные �
   assert.match(h, /href="https:\/\/shop\.example\/card"/);
   assert.doesNotMatch(h, /добрано из сети/, 'полный разбор заменяет краткую сноску');
 });
+t('ключ парсера садится на ось specs', () => {
+  const keys = ['макс_загрузка_кг', 'объем_общий_л', 'цвет', 'тип_загрузки'];
+  assert.strictEqual(api.alignParseKey('Макс. загрузка', keys), 'макс_загрузка_кг');
+  assert.strictEqual(api.alignParseKey('Общий объём', keys), 'объем_общий_л');
+  assert.strictEqual(api.alignParseKey('Цвет', keys), 'цвет');
+  assert.strictEqual(api.alignParseKey('Гарантия', keys), null);
+  assert.strictEqual(api.alignParseKey('Тип', keys), null, 'голое «Тип» ≠ тип_загрузки');
+});
+t('обогащение 100%, если факты перенесены — чужие ключи парсера не штрафуют', () => {
+  const specs = {
+    макс_загрузка_кг: 6,
+    цвет: 'белый',
+    объем_общий_л: 310,
+    тип_загрузки: null,
+  };
+  const r = {
+    original: {},
+    enriched: {
+      specs,
+      source_facts: {
+        макс_загрузка_кг: 6,
+        цвет: 'белый',
+        объем_общий_л: 310,
+      },
+      filled_from_text: ['объем_общий_л'],
+      warnings: [],
+    },
+    parse: {
+      card: {
+        origin: 'дамп',
+        hits: [
+          { key: 'Макс. загрузка', value: '6 кг', where: 'аннотация' },
+          { key: 'Цвет', value: 'белый', where: 'описание' },
+          { key: 'Гарантия', value: '2 года', where: 'аннотация' },
+          { key: 'Страна', value: 'Беларусь', where: 'описание' },
+        ],
+      },
+      web: {
+        origin: 'shop.example',
+        hits: [{ key: 'Общий объём', value: '310 л', where: 'таблица' }],
+      },
+    },
+  };
+  const m = api.enrichBoardModel(r);
+  assert.strictEqual(m.enrichPct, 100);
+  assert.strictEqual(m.missing.length, 0);
+  assert.ok(m.bonus >= 1);
+  st.items = [{ name: 'ATLANT 60C1010' }];
+  st.results = [r];
+  api.selectResult(0);
+  const h = G('detail').innerHTML;
+  assert.match(h, />100%</);
+  assert.match(h, /добрано/);
+  assert.doesNotMatch(h, /Не перенесено/);
+});
+t('обогащение <100%, если факт оси не попал в specs', () => {
+  const m = api.enrichBoardModel({
+    enriched: {
+      specs: { цвет: 'белый', макс_загрузка_кг: 6 },
+      source_facts: { цвет: 'белый', макс_загрузка_кг: 6, объем_общий_л: 310 },
+      warnings: [],
+    },
+  });
+  assert.strictEqual(m.enrichPct, 67);
+  assert.strictEqual(m.missing.length, 1);
+  assert.strictEqual(m.missing[0].key, 'объем_общий_л');
+});
 t('пропуск всё равно показывает, что нашёл парсер', () => {
   st.results = [{
     skipped: 'пусто',
@@ -1022,7 +1090,7 @@ t('пропуск всё равно показывает, что нашёл па
   api.renderDetail();
   const h = G('detail').innerHTML;
   assert.match(h, /Пропущен без обращения/);
-  assert.match(h, /Источник данных при парсинге/);
+  assert.match(h, /Данные парсинга/);
   assert.match(h, /карточка/);
   assert.match(h, /Цвет/);
   assert.match(h, /белый/);
@@ -1094,7 +1162,7 @@ t('пока модель думает, на карточке уже видны �
   api.renderDetail();
   const h = G('detail').innerHTML;
   assert.match(h, /parse-card/);
-  assert.match(h, /Источник данных при парсинге/);
+  assert.match(h, /Данные парсинга/);
   assert.match(h, /дамп/);
   assert.match(h, /Макс\. загрузка/);
   assert.match(h, /6 кг/);

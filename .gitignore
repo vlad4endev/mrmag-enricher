@@ -29,6 +29,7 @@ dumps/
 # Альбомы фото и vision-прогоны
 photos/
 photo_jobs/
+provider_usage.json
 
 # Разметка: labelset.json и label.html генерируются, эталон храним
 labelset.json

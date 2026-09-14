@@ -15,6 +15,7 @@
  *   GET  /api/models          список моделей включённых провайдеров (кэш MODELS_TTL_MS)
  *   GET  /api/settings        провайдеры ИИ, парсеры, условия, шаблон промпта (ключи скрыты)
  *   PUT  /api/settings        сохранить настройки; пустой api_key оставляет прежний
+ *   GET  /api/providers/:id/balance  баланс и расход AITUNNEL (₽)
  *   POST /api/prompt/preview  превью системного промпта { template?, category }
  *   GET  /api/parser          статус и настройки поиска пустых карточек
  *   POST /api/parser/probe    живая проверка Yandex Search API / запасного поиска
@@ -133,10 +134,14 @@ import { exportTemplatesView } from './pipeline/export_template.js';
 import {
   bootstrapPhotosDir, listAlbums, createAlbum, getAlbum, deleteAlbum,
   uploadPhotos, patchPhotoItem, deletePhotoItem, readPhotoFile, buildMlExport,
-  applyDescribeResult, patchAlbum, photosDir, PHOTO_LIMITS,
+  applyDescribeResult, patchAlbum, photosDir, PHOTO_LIMITS, sumPhotoSpend,
 } from './pipeline/photos.js';
 import { describePhoto, defaultPhotoSystemPrompt, PHOTO_PROMPT_PLACEHOLDERS, resolvePhotoSystemPrompt } from './pipeline/photo_agent.js';
 import { createPhotoJobStore } from './pipeline/photo_jobs.js';
+import {
+  isAitunnelProvider, fetchAitunnelBalance, providerSpentRub, touchProviderBalance,
+  loadProviderUsage,
+} from './pipeline/provider_billing.js';
 const API_KEY = process.env.OPENROUTER_API_KEY || '';
 const PORT    = Number(process.env.PORT || 3000);
 const HOST    = process.env.HOST || '0.0.0.0';
@@ -984,6 +989,53 @@ async function apiSettingsPut(req, res) {
     });
   } catch (e) {
     json(res, e.status || 400, { error: e.message, details: e.details });
+  }
+}
+
+async function apiProviderBalance(res, id) {
+  const settings = loadSettings(ROOT);
+  const list = settings.providers || [];
+  const want = decodeURIComponent(String(id || ''));
+  const prov = list.find(p => p.id === want)
+    || (want === 'aitunnel' ? list.find(p => isAitunnelProvider(p)) : null);
+  if (!prov) return json(res, 404, { error: 'Провайдер не найден' });
+  if (!isAitunnelProvider(prov)) {
+    return json(res, 400, { error: 'Живой баланс есть только у AITUNNEL' });
+  }
+  const ep = providerEndpoint(prov, settings);
+  if (!ep.apiKey) return json(res, 400, { error: 'Нет API-ключа AITUNNEL' });
+
+  const spent_rub = providerSpentRub(prov.id, { photos: sumPhotoSpend(ROOT) }, ROOT);
+  const cached = loadProviderUsage(ROOT).providers[prov.id] || {};
+  const payload = {
+    provider: prov.id,
+    currency: 'RUB',
+    spent_rub,
+    balance: typeof cached.last_balance === 'number' ? cached.last_balance : null,
+    budget: typeof cached.last_budget === 'number' ? cached.last_budget : null,
+    updated_at: cached.updated_at || null,
+  };
+
+  try {
+    const live = await fetchAitunnelBalance({
+      baseUrl: ep.baseUrl,
+      headers: ep.headers,
+      fetchImpl: (url, init) => providerFetch(url, init, { useProxy: providerUsesProxy(prov) }),
+    });
+    if (typeof live.balance === 'number' || typeof live.budget === 'number') {
+      touchProviderBalance(prov.id, live, ROOT);
+    }
+    return json(res, 200, {
+      ...payload,
+      balance: live.balance,
+      budget: live.budget,
+      updated_at: Date.now(),
+    });
+  } catch (e) {
+    return json(res, 200, {
+      ...payload,
+      warning: e.message || 'Не удалось прочитать баланс AITUNNEL',
+    });
   }
 }
 
@@ -2383,6 +2435,8 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'POST' && u.pathname === '/api/parser/probe') return await apiParserProbe(req, res);
     if (req.method === 'GET'  && u.pathname === '/api/settings')   return apiSettingsGet(res);
     if (req.method === 'PUT'  && u.pathname === '/api/settings')   return await apiSettingsPut(req, res);
+    const provBalance = u.pathname.match(/^\/api\/providers\/([^/]+)\/balance$/);
+    if (req.method === 'GET' && provBalance) return await apiProviderBalance(res, provBalance[1]);
     if ((req.method === 'GET' || req.method === 'POST') && u.pathname === '/api/proxy/probe') {
       return await apiProxyProbe(req, res);
     }

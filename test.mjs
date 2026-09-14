@@ -2747,4 +2747,110 @@ console.log('\nТовар без описания: поиск в сети');
   fs.rmSync(dir, { recursive: true, force: true });
 }
 
+{
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'enricher-bill-'));
+  const prevSettings = process.env.SETTINGS_PATH;
+  const prevPhotos = process.env.PHOTOS_DIR;
+  process.env.SETTINGS_PATH = path.join(dir, 'config.json');
+  process.env.PHOTOS_DIR = path.join(dir, 'photos');
+  fs.copyFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), 'config.json'), process.env.SETTINGS_PATH);
+  const {
+    normalizeProviderUsage, usageCostRub, recordProviderSpend, providerSpentRub,
+    fetchAitunnelBalance, isAitunnelProvider, roundMoney,
+  } = await import('./pipeline/provider_billing.js');
+  const { createAlbum, applyDescribeResult, sumPhotoSpend } = await import('./pipeline/photos.js');
+
+  console.log('\nБиллинг AITUNNEL');
+  t('usage.cost_rub и balance из ответа AITUNNEL', () => {
+    const u = normalizeProviderUsage({
+      prompt_tokens: 150,
+      completion_tokens: 300,
+      total_tokens: 450,
+      cost_rub: 0.45,
+      balance: 4999.55,
+    }, { currency: 'RUB' });
+    assert.equal(u.cost_rub, 0.45);
+    assert.equal(u.cost, 0.45);
+    assert.equal(u.currency, 'RUB');
+    assert.equal(u.balance, 4999.55);
+    assert.equal(usageCostRub(u), 0.45);
+  });
+  t('без cost_rub, но currency RUB — берём cost', () => {
+    const u = normalizeProviderUsage({ prompt_tokens: 1, completion_tokens: 2, cost: 1.2 }, { currency: 'RUB' });
+    assert.equal(u.cost_rub, 1.2);
+    assert.equal(u.currency, 'RUB');
+  });
+  t('isAitunnelProvider по id и хосту', () => {
+    assert.equal(isAitunnelProvider({ id: 'aitunnel' }), true);
+    assert.equal(isAitunnelProvider({ id: 'x', base_url: 'https://api.aitunnel.ru/v1' }), true);
+    assert.equal(isAitunnelProvider({ id: 'openrouter', base_url: 'https://openrouter.ai/api/v1' }), false);
+  });
+  t('ledger копит списания и не теряет баланс', () => {
+    recordProviderSpend('aitunnel', { cost_rub: 0.4, balance: 100 }, dir);
+    recordProviderSpend('aitunnel', { cost_rub: 0.15, balance: 99.85 }, dir);
+    assert.equal(providerSpentRub('aitunnel', { photos: 0 }, dir), 0.55);
+  });
+  t('spent берёт максимум из ledger и суммы фото', () => {
+    assert.equal(providerSpentRub('aitunnel', { photos: 12.3 }, dir), 12.3);
+    assert.equal(roundMoney(0.55555), 0.5556);
+  });
+  await tAsync('GET /aitunnel/balance через fetchImpl', async () => {
+    const calls = [];
+    const live = await fetchAitunnelBalance({
+      baseUrl: 'https://api.aitunnel.ru/v1',
+      headers: { Authorization: 'Bearer sk-test' },
+      fetchImpl: async (url, init) => {
+        calls.push({ url, init });
+        return {
+          ok: true,
+          status: 200,
+          async text() { return JSON.stringify({ balance: 12.5, budget: 3 }); },
+        };
+      },
+    });
+    assert.equal(live.balance, 12.5);
+    assert.equal(live.budget, 3);
+    assert.equal(calls[0].url, 'https://api.aitunnel.ru/v1/aitunnel/balance');
+    assert.equal(calls[0].init.method, 'GET');
+  });
+  t('сумма по альбому после описания', () => {
+    const album = createAlbum('тест', {}, dir);
+    const metaPath = path.join(process.env.PHOTOS_DIR, album.id, 'meta.json');
+    const meta = JSON.parse(fs.readFileSync(metaPath, 'utf-8'));
+    meta.items.push({
+      id: 'abcdefghij',
+      filename: 'a.jpg',
+      stored: 'abcdefghij.jpg',
+      mime: 'image/jpeg',
+      bytes: 10,
+      status: 'uploaded',
+      description: null,
+      caption: null,
+      alt: null,
+      tags: [],
+      attributes: {},
+      warnings: [],
+      error: null,
+      usage: null,
+      described_at: null,
+      created_at: Date.now(),
+    });
+    fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2));
+    applyDescribeResult(album.id, 'abcdefghij', {
+      caption: 'подпись',
+      description: 'описание товара на фото',
+      alt: 'alt',
+      tags: ['тест'],
+      usage: { prompt_tokens: 10, completion_tokens: 20, cost_rub: 0.33, balance: 50, currency: 'RUB' },
+    }, dir);
+    assert.equal(sumPhotoSpend(dir), 0.33);
+  });
+
+  if (prevSettings === undefined) delete process.env.SETTINGS_PATH;
+  else process.env.SETTINGS_PATH = prevSettings;
+  if (prevPhotos === undefined) delete process.env.PHOTOS_DIR;
+  else process.env.PHOTOS_DIR = prevPhotos;
+  fs.rmSync(dir, { recursive: true, force: true });
+}
+
 console.log(`\n✅ ${n} проверок пройдено\n`);

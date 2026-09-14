@@ -6,6 +6,7 @@
 
 import { RateLimiter } from '../lib.js';
 import { getDump } from './dumps.js';
+import { normalizeProviderUsage } from './provider_billing.js';
 
 export const PHOTO_PROMPT_PLACEHOLDERS = [
   { key: '{{filename}}', note: 'имя файла изображения' },
@@ -422,11 +423,8 @@ export async function describePhoto(itemFile, opts = {}) {
 
   vision.warnings = consistencyLite(vision, dump);
 
-  const usage = {
-    prompt_tokens: data.usage?.prompt_tokens ?? 0,
-    completion_tokens: data.usage?.completion_tokens ?? 0,
-    cost: typeof data.usage?.cost === 'number' ? data.usage.cost : null,
-  };
+  // AITUNNEL: usage.cost_rub + usage.balance. OpenRouter: usage.cost (USD).
+  const usage = normalizeProviderUsage(data.usage, { currency: 'RUB' });
 
   return {
     ...vision,

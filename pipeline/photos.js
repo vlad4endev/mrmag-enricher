@@ -8,6 +8,7 @@ import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 import { resolveDictRoot } from './dict.js';
+import { recordProviderSpend, usageCostRub, roundMoney } from './provider_billing.js';
 
 const ALBUM_RE = /^[a-zA-Z0-9_-]{1,64}$/;
 const ITEM_RE = /^[a-zA-Z0-9_-]{8,40}$/;
@@ -172,6 +173,23 @@ export function createAlbum(name, { category = null } = {}, root) {
 export function getAlbum(albumId, root) {
   const meta = readMeta(assertAlbumId(albumId), root);
   return publicAlbum(meta);
+}
+
+/** Сумма списаний AITUNNEL по всем описанным фото, ₽. */
+export function sumPhotoSpend(root) {
+  bootstrapPhotosDir(root);
+  let sum = 0;
+  for (const album of listAlbums(root)) {
+    if (album.broken) continue;
+    try {
+      const meta = readMeta(album.id, root);
+      for (const item of meta.items || []) {
+        const cost = usageCostRub(item.usage);
+        if (typeof cost === 'number') sum += cost;
+      }
+    } catch { /* битый альбом */ }
+  }
+  return roundMoney(sum);
 }
 
 function publicAlbum(meta) {
@@ -409,7 +427,10 @@ export function applyDescribeResult(albumId, itemId, result, root) {
   if (result?.error) {
     item.status = 'error';
     item.error = String(result.error).slice(0, 800);
-    if (result.usage) item.usage = result.usage;
+    if (result.usage) {
+      item.usage = result.usage;
+      recordProviderSpend('aitunnel', result.usage, root);
+    }
     writeMeta(meta, root);
     return publicItem(item);
   }
@@ -427,6 +448,7 @@ export function applyDescribeResult(albumId, itemId, result, root) {
     : {};
   item.warnings = Array.isArray(result.warnings) ? result.warnings.slice(0, 20) : [];
   item.usage = result.usage || null;
+  if (result.usage) recordProviderSpend('aitunnel', result.usage, root);
   item.described_at = Date.now();
   if (result.model) meta.model = result.model;
   writeMeta(meta, root);

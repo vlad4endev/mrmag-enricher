@@ -73,7 +73,7 @@ try {
     assert.strictEqual((await r.json()).ok, true);
   });
   await t('без пароля закрыты и страница, и API', async () => {
-    for (const p of ['/', '/api/categories', '/api/models', '/api/parser', '/api/settings', '/api/dumps', '/api/dictionaries', '/schema_constructor.js', '/api/catalog?category=523']) {
+    for (const p of ['/', '/api/categories', '/api/models', '/api/parser', '/api/settings', '/api/dumps', '/api/dictionaries', '/schema_constructor.js', '/api/catalog?category=523', '/api/providers/aitunnel/balance']) {
       assert.strictEqual((await fetch(url(p))).status, 401, `${p} должен требовать вход`);
     }
     const probe = await fetch(url('/api/parser/probe'), { method: 'POST', body: '{}' });
@@ -193,6 +193,22 @@ try {
     assert.ok(!d.parsers.parsers.some(p => p.kind === 'serpapi'));
     assert.ok(!('api_key' in (d.settings.search.yandex || {})) || !d.settings.search.yandex.api_key);
     assert.ok(!('api_key' in (d.parsers.yandex || {})) || !d.parsers.yandex.api_key);
+  });
+  await t('баланс OpenRouter не ходит в сеть — только AITUNNEL', async () => {
+    const r = await fetch(url('/api/providers/openrouter/balance'), { headers: { authorization: auth } });
+    assert.strictEqual(r.status, 400, await r.clone().text());
+    const d = await r.json();
+    assert.match(d.error, /AITUNNEL/i);
+  });
+  await t('баланс неизвестного провайдера — 404', async () => {
+    const r = await fetch(url('/api/providers/no-such-gw/balance'), { headers: { authorization: auth } });
+    assert.strictEqual(r.status, 404);
+  });
+  await t('баланс AITUNNEL без ключа — 400', async () => {
+    const r = await fetch(url('/api/providers/aitunnel/balance'), { headers: { authorization: auth } });
+    assert.ok([400, 404].includes(r.status), await r.clone().text());
+    const d = await r.json();
+    assert.ok(d.error);
   });
   await t('/api/models отдаёт DeepSeek из карточки, не дожидаясь OpenRouter', async () => {
     const t0 = Date.now();

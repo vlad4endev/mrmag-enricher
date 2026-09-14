@@ -889,6 +889,28 @@ input[type=range]::-moz-range-thumb{
 .set-card-h b{font-size:13.5px;font-weight:650}
 .set-badge{font-size:10px;font-weight:700;padding:2px 6px;border-radius:var(--r3);border:1px solid var(--gbd);background:var(--gbg);color:var(--green)}
 .set-badge.off{background:var(--bg3);border-color:var(--b1);color:var(--t3)}
+.prov-bill{
+  margin:0;padding:10px 12px;border-radius:12px;
+  background:var(--bg3);border:1px solid var(--b1);
+}
+.prov-bill-h{
+  display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px;
+}
+.prov-bill-h b{font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--t3)}
+.prov-bill-h .sbtn{padding:4px 9px;font-size:11px;border-radius:8px}
+.prov-bill-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.prov-bill-cell{
+  display:flex;flex-direction:column;gap:2px;min-width:0;
+  padding:8px 10px;border-radius:10px;background:var(--bg2);border:1px solid var(--b1);
+}
+.prov-bill-cell span{font-size:10.5px;color:var(--t3);font-weight:600}
+.prov-bill-cell strong{
+  font-family:var(--mono);font-size:15px;font-weight:700;color:var(--t1);
+  font-variant-numeric:tabular-nums;letter-spacing:-.02em;
+}
+.prov-bill-cell strong.ok{color:var(--green)}
+.prov-bill-cell strong.warn{color:var(--amber)}
+.prov-bill .hint{margin:8px 0 0;font-size:11px;color:var(--t3);line-height:1.4}
 .set-row{display:flex;flex-direction:column;gap:4px;min-width:0}
 .set-row label{font-size:11.5px;color:var(--t2);font-weight:500}
 .set-row input,.set-row textarea,.set-row select{min-width:0}
@@ -989,6 +1011,19 @@ input[type=range]::-moz-range-thumb{
 .photo-page .photo-pill.warn{background:var(--abg);border-color:var(--abd);color:var(--amber)}
 .photo-page .photo-pill.err{background:var(--rbg);border-color:var(--rbd);color:var(--red)}
 .photo-page .photo-pill i{font-size:13px}
+.photo-bill{
+  display:grid;grid-template-columns:1fr 1fr;gap:6px;
+}
+.photo-bill[hidden]{display:none!important}
+.photo-bill-cell{
+  display:flex;flex-direction:column;gap:1px;
+  padding:7px 9px;border-radius:10px;background:var(--bg3);border:1px solid var(--b1);
+}
+.photo-bill-cell span{font-size:10px;color:var(--t3);font-weight:600}
+.photo-bill-cell b{
+  font-family:var(--mono);font-size:13px;font-weight:700;color:var(--t1);
+  font-variant-numeric:tabular-nums;
+}
 .photo-page .photo-albums{display:flex;flex-direction:column;gap:6px;max-height:132px;overflow:auto}
 .photo-album{
   border:1px solid var(--b1);border-radius:12px;padding:9px 11px;background:var(--bg3);
@@ -1090,7 +1125,13 @@ input[type=range]::-moz-range-thumb{
 }
 .photo-page .photo-dock .photo-card-h b{color:var(--t2)}
 .photo-page .photo-dock .photo-run{margin:0}
-.photo-ri{grid-template-columns:auto auto minmax(0,1fr) auto}
+.photo-ri{grid-template-columns:auto auto minmax(0,1fr) auto auto}
+.ri-cost{
+  font-family:var(--mono);font-size:11px;font-weight:700;line-height:1.2;
+  font-variant-numeric:tabular-nums;color:transparent;white-space:nowrap;
+}
+.ri-cost.has{color:var(--green)}
+.photo-ri.on .ri-cost.has{color:var(--ac)}
 .photo-ri .photo-check{
   width:16px;height:16px;margin:0;accent-color:var(--ac);cursor:pointer;flex-shrink:0;
 }
@@ -2110,7 +2151,11 @@ input[type=range]::-moz-range-thumb{
       <section class="photo-card">
         <div class="photo-card-h"><b>Модель</b></div>
         <div class="photo-pill" id="photoProvStatus">AITUNNEL</div>
-        <div class="hint">Только AITUNNEL · РФ, без VPN</div>
+        <div class="photo-bill" id="photoBill" hidden>
+          <div class="photo-bill-cell"><span>Баланс</span><b id="photoBillBal">—</b></div>
+          <div class="photo-bill-cell"><span>Потрачено</span><b id="photoBillSpent">—</b></div>
+        </div>
+        <div class="hint">Только AITUNNEL · РФ, без VPN · списание в ₽</div>
         <div class="msel none" id="photoMsel" onclick="photoToggleDrop()" role="button" tabindex="0"
              aria-label="Выбрать vision-модель AITUNNEL" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();photoToggleDrop()}">
           <span class="msel-n" id="photoMselName">Выберите модель</span>
@@ -2875,6 +2920,92 @@ async function apiJson(url,opts){
 function brief(text){
   const t=text.match(/<title>([^<]+)<\/title>/i);
   return (t?t[1]:text.replace(/<[^>]+>/g,' ')).replace(/\s+/g,' ').trim().slice(0,120);
+}
+
+function formatRub(n){
+  if(typeof n!=='number'||!Number.isFinite(n)) return '';
+  return n.toLocaleString('ru-RU',{minimumFractionDigits:2,maximumFractionDigits:2})+' ₽';
+}
+function usageCostRub(u){
+  if(!u||typeof u!=='object') return null;
+  if(typeof u.cost_rub==='number'&&Number.isFinite(u.cost_rub)) return u.cost_rub;
+  if(u.currency==='RUB'&&typeof u.cost==='number'&&Number.isFinite(u.cost)) return u.cost;
+  return null;
+}
+
+let provBillCache={};
+let provBillPending=null;
+function isAitunnelProv(p){
+  const id=String(p?.id||'');
+  return id==='aitunnel'||/aitunnel/i.test(id)||/aitunnel\.ru/i.test(p?.base_url||'');
+}
+async function fetchProviderBalance(id, {force=false}={}){
+  const key=String(id||'aitunnel');
+  const hit=provBillCache[key];
+  if(!force && hit && Date.now()-hit.at<20_000) return hit.data;
+  const data=await apiJson('/api/providers/'+encodeURIComponent(key)+'/balance');
+  provBillCache[key]={ at:Date.now(), data };
+  return data;
+}
+function paintProviderBill(el, data, err){
+  if(!el) return;
+  const bal=el.querySelector('[data-bill-balance]');
+  const spent=el.querySelector('[data-bill-spent]');
+  const note=el.querySelector('[data-bill-note]');
+  if(bal){
+    bal.textContent=typeof data?.balance==='number'?formatRub(data.balance):(err?'нет данных':'—');
+    bal.className=typeof data?.balance==='number'?(data.balance<100?'warn':'ok'):'';
+  }
+  if(spent){
+    spent.textContent=typeof data?.spent_rub==='number'?formatRub(data.spent_rub):'—';
+  }
+  if(note){
+    if(err) note.textContent=err;
+    else if(data?.warning) note.textContent=data.warning;
+    else if(typeof data?.budget==='number') note.textContent='Бюджет ключа: '+formatRub(data.budget);
+    else note.textContent='Pay-as-you-go · списание в ₽ за каждый запрос';
+  }
+}
+async function refreshAitunnelBills({force=false}={}){
+  const cards=[...document.querySelectorAll('[data-bill]')];
+  const ids=new Set(cards.map(el=>el.dataset.bill).filter(Boolean));
+  if(typeof photoAitunnelSettings==='function'){
+    const p=photoAitunnelSettings();
+    if(p && p.enabled!==false && (p.has_key || p.key_from==='env' || p.key_from==='file')){
+      ids.add(p.id || 'aitunnel');
+    }
+  }
+  if(!ids.size && document.getElementById('photoBill')) ids.add('aitunnel');
+  if(!ids.size) return;
+  if(provBillPending && !force) return provBillPending;
+  const run=async()=>{
+    for(const id of ids){
+      const el=document.querySelector(`[data-bill="${CSS.escape(id)}"]`);
+      try{
+        const data=await fetchProviderBalance(id,{force});
+        paintProviderBill(el, data);
+        paintPhotoBill(data);
+      }catch(e){
+        const cached=provBillCache[id]?.data;
+        paintProviderBill(el, cached, e.message||'не удалось прочитать баланс');
+        paintPhotoBill(cached, e.message);
+      }
+    }
+  };
+  provBillPending=run().finally(()=>{ provBillPending=null; });
+  return provBillPending;
+}
+function paintPhotoBill(data, err){
+  const box=document.getElementById('photoBill');
+  const bal=document.getElementById('photoBillBal');
+  const spent=document.getElementById('photoBillSpent');
+  if(!box||!bal||!spent) return;
+  const has=data && (typeof data.balance==='number'||typeof data.spent_rub==='number');
+  box.hidden=!has && !err;
+  if(typeof data?.balance==='number') bal.textContent=formatRub(data.balance);
+  else if(err) bal.textContent='—';
+  if(typeof data?.spent_rub==='number') spent.textContent=formatRub(data.spent_rub);
+  else if(err && !has) spent.textContent='—';
 }
 
 // ── MODELS DATABASE ──────────────────────────────────────────
@@ -4746,6 +4877,19 @@ function renderProviderCards(){
         <div class="set-row set-row-wide"><label>Ключ API ${p.has_key?`<span class="set-badge">${esc(p.key_from==='env'?'из env':'в файле')} ${esc(p.key_hint||'')}</span>`:'<span class="set-badge off">нет ключа</span>'}</label>
           <input type="password" data-pk="api_key" data-i="${i}" data-secret="1" name="provider-api-key-${esc(p.id)}" placeholder="${p.has_key?'оставьте пустым, чтобы не менять':'sk-...'}" autocomplete="new-password" spellcheck="false" autocapitalize="off" data-lpignore="true" data-1p-ignore="true">
         </div>
+        ${isAitunnelProv(p)?`<div class="set-row set-row-wide">
+          <div class="prov-bill" data-bill="${esc(p.id)}">
+            <div class="prov-bill-h">
+              <b>Баланс AITUNNEL</b>
+              <button type="button" class="sbtn ghost" data-bill-refresh="${esc(p.id)}"><i class="ti ti-refresh"></i> Обновить</button>
+            </div>
+            <div class="prov-bill-grid">
+              <div class="prov-bill-cell"><span>На счёте</span><strong data-bill-balance>—</strong></div>
+              <div class="prov-bill-cell"><span>Потрачено здесь</span><strong data-bill-spent>—</strong></div>
+            </div>
+            <div class="hint" data-bill-note>Pay-as-you-go · списание в ₽ за каждый запрос</div>
+          </div>
+        </div>`:''}
         <div class="set-row set-row-wide"><label>Модели вручную (по одной на строку)</label><textarea data-pk="models" data-i="${i}" style="min-height:64px" placeholder="если каталог /models недоступен">${esc((p.models||[]).join('\n'))}</textarea></div>
       </div>
       <label class="set-check"><input type="checkbox" data-pk="enabled" data-i="${i}" ${p.enabled?'checked':''}> Включён</label>
@@ -4769,6 +4913,10 @@ function renderProviderCards(){
       if(en) en.checked=true;
     });
   });
+  document.getElementById('setProvList').querySelectorAll('[data-bill-refresh]').forEach(b=>{
+    b.addEventListener('click',()=>refreshAitunnelBills({force:true}));
+  });
+  refreshAitunnelBills();
 }
 
 function renderEngineCards(){
@@ -8440,20 +8588,27 @@ function photoRenderProviders(){
   if(!p){
     box.classList.add('err');
     box.innerHTML='<i class="ti ti-alert-circle"></i> AITUNNEL не добавлен';
+    const bill=document.getElementById('photoBill');
+    if(bill) bill.hidden=true;
     return;
   }
   if(p.enabled===false){
     box.classList.add('warn');
     box.innerHTML='<i class="ti ti-player-pause"></i> AITUNNEL выключен';
+    const bill=document.getElementById('photoBill');
+    if(bill) bill.hidden=true;
     return;
   }
   const hasKey=p.has_key || p.key_from==='env' || p.key_from==='file';
   if(hasKey){
     box.classList.add('ok');
     box.innerHTML='<i class="ti ti-check"></i> AITUNNEL · ключ есть';
+    refreshAitunnelBills();
   }else{
     box.classList.add('err');
     box.innerHTML='<i class="ti ti-key-off"></i> AITUNNEL · нет ключа';
+    const bill=document.getElementById('photoBill');
+    if(bill) bill.hidden=true;
   }
 }
 
@@ -8685,7 +8840,8 @@ function photoRenderList(){
     const preview=it.caption||it.description||it.error||'';
     const metaParts=[photoStLabel(it)];
     if(photoIsDumpBound(it)) metaParts.push('дамп '+it.dump_category+'/'+it.product_id);
-    const meta=metaParts.join(' · ');
+    const cost=usageCostRub(it.usage);
+    const costHtml=cost!=null?`<span class="ri-cost has" title="Списано за описание">${esc(formatRub(cost))}</span>`:'<span class="ri-cost"></span>';
     return `<div class="ri photo-ri s-${st}${photoCurId===it.id?' on':''}${photoSel.has(it.id)?' sel':''}" data-id="${esc(it.id)}" role="button" tabindex="0" onclick="photoFocus('${esc(it.id)}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();photoFocus('${esc(it.id)}')}">
       <input type="checkbox" class="photo-check" ${photoSel.has(it.id)?'checked':''} onclick="photoToggleSel('${esc(it.id)}',event)" aria-label="Выбрать для прогона">
       <span class="ri-thumb"><img src="${photoFileUrl(it)}" alt="" loading="lazy"></span>
@@ -8693,6 +8849,7 @@ function photoRenderList(){
         <span class="ri-n" title="${esc(it.filename)}">${esc(it.filename)}</span>
         <span class="ri-m">${esc(metaParts[0])}${photoIsDumpBound(it)?` · <span class="dump-tag">дамп ${esc(it.dump_category)}/${esc(it.product_id)}</span>`:''}${preview?` · ${esc(String(preview).slice(0,72))}`:''}</span>
       </span>
+      ${costHtml}
       <span class="ri-st ${st==='run'?'run':st}" aria-hidden="true">${st==='run'?'↻':''}</span>
     </div>`;
   }).join('');
@@ -8908,6 +9065,7 @@ function photoRenderDetail(){
         ${it.mime?`<span class="chip"><b>mime</b> ${esc(it.mime)}</span>`:''}
         ${it.bytes?`<span class="chip"><b>${Math.round(it.bytes/1024)}</b> KB</span>`:''}
         ${when?`<span class="chip"><b>время</b> ${esc(when)}</span>`:''}
+        ${usageCostRub(it.usage)!=null?`<span class="chip ok"><b>списано</b> ${esc(formatRub(usageCostRub(it.usage)))}</span>`:''}
       </div>
     </div>
   </div>`;
@@ -8951,8 +9109,11 @@ function photoRenderDetail(){
 
   if(it.usage){
     const u=it.usage;
-    html+=`<div class="photo-sec-title">Токены</div><div class="photo-sec"><div class="body muted">`
-      +`in ${u.prompt_tokens??u.input_tokens??'—'} · out ${u.completion_tokens??u.output_tokens??'—'} · total ${u.total_tokens??'—'}`
+    const cost=usageCostRub(u);
+    html+=`<div class="photo-sec-title">Стоимость</div><div class="photo-sec"><div class="body">`
+      +(cost!=null?`<b>${esc(formatRub(cost))}</b> · `:'')
+      +`in ${u.prompt_tokens??u.input_tokens??'—'} · out ${u.completion_tokens??u.output_tokens??'—'}`
+      +(typeof u.balance==='number'?` · баланс после ${esc(formatRub(u.balance))}`:'')
       +`</div></div>`;
   }
 
@@ -9118,7 +9279,7 @@ function photoPollJob(){
       const st=await apiJson('/api/photo-jobs/'+encodeURIComponent(photoJobId)+'?logFrom='+logFrom);
       document.getElementById('photoJobHint').textContent=
         `${st.status}: ${st.done}/${st.total} · ok ${st.ok} · err ${st.err}`
-        +(st.cost?` · $${Number(st.cost).toFixed(4)}`:'');
+        +(st.cost?` · ${formatRub(Number(st.cost))}`:'');
       const bar=document.getElementById('photoBarF');
       if(bar && st.total) bar.style.width=Math.round((st.done/st.total)*100)+'%';
       const line=document.getElementById('photoRunline');
@@ -9147,9 +9308,10 @@ function photoPollJob(){
         photoRenderList();
         photoRenderDetail();
         await photoLoadAlbums();
-        photoAppendRunLog([{ message:`Финиш: ${st.status} · ok ${st.ok} · err ${st.err}`, level:st.err?'warn':'ok' }]);
+        photoAppendRunLog([{ message:`Финиш: ${st.status} · ok ${st.ok} · err ${st.err}${st.cost?` · ${formatRub(Number(st.cost))}`:''}`, level:st.err?'warn':'ok' }]);
         photoStatus(st.status==='done'?'Описание готово':'Прогон остановлен', st.err?false:true);
         photoJobId=null;
+        refreshAitunnelBills({force:true});
       }
     }catch(e){
       clearInterval(photoPoll); photoPoll=null;

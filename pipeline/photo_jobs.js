@@ -10,6 +10,7 @@ import {
   getAlbum, readPhotoFile, applyDescribeResult, PHOTO_LIMITS,
 } from './photos.js';
 import { describePhoto } from './photo_agent.js';
+import { usageCostRub } from './provider_billing.js';
 
 const now = () => Date.now();
 const LOG_CAP = 2000;
@@ -166,8 +167,10 @@ export function createPhotoJobStore({
           });
           job.results[idx] = { id: itemId, ok: true, ...result };
           job.ok += 1;
-          if (typeof result?.usage?.cost === 'number') job.cost += result.usage.cost;
-          pushLog(job, `ok ${itemId}`, 'ok');
+          const costRub = usageCostRub(result?.usage)
+            ?? (typeof result?.usage?.cost === 'number' ? result.usage.cost : null);
+          if (typeof costRub === 'number') job.cost += costRub;
+          pushLog(job, `ok ${itemId}${typeof costRub === 'number' ? ` · ${costRub.toFixed(2)} ₽` : ''}`, 'ok');
         } catch (e) {
           const rawHint = e.raw ? ` · raw: ${String(e.raw).replace(/\s+/g, ' ').slice(0, 220)}` : '';
           job.results[idx] = { id: itemId, ok: false, error: e.message, raw: e.raw || null };

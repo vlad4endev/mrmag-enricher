@@ -74,7 +74,7 @@ body::before{
 }
 /* Цифры в интерфейсе постоянно пересчитываются — фиксированная ширина
    не даёт числам «прыгать» при каждом обновлении. */
-.mono,code,.jv,.mi-p,.msel-p,.est-row b,.tk-val,.tk-sub,.ri-m,.foot b,
+.mono,code,.jv,.mi-p,.msel-p,.tk-val,.tk-sub,.ri-m,.foot b,
 .step-sub,.rn-info,.pval,.ctbl td.r,.mcard-price{
   font-family:var(--mono);font-variant-numeric:tabular-nums;
 }
@@ -160,6 +160,7 @@ button:focus-visible,input:focus-visible,textarea:focus-visible,[tabindex]:focus
   font:500 12.5px/1 var(--sans);transition:border-color .16s,color .16s,background .16s;
 }
 .hbtn:hover{color:var(--t1);border-color:var(--b2);background:var(--bg3)}
+.hbtn:disabled{opacity:.55;cursor:wait}
 .head .hbtn{margin-left:auto}
 .head .sbtn.primary{height:29px;padding:0 14px;font-size:12.5px;border-radius:8px}
 
@@ -360,10 +361,6 @@ textarea{
 .mi-empty{padding:16px;text-align:center;font-size:12px;color:var(--t3)}
 .mi-prov{font-size:9.5px;color:var(--t3);text-transform:uppercase;letter-spacing:.04em;font-weight:700;flex-shrink:0}
 
-/* Оценка стоимости — в подвале рядом с запуском */
-.est{display:flex;flex-direction:column;gap:6px;margin-bottom:10px}
-.est-row{display:flex;justify-content:space-between;align-items:baseline;gap:var(--gap);font-size:12.5px;color:var(--t2)}
-.est-row b{color:var(--t1);font-weight:600;font-size:26px;font-family:var(--mono);font-variant-numeric:tabular-nums;letter-spacing:-.04em;line-height:1}
 .est-note{font-size:11px;color:var(--t3);line-height:1.45}
 
 /* Запуск */
@@ -372,10 +369,6 @@ textarea{
   border-top:1px solid var(--b1);background:var(--bg3);position:static;
 }
 .run-wrap.locked{opacity:.7;pointer-events:none}
-.run-wrap .step-cap{
-  font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;
-  color:var(--t3);margin-bottom:8px;
-}
 .run-btn{
   width:100%;padding:0;height:var(--ctrl-h);background:var(--grad);border:none;border-radius:var(--r2);
   color:var(--ink-on-mint);font-family:var(--sans);font-size:13.5px;font-weight:600;cursor:pointer;
@@ -827,6 +820,18 @@ input[type=range]::-moz-range-thumb{
 /* Таблица шире узкого экрана — прокручивается внутри себя,
    а не обрезается и не растягивает страницу. */
 .tblwrap{background:var(--bg2);border:1px solid var(--b1);border-radius:var(--r);overflow-x:auto;box-shadow:var(--sh1)}
+.calc-toolbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:0 0 12px}
+.calc-provs{display:flex;flex-wrap:wrap;gap:6px;flex:1;min-width:0}
+.calc-chip{
+  height:26px;padding:0 10px;border-radius:var(--r3);border:1px solid var(--b1);
+  background:var(--bg2);color:var(--t2);font:600 11px/26px var(--sans);cursor:pointer;
+}
+.calc-chip.on{border-color:var(--ac-b);background:var(--ac-w);color:var(--ac)}
+#calc-search{
+  height:26px;width:min(200px,100%);padding:0 10px;border-radius:var(--r3);
+  border:1px solid var(--b1);background:var(--bg2);color:var(--t1);font:12px var(--sans);
+}
+.mcard.unknown .mcard-cost,.tcost.unknown{color:var(--t3);font-weight:500}
 .ctbl{width:100%;border-collapse:collapse;font-size:12.5px;background:var(--bg2)}
 .ctbl th{
   font-size:10px;font-weight:700;color:var(--t3);text-align:left;padding:9px 12px;
@@ -1924,7 +1929,7 @@ input[type=range]::-moz-range-thumb{
   <header class="head">
     <div>
       <h1>Обогащение</h1>
-      <div class="crumb">Модель → товары → запуск · <b>стоимость видна перед прогоном</b></div>
+      <div class="crumb">Модель → товары → запуск</div>
     </div>
   </header>
 <div class="app">
@@ -1933,7 +1938,7 @@ input[type=range]::-moz-range-thumb{
   <aside class="left">
     <header class="left-head">
       <div class="left-title">Прогон</div>
-      <div class="left-lead">Модель, товары и оценка стоимости — затем запуск.</div>
+      <div class="left-lead">Модель и товары — затем запуск.</div>
       <div class="left-flow" aria-hidden="true"><span>1 модель</span><i>→</i><span>2 товары</span><i>→</i><span>запуск</span></div>
     </header>
 
@@ -2029,10 +2034,6 @@ input[type=range]::-moz-range-thumb{
     </div>
 
     <div class="run-wrap" id="step3">
-      <div class="step-cap">Стоимость и запуск</div>
-      <div class="est" id="est">
-        <div class="est-note">Выберите модель и загрузите товары — здесь появится стоимость.</div>
-      </div>
       <button class="run-btn" id="runBtn" onclick="run()" disabled>
         <span class="rb-fill" id="rbFill"></span>
         <span class="ogran-btn-spin" aria-hidden="true"></span>
@@ -2109,7 +2110,7 @@ input[type=range]::-moz-range-thumb{
           <ol>
             <li>Выберите <b>модель</b> — рядом видна её цена за 1M токенов.</li>
             <li>Укажите <b>сколько</b> товаров и загрузите их по URL, из файла или JSON.</li>
-            <li>Сверьте <b>стоимость</b> внизу слева и нажмите «Обогатить».</li>
+            <li>Нажмите <b>«Обогатить»</b>.</li>
           </ol>
         </div>
       </div>
@@ -2276,8 +2277,11 @@ input[type=range]::-moz-range-thumb{
   <header class="head">
     <div>
       <h1>Калькулятор цен</h1>
-      <div class="crumb">Сколько будет стоить прогон дампа на разных моделях</div>
+      <div class="crumb">Сколько будет стоить прогон дампа на моделях ваших провайдеров</div>
     </div>
+    <button type="button" class="hbtn" id="calcRefreshBtn" onclick="calcRefresh()">
+      <i class="ti ti-refresh"></i> Актуализировать
+    </button>
   </header>
   <div class="calc-body">
     <div class="calc-left">
@@ -2309,7 +2313,11 @@ input[type=range]::-moz-range-thumb{
     </div>
     <div class="calc-right">
       <div>
-        <div class="sec-lbl" style="margin-bottom:12px">Выберите модель для расчёта</div>
+        <div class="sec-lbl" style="margin-bottom:8px">Выберите модель для расчёта</div>
+        <div class="calc-toolbar">
+          <div class="calc-provs" id="calc-provs"></div>
+          <input type="search" id="calc-search" placeholder="Найти модель" oninput="calcUpdate()" aria-label="Поиск модели в калькуляторе" autocomplete="off">
+        </div>
         <div class="model-cards" id="calc-model-cards"></div>
       </div>
       <div>
@@ -3008,44 +3016,150 @@ function paintPhotoBill(data, err){
   else if(err && !has) spent.textContent='—';
 }
 
-// ── MODELS DATABASE ──────────────────────────────────────────
-// Внесено вручную и НЕ обновляется автоматически. Цены с пометкой unverified
-// не сверены с прайсом провайдера — не принимайте по ним решений, пока не
-// проверите. Модели OpenRouter с живыми ценами есть на странице «Обогащение».
-const PRICES_EDITED = '18.08.2026';
-const CALC_MODELS = [
-  // OpenAI
-  {prov:'OpenAI',name:'GPT-5.4 Nano',   inp:0.20,  out:1.25,  badge:'cheap', badgeText:'Дешёвый'},
-  {prov:'OpenAI',name:'GPT-5.4 Mini',   inp:0.75,  out:4.50,  badge:'',      badgeText:''},
-  {prov:'OpenAI',name:'GPT-5.4',        inp:2.50,  out:15.00, badge:'best',  badgeText:'Популярный'},
-  {prov:'OpenAI',name:'GPT-5.5',        inp:5.00,  out:30.00, badge:'',      badgeText:''},
-  // Anthropic
-  {prov:'Claude', name:'Haiku 4.5',     inp:1.00,  out:5.00,  badge:'best',  badgeText:'Лучший JSON'},
-  {prov:'Claude', name:'Sonnet 4.6',    inp:3.00,  out:15.00, badge:'',      badgeText:''},
-  {prov:'Claude', name:'Opus 4.6',      inp:5.00,  out:25.00, badge:'',      badgeText:''},
-  // Google
-  {prov:'Google', name:'Gemini 2.5 Flash-Lite', inp:0.10, out:0.40, badge:'cheap', badgeText:'Самый дешёвый'},
-  {prov:'Google', name:'Gemini 2.5 Flash',      inp:0.30, out:2.50, badge:'',      badgeText:''},
-  {prov:'Google', name:'Gemini 2.5 Pro',        inp:1.25, out:10.00,badge:'',      badgeText:''},
-  // DeepSeek
-  {prov:'DeepSeek',name:'deepseek-chat',         inp:0.14, out:0.28, badge:'cheap', badgeText:'Дешёвый'},
-  {prov:'DeepSeek',name:'deepseek-reasoner',     inp:0.55, out:2.19, badge:'',      badgeText:''},
-  {prov:'DeepSeek',name:'deepseek-v4-pro (акция)',inp:0.435,out:0.87,badge:'',     badgeText:'до 31.05'},
-  // YandexGPT — цены заданы в ₽ за 1M токенов (inp_rub/out_rub), в $ переводятся
-  // в calcCost по текущему курсу. Единицы в исходной таблице были несогласованы:
-  // две строки выглядели как ₽/1K, одна как ₽/1M, из-за чего GPT Pro считался
-  // как $18 525/1M. Ниже приведено к одной единице — но требует проверки по прайсу.
-  {prov:'YandexGPT',name:'Alice Flash', badge:'ru', badgeText:'Данные в РФ', rub:true, inp_rub:500,  out_rub:125,  unverified:true},
-  {prov:'YandexGPT',name:'GPT Lite',    badge:'ru', badgeText:'Данные в РФ', rub:true, inp_rub:1000, out_rub:1000, unverified:true},
-  {prov:'YandexGPT',name:'GPT Pro 5',   badge:'ru', badgeText:'Данные в РФ', rub:true, inp_rub:1482, out_rub:1482, unverified:true},
-];
+// ── CALCULATOR MODELS ────────────────────────────────────────
+// Строится из включённых провайдеров (/api/settings + /api/models), не из
+// зашитого списка OpenAI/Claude. «Актуализировать» сбрасывает кэш каталогов.
+let CALC_MODELS = [];
+let calcSelModel = null;
+let calcProvFilter = '';
+let calcPricedAt = 0;
+let calcErrors = [];
+const OPENROUTER_CALC_LIMIT = 16;
 
-// Рублёвые тарифы → $/1M по текущему курсу. Один проход, чтобы единица была одна.
-for(const m of CALC_MODELS){
-  if(m.rub){ m.inp=m.inp_rub/RUB; m.out=m.out_rub/RUB; }
+function calcKey(m){
+  return (m.provider||'')+'|'+(m.id||m.name||'');
 }
 
-let calcSelModel = CALC_MODELS[4]; // Claude Haiku по умолчанию
+function toCalcModel(m){
+  if(!m) return null;
+  const src=m.pricing_source||null;
+  const isRub=m.pricing_currency==='RUB';
+  const rub=m.pricing_rub;
+  const p=m.pricing;
+  let inp=0, out=0, inp_rub=0, out_rub=0, unknown=true;
+  if(isRub && rub && (Number(rub.prompt)||Number(rub.completion))){
+    inp_rub=Number(rub.prompt)||0;
+    out_rub=Number(rub.completion)||0;
+    inp=RUB>0?inp_rub/RUB:0;
+    out=RUB>0?out_rub/RUB:0;
+    unknown=false;
+  }else if(p && (Number(p.prompt)||Number(p.completion) || Number(p.prompt)===0)){
+    const ip=parseFloat(p.prompt), op=parseFloat(p.completion);
+    if(Number.isFinite(ip)||Number.isFinite(op)){
+      inp=(Number.isFinite(ip)?ip:0)*1e6;
+      out=(Number.isFinite(op)?op:0)*1e6;
+      inp_rub=rub&&Number.isFinite(Number(rub.prompt))?Number(rub.prompt):inp*RUB;
+      out_rub=rub&&Number.isFinite(Number(rub.completion))?Number(rub.completion):out*RUB;
+      unknown=false;
+    }
+  }
+  const pid=String(m.provider||'');
+  const badge=unknown?'':(isRub?'ru':src==='local'?'cheap':'');
+  const badgeText=isRub?'в ₽':src==='local'?'локально':'';
+  return {
+    key:calcKey(m),
+    id:m.id,
+    provider:pid,
+    prov:m.provider_name||pid||'—',
+    name:m.name||m.id,
+    inp, out, inp_rub, out_rub,
+    rub:isRub,
+    unknown,
+    unverified:src==='fallback',
+    source:src,
+    badge, badgeText,
+  };
+}
+
+/**
+ * Карточки провайдеров. У OpenRouter без своего списка — топ для обогащения
+ * и ограниченный набор из каталога с ценой, чтобы не вывалить 300 строк.
+ */
+function calcModelsFromCatalog(list, d=setPayload){
+  const providers=(d?.settings?.providers||[]).filter(p=>p.enabled!==false);
+  if(!providers.length) return [];
+  const src=list||[];
+  const byProv=new Map();
+  for(const m of src){
+    const k=m.provider||'_';
+    if(!byProv.has(k)) byProv.set(k,[]);
+    byProv.get(k).push(m);
+  }
+  const out=[];
+  const seen=new Set();
+  const push=raw=>{
+    const row=toCalcModel(raw);
+    if(!row||!row.id||seen.has(row.key)) return;
+    seen.add(row.key);
+    out.push(row);
+  };
+  for(const p of providers){
+    const catalog=byProv.get(p.id)||[];
+    const wanted=(p.models||[]).map(String).filter(Boolean);
+    const labels=p.model_labels&&typeof p.model_labels==='object'?p.model_labels:{};
+    if(wanted.length){
+      for(const id of wanted){
+        const hit=catalog.find(m=>m.id===id)
+          ||{id,name:labels[id]||id,provider:p.id,provider_name:p.name,pricing:null};
+        push(hit);
+      }
+      continue;
+    }
+    const top=TOP_ENRICH_IDS.map(id=>catalog.find(m=>m.id===id)).filter(Boolean);
+    top.forEach(push);
+    const rest=catalog.filter(m=>m.pricing && !seen.has(calcKey(m)))
+      .sort((a,b)=>{
+        const ap=(parseFloat(a.pricing?.prompt)||0)+(parseFloat(a.pricing?.completion)||0);
+        const bp=(parseFloat(b.pricing?.prompt)||0)+(parseFloat(b.pricing?.completion)||0);
+        return ap-bp;
+      })
+      .slice(0, Math.max(0, OPENROUTER_CALC_LIMIT-top.length));
+    rest.forEach(push);
+  }
+  return out;
+}
+
+function syncCalcModels(){
+  const prev=calcSelModel?.key;
+  CALC_MODELS=calcModelsFromCatalog(allModels);
+  calcSelModel=CALC_MODELS.find(m=>m.key===prev)
+    ||CALC_MODELS.find(m=>!m.unknown)
+    ||CALC_MODELS[0]
+    ||null;
+  if(calcProvFilter && !CALC_MODELS.some(m=>m.provider===calcProvFilter)) calcProvFilter='';
+}
+
+function calcVisible(){
+  const q=(document.getElementById('calc-search')?.value||'').toLowerCase().trim();
+  return CALC_MODELS.filter(m=>{
+    if(calcProvFilter && m.provider!==calcProvFilter) return false;
+    if(!q) return true;
+    return (m.name+' '+m.id+' '+m.prov).toLowerCase().includes(q);
+  });
+}
+
+function calcSetProv(id){
+  calcProvFilter=id||'';
+  calcUpdate();
+}
+
+async function calcRefresh(){
+  const btn=document.getElementById('calcRefreshBtn');
+  if(btn){ btn.disabled=true; btn.setAttribute('aria-busy','true'); }
+  try{
+    if(!setPayload){
+      try{ setPayload=await apiJson('/api/settings'); }catch{ /* */ }
+    }
+    await reloadModels({refresh:true});
+    syncCalcModels();
+    calcUpdate();
+  }catch(e){
+    const el=document.getElementById('calc-provenance');
+    if(el) el.textContent='Не удалось обновить тарифы: '+(e.message||e);
+  }finally{
+    if(btn){ btn.disabled=false; btn.removeAttribute('aria-busy'); }
+  }
+}
 
 // ── PAGE NAVIGATION ──────────────────────────────────────────
 function showPage(id, btn){
@@ -3054,7 +3168,7 @@ function showPage(id, btn){
   document.getElementById('page-'+id).classList.add('on');
   if(btn) btn.classList.add('on');
   else document.querySelectorAll('.ntab').forEach(b=>{ if(b.dataset.page===id) b.classList.add('on'); });
-  if(id==='calc') calcUpdate();
+  if(id==='calc'){ syncCalcModels(); calcUpdate(); }
   if(id==='settings') loadSettings();
   if(id==='enricher') applyDefaultProviderModels();
   if(id==='photos') photoInit();
@@ -5452,7 +5566,7 @@ async function loadParser(){
 /** Пересчитывает рублёвые тарифы под текущий курс. */
 function applyRate(){
   for(const m of CALC_MODELS){
-    if(m.rub){ m.inp=m.inp_rub/RUB; m.out=m.out_rub/RUB; }
+    if(m.rub && !m.unknown){ m.inp=m.inp_rub/RUB; m.out=m.out_rub/RUB; }
   }
 }
 
@@ -5603,20 +5717,23 @@ function applyDefaultProviderModels(){
 }
 
 /** Полная перезагрузка каталога с сервера (после сохранения провайдеров). */
-async function reloadModels(){
+async function reloadModels({refresh=false}={}){
   setSt('ld','Загружаем модели...');
   stepError(1,'');
   try{
-    const data=await apiJson('/api/models');
+    const data=await apiJson('/api/models'+(refresh?'?refresh=1':''));
     if(typeof data.rub_per_usd==='number'&&data.rub_per_usd>0){
       RUB=data.rub_per_usd;
       RUB_DATE=data.rub_rate_date||'—';
       applyRate();
-      calcUpdate();
     }
+    if(data.priced_at) calcPricedAt=data.priced_at;
+    calcErrors=Array.isArray(data.errors)?data.errors:[];
     allModels=orderModels(onlyEnabledModels(mergeModels(data.data, modelsFromSettings())));
     setSt('ok',`${allModels.length} моделей`);
     renderModelList(previewModels(allModels));
+    syncCalcModels();
+    calcUpdate();
     const er=(data.errors||[]).find(e=>e.provider===defaultProviderId())
       ||(data.errors||[])[0];
     // Каталог OpenRouter часто недоступен из РФ — это не стоп: модели из карточек / запас уже в списке.
@@ -5626,6 +5743,8 @@ async function reloadModels(){
     }
   }catch(e){
     allModels=orderModels(modelsFromSettings());
+    syncCalcModels();
+    calcUpdate();
     if(allModels.length){
       setSt('ok',`${allModels.length} моделей · каталог временно недоступен`);
       renderModelList(previewModels(allModels));
@@ -6109,8 +6228,6 @@ function syncSteps(){
     ? `${items.length} ${plural(items.length,'запись','записи','записей')} в окне — можно править JSON`
     : 'Вставьте массив товаров вручную';
 
-  renderEstimate();
-
   const btn=document.getElementById('runBtn'), why=document.getElementById('runWhy');
   // В частично завершённом прогоне есть незаполненные позиции — их пропускаем.
   const done=doneRes().filter(r=>r.enriched||r.skipped).length;
@@ -6128,29 +6245,6 @@ function syncSteps(){
   else if(q<items.length) why.textContent=`Будет обработано ${q} из ${items.length} — по текущему фильтру`;
   else if(done)      why.textContent=`Повторный запуск заменит текущие ${done} ${plural(done,'результат','результата','результатов')}`;
   else               why.textContent=`Будет обработано ${items.length} ${plural(items.length,'товар','товара','товаров')}`;
-}
-
-// Допущение о размере запроса. До первого прогона — оценка, после — факт.
-let estIn=1200, estOut=700, estFromRun=false;
-
-function renderEstimate(){
-  const el=document.getElementById('est');
-  if(!selModel||!items.length){
-    el.innerHTML='<div class="est-note">Выберите модель и загрузите товары — здесь появится стоимость прогона.</div>';
-    return;
-  }
-  const {ip,op}=priceOf(selModel);
-  const per=estIn*ip+estOut*op;
-  // Считаем по очереди прогона, а не по всему списку: с фильтром «Без данных»
-  // цифра иначе врала бы в разы.
-  const q=queued().length;
-  const all=per*q;
-  const fmt=u=>u===0?'бесплатно':u<0.01?`$${u.toFixed(5)}`:`$${u.toFixed(3)}`;
-  el.innerHTML=
-    `<div class="est-row"><span>За ${q} ${plural(q,'товар','товара','товаров')}${q<items.length?` из ${items.length}`:''}</span><b>${fmt(all)}</b></div>`
-   +`<div class="est-note">${estFromRun?`По факту прошлого прогона: ${estIn}↑ ${estOut}↓ токенов на товар.`
-        :`Оценка по ${estIn}↑ ${estOut}↓ токенов на товар — уточнится после первого прогона.`}`
-   +` Курс ${RUB} ₽/$ на ${RUB_DATE}.</div>`;
 }
 
 function runningSet(){
@@ -7659,9 +7753,6 @@ function finishRun(d){
       .filter(Boolean).join(' · '));
     saveJobId(null);
   }
-
-  // Прогноз в шаге 3 теперь опирается на факт, а не на допущение.
-  if(s.ok>0){ estIn=Math.round(s.tIn/s.ok); estOut=Math.round(s.tOut/s.ok); estFromRun=true; }
 
   runQueue=null;
   renderRunline();

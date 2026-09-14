@@ -13,6 +13,7 @@
  * Маршруты:
  *   GET  /healthz             проба живости, без аутентификации
  *   GET  /api/models          список моделей включённых провайдеров (кэш MODELS_TTL_MS)
+ *   GET  /api/models?refresh=1  сбросить кэш и дождаться каталогов (калькулятор цен)
  *   GET  /api/settings        провайдеры ИИ, парсеры, условия, шаблон промпта (ключи скрыты)
  *   PUT  /api/settings        сохранить настройки; пустой api_key оставляет прежний
  *   GET  /api/providers/:id/balance  баланс и расход AITUNNEL (₽)
@@ -142,6 +143,9 @@ import {
   isAitunnelProvider, fetchAitunnelBalance, providerSpentRub, touchProviderBalance,
   loadProviderUsage,
 } from './pipeline/provider_billing.js';
+import {
+  decorateModels, fetchAitunnelPublicCatalog, providerWantsAitunnelCatalog,
+} from './pipeline/model_pricing.js';
 const API_KEY = process.env.OPENROUTER_API_KEY || '';
 const PORT    = Number(process.env.PORT || 3000);
 const HOST    = process.env.HOST || '0.0.0.0';
@@ -196,6 +200,10 @@ function tagModels(raw, p) {
   })).filter(m => m.id);
 }
 
+function priceModels(list, p) {
+  return decorateModels(list, p, { rubPerUsd: RUB_PER_USD });
+}
+
 /** Модели из карточки провайдера — без сети. DeepSeek/Ollama/Yandex ими и живут. */
 function listedModels(p) {
   const labels = p.model_labels && typeof p.model_labels === 'object' ? p.model_labels : {};
@@ -214,7 +222,7 @@ function isOpenRouterProvider(p) {
 function seedModels(p) {
   const listed = listedModels(p);
   if (listed.length) return listed;
-  if (isOpenRouterProvider(p)) return tagModels(OPENROUTER_FALLBACK, p);
+  if (isOpenRouterProvider(p)) return priceModels(tagModels(OPENROUTER_FALLBACK, p), p);
   return [];
 }
 
@@ -245,10 +253,18 @@ function sortModels(list, defaultId) {
   });
 }
 
-async function fetchProviderModels(p, { timeoutMs = 20_000, settings } = {}) {
+async function fetchProviderModels(p, { timeoutMs = 20_000, settings, catalogTimeoutMs = 12_000 } = {}) {
   const ep = providerEndpoint(p, settings);
   const listed = listedModels(p);
-  if (!p.models_path) return listed;
+  let catalog = null;
+  if (providerWantsAitunnelCatalog(p)) {
+    catalog = await fetchAitunnelPublicCatalog({
+      fetchImpl: (url, init) => providerFetch(url, init, { useProxy: false }),
+      timeoutMs: catalogTimeoutMs,
+    });
+  }
+  const finish = list => decorateModels(list, p, { rubPerUsd: RUB_PER_USD, catalog });
+  if (!p.models_path) return finish(listed);
   const headers = { ...ep.headers };
   const viaProxy = providerUsesProxy(p);
   let r, text;
@@ -256,26 +272,27 @@ async function fetchProviderModels(p, { timeoutMs = 20_000, settings } = {}) {
     r = await providerFetch(ep.modelsUrl, { headers, signal: AbortSignal.timeout(timeoutMs) }, { useProxy: viaProxy });
     text = await r.text();
   } catch (e) {
-    if (listed.length) return listed;
+    if (listed.length) return finish(listed);
     const host = (() => { try { return new URL(ep.modelsUrl).hostname; } catch { return p.name; } })();
     throw new Error(`не достучались до ${host} — ${netError(e, host)}`);
   }
   if (!r.ok) {
-    if (listed.length) return listed;
+    if (listed.length) return finish(listed);
     throw new Error(/openrouter\.ai/i.test(ep.modelsUrl) ? explainUpstream(r, text) : `${p.name} HTTP ${r.status}: ${text.slice(0, 200)}`);
   }
   let data;
   try { data = JSON.parse(text); } catch {
-    if (listed.length) return listed;
+    if (listed.length) return finish(listed);
     throw new Error(`${p.name} вернул не JSON`);
   }
   const rows = data.data || data.models || (Array.isArray(data) ? data : []);
   const fetched = tagModels(rows, p);
-  return fetched.length ? dedupeModels([...fetched, ...listed]) : listed;
+  return finish(fetched.length ? dedupeModels([...fetched, ...listed]) : listed);
 }
 
-async function models() {
-  if (modelsCache.list && Date.now() - modelsCache.at < MODELS_TTL) return modelsCache.list;
+async function models({ refresh = false } = {}) {
+  if (refresh) invalidateModelsCache();
+  else if (modelsCache.list && Date.now() - modelsCache.at < MODELS_TTL) return modelsCache.list;
   const settings = loadSettings(ROOT);
   const enabled = settings.providers.filter(p => p.enabled);
   if (!enabled.length) throw new Error('нет включённых провайдеров ИИ');
@@ -289,8 +306,11 @@ async function models() {
     const chunks = await Promise.all(enabled.map(async p => {
       const listed = listedModels(p);
       // OpenRouter без своего списка не должен надолго блокировать DeepSeek/Yandex.
-      const timeoutMs = listed.length ? 2500 : (isOpenRouterProvider(p) ? 4000 : (p.default ? 6000 : 4000));
-      try { return await fetchProviderModels(p, { timeoutMs, settings }); }
+      // refresh=1 ждёт каталог дольше — калькулятору нужны живые цены.
+      const timeoutMs = refresh
+        ? 20_000
+        : (listed.length ? 2500 : (isOpenRouterProvider(p) ? 4000 : (p.default ? 6000 : 4000)));
+      try { return await fetchProviderModels(p, { timeoutMs, settings, catalogTimeoutMs: refresh ? 15_000 : 8_000 }); }
       catch (e) {
         errors.push({ provider: p.id, name: p.name, error: e.message });
         return seedModels(p);
@@ -302,6 +322,11 @@ async function models() {
     modelsCache = { at: Date.now(), list: out, errors };
     return out;
   };
+
+  if (refresh) {
+    modelsInflight = loadRemote().finally(() => { if (gen === modelsGen) modelsInflight = null; });
+    return modelsInflight;
+  }
 
   // Карточки / запас уже есть — отвечаем сразу, каталог OpenRouter догоняет кэш.
   if (seedList.length) {
@@ -419,14 +444,16 @@ function readBody(req, limit = 1_000_000) {
 }
 
 // ── МАРШРУТЫ ─────────────────────────────────────────────────
-async function apiModels(res) {
+async function apiModels(res, url) {
   try {
-    const list = await models();
+    const refresh = url?.searchParams?.get('refresh') === '1' || url?.searchParams?.get('refresh') === 'true';
+    const list = await models({ refresh });
     json(res, 200, {
       data: list,
       errors: modelsCache.errors || [],
       rub_per_usd: RUB_PER_USD,
       rub_rate_date: RUB_RATE_DATE,
+      priced_at: modelsCache.at || Date.now(),
     });
   } catch (e) {
     json(res, 502, { error: e.message });
@@ -2430,7 +2457,7 @@ const server = http.createServer(async (req, res) => {
 
     if (!authorized(req)) return deny(req, res, u.pathname);
 
-    if (req.method === 'GET'  && u.pathname === '/api/models')     return await apiModels(res);
+    if (req.method === 'GET'  && u.pathname === '/api/models')     return await apiModels(res, u);
     if (req.method === 'GET'  && u.pathname === '/api/parser')     return apiParser(res);
     if (req.method === 'POST' && u.pathname === '/api/parser/probe') return await apiParserProbe(req, res);
     if (req.method === 'GET'  && u.pathname === '/api/settings')   return apiSettingsGet(res);

@@ -148,7 +148,7 @@ const script = html.match(/<script>\n([\s\S]*?)<\/script>/)[1]
 
 const EXPORTS = `
 export const api={syncSteps,setCnt,setCntFree,applyCnt,applySource,setSource,pickDataCat,renderDataCats,runCat,readProd,renderList,statusOf,selectResult,renderDetail,plural,
-  renderEstimate,setFilter,stepError,pick,sumRun,renderFoot,clearResults,restoreResults,saveResults,
+  setFilter,stepError,pick,sumRun,renderFoot,clearResults,restoreResults,saveResults,
   downloadAll,downloadCategoryFiles,downloadV2,initTheme,toggleTheme,applyTheme,dur,renderRunline,
   loadCategories,catOf,renderModelList,filterModels,renderParser,loadParser,
   applyDates,clearDates,renderDates,passesFilter,queued,onProdInput,apiJson,run,
@@ -230,6 +230,8 @@ t('с моделью и товарами — включается', () => {
   assert.strictEqual(G('runBtn').disabled, false);
   assert.match(G('runWhy').textContent, /Будет обработано 3 товара/);
   assert.strictEqual(G('sub2').textContent, '3 товара');
+  assert.ok(!ids.includes('est'), 'блока оценки стоимости больше нет');
+  assert.doesNotMatch(html.slice(0, html.indexOf('<script>')), /Стоимость и запуск|1200↑|токенов на товар/);
 });
 t('повторный запуск предупреждает о замене результатов', () => {
   st.results = [ok(), ok(), null];
@@ -304,8 +306,6 @@ t('без спора блок не появляется', () => {
 t('прогон обещает ровно то, что в фильтре', () => {
   api.syncSteps();
   assert.match(G('runWhy').textContent, /Будет обработано 2 из 3/);
-  api.renderEstimate();
-  assert.match(G('est').innerHTML, /За 2 товара из 3/);
 });
 t('без поля с датой строка дат скрыта', () => {
   api.setFilter(F('all'));
@@ -346,22 +346,6 @@ console.log('\nРусские склонения в подписях');
 t('1 / 2 / 5 / 11 / 21 / 104', () => {
   const p = n => api.plural(n, 'товар', 'товара', 'товаров');
   assert.deepStrictEqual([1, 2, 5, 11, 21, 104].map(p), ['товар', 'товара', 'товаров', 'товаров', 'товар', 'товара']);
-});
-
-console.log('\nОценка стоимости — для загруженного количества');
-t('показывает итог и допущение', () => {
-  st.items = [{ name: 'A' }, { name: 'B' }, { name: 'C' }];
-  api.renderEstimate();
-  const h = G('est').innerHTML;
-  assert.match(h, /За 3 товара/);
-  assert.doesNotMatch(h, /За один товар/);
-  assert.match(h, /1200↑ 700↓/, 'допущение о токенах должно быть подписано');
-  assert.match(h, /Курс 80/);
-});
-t('без модели или товаров — только пояснение', () => {
-  st.items = [];
-  api.renderEstimate();
-  assert.match(G('est').innerHTML, /появится стоимость/);
 });
 
 console.log('\nПарсер: статус и настройки на экране');

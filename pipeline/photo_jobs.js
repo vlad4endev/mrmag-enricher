@@ -171,12 +171,13 @@ export function createPhotoJobStore({
           if (typeof result?.usage?.cost === 'number') job.cost += result.usage.cost;
           pushLog(job, `ok ${itemId}`, 'ok');
         } catch (e) {
-          job.results[idx] = { id: itemId, ok: false, error: e.message };
+          const rawHint = e.raw ? ` · raw: ${String(e.raw).replace(/\s+/g, ' ').slice(0, 220)}` : '';
+          job.results[idx] = { id: itemId, ok: false, error: e.message, raw: e.raw || null };
           job.err += 1;
           try {
-            applyDescribeResult(job.album_id, itemId, { error: e.message });
+            applyDescribeResult(job.album_id, itemId, { error: e.message + rawHint });
           } catch { /* */ }
-          pushLog(job, `err ${itemId}: ${e.message}`, 'err');
+          pushLog(job, `err ${itemId}: ${e.message}${rawHint}`, 'err');
         }
         job.done += 1;
         save(job);

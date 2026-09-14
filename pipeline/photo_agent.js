@@ -60,8 +60,35 @@ function stripHtml(s) {
     .trim();
 }
 
+/** content у OpenAI-compatible шлюзов бывает строкой или массивом частей (Gemini). */
+export function extractMessageContent(message) {
+  const c = message?.content;
+  if (c == null) {
+    if (typeof message?.text === 'string') return message.text;
+    if (typeof message?.refusal === 'string') return message.refusal;
+    return '';
+  }
+  if (typeof c === 'string') return c;
+  if (Array.isArray(c)) {
+    return c.map((part) => {
+      if (typeof part === 'string') return part;
+      if (!part || typeof part !== 'object') return '';
+      if (typeof part.text === 'string') return part.text;
+      if (typeof part.content === 'string') return part.content;
+      return '';
+    }).filter(Boolean).join('\n');
+  }
+  if (typeof c === 'object' && typeof c.text === 'string') return c.text;
+  return String(c);
+}
+
 function parseJsonContent(content) {
-  const text = String(content || '').trim();
+  let text = String(content || '').trim();
+  // Иногда шлюз кладёт уже-объект / двойной JSON-string
+  if (text.startsWith('"') && text.endsWith('"')) {
+    try { text = JSON.parse(text); } catch { /* keep */ }
+    text = String(text || '').trim();
+  }
   const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
   const raw = fenced ? fenced[1].trim() : text;
   const start = raw.indexOf('{');
@@ -70,27 +97,91 @@ function parseJsonContent(content) {
   return JSON.parse(raw.slice(start, end + 1));
 }
 
+function firstNonEmpty(obj, keys) {
+  for (const k of keys) {
+    const v = obj?.[k];
+    if (v == null) continue;
+    const s = String(v).trim();
+    if (s) return s;
+  }
+  return '';
+}
+
+/** Модели иногда кладут поля во вложенный result/data или на русском. */
+function unwrapVisionRoot(parsed) {
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return parsed;
+  const hasCore = (o) => o && (
+    firstNonEmpty(o, [
+      'caption', 'Caption', 'подпись', 'title', 'description', 'Description', 'описание', 'text', 'alt',
+    ])
+  );
+  if (hasCore(parsed)) return parsed;
+  for (const k of ['result', 'data', 'output', 'response', 'photo', 'image', 'fields', 'vision']) {
+    const inner = parsed[k];
+    if (inner && typeof inner === 'object' && !Array.isArray(inner) && hasCore(inner)) return inner;
+  }
+  return parsed;
+}
+
 function normalizeVision(parsed) {
-  const attributes = parsed?.attributes && typeof parsed.attributes === 'object'
-    ? Object.fromEntries(
-      Object.entries(parsed.attributes)
-        .filter(([, v]) => v != null && String(v).trim() !== '')
-        .map(([k, v]) => [String(k).slice(0, 40), typeof v === 'boolean' ? v : String(v).slice(0, 200)]),
-    )
-    : {};
+  const root = unwrapVisionRoot(parsed) || {};
+  const attributesRaw = root.attributes && typeof root.attributes === 'object'
+    ? root.attributes
+    : (root.attrs && typeof root.attrs === 'object' ? root.attrs : {});
+  const attributes = Object.fromEntries(
+    Object.entries(attributesRaw)
+      .filter(([, v]) => v != null && String(v).trim() !== '')
+      .map(([k, v]) => [String(k).slice(0, 40), typeof v === 'boolean' ? v : String(v).slice(0, 200)]),
+  );
+  const tagsSrc = Array.isArray(root.tags) ? root.tags
+    : (Array.isArray(root.labels) ? root.labels
+      : (Array.isArray(root.keywords) ? root.keywords : []));
+  const warningsSrc = Array.isArray(root.warnings) ? root.warnings
+    : (Array.isArray(root.notes) ? root.notes : []);
   return {
-    caption: String(parsed?.caption || '').trim().slice(0, 1000),
-    description: String(parsed?.description || '').trim().slice(0, 8000),
-    alt: String(parsed?.alt || '').trim().slice(0, 500),
-    tags: Array.isArray(parsed?.tags)
-      ? [...new Set(parsed.tags.map(t => String(t).trim()).filter(Boolean))].slice(0, 40)
-      : [],
+    caption: firstNonEmpty(root, [
+      'caption', 'Caption', 'CAPTION', 'title', 'Title', 'подпись', 'заголовок', 'summary', 'short_description',
+    ]).slice(0, 1000),
+    description: firstNonEmpty(root, [
+      'description', 'Description', 'DESCRIPTION', 'text', 'Text', 'описание',
+      'full_description', 'long_description', 'body', 'details',
+    ]).slice(0, 8000),
+    alt: firstNonEmpty(root, ['alt', 'Alt', 'alt_text', 'altText', 'альт']).slice(0, 500),
+    tags: [...new Set(tagsSrc.map(t => String(t).trim()).filter(Boolean))].slice(0, 40),
     attributes,
-    warnings: Array.isArray(parsed?.warnings)
-      ? parsed.warnings.map(w => String(w).trim()).filter(Boolean).slice(0, 20)
-      : [],
+    warnings: warningsSrc.map(w => String(w).trim()).filter(Boolean).slice(0, 20),
   };
 }
+
+/** Строгая схема для AITUNNEL json_schema — меньше пустых/чужих ключей у Gemini. */
+export const PHOTO_RESPONSE_SCHEMA = {
+  name: 'photo_description',
+  strict: true,
+  schema: {
+    type: 'object',
+    additionalProperties: false,
+    required: ['caption', 'description', 'alt', 'tags', 'attributes', 'warnings'],
+    properties: {
+      caption: { type: 'string', description: 'Короткая подпись 8–18 слов' },
+      description: { type: 'string', description: '2–4 предложения про фото' },
+      alt: { type: 'string', description: 'alt до 120 символов' },
+      tags: { type: 'array', items: { type: 'string' } },
+      attributes: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          view: { type: 'string' },
+          color: { type: 'string' },
+          product_type: { type: 'string' },
+          brand_visible: { type: 'boolean' },
+          text_on_image: { type: 'string' },
+        },
+        required: ['view', 'color', 'product_type', 'brand_visible', 'text_on_image'],
+      },
+      warnings: { type: 'array', items: { type: 'string' } },
+    },
+  },
+};
 
 function dumpContext(productId, sku, category, root) {
   const key = String(productId || sku || '').trim();
@@ -159,7 +250,7 @@ export async function describePhoto(itemFile, opts = {}) {
     fetchImpl = null,
     limiter = null,
     timeoutMs = 90_000,
-    maxTokens = 1200,
+    maxTokens = 2000,
     category = null,
     root = undefined,
     onNote = () => {},
@@ -186,33 +277,41 @@ export async function describePhoto(itemFile, opts = {}) {
   await rate.wait(ms => onNote(`rate limit ${ms}ms`));
   onNote('запрос к vision-модели…');
 
-  const body = {
+  const messages = [
+    { role: 'system', content: system },
+    {
+      role: 'user',
+      content: buildUserParts({
+        mime: itemFile.mime,
+        base64,
+        filename: itemFile.item?.filename,
+        productId: itemFile.item?.product_id,
+        sku: itemFile.item?.sku,
+        dump,
+      }),
+    },
+  ];
+
+  const baseBody = {
     model,
     max_tokens: maxTokens,
     temperature: 0.2,
-    response_format: { type: 'json_object' },
-    messages: [
-      { role: 'system', content: system },
-      {
-        role: 'user',
-        content: buildUserParts({
-          mime: itemFile.mime,
-          base64,
-          filename: itemFile.item?.filename,
-          productId: itemFile.item?.product_id,
-          sku: itemFile.item?.sku,
-          dump,
-        }),
-      },
-    ],
+    messages,
   };
   // OpenRouter-only: остальные шлюзы (AITUNNEL и т.п.) могут отвергнуть неизвестное поле.
-  if (/openrouter\.ai/i.test(chatUrl)) body.usage = { include: true };
+  if (/openrouter\.ai/i.test(chatUrl)) baseBody.usage = { include: true };
 
-  let res;
-  let text;
-  try {
-    res = await doFetch(chatUrl, {
+  // Сначала json_schema (AITUNNEL/Gemini), потом мягкий json_object, потом без формата.
+  const formatAttempts = [
+    { type: 'json_schema', json_schema: PHOTO_RESPONSE_SCHEMA },
+    { type: 'json_object' },
+    null,
+  ];
+
+  async function postOnce(responseFormat) {
+    const body = { ...baseBody };
+    if (responseFormat) body.response_format = responseFormat;
+    const res = await doFetch(chatUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -224,8 +323,37 @@ export async function describePhoto(itemFile, opts = {}) {
       body: JSON.stringify(body),
       signal: AbortSignal.timeout(timeoutMs),
     });
-    text = await res.text();
+    const text = await res.text();
+    let data;
+    try { data = JSON.parse(text); } catch { data = null; }
+    return { res, text, data };
+  }
+
+  let res;
+  let text;
+  let data;
+  let lastHttpErr = null;
+  try {
+    for (let i = 0; i < formatAttempts.length; i++) {
+      const fmt = formatAttempts[i];
+      const out = await postOnce(fmt);
+      res = out.res;
+      text = out.text;
+      data = out.data;
+      if (res.ok && !data?.error) {
+        if (i > 0) onNote(`vision: ответ без ${i === 1 ? 'json_schema' : 'response_format'}`);
+        break;
+      }
+      const msg = data?.error?.message || `HTTP ${res.status}: ${String(text).slice(0, 180)}`;
+      lastHttpErr = Object.assign(new Error(msg), { status: res.status >= 400 ? res.status : 502 });
+      // Неподдерживаемый response_format / схема → пробуем следующий вариант
+      const retryable = res.status === 400 || res.status === 422
+        || /response_format|json_schema|json_object|unsupported|unknown|не поддерж/i.test(msg);
+      if (!retryable || i === formatAttempts.length - 1) throw lastHttpErr;
+      onNote(`vision: ${msg.slice(0, 80)} → другой формат ответа`);
+    }
   } catch (e) {
+    if (e?.status) throw e;
     const timed = e.name === 'TimeoutError' || e.cause?.name === 'TimeoutError';
     throw Object.assign(
       new Error(timed ? `таймаут vision ${timeoutMs}ms` : `vision: ${e.message}`),
@@ -233,29 +361,55 @@ export async function describePhoto(itemFile, opts = {}) {
     );
   }
 
-  let data;
-  try { data = JSON.parse(text); } catch { data = null; }
-  if (!res.ok || data?.error) {
-    const msg = data?.error?.message || `HTTP ${res.status}: ${String(text).slice(0, 180)}`;
-    throw Object.assign(new Error(msg), { status: res.status >= 400 ? res.status : 502 });
+  if (!res?.ok || data?.error) {
+    throw lastHttpErr || Object.assign(new Error('vision HTTP error'), { status: 502 });
   }
 
-  const content = data?.choices?.[0]?.message?.content ?? '';
+  const content = extractMessageContent(data?.choices?.[0]?.message);
   if (!String(content).trim()) {
-    throw Object.assign(new Error('Пустой ответ vision-модели'), { status: 502 });
+    const finish = data?.choices?.[0]?.finish_reason || '';
+    throw Object.assign(
+      new Error(`Пустой ответ vision-модели${finish ? ` (${finish})` : ''}`),
+      { status: 502, raw: text?.slice?.(0, 500) },
+    );
   }
 
   let parsed;
   try {
     parsed = parseJsonContent(content);
   } catch (e) {
-    throw Object.assign(new Error(`Не разобрали JSON: ${e.message}`), { status: 502, raw: content });
+    throw Object.assign(new Error(`Не разобрали JSON: ${e.message}`), {
+      status: 502,
+      raw: String(content).slice(0, 800),
+    });
   }
 
   const vision = normalizeVision(parsed);
   if (!vision.caption && !vision.description) {
-    throw Object.assign(new Error('Модель не вернула caption/description'), { status: 502 });
+    // Если модель вернула один длинный текст в неожиданном ключе — подхватим.
+    const fallback = firstNonEmpty(unwrapVisionRoot(parsed) || parsed, [
+      'content', 'message', 'answer', 'ответ', 'анализ',
+    ]);
+    if (fallback.length >= 24) {
+      vision.description = fallback.slice(0, 8000);
+      vision.caption = fallback.slice(0, 120);
+      vision.warnings = [...vision.warnings, 'поля caption/description восстановлены из общего текста ответа'];
+    }
   }
+  if (!vision.caption && !vision.description) {
+    throw Object.assign(new Error('Модель не вернула caption/description'), {
+      status: 502,
+      raw: String(content).slice(0, 800),
+    });
+  }
+  if (!vision.caption && vision.description) {
+    vision.caption = vision.description.split(/[.!?…]/)[0].trim().slice(0, 120) || vision.description.slice(0, 80);
+  }
+  if (!vision.description && vision.caption) {
+    vision.description = vision.caption;
+  }
+  if (!vision.alt) vision.alt = vision.caption.slice(0, 120);
+
   vision.warnings = consistencyLite(vision, dump);
 
   const usage = {

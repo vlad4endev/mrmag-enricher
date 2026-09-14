@@ -135,7 +135,7 @@ import {
   uploadPhotos, patchPhotoItem, deletePhotoItem, readPhotoFile, buildMlExport,
   applyDescribeResult, patchAlbum, photosDir, PHOTO_LIMITS,
 } from './pipeline/photos.js';
-import { describePhoto } from './pipeline/photo_agent.js';
+import { describePhoto, defaultPhotoSystemPrompt, PHOTO_PROMPT_PLACEHOLDERS, resolvePhotoSystemPrompt } from './pipeline/photo_agent.js';
 import { createPhotoJobStore } from './pipeline/photo_jobs.js';
 const API_KEY = process.env.OPENROUTER_API_KEY || '';
 const PORT    = Number(process.env.PORT || 3000);
@@ -902,6 +902,8 @@ function promptMeta(settings, category = null) {
   const resolved = resolveSystemPrompt(cat, prompts, settings?.model?.system_prompt);
   const custom = String(resolved || '').trim();
   const template = custom || builtin;
+  const photoBuiltin = defaultPhotoSystemPrompt();
+  const photoCustom = String(settings?.model?.photo_system_prompt || '').trim();
   return {
     template: custom,
     default_template: builtin,
@@ -919,6 +921,20 @@ function promptMeta(settings, category = null) {
         custom: !!tpl && tpl !== builtin,
       };
     }),
+    photo: {
+      template: photoCustom,
+      default_template: photoBuiltin,
+      custom: !!photoCustom && photoCustom !== photoBuiltin,
+      placeholders: PHOTO_PROMPT_PLACEHOLDERS,
+      preview: resolvePhotoSystemPrompt(photoCustom || photoBuiltin, {
+        product_id: '21670',
+        sku: '21670',
+        filename: '21670.jpg',
+        category: '467',
+        dump_name: 'Пример товара',
+        dump_annotation: 'Цвет: белый',
+      }),
+    },
   };
 }
 
@@ -995,6 +1011,29 @@ async function apiPromptPreview(req, res) {
   let body;
   try { body = JSON.parse(raw || '{}'); } catch { return json(res, 400, { error: 'Тело запроса не JSON' }); }
   const settings = loadSettings(ROOT);
+  if (body?.kind === 'photo') {
+    const builtin = defaultPhotoSystemPrompt();
+    const fromBody = body?.template != null ? String(body.template) : null;
+    const saved = String(settings.model?.photo_system_prompt || '').trim();
+    const template = fromBody != null
+      ? (String(fromBody).trim() ? fromBody : builtin)
+      : (saved || builtin);
+    const preview = resolvePhotoSystemPrompt(template, {
+      product_id: body?.product_id || '21670',
+      sku: body?.sku || '21670',
+      filename: body?.filename || '21670.jpg',
+      category: body?.category || '467',
+      dump_name: body?.dump_name || 'Пример товара',
+      dump_annotation: body?.dump_annotation || 'Цвет: белый',
+    });
+    return json(res, 200, {
+      kind: 'photo',
+      custom: String(template).trim() !== '' && template !== builtin,
+      preview,
+      placeholders: PHOTO_PROMPT_PLACEHOLDERS,
+      default_template: builtin,
+    });
+  }
   const category = body?.category || CATEGORIES[0]?.slug || 'kholodilniki';
   const fromBody = body?.template != null ? String(body.template) : null;
   const resolved = resolveSystemPrompt(category, settings.model?.system_prompts, settings.model?.system_prompt);
@@ -1916,6 +1955,7 @@ async function describePhotoOne({ albumId, itemId, model, provider, category, on
     root: ROOT,
     onNote,
     limiter: limiterFor(`${prov.id}:${resolvedModel}`),
+    systemPrompt: settings.model?.photo_system_prompt || '',
   });
   const saved = applyDescribeResult(albumId, itemId, result, ROOT);
   return { item: saved, usage: result.usage, dump_linked: result.dump_linked };

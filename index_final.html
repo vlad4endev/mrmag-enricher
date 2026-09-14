@@ -940,61 +940,69 @@ input[type=range]::-moz-range-thumb{
 .dump-drop:hover,.dump-drop.on{border-color:var(--ac);background:var(--ac-w)}
 .dump-drop i{font-size:22px;color:var(--ac)}
 .dump-drop b{display:block;font-size:13.5px;margin:8px 0 4px}
-.photo-page .photo-body{
-  display:grid;grid-template-columns:280px minmax(0,1fr);gap:12px;padding:12px 16px 16px;
-  flex:1;min-height:0;overflow:hidden;
-}
-.photo-side{display:flex;flex-direction:column;gap:10px;overflow:auto;min-height:0}
-.photo-main{display:flex;flex-direction:column;gap:10px;min-width:0;min-height:0;overflow:hidden}
-.photo-toolbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
-.photo-toolbar .grow{flex:1;min-width:120px}
-.photo-grid{
-  display:grid;grid-template-columns:repeat(auto-fill,minmax(168px,1fr));gap:10px;
-  overflow:auto;flex:1;min-height:0;padding:2px;align-content:start;
-}
-.photo-card{
-  background:var(--panel);border:1px solid var(--b);border-radius:var(--r);overflow:hidden;
-  display:flex;flex-direction:column;min-width:0;
-}
-.photo-card.sel{outline:2px solid var(--ac);outline-offset:1px}
-.photo-card .thumb{
-  aspect-ratio:1;background:var(--bg3);display:flex;align-items:center;justify-content:center;
-  overflow:hidden;position:relative;
-}
-.photo-card .thumb img{width:100%;height:100%;object-fit:cover}
-.photo-card .meta{padding:8px 9px 10px;display:flex;flex-direction:column;gap:4px;font-size:12px}
-.photo-card .meta b{font-size:12.5px;font-weight:650;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.photo-card .st{
-  font-size:11px;color:var(--t3);display:flex;justify-content:space-between;gap:6px;
-}
-.photo-card .st .ok{color:var(--ok,#2a9d5c)}
-.photo-card .st .err{color:var(--red)}
-.photo-card .desc{
-  color:var(--t2);font-size:11.5px;line-height:1.35;max-height:3.9em;overflow:hidden;
+.photo-page .app{grid-template-columns:260px minmax(240px,280px) minmax(0,1fr)}
+.photo-page .left-body{display:flex;flex-direction:column;gap:12px;padding:12px 12px 14px}
+.photo-page .photo-block{display:flex;flex-direction:column;gap:8px}
+.photo-page .photo-block-h{
+  font-size:11.5px;font-weight:650;color:var(--t2);letter-spacing:-.01em;
+  display:flex;align-items:center;justify-content:space-between;gap:8px;
 }
 .photo-drop{
-  border:1px dashed var(--b2);border-radius:var(--r);padding:18px 14px;background:var(--bg3);
+  border:1px dashed var(--b2);border-radius:var(--r);padding:14px 12px;background:var(--bg3);
   text-align:center;cursor:pointer;transition:border-color .15s,background .15s;
 }
 .photo-drop:hover,.photo-drop.on{border-color:var(--ac);background:var(--ac-w)}
-.photo-drop i{font-size:22px;color:var(--ac)}
-.photo-drop b{display:block;font-size:13.5px;margin:8px 0 4px}
+.photo-drop i{font-size:20px;color:var(--ac)}
+.photo-drop b{display:block;font-size:12.5px;margin:6px 0 4px}
 .photo-album{
-  border:1px solid var(--b);border-radius:var(--r);padding:10px 11px;background:var(--panel);
-  cursor:pointer;display:flex;flex-direction:column;gap:4px;
+  border:1px solid var(--b1);border-radius:var(--r);padding:9px 10px;background:var(--bg2);
+  cursor:pointer;display:flex;flex-direction:column;gap:3px;
 }
-.photo-album.on{border-color:var(--ac);box-shadow:0 0 0 1px var(--ac)}
-.photo-album strong{font-size:13.5px}
-.photo-album .sub{font-size:12px;color:var(--t2)}
-.photo-log{
-  font-family:var(--mono);font-size:11.5px;line-height:1.45;background:var(--bg3);
-  border:1px solid var(--b);border-radius:var(--r);padding:8px 10px;max-height:140px;overflow:auto;
-  white-space:pre-wrap;color:var(--t2);
+.photo-album.on{border-color:var(--ac);background:var(--ac-w)}
+.photo-album strong{font-size:12.5px;font-weight:650}
+.photo-album .sub{font-size:11px;color:var(--t3)}
+.photo-ri{grid-template-columns:auto auto minmax(0,1fr) auto}
+.photo-ri .photo-check{
+  width:16px;height:16px;margin:0;accent-color:var(--ac);cursor:pointer;flex-shrink:0;
 }
-@media(max-width:900px){
-  .photo-page .photo-body{grid-template-columns:1fr;overflow:auto}
-  .photo-main{overflow:visible}
-  .photo-grid{overflow:visible}
+.photo-ri .ri-thumb{
+  width:36px;height:36px;border-radius:6px;overflow:hidden;background:var(--bg4);
+  flex-shrink:0;border:1px solid var(--b1);
+}
+.photo-ri .ri-thumb img{width:100%;height:100%;object-fit:cover;display:block}
+.photo-ri.sel:not(.on){background:var(--bg3);border-color:var(--b2)}
+.photo-detail-hero{
+  display:grid;grid-template-columns:minmax(120px,200px) minmax(0,1fr);gap:16px;
+  margin:0 0 18px;align-items:start;
+}
+.photo-detail-hero .ph-img{
+  border-radius:var(--r);overflow:hidden;border:1px solid var(--b1);background:var(--bg3);
+  aspect-ratio:1;display:flex;align-items:center;justify-content:center;
+}
+.photo-detail-hero .ph-img img{width:100%;height:100%;object-fit:contain}
+.photo-detail-hero .ph-meta{display:flex;flex-direction:column;gap:8px;min-width:0}
+.photo-detail-hero .ph-meta .name{font-size:15px;font-weight:650;color:var(--t1);word-break:break-word}
+.photo-detail-hero .ph-meta .row{font-size:12px;color:var(--t2);display:flex;flex-wrap:wrap;gap:6px 12px}
+.photo-detail-hero .ph-meta .row b{color:var(--t1);font-weight:600}
+.photo-tags{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 16px}
+.photo-tags span{
+  font-size:11.5px;padding:4px 8px;border-radius:6px;background:var(--bg3);
+  border:1px solid var(--b1);color:var(--t2);
+}
+.photo-attrs{display:flex;flex-direction:column;gap:0;margin:0 0 16px}
+.photo-attrs .pa{
+  display:grid;grid-template-columns:minmax(90px,140px) minmax(0,1fr);gap:8px 12px;
+  padding:8px 0;border-bottom:1px solid var(--b1);font-size:12.5px;
+}
+.photo-attrs .pa:last-child{border-bottom:none}
+.photo-attrs .pa .k{color:var(--t3);font-weight:550}
+.photo-attrs .pa .v{color:var(--t1);word-break:break-word}
+@media(max-width:1100px){
+  .photo-page .app{grid-template-columns:1fr;grid-template-rows:auto minmax(220px,32vh) minmax(320px,1fr);overflow:auto}
+  .photo-page .left,.photo-page .mid,.photo-page .right{min-height:220px}
+}
+@media(max-width:720px){
+  .photo-detail-hero{grid-template-columns:1fr}
 }
 .dump-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap}
 .dump-title{display:flex;flex-direction:column;gap:2px;min-width:0}
@@ -1873,21 +1881,29 @@ input[type=range]::-moz-range-thumb{
   <header class="head">
     <div>
       <h1>Фото</h1>
-      <div class="crumb">Массовая загрузка → vision-описания → выгрузка в ML · сверка с дампом при привязке id</div>
+      <div class="crumb">Альбом → модель → список · лог · полный текст описания · как в обогащении</div>
     </div>
   </header>
-  <div class="photo-body">
-    <aside class="photo-side">
-      <div class="set-card" style="margin:0">
-        <div class="set-card-h"><b>Альбомы</b>
+<div class="app">
+
+  <aside class="left">
+    <header class="left-head">
+      <div class="left-title" id="photoAlbumTitle">Прогон фото</div>
+      <div class="left-lead">Модель AITUNNEL, загрузка и описание — затем полный текст справа.</div>
+      <div class="left-flow" aria-hidden="true"><span>1 альбом</span><i>→</i><span>2 модель</span><i>→</i><span>описать</span></div>
+    </header>
+    <div class="left-body">
+      <div class="photo-block">
+        <div class="photo-block-h"><span>Альбомы</span>
           <button type="button" class="sbtn primary" onclick="photoCreateAlbum()"><i class="ti ti-plus"></i> Новый</button>
         </div>
-        <div id="photoAlbumList" style="margin-top:10px;display:flex;flex-direction:column;gap:8px"></div>
+        <div id="photoAlbumList" style="display:flex;flex-direction:column;gap:6px"></div>
       </div>
-      <div class="set-card" style="margin:0">
-        <div class="set-card-h"><b>Модель AITUNNEL</b></div>
-        <div class="hint" style="margin:6px 0 8px">Для фото используется <b>только AITUNNEL</b> (РФ, без VPN). Другие провайдеры здесь недоступны.</div>
-        <div id="photoProvStatus" class="hint" style="margin:0 0 8px">Провайдер: AITUNNEL</div>
+
+      <div class="photo-block">
+        <div class="photo-block-h"><span>Модель AITUNNEL</span></div>
+        <div class="hint" style="margin:0">Только AITUNNEL (РФ, без VPN).</div>
+        <div id="photoProvStatus" class="hint" style="margin:0">Провайдер: AITUNNEL</div>
         <div class="msel none" id="photoMsel" onclick="photoToggleDrop()" role="button" tabindex="0"
              aria-label="Выбрать vision-модель AITUNNEL" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();photoToggleDrop()}">
           <span class="msel-n" id="photoMselName">Выберите модель</span>
@@ -1895,50 +1911,112 @@ input[type=range]::-moz-range-thumb{
           <i class="ti ti-chevron-down" aria-hidden="true" style="opacity:.4;font-size:11px;flex-shrink:0"></i>
         </div>
         <div class="msearch" id="photoMsearch">
-          <input type="text" id="photoMsrch" placeholder="Поиск или id (gemini-3.1-flash-lite-preview)" oninput="photoFilterModels()" autocomplete="off" aria-label="Поиск модели AITUNNEL">
+          <input type="text" id="photoMsrch" placeholder="Поиск или id модели" oninput="photoFilterModels()" autocomplete="off" aria-label="Поиск модели AITUNNEL">
           <div class="mdrop" id="photoMdrop"></div>
         </div>
-        <label class="hint" style="display:block;margin-top:10px">Раздел дампа (для сверки id товара)
-          <input type="text" id="photoCatId" placeholder="например 467" style="width:100%;margin-top:4px" inputmode="numeric">
-        </label>
+        <label class="flbl stack-gap" for="photoCatId">Раздел дампа (сверка id)</label>
+        <input type="text" id="photoCatId" placeholder="например 467" inputmode="numeric" aria-label="Раздел дампа">
       </div>
-      <div class="set-card" style="margin:0">
-        <div class="set-card-h"><b>Прогон</b></div>
-        <div class="set-actions" style="margin-top:8px">
+
+      <div class="photo-block">
+        <div class="photo-block-h"><span>Загрузка</span></div>
+        <div class="photo-drop" id="photoZone" tabindex="0" role="button" aria-label="Загрузить фото">
+          <i class="ti ti-cloud-upload" aria-hidden="true"></i>
+          <b>Перетащите или выберите</b>
+          <div class="hint" style="margin:0">JPEG / PNG / WebP / GIF · <code>12345.jpg</code> → product_id</div>
+        </div>
+        <input type="file" id="photoFile" accept="image/jpeg,image/png,image/webp,image/gif,.jpg,.jpeg,.png,.webp,.gif" multiple hidden>
+      </div>
+
+      <div class="photo-block">
+        <div class="photo-block-h"><span>Прогон</span></div>
+        <div class="set-actions" style="margin:0">
           <button type="button" class="sbtn primary" id="photoDescribeBtn" onclick="photoStartDescribe()"><i class="ti ti-sparkles"></i> Описать</button>
           <button type="button" class="sbtn ghost" onclick="photoStopDescribe()">Стоп</button>
         </div>
-        <div class="hint" id="photoJobHint" style="margin-top:8px">Загрузите фото и запустите описание.</div>
-        <div class="photo-log" id="photoLog" hidden></div>
+        <div class="hint" id="photoJobHint" style="margin:0">Отметьте фото слева или опишите все без текста.</div>
+        <div class="hint" id="photoStatus" style="margin:0">Нет альбома</div>
       </div>
-      <div class="set-card" style="margin:0">
-        <div class="set-card-h"><b>ML-выгрузка</b></div>
-        <div class="set-actions" style="margin-top:8px">
+
+      <div class="photo-block">
+        <div class="photo-block-h"><span>Выборка</span></div>
+        <div class="set-actions" style="margin:0;flex-wrap:wrap">
+          <button type="button" class="sbtn ghost" onclick="photoSelectUndescribed()">Без описания</button>
+          <button type="button" class="sbtn ghost" onclick="photoSelectAll()">Все</button>
+          <button type="button" class="sbtn ghost" onclick="photoSelectClear()">Снять</button>
+          <button type="button" class="sbtn danger" onclick="photoDeleteSelected()">Удалить</button>
+          <button type="button" class="sbtn ghost" onclick="photoDeleteAlbum()">Альбом ✕</button>
+        </div>
+      </div>
+
+      <div class="photo-block">
+        <div class="photo-block-h"><span>ML-выгрузка</span></div>
+        <div class="set-actions" style="margin:0">
           <button type="button" class="sbtn primary" onclick="photoExportMl('jsonl')"><i class="ti ti-download"></i> JSONL</button>
           <button type="button" class="sbtn ghost" onclick="photoExportMl('json')">JSON</button>
-          <button type="button" class="sbtn ghost" onclick="photoExportMl('jsonl',true)">JSONL+base64</button>
+          <button type="button" class="sbtn ghost" onclick="photoExportMl('jsonl',true)">+base64</button>
         </div>
-        <div class="hint" style="margin-top:8px">Схема <code>ogran.photo_ml.v1</code>: caption, description, tags, attributes, product_id.</div>
+        <div class="hint" style="margin:0">Схема <code>ogran.photo_ml.v1</code></div>
       </div>
-    </aside>
-    <section class="photo-main">
-      <div class="photo-drop" id="photoZone" tabindex="0" role="button" aria-label="Загрузить фото">
-        <i class="ti ti-cloud-upload" aria-hidden="true"></i>
-        <b>Перетащите фото или выберите файлы</b>
-        <div class="hint" style="margin:0">JPEG / PNG / WebP / GIF · массово · имя вида <code>12345.jpg</code> само ставит product_id</div>
+    </div>
+  </aside>
+
+  <div class="mid">
+    <div class="mid-h">
+      <div class="runline" id="photoRunline" aria-live="polite"></div>
+      <div class="filters" id="photoFilters">
+        <button type="button" class="fbtn on" data-f="all" onclick="photoSetFilter(this)">Все</button>
+        <button type="button" class="fbtn" data-f="pending" onclick="photoSetFilter(this)" title="Ещё без описания">Ожидают</button>
+        <button type="button" class="fbtn" data-f="ok" onclick="photoSetFilter(this)">Описаны</button>
+        <button type="button" class="fbtn" data-f="err" onclick="photoSetFilter(this)">Ошибки</button>
       </div>
-      <input type="file" id="photoFile" accept="image/jpeg,image/png,image/webp,image/gif,.jpg,.jpeg,.png,.webp,.gif" multiple hidden>
-      <div class="photo-toolbar">
-        <strong id="photoAlbumTitle" class="grow">Выберите альбом</strong>
-        <button type="button" class="sbtn ghost" onclick="photoSelectUndescribed()">Без описания</button>
-        <button type="button" class="sbtn ghost" onclick="photoSelectAll()">Все</button>
-        <button type="button" class="sbtn danger" onclick="photoDeleteSelected()">Удалить</button>
-        <button type="button" class="sbtn ghost" onclick="photoDeleteAlbum()">Удалить альбом</button>
+    </div>
+    <div class="mid-bar"><div class="mid-bar-f" id="photoBarF"></div></div>
+    <div class="runlog" id="photoRunLog">
+      <div class="runlog-h" onclick="photoToggleRunLog(event)" title="Показать или скрыть журнал">
+        <span class="runlog-tog" aria-hidden="true">▸</span>
+        <span class="runlog-t">Ход описания</span>
+        <span class="runlog-n" id="photoRunLogN">0 шагов</span>
+        <button type="button" class="runlog-copy" id="photoRunLogCopy" onclick="photoCopyRunLog(event)" title="Скопировать журнал">Копировать</button>
+        <button type="button" class="runlog-clr" onclick="photoClearRunLog(event)" title="Скрыть журнал">✕</button>
       </div>
-      <div class="photo-grid" id="photoGrid"></div>
-      <div class="hint" id="photoStatus">Нет альбома</div>
-    </section>
+      <pre class="runlog-body" id="photoRunLogBody"><span class="runlog-empty">Здесь появятся шаги прогона фото.</span></pre>
+    </div>
+    <div class="mid-list" id="photoList">
+      <div class="mid-empty">Здесь появится список фото.<br>Создайте альбом и загрузите файлы.</div>
+    </div>
   </div>
+
+  <div class="right">
+    <div class="ph">
+      <div class="ph-top">
+        <span class="pt" id="photoDetailTitle"><i class="ti ti-photo" aria-hidden="true"></i> Результат</span>
+        <div class="rtabs" id="photoRtabs" style="display:none">
+          <button type="button" class="rtab on" onclick="photoSwitchTab('vis',this)">Текст</button>
+          <button type="button" class="rtab" onclick="photoSwitchTab('json',this)">JSON</button>
+        </div>
+      </div>
+      <div class="ph-actions">
+        <span class="bdg bdg-g" id="photoStatusBdg" style="display:none"></span>
+        <span class="bdg bdg-b" id="photoCpyBtn" style="display:none;cursor:pointer" onclick="photoCopyDetail()" title="Скопировать полный текст"><i class="ti ti-copy" aria-hidden="true"></i> Копировать</span>
+      </div>
+    </div>
+    <div class="pb" id="photoDetail">
+      <div class="empty">
+        <div class="guide">
+          <div class="guide-k">Описание фото</div>
+          <h3>Список → лог → полный текст</h3>
+          Как в обогащении: слева настройка, в центре фото и ход прогона, справа полный caption и description.
+          <ol>
+            <li>Создайте <b>альбом</b> и загрузите фото.</li>
+            <li>Выберите <b>модель AITUNNEL</b> и нажмите «Описать».</li>
+            <li>Откройте фото в списке — справа будет <b>полный текст</b>.</li>
+          </ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
 </div>
 
 <!-- ===== PAGE: CALCULATOR ===== -->
@@ -2383,8 +2461,11 @@ input[type=range]::-moz-range-thumb{
       </section>
 
       <section class="set-panel" id="setPrompt">
-        <div class="set-h">Промпт обогащения</div>
-        <p class="set-lead">Системный текст уходит в модель вместе с карточкой. Один шаблон — на все разделы, или заведите несколько и отметьте, к каким разделам каждый относится. Поля вида <code>{{category_name}}</code> подставляются из схемы раздела перед запросом. Сохраните — следующий прогон пойдёт с этими шаблонами.</p>
+        <div class="set-h">Промпт</div>
+        <p class="set-lead">Шаблоны для обогащения текста и для описания фото (AITUNNEL). Сохраните — следующий прогон подхватит изменения.</p>
+
+        <div class="set-h" style="font-size:15px;margin-top:4px">Обогащение карточек</div>
+        <p class="set-lead" style="margin-top:0">Системный текст уходит в модель вместе с карточкой. Один шаблон — на все разделы, или заведите несколько и отметьте, к каким разделам каждый относится. Поля вида <code>{{category_name}}</code> подставляются из схемы раздела перед запросом.</p>
         <div class="set-prompt-tabs" id="setPromptTabs" role="tablist" aria-label="Шаблоны промпта"></div>
         <div class="set-card" style="margin-bottom:12px">
           <div class="set-grid" style="margin-bottom:8px">
@@ -2412,9 +2493,29 @@ input[type=range]::-moz-range-thumb{
           <div class="hint" style="margin-top:8px">Клик по плейсхолдеру вставляет его в курсор. Если шаблон совпадает со встроенным, в файл ничего лишнего не пишется. При пересечении разделов у нескольких шаблонов берётся первый в списке.</div>
           <div class="set-ph" id="setPromptPh"></div>
         </div>
-        <div class="set-card">
-          <div class="set-card-h"><b>Как уйдёт в модель</b><span class="set-note" id="setPromptPrevNote" style="flex:0"></span></div>
+        <div class="set-card" style="margin-bottom:16px">
+          <div class="set-card-h"><b>Как уйдёт в модель (обогащение)</b><span class="set-note" id="setPromptPrevNote" style="flex:0"></span></div>
           <pre class="set-pre" id="setPromptPreview" style="max-height:min(40vh,420px)">Загрузка…</pre>
+        </div>
+
+        <div class="set-h" style="font-size:15px">Изображения (Фото · AITUNNEL)</div>
+        <p class="set-lead" style="margin-top:0">System-промпт для vision-описаний в разделе «Фото». Модель должна вернуть JSON с caption / description / alt / tags. Плейсхолдеры подставляются перед запросом к AITUNNEL.</p>
+        <div class="set-card" style="margin-bottom:12px">
+          <div class="set-scope-row" style="margin-bottom:8px">
+            <span class="flbl" style="margin:0">Шаблон vision</span>
+            <div class="set-actions" style="margin-left:auto">
+              <span class="set-badge" id="setPhotoPromptBadge">встроенный</span>
+              <button type="button" class="sbtn ghost" onclick="resetPhotoPromptTemplate()">Сбросить к встроенному</button>
+            </div>
+          </div>
+          <label for="setPhotoSystemPrompt" class="flbl" style="margin-bottom:6px">Шаблон (system) для изображений</label>
+          <textarea id="setPhotoSystemPrompt" class="set-prompt" spellcheck="false" oninput="onPhotoPromptTemplateEdit()"></textarea>
+          <div class="hint" style="margin-top:8px">Клик по плейсхолдеру вставляет его в курсор. Пустой или совпадающий со встроенным шаблон в config не пишется.</div>
+          <div class="set-ph" id="setPhotoPromptPh"></div>
+        </div>
+        <div class="set-card">
+          <div class="set-card-h"><b>Как уйдёт в AITUNNEL</b><span class="set-note" id="setPhotoPromptPrevNote" style="flex:0"></span></div>
+          <pre class="set-pre" id="setPhotoPromptPreview" style="max-height:min(36vh,360px)">Загрузка…</pre>
         </div>
       </section>
 
@@ -2629,7 +2730,7 @@ function setTab(id){
   });
   const foot=document.querySelector('.set-foot');
   if(foot) foot.style.display=(id==='logs'||id==='dict'||id==='dumps')?'none':'flex';
-  if(id==='prompt') refreshPromptPreview();
+  if(id==='prompt'){ refreshPromptPreview(); refreshPhotoPromptPreview(); }
   if(id==='logs') refreshLogsJobs();
   if(id==='dict') loadDictList();
   if(id==='dumps') loadDumps();
@@ -3876,6 +3977,8 @@ async function saveDictionary(){
 
 let setPayload=null;
 let promptDefault='';
+let photoPromptDefault='';
+let photoPreviewTimer=null;
 let promptPreviewTimer=null;
 let promptList=[];
 let promptIdx=0;
@@ -4128,6 +4231,90 @@ function renderPromptEditor(d){
   const note=document.getElementById('setPromptPrevNote');
   if(note) note.textContent=p.preview_category?`раздел: ${p.preview_category}`:'';
   showCurrentPrompt();
+  renderPhotoPromptEditor(d);
+}
+
+function photoTplForSave(raw){
+  const cur=String(raw??'');
+  if(!cur.trim()) return '';
+  if(photoPromptDefault && cur===photoPromptDefault) return '';
+  return cur;
+}
+
+function renderPhotoPromptPlaceholders(list){
+  const box=document.getElementById('setPhotoPromptPh');
+  if(!box) return;
+  box.innerHTML=(list||[]).map(p=>
+    `<code title="${esc(p.note||'')}" data-ph="${esc(p.key)}">${esc(p.key)}</code>`
+  ).join('');
+  box.querySelectorAll('[data-ph]').forEach(el=>{
+    el.addEventListener('click',()=>insertPhotoPromptPlaceholder(el.dataset.ph));
+  });
+}
+
+function insertPhotoPromptPlaceholder(token){
+  const ta=document.getElementById('setPhotoSystemPrompt');
+  if(!ta||!token) return;
+  const start=ta.selectionStart??ta.value.length;
+  const end=ta.selectionEnd??start;
+  ta.value=ta.value.slice(0,start)+token+ta.value.slice(end);
+  const pos=start+token.length;
+  ta.focus();
+  ta.setSelectionRange(pos,pos);
+  onPhotoPromptTemplateEdit();
+}
+
+function updatePhotoPromptBadge(){
+  const badge=document.getElementById('setPhotoPromptBadge');
+  if(!badge) return;
+  const custom=!!photoTplForSave(getV('setPhotoSystemPrompt'));
+  badge.className='set-badge'+(custom?'':' off');
+  badge.textContent=custom?'свой шаблон':'встроенный';
+}
+
+function renderPhotoPromptEditor(d){
+  const photo=d?.prompt?.photo||{};
+  photoPromptDefault=photo.default_template||'';
+  const tpl=String(photo.template||'').trim() ? photo.template : (photoPromptDefault||'');
+  setV('setPhotoSystemPrompt', tpl);
+  renderPhotoPromptPlaceholders(photo.placeholders||[]);
+  const prev=document.getElementById('setPhotoPromptPreview');
+  if(prev) prev.textContent=photo.preview||photoPromptDefault||'';
+  const note=document.getElementById('setPhotoPromptPrevNote');
+  if(note) note.textContent='vision · AITUNNEL';
+  updatePhotoPromptBadge();
+}
+
+function resetPhotoPromptTemplate(){
+  setV('setPhotoSystemPrompt', photoPromptDefault||'');
+  updatePhotoPromptBadge();
+  refreshPhotoPromptPreview();
+}
+
+function onPhotoPromptTemplateEdit(){
+  updatePhotoPromptBadge();
+  clearTimeout(photoPreviewTimer);
+  photoPreviewTimer=setTimeout(refreshPhotoPromptPreview, 400);
+}
+
+async function refreshPhotoPromptPreview(){
+  const prev=document.getElementById('setPhotoPromptPreview');
+  const note=document.getElementById('setPhotoPromptPrevNote');
+  if(!prev) return;
+  const template=getV('setPhotoSystemPrompt');
+  try{
+    const d=await apiJson('/api/prompt/preview',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({ kind:'photo', template }),
+    });
+    prev.textContent=d.preview||'';
+    if(note) note.textContent=d.custom?'свой · AITUNNEL':'встроенный · AITUNNEL';
+    if(d.default_template) photoPromptDefault=d.default_template;
+    updatePhotoPromptBadge();
+  }catch(e){
+    prev.textContent='Не удалось собрать превью: '+e.message;
+  }
 }
 
 function resetPromptTemplate(){
@@ -4561,6 +4748,7 @@ function readSettingsPatch(){
       timeout_ms:Number(getV('setAiTimeout'))||60000,
       max_tokens:Number(getV('setMaxTokens'))||3200,
       system_prompts:promptsForSave(),
+      photo_system_prompt:photoTplForSave(getV('setPhotoSystemPrompt')),
     },
     export_templates:readExportTemplatesPatch(),
   };
@@ -7886,6 +8074,9 @@ async function checkIconFont(){
 let photoAlbums=[];
 let photoAlbum=null;
 let photoSel=new Set();
+let photoCurId=null;
+let photoFilter='all';
+let photoTab='vis';
 let photoModel=null;
 const PHOTO_PROVIDER_ID='aitunnel';
 let photoProvId=PHOTO_PROVIDER_ID;
@@ -7893,6 +8084,8 @@ let photoJobId=null;
 let photoPoll=null;
 let photoInited=false;
 let photoLimits={ MAX_BATCH_FILES:40 };
+let photoRunLogLines=[];
+let photoRunLogOpen=false;
 
 /** Только AITUNNEL — для фото другие шлюзы запрещены. */
 function photoAitunnelSettings(){
@@ -7907,6 +8100,123 @@ function photoStatus(msg, ok){
   if(!el) return;
   el.textContent=msg||'';
   el.style.color=ok===false?'var(--red)':ok===true?'var(--ok,#2a9d5c)':'';
+}
+
+function photoItemById(id){
+  return (photoAlbum?.items||[]).find(i=>i.id===id)||null;
+}
+
+function photoIsDescribed(it){
+  return it && (it.status==='described'||it.status==='ready');
+}
+
+function photoIsPending(it){
+  return it && !photoIsDescribed(it) && it.status!=='error';
+}
+
+function photoStClass(it){
+  if(!it) return 'pd';
+  if(it.status==='error') return 'er';
+  if(photoIsDescribed(it)) return 'ok';
+  if(photoJobId && photoSel.size && photoSel.has(it.id)) return 'run';
+  return 'pd';
+}
+
+function photoStLabel(it){
+  if(!it) return '—';
+  if(it.status==='error') return 'ошибка';
+  if(photoIsDescribed(it)) return 'описано';
+  return 'ожидает';
+}
+
+function photoFileUrl(it){
+  if(!photoAlbum||!it) return '';
+  return '/api/photos/'+encodeURIComponent(photoAlbum.id)+'/file/'+encodeURIComponent(it.id);
+}
+
+function photoFilteredItems(){
+  const items=photoAlbum?.items||[];
+  if(photoFilter==='ok') return items.filter(photoIsDescribed);
+  if(photoFilter==='err') return items.filter(i=>i.status==='error');
+  if(photoFilter==='pending') return items.filter(photoIsPending);
+  return items;
+}
+
+function photoSetFilter(btn){
+  photoFilter=btn?.dataset?.f||'all';
+  document.querySelectorAll('#photoFilters .fbtn').forEach(b=>b.classList.toggle('on',b===btn));
+  photoRenderList();
+}
+
+function photoUpdateBar(){
+  const bar=document.getElementById('photoBarF');
+  const line=document.getElementById('photoRunline');
+  const items=photoAlbum?.items||[];
+  const total=items.length;
+  const ok=items.filter(photoIsDescribed).length;
+  const err=items.filter(i=>i.status==='error').length;
+  const pct=total?Math.round((ok+err)/total*100):0;
+  if(bar) bar.style.width=(total?pct:0)+'%';
+  if(line){
+    if(!total) line.textContent='Нет фото в альбоме';
+    else line.textContent=`${ok} описано · ${err} ошибок · ${total} всего`
+      +(photoSel.size?` · выбрано ${photoSel.size}`:'');
+  }
+}
+
+function photoToggleRunLog(ev){
+  if(ev?.target?.closest?.('button')) return;
+  const box=document.getElementById('photoRunLog');
+  if(!box||!box.classList.contains('on')) return;
+  photoRunLogOpen=!photoRunLogOpen;
+  box.classList.toggle('open', photoRunLogOpen);
+}
+
+function photoClearRunLog(ev){
+  ev?.stopPropagation?.();
+  photoRunLogLines=[];
+  const box=document.getElementById('photoRunLog');
+  const body=document.getElementById('photoRunLogBody');
+  const n=document.getElementById('photoRunLogN');
+  if(box){ box.classList.remove('on','open'); }
+  photoRunLogOpen=false;
+  if(body) body.innerHTML='<span class="runlog-empty">Здесь появятся шаги прогона фото.</span>';
+  if(n) n.textContent='0 шагов';
+}
+
+function photoCopyRunLog(ev){
+  ev?.stopPropagation?.();
+  const text=photoRunLogLines.map(l=>l.message||l).join('\n');
+  if(!text) return;
+  navigator.clipboard?.writeText(text).then(()=>{
+    const btn=document.getElementById('photoRunLogCopy');
+    if(btn){ btn.classList.add('ok'); setTimeout(()=>btn.classList.remove('ok'),900); }
+  }).catch(()=>{});
+}
+
+function photoAppendRunLog(entries){
+  if(!entries?.length) return;
+  const box=document.getElementById('photoRunLog');
+  const body=document.getElementById('photoRunLogBody');
+  const n=document.getElementById('photoRunLogN');
+  if(box){
+    box.classList.add('on');
+    if(!photoRunLogOpen){ photoRunLogOpen=true; box.classList.add('open'); }
+  }
+  for(const e of entries){
+    const msg=typeof e==='string'?e:(e.message||'');
+    if(!msg) continue;
+    photoRunLogLines.push({ message:msg, level:e.level||'info' });
+  }
+  if(n) n.textContent=photoRunLogLines.length+' шаг'+(photoRunLogLines.length===1?'':'ов');
+  if(body){
+    body.innerHTML=photoRunLogLines.map(l=>{
+      const lv=l.level||'info';
+      const cls=lv==='error'||lv==='err'?'l-err':lv==='warn'?'l-warn':lv==='ok'?'l-ok':'l-info';
+      return `<span class="runlog-line ${cls}">${esc(l.message)}</span>`;
+    }).join('');
+    body.scrollTop=body.scrollHeight;
+  }
 }
 
 function photoRenderProviders(){
@@ -7939,7 +8249,6 @@ function photoModelsForProv(){
     const pid=String(m.provider||'');
     return pid===id || pid===PHOTO_PROVIDER_ID || /aitunnel/i.test(pid);
   });
-  // Модели из карточки AITUNNEL в настройках (если /models пуст)
   if(p){
     const labels=p.model_labels||{};
     const seeded=(p.models||[]).map(mid=>({
@@ -7953,7 +8262,6 @@ function photoModelsForProv(){
     const seen=new Set(list.map(m=>m.id));
     for(const m of seeded) if(!seen.has(m.id)){ list.push(m); seen.add(m.id); }
   }
-  // Жёсткий запас vision-моделей AITUNNEL, если справочник пуст
   if(!list.length){
     const fallback=[
       'gemini-3.1-flash-lite-preview',
@@ -8034,8 +8342,11 @@ async function photoLoadAlbums(){
     if(photoAlbum) await photoOpenAlbum(photoAlbum.id, true);
     else if(photoAlbums[0]) await photoOpenAlbum(photoAlbums[0].id);
     else{
-      document.getElementById('photoAlbumTitle').textContent='Создайте альбом';
-      document.getElementById('photoGrid').innerHTML='';
+      document.getElementById('photoAlbumTitle').textContent='Прогон фото';
+      document.getElementById('photoList').innerHTML='<div class="mid-empty">Создайте альбом слева<br>и загрузите фото.</div>';
+      photoCurId=null;
+      photoRenderDetail();
+      photoUpdateBar();
       photoStatus('Нет альбомов — создайте новый');
     }
   }catch(e){
@@ -8069,6 +8380,7 @@ async function photoCreateAlbum(forcedName){
     });
     photoAlbum=data.album;
     photoSel=new Set();
+    photoCurId=null;
     await photoLoadAlbums();
     photoStatus('Альбом создан', true);
   }catch(e){ photoStatus(e.message||'не создан', false); }
@@ -8081,8 +8393,11 @@ async function photoOpenAlbum(id, quiet){
     photoSel=new Set();
     if(photoAlbum.category) document.getElementById('photoCatId').value=photoAlbum.category;
     document.getElementById('photoAlbumTitle').textContent=photoAlbum.name||photoAlbum.id;
+    if(photoCurId && !photoItemById(photoCurId)) photoCurId=null;
+    if(!photoCurId && photoAlbum.items[0]) photoCurId=photoAlbum.items[0].id;
     photoRenderAlbums();
-    photoRenderGrid();
+    photoRenderList();
+    photoRenderDetail();
     if(!quiet) photoStatus(`${photoAlbum.items.length} фото`, true);
   }catch(e){ photoStatus(e.message||'не открыт', false); }
 }
@@ -8132,49 +8447,186 @@ async function photoIngestFiles(files){
       return;
     }
   }
-  photoRenderGrid();
+  if(!photoCurId && photoAlbum.items[0]) photoCurId=photoAlbum.items[0].id;
+  photoRenderList();
+  photoRenderDetail();
   await photoLoadAlbums();
   photoStatus(`Загружено ${uploaded} фото`, true);
 }
 
-function photoRenderGrid(){
-  const box=document.getElementById('photoGrid');
-  if(!box||!photoAlbum){ if(box) box.innerHTML=''; return; }
-  if(!photoAlbum.items.length){
-    box.innerHTML='<p class="dump-empty">Перетащите фото выше</p>';
+function photoRenderList(){
+  const box=document.getElementById('photoList');
+  if(!box) return;
+  photoUpdateBar();
+  if(!photoAlbum){
+    box.innerHTML='<div class="mid-empty">Создайте альбом слева.</div>';
     return;
   }
-  box.innerHTML=photoAlbum.items.map(it=>{
-    const st=it.status==='described'||it.status==='ready'
-      ?'<span class="ok">описано</span>'
-      :(it.status==='error'?`<span class="err">ошибка</span>`:'<span>ожидает</span>');
-    const src='/api/photos/'+encodeURIComponent(photoAlbum.id)+'/file/'+encodeURIComponent(it.id);
-    const desc=it.caption||it.description||it.error||'';
-    return `<div class="photo-card${photoSel.has(it.id)?' sel':''}" data-id="${esc(it.id)}" onclick="photoToggleSel('${esc(it.id)}',event)">
-      <div class="thumb"><img src="${src}" alt="${esc(it.alt||it.filename||'')}" loading="lazy"></div>
-      <div class="meta">
-        <b title="${esc(it.filename)}">${esc(it.filename)}</b>
-        <div class="st"><span>${it.product_id?('id '+esc(it.product_id)):'без id'}</span>${st}</div>
-        ${desc?`<div class="desc">${esc(String(desc).slice(0,160))}</div>`:''}
-      </div>
+  const items=photoFilteredItems();
+  if(!photoAlbum.items.length){
+    box.innerHTML='<div class="mid-empty">Перетащите фото в блок загрузки слева.</div>';
+    return;
+  }
+  if(!items.length){
+    box.innerHTML='<div class="mid-empty">Нет фото в этом фильтре.</div>';
+    return;
+  }
+  box.innerHTML=items.map(it=>{
+    const st=photoStClass(it);
+    const preview=it.caption||it.description||it.error||'';
+    const meta=[
+      it.product_id?('id '+it.product_id):'без id',
+      photoStLabel(it),
+    ].join(' · ');
+    return `<div class="ri photo-ri s-${st}${photoCurId===it.id?' on':''}${photoSel.has(it.id)?' sel':''}" data-id="${esc(it.id)}" role="button" tabindex="0" onclick="photoFocus('${esc(it.id)}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();photoFocus('${esc(it.id)}')}">
+      <input type="checkbox" class="photo-check" ${photoSel.has(it.id)?'checked':''} onclick="photoToggleSel('${esc(it.id)}',event)" aria-label="Выбрать для прогона">
+      <span class="ri-thumb"><img src="${photoFileUrl(it)}" alt="" loading="lazy"></span>
+      <span class="ri-b">
+        <span class="ri-n" title="${esc(it.filename)}">${esc(it.filename)}</span>
+        <span class="ri-m">${esc(meta)}${preview?` · ${esc(String(preview).slice(0,72))}`:''}</span>
+      </span>
+      <span class="ri-st ${st==='run'?'run':st}" aria-hidden="true">${st==='run'?'↻':''}</span>
     </div>`;
   }).join('');
 }
 
+function photoFocus(id){
+  photoCurId=id;
+  photoRenderList();
+  photoRenderDetail();
+}
+
 function photoToggleSel(id, e){
-  if(e) e.stopPropagation();
+  if(e){ e.stopPropagation(); e.preventDefault(); }
   if(photoSel.has(id)) photoSel.delete(id); else photoSel.add(id);
-  photoRenderGrid();
+  photoRenderList();
 }
 function photoSelectAll(){
   if(!photoAlbum) return;
   photoSel=new Set(photoAlbum.items.map(i=>i.id));
-  photoRenderGrid();
+  photoRenderList();
 }
 function photoSelectUndescribed(){
   if(!photoAlbum) return;
-  photoSel=new Set(photoAlbum.items.filter(i=>i.status!=='described'&&i.status!=='ready').map(i=>i.id));
-  photoRenderGrid();
+  photoSel=new Set(photoAlbum.items.filter(i=>!photoIsDescribed(i)).map(i=>i.id));
+  photoRenderList();
+}
+function photoSelectClear(){
+  photoSel=new Set();
+  photoRenderList();
+}
+
+function photoSwitchTab(tab, btn){
+  photoTab=tab==='json'?'json':'vis';
+  document.querySelectorAll('#photoRtabs .rtab').forEach(b=>b.classList.toggle('on',b===btn));
+  photoRenderDetail();
+}
+
+function photoCopyDetail(){
+  const it=photoItemById(photoCurId);
+  if(!it) return;
+  const text=photoTab==='json'
+    ? JSON.stringify(it,null,2)
+    : [
+        it.caption&&('Caption: '+it.caption),
+        it.description&&('Description:\n'+it.description),
+        it.alt&&('Alt: '+it.alt),
+        (it.tags||[]).length&&('Tags: '+it.tags.join(', ')),
+        it.attributes&&Object.keys(it.attributes).length&&('Attributes:\n'+Object.entries(it.attributes).map(([k,v])=>k+': '+v).join('\n')),
+        it.error&&('Error: '+it.error),
+      ].filter(Boolean).join('\n\n');
+  navigator.clipboard?.writeText(text).then(()=>photoStatus('Скопировано', true)).catch(()=>{});
+}
+
+function photoRenderDetail(){
+  const box=document.getElementById('photoDetail');
+  const title=document.getElementById('photoDetailTitle');
+  const tabs=document.getElementById('photoRtabs');
+  const bdg=document.getElementById('photoStatusBdg');
+  const cpy=document.getElementById('photoCpyBtn');
+  if(!box) return;
+  const it=photoItemById(photoCurId);
+  if(!it){
+    if(tabs) tabs.style.display='none';
+    if(bdg) bdg.style.display='none';
+    if(cpy) cpy.style.display='none';
+    if(title) title.innerHTML='<i class="ti ti-photo" aria-hidden="true"></i> Результат';
+    box.innerHTML=`<div class="empty"><div class="guide">
+      <div class="guide-k">Описание фото</div>
+      <h3>Выберите фото в списке</h3>
+      Справа появится полный caption, description, alt, теги и атрибуты — как поля результата в обогащении.
+    </div></div>`;
+    return;
+  }
+  if(tabs) tabs.style.display='';
+  if(cpy) cpy.style.display='';
+  if(bdg){
+    bdg.style.display='';
+    bdg.textContent=photoStLabel(it);
+    bdg.className='bdg '+(it.status==='error'?'bdg-a':photoIsDescribed(it)?'bdg-g':'bdg-b');
+  }
+  if(title){
+    title.innerHTML=`<span class="pt-name">${esc(it.filename||'Фото')}</span>`
+      +`<span class="pt-meta">${it.product_id?`<b>id</b> ${esc(it.product_id)}`:'без product_id'}`
+      +(it.bytes?` · <b>${Math.round(it.bytes/1024)} KB</b>`:'')
+      +`</span>`;
+  }
+
+  if(photoTab==='json'){
+    box.innerHTML=`<pre class="codeblock" style="white-space:pre-wrap;word-break:break-word;font-size:12px;line-height:1.45;margin:0">${esc(JSON.stringify(it,null,2))}</pre>`;
+    return;
+  }
+
+  const attrs=it.attributes&&typeof it.attributes==='object'?Object.entries(it.attributes):[];
+  const tags=Array.isArray(it.tags)?it.tags:[];
+  const warns=Array.isArray(it.warnings)?it.warnings:[];
+  let html=`<div class="photo-detail-hero">
+    <div class="ph-img"><img src="${photoFileUrl(it)}" alt="${esc(it.alt||it.filename||'')}"></div>
+    <div class="ph-meta">
+      <div class="name">${esc(it.filename||'')}</div>
+      <div class="row"><span><b>Статус</b> ${esc(photoStLabel(it))}</span>`
+        +(it.product_id?`<span><b>product_id</b> ${esc(it.product_id)}</span>`:'')
+        +(it.sku?`<span><b>sku</b> ${esc(it.sku)}</span>`:'')
+        +`</div>
+      <div class="row"><span><b>mime</b> ${esc(it.mime||'—')}</span>`
+        +(it.described_at?`<span><b>описано</b> ${esc(new Date(it.described_at).toLocaleString('ru-RU'))}</span>`:'')
+        +`</div>
+    </div>
+  </div>`;
+
+  if(it.error){
+    html+=`<div class="errbox">${esc(it.error)}</div>`;
+  }
+  if(warns.length){
+    html+=`<div class="warnbox"><div class="wt">Предупреждения</div>${warns.map(w=>`<div class="wi">${esc(String(w))}</div>`).join('')}</div>`;
+  }
+
+  html+=`<div class="seobox"><div class="st">Caption · ${ (it.caption||'').length } символов</div>${esc(it.caption||'— пусто —')}</div>`;
+  html+=`<div class="seobox"><div class="st">Description · полный текст · ${ (it.description||'').length } символов</div>${esc(it.description||'— пусто —')}</div>`;
+  html+=`<div class="seobox"><div class="st">Alt</div>${esc(it.alt||'— пусто —')}</div>`;
+
+  if(tags.length){
+    html+=`<div class="spec-title">Теги <i>${tags.length}</i></div><div class="photo-tags">${tags.map(t=>`<span>${esc(t)}</span>`).join('')}</div>`;
+  }else{
+    html+=`<div class="spec-title">Теги</div><div class="eboard-empty">Тегов нет</div>`;
+  }
+
+  if(attrs.length){
+    html+=`<div class="spec-title mt">Атрибуты <i>${attrs.length}</i></div><div class="photo-attrs">`
+      +attrs.map(([k,v])=>`<div class="pa"><span class="k">${esc(k)}</span><span class="v">${esc(String(v))}</span></div>`).join('')
+      +`</div>`;
+  }else{
+    html+=`<div class="spec-title mt">Атрибуты</div><div class="eboard-empty">Атрибутов нет</div>`;
+  }
+
+  if(it.usage){
+    const u=it.usage;
+    html+=`<div class="spec-title mt">Токены</div><div class="eboard-empty">`
+      +`in ${u.prompt_tokens??u.input_tokens??'—'} · out ${u.completion_tokens??u.output_tokens??'—'} · total ${u.total_tokens??'—'}`
+      +`</div>`;
+  }
+
+  box.innerHTML=html;
 }
 
 async function photoDeleteSelected(){
@@ -8185,6 +8637,7 @@ async function photoDeleteSelected(){
       await apiJson('/api/photos/'+encodeURIComponent(photoAlbum.id)+'/items/'+encodeURIComponent(id),{method:'DELETE'});
     }catch(e){ photoStatus(e.message||'ошибка удаления', false); }
   }
+  if(photoCurId && photoSel.has(photoCurId)) photoCurId=null;
   photoSel=new Set();
   await photoOpenAlbum(photoAlbum.id);
 }
@@ -8195,6 +8648,7 @@ async function photoDeleteAlbum(){
   try{
     await apiJson('/api/photos/'+encodeURIComponent(photoAlbum.id),{method:'DELETE'});
     photoAlbum=null;
+    photoCurId=null;
     await photoLoadAlbums();
     photoStatus('Альбом удалён', true);
   }catch(e){ photoStatus(e.message||'не удалён', false); }
@@ -8320,8 +8774,8 @@ async function photoStartDescribe(){
       }),
     });
     photoJobId=job.id;
-    document.getElementById('photoLog').hidden=false;
-    document.getElementById('photoLog').textContent='';
+    photoRunLogLines=[];
+    photoAppendRunLog([{ message:`Старт ${job.id} · ${job.total} фото · ${photoModel.id}`, level:'info' }]);
     photoStatus(`Прогон ${job.id}: 0/${job.total}`, true);
     photoPollJob();
   }catch(e){ photoStatus(e.message||'не запущен', false); }
@@ -8336,6 +8790,7 @@ async function photoStopDescribe(){
 function photoPollJob(){
   if(photoPoll) clearInterval(photoPoll);
   let logFrom=0;
+  let ticks=0;
   photoPoll=setInterval(async()=>{
     if(!photoJobId){ clearInterval(photoPoll); return; }
     try{
@@ -8343,17 +8798,37 @@ function photoPollJob(){
       document.getElementById('photoJobHint').textContent=
         `${st.status}: ${st.done}/${st.total} · ok ${st.ok} · err ${st.err}`
         +(st.cost?` · $${Number(st.cost).toFixed(4)}`:'');
-      const logEl=document.getElementById('photoLog');
+      const bar=document.getElementById('photoBarF');
+      if(bar && st.total) bar.style.width=Math.round((st.done/st.total)*100)+'%';
+      const line=document.getElementById('photoRunline');
+      if(line) line.textContent=`Прогон: ${st.done}/${st.total} · ok ${st.ok} · err ${st.err}`;
       if(st.log?.length){
         logFrom=st.log_from+(st.log.length);
-        logEl.textContent+=(logEl.textContent?'\n':'')+st.log.map(l=>l.message).join('\n');
-        logEl.scrollTop=logEl.scrollHeight;
+        photoAppendRunLog(st.log.map(l=>({
+          message:l.message||String(l),
+          level:/err|fail|ошиб/i.test(l.message||'')?'err':/ok|готово|описан/i.test(l.message||'')?'ok':'info',
+        })));
+      }
+      ticks++;
+      if(ticks%3===0 && photoAlbum){
+        try{
+          const data=await apiJson('/api/photos/'+encodeURIComponent(photoAlbum.id));
+          photoAlbum=data.album;
+          photoRenderList();
+          photoRenderDetail();
+        }catch{ /* */ }
       }
       if(st.status==='done'||st.status==='stopped'||st.status==='interrupted'){
         clearInterval(photoPoll); photoPoll=null;
-        await photoOpenAlbum(photoAlbum.id);
+        const keepCur=photoCurId;
+        await photoOpenAlbum(photoAlbum.id, true);
+        if(keepCur && photoItemById(keepCur)) photoCurId=keepCur;
+        photoRenderList();
+        photoRenderDetail();
         await photoLoadAlbums();
+        photoAppendRunLog([{ message:`Финиш: ${st.status} · ok ${st.ok} · err ${st.err}`, level:st.err?'warn':'ok' }]);
         photoStatus(st.status==='done'?'Описание готово':'Прогон остановлен', st.err?false:true);
+        photoJobId=null;
       }
     }catch(e){
       clearInterval(photoPoll); photoPoll=null;
@@ -8399,6 +8874,8 @@ document.addEventListener('click',e=>{
 
 initTheme();
 checkIconFont();
+
+
 </script>
 <script src="schema_constructor.js"></script>
 <script>

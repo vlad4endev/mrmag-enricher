@@ -9,7 +9,17 @@
 import { RateLimiter } from '../lib.js';
 import { getDump } from './dumps.js';
 
-const SYSTEM = `Ты — агент описания товарных фото для интернет-магазина бытовой техники и электроники (RU).
+export const PHOTO_PROMPT_PLACEHOLDERS = [
+  { key: '{{product_id}}', note: 'id товара, если привязан к фото' },
+  { key: '{{sku}}', note: 'артикул / sku' },
+  { key: '{{filename}}', note: 'имя файла изображения' },
+  { key: '{{category}}', note: 'id раздела дампа' },
+  { key: '{{dump_name}}', note: 'название товара из дампа' },
+  { key: '{{dump_annotation}}', note: 'annotation из дампа (без HTML)' },
+];
+
+export function defaultPhotoSystemPrompt() {
+  return `Ты — агент описания товарных фото для интернет-магазина бытовой техники и электроники (RU).
 По изображению верни ТОЛЬКО JSON-объект:
 {
   "caption": "короткая подпись 8–18 слов для ML/поиска",
@@ -26,6 +36,20 @@ const SYSTEM = `Ты — агент описания товарных фото �
   "warnings": ["если качество плохое / водяной знак / коллаж / не товар"]
 }
 Правила: только факты с фото; не выдумывай объём/мощность/габариты; язык русский; JSON без markdown.`;
+}
+
+/** Пустой или совпадающий со встроенным → встроенный шаблон. */
+export function resolvePhotoSystemPrompt(template, vars = {}) {
+  const raw = String(template || '').trim();
+  const base = raw || defaultPhotoSystemPrompt();
+  return base
+    .replaceAll('{{product_id}}', String(vars.product_id ?? ''))
+    .replaceAll('{{sku}}', String(vars.sku ?? ''))
+    .replaceAll('{{filename}}', String(vars.filename ?? ''))
+    .replaceAll('{{category}}', String(vars.category ?? ''))
+    .replaceAll('{{dump_name}}', String(vars.dump_name ?? ''))
+    .replaceAll('{{dump_annotation}}', String(vars.dump_annotation ?? ''));
+}
 
 function stripHtml(s) {
   return String(s || '')
@@ -141,6 +165,7 @@ export async function describePhoto(itemFile, opts = {}) {
     onNote = () => {},
     referer = 'https://mrmag.ru',
     title = 'Ogran Photos',
+    systemPrompt = '',
   } = opts;
 
   if (!model) throw Object.assign(new Error('Не передана модель'), { status: 400 });
@@ -149,6 +174,14 @@ export async function describePhoto(itemFile, opts = {}) {
   const rate = limiter || new RateLimiter(30);
   const dump = dumpContext(itemFile.item?.product_id, itemFile.item?.sku, category, root);
   const base64 = itemFile.buf.toString('base64');
+  const system = resolvePhotoSystemPrompt(systemPrompt, {
+    product_id: itemFile.item?.product_id || '',
+    sku: itemFile.item?.sku || '',
+    filename: itemFile.item?.filename || '',
+    category: category || '',
+    dump_name: dump?.name || '',
+    dump_annotation: dump?.annotation || '',
+  });
 
   await rate.wait(ms => onNote(`rate limit ${ms}ms`));
   onNote('запрос к vision-модели…');
@@ -159,7 +192,7 @@ export async function describePhoto(itemFile, opts = {}) {
     temperature: 0.2,
     response_format: { type: 'json_object' },
     messages: [
-      { role: 'system', content: SYSTEM },
+      { role: 'system', content: system },
       {
         role: 'user',
         content: buildUserParts({

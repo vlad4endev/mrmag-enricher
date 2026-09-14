@@ -563,6 +563,9 @@ function persistModel(model) {
   else delete out.system_prompts;
   const all = (prompts || []).find(p => p.scope === 'all');
   out.system_prompt = all ? all.template : '';
+  const photoTpl = String(model.photo_system_prompt || '').trim();
+  if (photoTpl) out.photo_system_prompt = photoTpl.slice(0, 80_000);
+  else delete out.photo_system_prompt;
   return out;
 }
 
@@ -579,6 +582,8 @@ function normalizeModel(raw = {}) {
     // Пустая строка — встроенный шаблон из lib.js. Иначе текст с {{плейсхолдерами}}.
     system_prompt: all ? all.template : legacy,
     system_prompts,
+    // Vision / раздел «Фото». Пусто — встроенный шаблон из photo_agent.js.
+    photo_system_prompt: String(raw.photo_system_prompt ?? '').slice(0, 80_000),
     max_retries: num(raw.max_retries, 2, { min: 1, max: 2 }),
     timeout_ms: num(raw.timeout_ms, 60_000, { min: 5000, max: 300_000 }),
     max_tokens: num(raw.max_tokens, 3200, { min: 256, max: 16_000 }),

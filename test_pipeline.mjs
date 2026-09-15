@@ -4573,6 +4573,7 @@ console.log('golden tests passed');
     findEnergyClassMismatches,
     findStrongGlueIssues,
     stripEnergyClassOpinions,
+    padStrongSpaces,
   } = await import('./pipeline/desc_annotation_align.js');
   const { renderAnnotation } = await import('./pipeline/generate.js');
   const { applyEnrichedSpecs } = await import('./pipeline/export.js');
@@ -4638,11 +4639,32 @@ console.log('golden tests passed');
   );
   assert.match(comp9560, /Модель оснащена одним компрессором/i, comp9560);
   assert.ok(!/^Одним компрессором/i.test(comp9560.split(/\.\s+/)[1] || ''), comp9560);
+  assert.ok(!/(?:Модель\s+оснащена\.\s*){2,}/i.test(comp9560), comp9560);
+  let comp9560Twice = comp9560;
+  comp9560Twice = repairAssemblyPunctuation(comp9560Twice);
+  assert.equal(comp9560Twice, comp9560, 'compressor bridge must be idempotent');
 
   const comp11494 = repairAssemblyPunctuation(
     'Холодильник подходит для семьи из нескольких человек двумя компрессорами и хладагентом R600a.',
   );
   assert.match(comp11494, /Модель оснащена двумя компрессорами/i, comp11494);
+  assert.ok(!/(?:Модель\s+оснащена\.\s*){2,}/i.test(comp11494), comp11494);
+
+  const defrost8738 = repairAssemblyPunctuation(
+    'камера оснащена капельной системой размораживания морозильная камера требует ручного размораживания.',
+  );
+  assert.match(defrost8738, /размораживания\.\s+Морозильная камера/i, defrost8738);
+
+  const grammar8738 = repairAssemblyPunctuation(
+    'Перед покупкой стоит учесть, поэтому морозильную камеру необходимо периодически размораживать вручную.',
+  );
+  assert.match(grammar8738, /учесть,\s+что\s+морозильную/i, grammar8738);
+  assert.ok(!/учесть,\s+поэтому/i.test(grammar8738), grammar8738);
+
+  const strong805 = repairAssemblyPunctuation(padStrongSpaces(
+    'Холодильная камера оснащена <strong>капельной системой размораживания</strong>морозильное требует ручного размораживания.',
+  ));
+  assert.match(strong805, /размораживания<\/strong>\.\s+Морозильное/i, strong805);
 
   const rec8738 = normalizeProduct(p523[8738], d523, config);
   rec8738.attrs.defrost_freezer = 'Ручное';

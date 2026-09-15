@@ -734,8 +734,39 @@ const FEATURE_ITEM_SRC = String.raw`защита от детей|контрол�
 
 const FINITE_VERB_IN_PHRASE = /(?:оснащен|оснащён|оснащена|оснащено|имеет|работает|снабж|предусмотрен|оборудован|использует|позволяет|охлажда|отлича|предназнач|рассчитан|комплекту|обеспеч|сохран|поддерж|управля|замораж|явля|выполнен|снабжен|снабжена|снабжено)[а-яё]*/i;
 
+function isNestedCompressorBridge(str, offset, lead) {
+  if (!/оснащен/i.test(String(lead || ''))) return false;
+  const prefix = String(str || '').slice(Math.max(0, offset - 10), offset);
+  return /модель\s+$/i.test(prefix);
+}
+
+function dedupeModelEquippedBridge(s) {
+  return String(s || '').replace(
+    /(?:Модель\s+оснащена\.\s*)+(?=Модель\s+оснащена\s+(?:одним|двумя|тремя)\s+компрессор)/gi,
+    '',
+  );
+}
+
+/** «учесть, поэтому …» — бессмысленная связка в шаблонах описаний. */
+function repairIllformedConjunctions(s) {
+  return String(s || '').replace(
+    /(учесть|учитывать|помнить|знать)\s*,\s*поэтому\s+/gi,
+    '$1, что ',
+  );
+}
+
+/** Капельная + ручная морозилка: «…размораживания морозильная камера…». */
+function repairDefrostSentenceBreaks(s) {
+  let out = String(s || '');
+  out = out.replace(
+    /(размораживани[яе])(<\/strong>)?\s+(морозил[а-яё]+)/gi,
+    (_, lead, close, tail) => `${lead}${close || ''}. ${tail.charAt(0).toUpperCase()}${tail.slice(1)}`,
+  );
+  return out;
+}
+
 function repairCompressorSplit(full, lead, rest) {
-  if (/(?:компрессор|работа|оснащен|оснащён|имеет|снабж|установлен|с)$/i.test(lead)) return full;
+  if (/(?:компрессор|работа|оснащен|оснащён|оснащена|оснащено|имеет|снабж|установлен|с)$/i.test(lead)) return full;
   const tail = String(rest || '').trim();
   if (!tail) return full;
   if (FINITE_VERB_IN_PHRASE.test(lead) && FINITE_VERB_IN_PHRASE.test(tail)) {
@@ -795,8 +826,14 @@ function repairAssemblyPunctPlain(text, { sentences = true } = {}) {
   // «на морозильное одним компрессором» / «человек двумя компрессорами».
   out = out.replace(
     /([а-яё]{5,})\s+((?:одним|двумя|тремя)\s+компрессор(?:ом|ами)[^.!?]{0,120})/gi,
-    (full, lead, rest) => repairCompressorSplit(full, lead, rest),
+    (full, lead, rest, offset, str) => {
+      if (isNestedCompressorBridge(str, offset, lead)) return full;
+      return repairCompressorSplit(full, lead, rest);
+    },
   );
+  out = repairDefrostSentenceBreaks(out);
+  out = repairIllformedConjunctions(out);
+  out = dedupeModelEquippedBridge(out);
   out = commaSeparateFeatureItems(out);
   return tidyPunct(out);
 }
@@ -851,7 +888,8 @@ export function findAssemblyPunctIssues(text) {
   while ((m = ecFactRe.exec(s))) hits.push({ kind: 'missing_period', match: m[0] });
   const compRe = /([а-яё]{5,})\s+((?:одним|двумя|тремя)\s+компрессор(?:ом|ами)[^.!?]{0,120})/gi;
   while ((m = compRe.exec(s))) {
-    if (/(?:компрессор|работа|оснащен|оснащён|имеет|снабж|установлен|с)$/i.test(m[1])) continue;
+    if (isNestedCompressorBridge(s, m.index, m[1])) continue;
+    if (/(?:компрессор|работа|оснащен|оснащён|оснащена|оснащено|имеет|снабж|установлен|с)$/i.test(m[1])) continue;
     if (FINITE_VERB_IN_PHRASE.test(m[1]) && FINITE_VERB_IN_PHRASE.test(m[2])) {
       hits.push({ kind: 'missing_period', match: m[0] });
       continue;
@@ -871,12 +909,15 @@ export function findAssemblyPunctIssues(text) {
 export function repairAssemblyPunctuation(text, opts = {}) {
   const raw = String(text || '');
   if (!raw.trim()) return raw;
-  if (/<[a-z][\s\S]*>/i.test(raw)) {
+  if (/<(p|li|h[1-6]|td|th|div)\b/i.test(raw)) {
     return raw.replace(/<(p|li|h[1-6]|td|th|div)\b([^>]*)>([\s\S]*?)<\/\1>/gi, (full, tag, attrs, inner) => {
       const next = repairAssemblyPunctPlain(inner, opts);
       if (!String(next).trim()) return '';
       return `<${tag}${attrs}>${next}</${tag}>`;
     });
+  }
+  if (/<[a-z][\s\S]*>/i.test(raw)) {
+    return repairAssemblyPunctPlain(raw, opts);
   }
   return repairAssemblyPunctPlain(raw, opts);
 }

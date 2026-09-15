@@ -104,6 +104,7 @@ import { buildV2 } from './export_v2.js';
 import {
   buildCustomerExport, buildGoldShapeExport, buildFiltersOnly, fillCardFiltersAfterEnrich,
 } from './pipeline/export.js';
+import { formatCleanlinessError } from './pipeline/validate.js';
 import { cardFilterCoverage } from './pipeline/filter_report.js';
 import { categoryMismatchOf } from './pipeline/category_mismatch.js';
 import { dictForProducts, expectedDictCatId } from './pipeline/schema.js';
@@ -1277,7 +1278,7 @@ async function apiFilters(req, res) {
     });
     if (!out.validation?.ok) {
       return json(res, 422, {
-        error: 'filters не прошли проверку чистоты',
+        error: formatCleanlinessError(out.validation),
         ...out,
       });
     }
@@ -1530,7 +1531,7 @@ async function apiExportV2(req, res) {
     });
     if (!out.validation?.ok) {
       return json(res, 422, {
-        error: 'filters не прошли проверку чистоты',
+        error: formatCleanlinessError(out.validation),
         validation: out.validation,
         filters_agent: out.filters_agent,
         consistency_agent: out.consistency_agent,
@@ -1602,7 +1603,7 @@ async function apiExport(req, res) {
     });
     if (!out.validation?.ok) {
       return json(res, 422, {
-        error: 'filters не прошли проверку чистоты',
+        error: formatCleanlinessError(out.validation),
         validation: out.validation,
         filters_agent: out.filters_agent,
         consistency_agent: out.consistency_agent,
@@ -1674,7 +1675,7 @@ async function apiFiltersBuild(req, res) {
   });
   if (!out.validation?.ok) {
     return json(res, 422, {
-      error: 'filters не прошли проверку чистоты',
+      error: formatCleanlinessError(out.validation),
       ...out,
     });
   }

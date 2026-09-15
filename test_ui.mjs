@@ -2091,6 +2091,19 @@ await tAsync('свою ошибку сервера шлюзовое объясн
   catch (e) { assert.strictEqual(e.message, 'таймаут 60000ms'); }
   finally { globalThis.fetch = realFetch; }
 });
+await tAsync('422 чистоты фильтров показывает, какой фасет грязный', async () => {
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = () => reply({
+    error: 'filters не прошли проверку чистоты',
+    validation: { ok: false, errors: [{ kind: 'filter_bucketed_on_product', detail: 'Количество программ=10-15' }] },
+  }, false, 422);
+  try { await api.apiJson('/api/export'); assert.fail('ошибка должна была вылететь'); }
+  catch (e) {
+    assert.match(e.message, /проверку чистоты/);
+    assert.match(e.message, /Количество программ=10-15/);
+  }
+  finally { globalThis.fetch = realFetch; }
+});
 await tAsync('200 с пустым телом не выдаётся за успех', async () => {
   const realFetch = globalThis.fetch;
   globalThis.fetch = () => reply('');

@@ -3132,7 +3132,14 @@ async function apiJson(url,opts){
   if(!r.ok){
     // Свой сервер всегда отвечает JSON — если разобралось, причина уже в нём.
     const own=d?.error?.message||d?.error;
-    if(own) throw new Error(own);
+    if(own){
+      const bits=(Array.isArray(d?.validation?.errors)?d.validation.errors:[])
+        .slice(0,3)
+        .map(e=>e.detail||e.value||e.kind)
+        .filter(Boolean);
+      const extra=bits.filter(b=>!String(own).includes(String(b)));
+      throw new Error(extra.length?`${own}: ${extra.join('; ')}`:own);
+    }
     if(r.status===401) throw new Error('Требуется вход — откройте страницу заново и введите пароль');
     // Не-JSON на 502/504 отдаёт шлюз перед сервером, а не сервер. Обогащение
     // одного товара занимает до трёх минут, nginx по умолчанию ждёт минуту.

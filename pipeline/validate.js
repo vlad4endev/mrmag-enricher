@@ -62,6 +62,43 @@ export function isRangeBucketLabel(v) {
   return /^-?\d+(?:\.\d+)?(?:-\d+(?:\.\d+)?|\+)$/.test(s);
 }
 
+/**
+ * Карточка хранит точное число; бакеты и ключи вне schema — только filters_*.json.
+ * Снимаем их с товара, чтобы «чистота» не блокировала выгрузку при 100% покрытии.
+ */
+export function scrubProductFilterValues(row, dict) {
+  if (!row || !row.filters || typeof row.filters !== 'object' || Array.isArray(row.filters)) {
+    return row;
+  }
+  const byName = new Map(expectedFilters(dict).map(f => [f.name, f]));
+  const next = {};
+  for (const [name, val] of Object.entries(row.filters)) {
+    const spec = byName.get(name);
+    if (!spec) continue;
+    const list = (Array.isArray(val) ? val : [val]).filter(v => {
+      if (v == null || v === '') return false;
+      if (String(v) === '[object Object]') return false;
+      if (spec.kind === 'range' && isRangeBucketLabel(v)) return false;
+      return true;
+    });
+    if (list.length) next[name] = list;
+  }
+  row.filters = next;
+  return row;
+}
+
+/** Коротко, что именно грязное: общая фраза в tooltip ничего не объясняет. */
+export function formatCleanlinessError(validation) {
+  const bits = (validation?.errors || []).slice(0, 4).map(e => {
+    const label = e.name || e.kind || 'фильтр';
+    const val = e.value || e.detail;
+    return val ? `${label} — ${val}` : String(label);
+  }).filter(Boolean);
+  return bits.length
+    ? `filters не прошли проверку чистоты: ${bits.join('; ')}`
+    : 'filters не прошли проверку чистоты';
+}
+
 const textLen = html => String(html || '').replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim().length;
 const countTag = (html, tag) => (String(html || '').match(new RegExp(`<${tag}\\b`, 'gi')) || []).length;
 

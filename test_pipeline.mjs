@@ -6,7 +6,7 @@ import { normalizeProduct, formatCounts, deriveDimsFromAxes } from './pipeline/n
 import { bucketLabel, buildFilters, facetKind } from './pipeline/facets.js';
 import { renderCard, annotationRows, MIN_ANNOTATION_ROWS, verifyDescription } from './pipeline/generate.js';
 import { compactAnnotation, compactHtml, serializeProduct, metaKeywords, buildCustomerExport, buildGoldShapeExport, fillCardFiltersAfterEnrich } from './pipeline/export.js';
-import { validateProducts, validateDescription, expectedFilters, PRODUCT_FIELDS, isRangeBucketLabel } from './pipeline/validate.js';
+import { validateProducts, validateDescription, expectedFilters, PRODUCT_FIELDS, isRangeBucketLabel, scrubProductFilterValues, formatCleanlinessError } from './pipeline/validate.js';
 import { webInfoFrom, cleanReviewText, isReview } from './pipeline/reviews.js';
 import { dictForProducts } from './pipeline/schema.js';
 import { buildV2 } from './export_v2.js';
@@ -1969,6 +1969,35 @@ console.log('golden tests passed');
   assert.deepEqual(card['Габариты (ШхГхВ)'], ['59.6×55×84.6']);
   assert.ok(card['Высота, см']?.length && card['Ширина, см']?.length && card['Глубина, см']?.length);
   console.log('ok 467 Габариты (ШхГхВ) из осей');
+}
+
+{
+  const row = {
+    id: 1,
+    filters: {
+      'Количество программ': ['10-15'],
+      'Лишний фасет': ['да'],
+      'Цвет корпуса': ['Белый'],
+    },
+  };
+  scrubProductFilterValues(row, d467);
+  assert.ok(!('Количество программ' in row.filters), 'бакет range не оставляем на карточке');
+  assert.ok(!('Лишний фасет' in row.filters), 'ключ вне schema не в products');
+  assert.deepEqual(row.filters['Цвет корпуса'], ['Белый']);
+  const dirty = validateProducts([{
+    id: 1,
+    meta_keywords: 'а, б, в, г, д, е, ж',
+    description_html: '<p>a</p><p>b</p><p>c</p><p>d</p><ul><li>1</li><li>2</li><li>3</li></ul>',
+    annotation_html: '<ul><li>Тип: Автоматическая</li><li>Загрузка: 7 кг</li><li>Отжим: 1000</li><li>Класс: A</li><li>Шум: 58</li><li>Ширина: 60</li><li>Высота: 85</li><li>Глубина: 45</li></ul>',
+    filters: { 'Количество программ': ['10-15'], 'Цвет корпуса': ['Белый'] },
+    web_info: '',
+  }], d467).errors.filter(e => e.kind === 'filter_bucketed_on_product');
+  assert.ok(dirty.length, 'бакет на карточке ловит validateProducts');
+  assert.match(
+    formatCleanlinessError({ errors: dirty }),
+    /Количество программ/,
+  );
+  console.log('ok scrub снимает бакет и чужой ключ до выгрузки');
 }
 
 {

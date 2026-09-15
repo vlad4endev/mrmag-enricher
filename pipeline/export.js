@@ -13,7 +13,7 @@ import { finalizeRecord, checkFilterConsistency, stripHallucinationClaims, check
 import { alignEnumSurfaces } from './enum_align.js';
 import { runFiltersAgent, assertFiltersClean } from './filters_agent.js';
 import { runConsistencyAgent } from './consistency_agent.js';
-import { validateProducts } from './validate.js';
+import { scrubProductFilterValues, validateProducts } from './validate.js';
 import { markCategoryMismatch } from './category_mismatch.js';
 import { buildFilterCoverageReport } from './filter_report.js';
 import { completeStorefrontRecs } from './storefront_fill.js';
@@ -535,6 +535,7 @@ export async function buildCustomerExport(products, {
   }
 
   const productsOut = serializeProducts(exported, dict, built.debug, { root, skipFinalize: true, config });
+  for (const row of productsOut) scrubProductFilterValues(row, dict);
   const coverage = buildFilterCoverageReport({
     catId: dict.catId,
     products: productsOut,
@@ -545,15 +546,13 @@ export async function buildCustomerExport(products, {
   });
   const clean = assertFiltersClean(built.filters, dict);
   const verdict = validateProducts(productsOut, dict, new Map(exported.map(r => [r.id, r])));
-  // Gate только на грязь в значениях фасетов. filter_missing (фасет из schema
-  // ни у кого не заполнен) — норма для частичной выгрузки / одного SKU.
+  // Gate — грязь в каталоге filters_*.json. Бакет/чужой ключ на карточке
+  // уже сняты scrub: иначе 20/20 на экране и 422 на JSON v2.
+  // filter_missing — норма для частичной выгрузки / одного SKU.
   const dirtyKinds = new Set([
     'dirty_filter_value',
     'filter_not_in_aliases',
     'filter_object_stringified',
-    'filter_unknown',
-    'filter_bucketed_on_product',
-    'filter_unit_mismatch',
   ]);
   const dirtyVerdict = verdict.errors.filter(e => dirtyKinds.has(e.kind));
   const validation = {

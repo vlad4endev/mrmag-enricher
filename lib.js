@@ -1929,6 +1929,56 @@ export function stripUnsupportedFilterSpecs(specs, facts, bounds = {}, schema = 
   return stripped;
 }
 
+/**
+ * Sheet-only поля (facet.enabled === false: материал бака/барабана, защита от детей)
+ * без подтверждения в facts → null. Иначе модель копирует бак → барабан.
+ * Если материал_барабана == материал_бака и facts барабана нет — обнуляем барабан.
+ */
+export function stripUnsupportedSheetSpecs(specs, facts, schema = null) {
+  if (!specs || typeof specs !== 'object') return [];
+  const stripped = [];
+  const sheetKeys = new Set([
+    'материал_бака',
+    'материал_барабана',
+    'защита_от_детей',
+  ]);
+  const fromCode = {
+    tank_material: 'материал_бака',
+    drum_material: 'материал_барабана',
+    child_lock: 'защита_от_детей',
+    water_use: 'расход_воды_л_цикл',
+    energy_year: 'энергопотребление_квтч_год',
+    country: 'страна_производства',
+    noise_spin: 'уровень_шума_отжима_дб',
+    shelf_material: 'материал_полок',
+  };
+  for (const a of schema?.dict?.attrs || []) {
+    if (a.tier === 'X' || a.facet?.enabled !== false) continue;
+    if (fromCode[a.code]) sheetKeys.add(fromCode[a.code]);
+  }
+  for (const k of sheetKeys) {
+    if (!(k in specs)) continue;
+    if (specs[k] == null || specs[k] === '') continue;
+    if (facts?.[k] != null && facts[k] !== '') continue;
+    specs[k] = null;
+    stripped.push(k);
+  }
+  // Барабан не наследует бак: одинаковые значения без факта барабана → null.
+  const drum = specs.материал_барабана;
+  const tank = specs.материал_бака;
+  if (
+    drum != null && drum !== ''
+    && tank != null && tank !== ''
+    && String(drum).toLowerCase().replace(/ё/g, 'е').trim()
+      === String(tank).toLowerCase().replace(/ё/g, 'е').trim()
+    && !(facts?.материал_барабана != null && facts.материал_барабана !== '')
+  ) {
+    specs.материал_барабана = null;
+    if (!stripped.includes('материал_барабана')) stripped.push('материал_барабана');
+  }
+  return stripped;
+}
+
 export function normalizeResponse(data, sourceText = '', schemaKey, attributes = [], policy = MISMATCH_POLICY, product = null) {
   if (!data || typeof data !== 'object' || Array.isArray(data)) {
     throw new Error('Ответ не объект');
@@ -2014,6 +2064,8 @@ export function normalizeResponse(data, sourceText = '', schemaKey, attributes =
 
   // Фильтры без подтверждения в attributes/annotation/description → null.
   const stripped_no_source = stripUnsupportedFilterSpecs(specs, facts, bounds, schema);
+  const stripped_sheet = stripUnsupportedSheetSpecs(specs, facts, schema);
+  stripped_no_source.push(...stripped_sheet);
 
   const arr = v => (Array.isArray(v) ? v.map(x => String(x).trim()).filter(Boolean) : []);
   const str = v => {

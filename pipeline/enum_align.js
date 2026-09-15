@@ -27,6 +27,16 @@ export const PRIORITY_ENUM_CODES = new Set([
   'compressor_type',
 ]);
 
+/**
+ * Материал бака/барабана: общие алиасы («нержавеющая сталь») в description
+ * без подписи путают поля. Истина — attrs/annotation; unlabeled desc игнорируем.
+ */
+export const MATERIAL_CONTEXT_CODES = new Set(['tank_material', 'drum_material']);
+
+const MATERIAL_CONTEXT_WORD = {
+  tank_material: /бак/i,
+  drum_material: /барабан/i,
+};
 /** Уровни provenance, которым не доверяем против явного claim в описании. */
 const WEAK_LEVELS = new Set(['model', 'review', 'other', 'distributor', 'retailer', 'S3']);
 
@@ -204,9 +214,31 @@ function pickFromHits(hits) {
  * @returns {{ truth: string|null, ambiguous: boolean, sources: object, action: string }}
  */
 export function resolveEnumTruth(attr, surfaces, current, prov = null) {
-  const descHits = findEnumClaimsInText(surfaces.description || '', attr);
-  const annHits = findEnumClaimsInText(surfaces.annotation || '', attr);
+  let descHits = findEnumClaimsInText(surfaces.description || '', attr);
+  let annHits = findEnumClaimsInText(surfaces.annotation || '', attr);
   const metaHits = findEnumClaimsInText(surfaces.meta || '', attr);
+
+  // Бак/барабан: unlabeled «нержавеющая сталь»/«пластик» без слова бак|барабан
+  // не трогает attrs (общий алиас путает поля).
+  if (MATERIAL_CONTEXT_CODES.has(attr.code)) {
+    const ctx = MATERIAL_CONTEXT_WORD[attr.code];
+    const other = attr.code === 'tank_material' ? /барабан/i : /бак[аеу]/i;
+    const filterHits = (hits, text) => {
+      const plain = String(text || '').replace(/<[^>]+>/g, ' ');
+      return hits.filter((h) => {
+        if (h.labeled) return true;
+        if (!ctx) return false;
+        const start = Math.max(0, (h.index || 0) - 40);
+        const end = Math.min(plain.length, (h.index || 0) + String(h.match || '').length + 40);
+        const window = plain.slice(start, end);
+        if (other.test(window) && !ctx.test(window)) return false;
+        return ctx.test(window);
+      });
+    };
+    descHits = filterHits(descHits, surfaces.description);
+    annHits = filterHits(annHits, surfaces.annotation);
+  }
+
   const filterRaw = surfaces.filter;
   const filterCanon = filterRaw != null
     ? aliasValue(attr, Array.isArray(filterRaw) ? filterRaw[0] : filterRaw)
@@ -239,6 +271,30 @@ export function resolveEnumTruth(attr, surfaces, current, prov = null) {
 
   const labeledAnn = pickFromHits(annHits.filter(h => h.labeled));
   const labeledDesc = pickFromHits(descHits.filter(h => h.labeled));
+
+  // Материал бака/барабана: annotation/attrs важнее свободного description.
+  // meta_keywords («пластик») — не источник материала бака/барабана.
+  if (MATERIAL_CONTEXT_CODES.has(attr.code)) {
+    if (labeledAnn) {
+      return { truth: labeledAnn, ambiguous: false, sources, action: 'from_annotation_label' };
+    }
+    if (fromAnn) {
+      return { truth: fromAnn, ambiguous: false, sources, action: 'from_annotation' };
+    }
+    if (attrCanon) {
+      return { truth: attrCanon, ambiguous: false, sources, action: 'keep_attr' };
+    }
+    if (labeledDesc) {
+      return { truth: labeledDesc, ambiguous: false, sources, action: 'from_description_label' };
+    }
+    if (fromDesc) {
+      return { truth: fromDesc, ambiguous: false, sources, action: 'from_description' };
+    }
+    if (filterCanon) {
+      return { truth: filterCanon, ambiguous: false, sources, action: 'from_filter' };
+    }
+    return { truth: null, ambiguous: false, sources, action: 'empty' };
+  }
 
   // 1) Размеченное описание («Установка: отдельностоящая»).
   if (labeledDesc) {

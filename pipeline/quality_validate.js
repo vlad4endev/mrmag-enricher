@@ -153,6 +153,40 @@ export function stripUnconfirmedNegatives(rec, dict) {
   return removed;
 }
 
+/**
+ * «Материал барабана» не должен копировать «Материал бака».
+ * Если значения совпадают, а в исходной аннотации/парах нет явной строки
+ * про барабан — обнуляем (типичный артефакт LLM / S3).
+ */
+export function stripCopiedDrumMaterial(rec) {
+  const removed = [];
+  const drum = rec?.attrs?.drum_material;
+  const tank = rec?.attrs?.tank_material;
+  if (drum == null || tank == null) return removed;
+  if (valueFold(drum) !== valueFold(tank)) return removed;
+
+  const blob = [
+    rec.annotation,
+    ...(Array.isArray(rec.source_pairs)
+      ? rec.source_pairs.map(p => `${p.key}: ${p.value}`)
+      : []),
+  ].join('\n');
+  const hasDrumLine = /материал\s+барабан/i.test(blob)
+    || (Array.isArray(rec.source_pairs)
+      && rec.source_pairs.some(p => /барабан/i.test(String(p.key || ''))));
+
+  if (hasDrumLine) return removed;
+
+  const prov = rec.provenance?.drum_material;
+  const how = String(prov?.how || '');
+  if (/harvest_drum/.test(how)) return removed;
+
+  rec.attrs.drum_material = null;
+  if (rec.provenance) delete rec.provenance.drum_material;
+  removed.push({ code: 'drum_material', action: 'unknown', reason: 'copied_from_tank' });
+  return removed;
+}
+
 export function checkFilterConsistency(rec, dict, assigned) {
   const issues = [];
   if (!assigned || typeof assigned !== 'object') return issues;
@@ -429,6 +463,9 @@ export function finalizeRecord(rec, dict, { enriched = null, assigned = null } =
     autoFix: true,
   });
   for (const a of enumAligned.actions) actions.push(a);
+
+  // После enum_align: барабан, скопированный с бака без источника, снова срезаем.
+  for (const r of stripCopiedDrumMaterial(rec)) actions.push(r);
 
   const issues = [
     ...enumAligned.issues,

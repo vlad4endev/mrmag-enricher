@@ -9,7 +9,7 @@ import { webInfoFrom } from './reviews.js';
 import { normalizeProduct, ingestPairs, refreshDerivedFacets } from './normalize.js';
 import { specDest } from './schema.js';
 import { buildDescriptionHtml } from './model_validate.js';
-import { finalizeRecord, checkFilterConsistency, stripHallucinationClaims, checkDescriptionClaims } from './quality_validate.js';
+import { finalizeRecord, checkFilterConsistency, stripHallucinationClaims, checkDescriptionClaims, stripCopiedDrumMaterial } from './quality_validate.js';
 import { alignEnumSurfaces } from './enum_align.js';
 import { runFiltersAgent, assertFiltersClean } from './filters_agent.js';
 import { runConsistencyAgent } from './consistency_agent.js';
@@ -17,6 +17,7 @@ import { scrubProductFilterValues, validateProducts } from './validate.js';
 import { markCategoryMismatch } from './category_mismatch.js';
 import { buildFilterCoverageReport } from './filter_report.js';
 import { completeStorefrontRecs } from './storefront_fill.js';
+import { repairDescriptionHtml } from './desc_annotation_align.js';
 
 function esc(s) {
   return String(s)
@@ -249,6 +250,8 @@ export function serializeProduct(rec, dict, debugFacets, opts = {}) {
   if (!opts.skipFinalize) {
     finalizeRecord(rec, dict, { enriched: enr, assigned: null });
   }
+  // После consistency_agent / skipFinalize барабан мог снова скопироваться с бака.
+  stripCopiedDrumMaterial(rec);
   const assigned = opts.skipFinalize
     ? assignFilterValues(rec, dict, debugFacets, opts.config || {})
     : assignFiltersAligned(rec, dict, debugFacets, opts.config || {}, null, enr);
@@ -269,7 +272,7 @@ export function serializeProduct(rec, dict, debugFacets, opts = {}) {
   const descSrc = enr?.description != null
     ? stripHallucinationClaims(alignAssembledProse(enr.description, rec, dict))
     : null;
-  const descHtml = stripHallucinationClaims(descSrc
+  let descHtml = stripHallucinationClaims(descSrc
     ? compactHtml(buildDescriptionHtml({
       description: descSrc,
       bullets: Array.isArray(enr.bullets)
@@ -280,11 +283,14 @@ export function serializeProduct(rec, dict, debugFacets, opts = {}) {
       strong: enr.strong,
     }))
     : compactHtml(renderDescription(rec, dict, opts)));
+  const annotationHtml = renderAnnotation(rec, dict);
+  // annotation — источник истины: срезать фабрикацию и выровнять противоречия.
+  descHtml = repairDescriptionHtml(descHtml, annotationHtml).html;
   return {
     id: rec.id,
     meta_keywords: meta,
     description_html: descHtml,
-    annotation_html: renderAnnotation(rec, dict),
+    annotation_html: annotationHtml,
     filters: asFilterArrays(assigned, rec, dict),
     web_info: catalogWebInfo(enr, rec),
   };

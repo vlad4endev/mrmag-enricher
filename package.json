@@ -20,6 +20,7 @@
     "fix-filters": "node cli.mjs fix-filters",
     "test:api": "node test_api.mjs",
     "quality": "node quality.mjs",
+    "qa:desc": "node qa_desc_annotation.mjs",
     "sample": "node sample.mjs",
     "smoke": "node smoke.mjs"
   },

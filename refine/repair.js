@@ -18,6 +18,7 @@ import { validateProducts } from '../pipeline/validate.js';
 import { enrichMissing } from '../pipeline/external.js';
 import { resolveSearchSettings } from '../pipeline/search.js';
 import { auditPack } from './audit.js';
+import { repairDescriptionHtml } from '../pipeline/desc_annotation_align.js';
 
 function stripSpecDump(html) {
   const s = String(html || '');
@@ -30,8 +31,11 @@ function keepDescription(rec, dict) {
   html = stripSpecDump(html);
   html = stripHallucinationClaims(html);
   html = compactHtml(html);
-  if (html.replace(/<[^>]+>/g, '').trim().length >= 80) return html;
-  return compactHtml(renderDescription(rec, dict));
+  if (html.replace(/<[^>]+>/g, '').trim().length < 80) {
+    html = compactHtml(renderDescription(rec, dict));
+  }
+  const ann = rec._uploaded?.annotation_html || renderAnnotation(rec, dict);
+  return repairDescriptionHtml(html, ann).html;
 }
 
 function keepMeta(rec, dict) {

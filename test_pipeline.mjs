@@ -4220,3 +4220,142 @@ console.log('golden tests passed');
   console.log('ok enriched filters ⊆ filters.json, Тип, покрытие 100% по выводимым осям');
 }
 
+
+{
+  const {
+    parseAnnotationDict, findDescAnnotationIssues, repairDescriptionHtml, auditDescAnnotation,
+  } = await import('./pipeline/desc_annotation_align.js');
+  const { stripUnsupportedSheetSpecs } = await import('./lib.js');
+  const { resolveEnumTruth } = await import('./pipeline/enum_align.js');
+  const { stripCopiedDrumMaterial, finalizeRecord } = await import('./pipeline/quality_validate.js');
+
+  const annNoLeak = '<ul><li>Тип загрузки: фронтальная</li><li>Сушка: нет</li><li>Материал бака: пластик</li></ul>';
+  const descLeak = '<p>Машина не имеет защиты от протечек воды и частичной защиты корпуса.</p>';
+  const leakIssues = findDescAnnotationIssues(descLeak, annNoLeak, { id: 1 });
+  assert.ok(leakIssues.some(i => i.kind === 'fabrication' && /протеч/i.test(i.topic)),
+    'защита от протечек без поля = фабрикация');
+
+  const descSteamWifi = '<p>Модель не оснащена функцией пара и беспроводным подключением.</p>';
+  const steamIssues = findDescAnnotationIssues(descSteamWifi, annNoLeak, { id: 2 });
+  assert.ok(steamIssues.some(i => i.kind === 'fabrication' && /пара/i.test(i.topic)));
+  assert.ok(steamIssues.some(i => i.kind === 'fabrication' && /беспроводн/i.test(i.topic)));
+
+  const annNoChild = '<ul><li>Тип загрузки: фронтальная</li><li>Сушка: нет</li></ul>';
+  const descChild = '<p>Стиральная машина не имеет защиты от детей.</p>';
+  assert.ok(findDescAnnotationIssues(descChild, annNoChild, { id: 3 })
+    .some(i => i.kind === 'fabrication' && /детей/i.test(i.topic)));
+
+  const annChild = '<ul><li>Защита от детей: есть</li></ul>';
+  assert.ok(!findDescAnnotationIssues('<p>Имеет защиту от детей.</p>', annChild)
+    .some(i => i.topic_id === 'child_lock'));
+
+  const annDrum = '<ul><li>Материал барабана: пластик</li><li>Материал бака: пластик</li></ul>';
+  const descDrum = '<p>Барабан — из нержавеющей стали, бак из пластика.</p>';
+  const drumIssues = findDescAnnotationIssues(descDrum, annDrum, { id: 4 });
+  assert.ok(drumIssues.some(i => i.kind === 'contradiction' && /барабан/i.test(i.topic)),
+    JSON.stringify(drumIssues));
+
+  const repaired = repairDescriptionHtml(
+    '<p>Машина не имеет защиты от протечек воды. Барабан — из нержавеющей стали.</p><p>Удобная загрузка.</p>',
+    '<ul><li>Материал барабана: пластик</li><li>Сушка: нет</li></ul>',
+  );
+  assert.ok(!/протеч/i.test(repaired.html), repaired.html);
+  assert.ok(/пластик/i.test(repaired.html) || !/нержавеющ/i.test(repaired.html), repaired.html);
+  assert.ok(repaired.fixes.some(f => f.kind === 'fabrication'));
+  assert.ok(repaired.fixes.some(f => f.kind === 'contradiction'));
+
+  const dict = parseAnnotationDict(annDrum);
+  assert.equal(dict['Материал барабана'], 'пластик');
+  assert.equal(dict['Материал бака'], 'пластик');
+
+  const audit = auditDescAnnotation([{
+    id: 99,
+    description_html: descLeak,
+    annotation_html: annNoLeak,
+  }]);
+  assert.ok(audit.issues.length >= 1);
+  assert.ok(audit.topics.some(t => t.topic.includes('протеч') && t.problem >= 1));
+
+  // Sheet-only specs без facts → null; барабан не копирует бак.
+  const specs = {
+    материал_бака: 'Пластик',
+    материал_барабана: 'Пластик',
+    защита_от_детей: 'нет',
+  };
+  const stripped = stripUnsupportedSheetSpecs(specs, { материал_бака: 'Пластик' }, { dict: d467 });
+  assert.equal(specs.материал_бака, 'Пластик');
+  assert.equal(specs.материал_барабана, null, 'барабан без facts обнулён');
+  assert.equal(specs.защита_от_детей, null);
+  assert.ok(stripped.includes('материал_барабана'));
+
+  // enum_align: unlabeled «нержавеющая сталь» в description не бьёт бак.
+  const tankAttr = d467.byCode.get('tank_material');
+  const resolved = resolveEnumTruth(
+    tankAttr,
+    {
+      description: 'Барабан из нержавеющей стали, удобная модель.',
+      annotation: 'Материал бака: пластик',
+      meta: '',
+      filter: null,
+    },
+    'Пластик',
+    { level: 'S1', raw: 'Материал бака = пластик' },
+  );
+  assert.equal(valueFold(resolved.truth), valueFold('Пластик'),
+    `tank truth=${resolved.truth} action=${resolved.action}`);
+
+  // stripCopiedDrumMaterial: одинаковые значения без строки барабана в источнике.
+  const rec = {
+    annotation: 'Материал бака: пластик. Сушка: нет.',
+    source_pairs: [{ key: 'Материал бака', value: 'пластик' }],
+    attrs: { tank_material: 'Пластик', drum_material: 'Пластик' },
+    provenance: {
+      tank_material: { level: 'S1', raw: 'Материал бака = пластик' },
+      drum_material: { level: 'S3', raw: 'Материал барабана = пластик' },
+    },
+  };
+  const gone = stripCopiedDrumMaterial(rec);
+  assert.equal(rec.attrs.drum_material, null);
+  assert.ok(gone.some(g => g.reason === 'copied_from_tank'));
+
+  // Экспорт: Материал бака в annotation_html, не в filters; барабан пуст без источника.
+  const src = {
+    id: 900001,
+    name: 'Стиральная машина QA Tank',
+    annotation: '<ul><li>Тип загрузки - фронтальная</li><li>Максимальная загрузка белья - 6 кг</li>'
+      + '<li>Сушка - нет</li><li>Установка - отдельно стоящая</li><li>Тип управления - электронное</li>'
+      + '<li>Высота - 85 см</li><li>Ширина - 60 см</li><li>Глубина - 45 см</li>'
+      + '<li>Материал бака - пластик</li><li>Класс энергопотребления - A</li></ul>',
+    description: '<p>Надёжная стиральная машина с баком из пластика.</p>',
+    enriched: {
+      description: 'Стиральная машина с удобной загрузкой. Барабан — из нержавеющей стали.',
+      bullets: ['Не имеет защиты от протечек воды'],
+      specs: {
+        материал_бака: 'Пластик',
+        материал_барабана: 'Пластик',
+        тип_загрузки: 'Фронтальная',
+        сушка: 'нет',
+      },
+      meta_keywords: 'стиральная машина, пластик',
+      web_info: null,
+    },
+  };
+  const out = await buildCustomerExport([src], {
+    dict: d467,
+    config,
+    filtersAgent: { mode: 'heuristic' },
+    consistencyAgent: { mode: 'heuristic' },
+  });
+  assert.ok(out.products.length >= 1, JSON.stringify(out.validation));
+  const row = out.products[0];
+  assert.match(row.annotation_html, /Материал бака:\s*пластик/i);
+  assert.ok(!/Материал барабана/i.test(row.annotation_html),
+    'барабан без источника не должен появиться: ' + row.annotation_html);
+  assert.ok(!Object.keys(row.filters || {}).some(k => /материал\s+бак/i.test(k)),
+    'Материал бака не должен быть в filters');
+  assert.ok(!/протеч/i.test(row.description_html), row.description_html);
+  assert.ok(!/нержавеющ/i.test(row.description_html) || /пластик/i.test(row.description_html),
+    row.description_html);
+
+  console.log('ok desc↔annotation QA: фабрикация, противоречие, бак/барабан, экспорт');
+}

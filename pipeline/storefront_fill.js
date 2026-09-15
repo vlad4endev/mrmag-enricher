@@ -5,7 +5,7 @@
 
 import { expectedCategoryKind, inferProductKind } from './category_mismatch.js';
 import { storefrontFilterAttrs } from './required_filters.js';
-import { parseTriple } from './dimensions.js';
+import { parseTriple, isCompleteDims } from './dimensions.js';
 import { aliasValue, defrostCanonFromCooling, hasStrictEnum, normalizeValue, unifyEnumValues } from './types.js';
 
 const COLOR_WORD = [
@@ -351,6 +351,41 @@ export function harvestStorefrontFacts(rec, dict, product) {
   harvestSheetOnlyFacts(rec, dict, t, put);
 }
 
+function fridgeCompressorLabel(rec, product) {
+  const blob = [
+    product?.name,
+    rec.name,
+    rec.annotation,
+    rec.description,
+    product?.annotation,
+    product?.description,
+  ].filter(Boolean).join(' ');
+  if (/линейн|linear/i.test(blob)) return 'Линейный';
+  if (/инвертор|inverter/i.test(blob)) return 'Инверторный';
+  return 'Стандартный';
+}
+
+/**
+ * Тип компрессора — обязательная строка листа 523. Не ждём facet.enabled:
+ * на томе ось может быть старой, без канона «Стандартный».
+ */
+function ensureFridgeCompressor(rec, dict, product) {
+  const attr = dict?.byCode?.get?.('compressor_type');
+  if (!attr) return;
+  if (!storefrontVacant(rec, attr)) return;
+  const raw = fridgeCompressorLabel(rec, product);
+  if (applyDerived(rec, dict, 'compressor_type', raw, 'storefront_default', 'S0', { overwrite: true })) return;
+  rec.attrs.compressor_type = raw;
+  rec.provenance = rec.provenance || {};
+  rec.provenance.compressor_type = {
+    level: 'S0',
+    raw,
+    model: null,
+    prompt: null,
+    how: 'storefront_default',
+  };
+}
+
 /**
  * Закрывает пустые и неканонические витринные оси типичным значением категории.
  */
@@ -358,7 +393,9 @@ export function fillStorefrontDefaults(rec, dict, product) {
   const kind = inferProductKind(product?.name || rec.name);
   const expected = expectedCategoryKind(dict.catId);
   if (expected && kind !== expected && kind !== 'other') return;
-  const table = dict.byCode.has('load_max') ? WASHER_DEFAULTS : FRIDGE_DEFAULTS;
+  const table = dict.byCode.has('compressor_type')
+    ? FRIDGE_DEFAULTS
+    : (dict.byCode.has('load_max') ? WASHER_DEFAULTS : FRIDGE_DEFAULTS);
   if (kind === 'dryer') {
     applyDerived(rec, dict, 'drying', 'Есть', 'storefront_default');
     applyDerived(rec, dict, 'load_type', 'Фронтальная', 'storefront_default');
@@ -373,13 +410,10 @@ export function fillStorefrontDefaults(rec, dict, product) {
     if (attr.code === 'motor_type' && /инвертор/i.test(String(product?.name || rec.name || ''))) {
       raw = 'Инверторный';
     }
-    if (attr.code === 'compressor_type') {
-      const blob = String(product?.name || rec.name || '');
-      if (/линейн|linear/i.test(blob)) raw = 'Линейный';
-      else if (/инвертор|inverter/i.test(blob)) raw = 'Инверторный';
-    }
+    if (attr.code === 'compressor_type') raw = fridgeCompressorLabel(rec, product);
     applyDerived(rec, dict, attr.code, String(raw), 'storefront_default', 'S0', { overwrite: true });
   }
+  ensureFridgeCompressor(rec, dict, product);
   const cool = rec.attrs.cooling;
   if (cool != null) {
     const fridge = defrostCanonFromCooling(cool, 'fridge');
@@ -391,7 +425,7 @@ export function fillStorefrontDefaults(rec, dict, product) {
 }
 
 function composeDimsFromAxes(rec, dict) {
-  if (!dict.byCode.has('dims') || rec.attrs.dims != null) return;
+  if (!dict.byCode.has('dims') || isCompleteDims(rec.attrs.dims)) return;
   const width = rec.attrs.width;
   const height = rec.attrs.height;
   const depth = rec.attrs.depth;

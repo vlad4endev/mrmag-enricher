@@ -185,11 +185,11 @@ export function validateProducts(rows, dict, sourceById = new Map()) {
       prev = pos;
 
       if (Array.isArray(val) && val.length > 1) multiValueSeen++;
-      // Числовой фильтр обязан быть бакетирован: точное значение живёт в аннотации.
+      // Карточка хранит точное число; бакеты («10-15», «90+») — только filters_*.json.
       if (spec.kind === 'range') {
         for (const v of (Array.isArray(val) ? val : [val])) {
-          if (!isRangeBucketLabel(v)) {
-            add(r.id, 'filter_not_bucketed', `${name}=${v}`);
+          if (isRangeBucketLabel(v)) {
+            add(r.id, 'filter_bucketed_on_product', `${name}=${v}`);
           }
         }
       }

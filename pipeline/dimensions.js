@@ -119,3 +119,24 @@ export function reconcileDimensions(separate, compound) {
   }
   return { dims: out, flag: null };
 }
+
+/** Три числа на месте — можно клеить «Ш×Г×В». Неполный объект габаритов = дыра. */
+export function isCompleteDims(v) {
+  return Boolean(
+    v && typeof v === 'object' && !Array.isArray(v)
+    && typeof v.width === 'number'
+    && typeof v.height === 'number'
+    && typeof v.depth === 'number',
+  );
+}
+
+export function dimsFromAxes(rec) {
+  if (isCompleteDims(rec?.attrs?.dims)) return rec.attrs.dims;
+  const width = rec?.attrs?.width;
+  const height = rec?.attrs?.height;
+  const depth = rec?.attrs?.depth;
+  if (typeof width === 'number' && typeof height === 'number' && typeof depth === 'number') {
+    return { width, height, depth };
+  }
+  return null;
+}

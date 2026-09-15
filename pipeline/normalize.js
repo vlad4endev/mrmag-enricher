@@ -3,7 +3,7 @@
 import { parseProductFields } from './parse.js';
 import { matchKey } from './match.js';
 import { normalizeValue, countUnitsInValues, defrostCanonFromCooling } from './types.js';
-import { parseDimensions, reconcileDimensions } from './dimensions.js';
+import { parseDimensions, reconcileDimensions, isCompleteDims } from './dimensions.js';
 import { parseIdentity } from './identity.js';
 import { isPackingKey, normKey } from './text.js';
 import { inferProductKind } from './category_mismatch.js';
@@ -457,7 +457,9 @@ export function setDerived(rec, dict, code, rawLabel, how, level) {
  * но есть все три оси, склеиваем тот же объект, что пишет аннотация.
  */
 export function deriveDimsFromAxes(rec, dict) {
-  if (!dict?.byCode?.has('dims') || rec.attrs?.dims != null) return false;
+  if (!dict?.byCode?.has('dims')) return false;
+  if (!isCompleteDims(rec.attrs?.dims)) rec.attrs.dims = null;
+  if (rec.attrs?.dims != null) return false;
   const attr = dict.byCode.get('dims');
   if (attr.tier === 'X') return false;
   const width = rec.attrs.width;

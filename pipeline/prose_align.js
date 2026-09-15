@@ -11,6 +11,8 @@
  */
 
 import { formatDimensions, formatAttrValue } from './types.js';
+import { dimsFromAxes } from './dimensions.js';
+import { approvedFilters, sheetToFilterKey } from './approved_filters.js';
 
 /** @typedef {{ key: string, label: string, re: RegExp }} ProseClaim */
 
@@ -375,20 +377,36 @@ export function catalogFilterKeys(assigned, rec, dict) {
       delete out[attr.name];
     }
   }
-  const dims = dict?.byCode?.get?.('dims');
-  const dimsName = dims ? (dims.facet?.label || dims.name) : null;
-  if (dims?.facet?.enabled && dims.facet.status !== 'not_a_filter' && rec?.attrs?.dims && dimsName && !out[dimsName]) {
-    const lab = formatAttrValue(dims, rec.attrs.dims, { withUnit: false });
-    if (lab) out[dimsName] = [lab];
+  const sheetDims = (approvedFilters(dict?.catId) || []).find(n => /габарит/i.test(n));
+  if (sheetDims) {
+    const dimsName = sheetToFilterKey(sheetDims, dict.catId);
+    if (dimsName && !out[dimsName]?.length) {
+      const obj = dimsFromAxes(rec);
+      const dimsAttr = dict?.byCode?.get?.('dims');
+      const lab = obj
+        ? ((dimsAttr ? formatAttrValue(dimsAttr, obj, { withUnit: false }) : '')
+          || `${obj.width}×${obj.depth}×${obj.height}`)
+        : '';
+      if (lab) out[dimsName] = [lab];
+    }
+  } else {
+    const dims = dict?.byCode?.get?.('dims');
+    const dimsName = dims ? (dims.facet?.label || dims.name) : null;
+    if (dims?.facet?.enabled && dims.facet.status !== 'not_a_filter' && rec?.attrs?.dims && dimsName && !out[dimsName]) {
+      const lab = formatAttrValue(dims, rec.attrs.dims, { withUnit: false });
+      if (lab) out[dimsName] = [lab];
+    }
   }
-  for (const code of ['defrost_fridge', 'defrost_freezer']) {
+  for (const code of ['defrost_fridge', 'defrost_freezer', 'compressor_type']) {
     const attr = dict?.byCode?.get?.(code);
-    if (!attr?.facet?.enabled || attr.facet.status === 'not_a_filter') continue;
-    const name = attr.facet.label || attr.name;
-    if (out[name]?.length) continue;
+    if (!attr) continue;
+    if (code !== 'compressor_type' && (!attr.facet?.enabled || attr.facet.status === 'not_a_filter')) continue;
+    const name = attr.facet?.label || attr.name;
+    if (!name || out[name]?.length) continue;
     const v = rec?.attrs?.[code];
     if (v == null || v === '') continue;
-    const lab = formatAttrValue(attr, v, { withUnit: false });
+    const lab = formatAttrValue(attr, v, { withUnit: false })
+      || (code === 'compressor_type' ? String(v) : '');
     if (lab) out[name] = [lab];
   }
   return out;

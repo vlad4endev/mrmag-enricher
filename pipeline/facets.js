@@ -56,6 +56,7 @@ function hasExplicitBuckets(facet) {
  * Явные buckets / int_enum из filters_spec не схлопываются в enum.
  */
 export function facetKind(attr) {
+  if (attr?.type === 'dimensions') return 'dimensions';
   const kind = attr.facet?.kind;
   if (kind === 'int_enum') return 'int_enum';
   if (attr.type === 'boolean') {
@@ -436,6 +437,15 @@ export function buildFilters(recs, dict, config) {
         const lab = displayValue(attr, v);
         counts.set(lab, (counts.get(lab) || 0) + 1);
       }
+    } else if (kind === 'dimensions' || attr.type === 'dimensions') {
+      for (const r of filled) {
+        const lab = displayValue(attr, r.attrs[attr.code]);
+        if (!lab) {
+          trackUnmapped(unmapped, fname, r.attrs[attr.code]);
+          continue;
+        }
+        counts.set(lab, (counts.get(lab) || 0) + 1);
+      }
     } else {
       const allowed = filterAllowedLabels(attr);
       const strict = allowed != null;
@@ -553,14 +563,11 @@ export function assignFilterValues(rec, dict, debugFacets, config = {}, unmapped
       continue;
     }
     if (kind === 'range') {
+      // Карточка: точное число (16 программ). Бакеты 10-15 / 15-20 — только filters_*.json.
       const raw = numericOf(v);
       if (raw == null) continue;
       const n = coerceFacetNumber(raw, attr);
-      const lab = snapToFacetBucket(n, facet) || (
-        hasExplicitBuckets(facet) || hasBreaks(facet)
-          ? null
-          : bucketLabel(n, { ...facet, kind: 'range' })
-      );
+      const lab = Number.isFinite(n) ? displayValue(attr, n) : '';
       if (!lab) {
         trackUnmapped(unmapped, f.name, v);
         continue;
@@ -586,7 +593,8 @@ export function assignFilterValues(rec, dict, debugFacets, config = {}, unmapped
       }
       out[f.name] = [displayValue(attr, flag)];
     } else {
-      const allowed = new Set(f.value);
+      const extra = filterAllowedLabels(attr);
+      const allowed = new Set([...(f.value || []), ...(extra || [])]);
       const labels = [];
       for (const p of valueList(v)) {
         const lab = displayValue(attr, p);

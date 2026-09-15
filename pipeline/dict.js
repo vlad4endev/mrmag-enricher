@@ -60,9 +60,37 @@ export function bundledDictionariesDir(root) {
   return path.join(resolveDictRoot(root), 'dictionaries');
 }
 
+function appendUniqueStrings(dst, src) {
+  if (!Array.isArray(src) || !src.length) return false;
+  if (!Array.isArray(dst)) return false;
+  const seen = new Set(dst.map(v => String(v)));
+  let changed = false;
+  for (const v of src) {
+    const s = String(v ?? '').trim();
+    if (!s || seen.has(s)) continue;
+    dst.push(v);
+    seen.add(s);
+    changed = true;
+  }
+  return changed;
+}
+
+function mergeAdditiveAliases(fromAliases, toAliases) {
+  if (!fromAliases || typeof fromAliases !== 'object' || Array.isArray(fromAliases)) return false;
+  if (!toAliases || typeof toAliases !== 'object' || Array.isArray(toAliases)) return false;
+  let changed = false;
+  for (const [canon, aliases] of Object.entries(fromAliases)) {
+    if (!canon || toAliases[canon] != null) continue;
+    toAliases[canon] = aliases;
+    changed = true;
+  }
+  return changed;
+}
+
 /**
  * Дописать в том недостающие записи из образа: правки UI на томе не трогаем,
- * но новые code/ключи (например washer_type) всё же появляются после деплоя.
+ * но новые code/ключи и каноны enum (например Стандартный у компрессора)
+ * всё же появляются после деплоя.
  */
 function mergeMissingDictEntries(name, bundledPath, volumePath) {
   let from;
@@ -75,22 +103,55 @@ function mergeMissingDictEntries(name, bundledPath, volumePath) {
   }
   let changed = false;
   if (/^attributes_\d+\.json$/i.test(name) && Array.isArray(from) && Array.isArray(to)) {
-    const have = new Set(to.map(a => a?.code).filter(Boolean));
+    const byCode = new Map(to.map(a => [a?.code, a]).filter(([code]) => code));
     for (const attr of from) {
-      if (attr?.code && !have.has(attr.code)) {
+      if (!attr?.code) continue;
+      const dst = byCode.get(attr.code);
+      if (!dst) {
         to.push(attr);
-        have.add(attr.code);
+        byCode.set(attr.code, attr);
         changed = true;
+        continue;
+      }
+      if (mergeAdditiveAliases(attr.value_aliases, dst.value_aliases)) changed = true;
+      else if (attr.value_aliases && (!dst.value_aliases || typeof dst.value_aliases !== 'object')) {
+        dst.value_aliases = attr.value_aliases;
+        changed = true;
+      }
+      if (Array.isArray(attr.facet?.enum_values) && attr.facet.enum_values.length) {
+        if (!dst.facet || typeof dst.facet !== 'object') dst.facet = {};
+        if (!Array.isArray(dst.facet.enum_values)) dst.facet.enum_values = [];
+        if (appendUniqueStrings(dst.facet.enum_values, attr.facet.enum_values)) changed = true;
+      }
+      if (attr.facet?.enabled === true && dst.facet?.status !== 'not_a_filter') {
+        if (!dst.facet || typeof dst.facet !== 'object') dst.facet = {};
+        if (dst.facet.enabled !== true) {
+          dst.facet.enabled = true;
+          if (attr.facet.label && !dst.facet.label) dst.facet.label = attr.facet.label;
+          if (attr.facet.kind && !dst.facet.kind) dst.facet.kind = attr.facet.kind;
+          changed = true;
+        }
       }
     }
   } else if (/^filters_spec_\d+\.json$/i.test(name)
     && from && typeof from === 'object' && to && typeof to === 'object'
     && Array.isArray(from.filters) && Array.isArray(to.filters)) {
-    const have = new Set(to.filters.map(f => f?.code).filter(Boolean));
+    const have = new Map(to.filters.map(f => [f?.code, f]).filter(([code]) => code));
     for (const facet of from.filters) {
-      if (facet?.code && !have.has(facet.code)) {
+      if (!facet?.code) continue;
+      const dst = have.get(facet.code);
+      if (!dst) {
         to.filters.push(facet);
-        have.add(facet.code);
+        have.set(facet.code, facet);
+        changed = true;
+        continue;
+      }
+      if (Array.isArray(facet.values) && facet.values.length) {
+        if (!Array.isArray(dst.values)) dst.values = [];
+        if (appendUniqueStrings(dst.values, facet.values)) changed = true;
+      }
+      if (facet.status === 'filter' && dst.status !== 'not_a_filter' && dst.status !== 'filter') {
+        dst.status = 'filter';
         changed = true;
       }
     }
@@ -102,6 +163,11 @@ function mergeMissingDictEntries(name, bundledPath, volumePath) {
       if (to[key] == null && val != null) {
         to[key] = val;
         changed = true;
+      } else if (
+        val && typeof val === 'object' && !Array.isArray(val)
+        && to[key] && typeof to[key] === 'object' && !Array.isArray(to[key])
+      ) {
+        if (mergeAdditiveAliases(val, to[key])) changed = true;
       }
     }
   }

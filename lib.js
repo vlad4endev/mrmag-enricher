@@ -1193,8 +1193,8 @@ export function promptVarsForSchema(schemaKey) {
     dims_order: catalogDimsPrompt(s.dict),
     unit_notes: (s.unitNotes || []).map(x => `- ${x}`).join('\n'),
     enums: enumLines.length ? enumLines.join('\n') : '- (в этой категории таких полей нет)',
-    compressor_default: s.enums?.тип_компрессора
-      ? 'Исключение — тип_компрессора: если не указан как инверторный или линейный, обязательно ставь значение "Стандартный".'
+    compressor_default: s.dict?.byCode?.has?.('compressor_type')
+      ? 'Исключение — тип_компрессора: если не указан как инверторный или линейный, обязательно ставь значение "Стандартный". Не оставляй null.'
       : '',
     color_facets: COLOR_FACETS,
     highlight_keys: highlightKeys.length

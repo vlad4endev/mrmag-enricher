@@ -7,7 +7,7 @@
  * Опасное авто-исправление без однозначного решения запрещено.
  */
 
-import { facetKind, bucketLabel, matchBucket, toIntEnum, coerceFacetNumber } from './facets.js';
+import { facetKind, toIntEnum, coerceFacetNumber } from './facets.js';
 import { annotationText, formatAttrValue, aliasValue, valueFold } from './types.js';
 import { annotationRows, verifyDescription } from './generate.js';
 import { SOURCE_RANK } from './normalize.js';
@@ -171,7 +171,7 @@ export function checkFilterConsistency(rec, dict, assigned) {
         a,
       );
       if (!Number.isFinite(n)) continue;
-      const expected = matchBucket(n, a.facet) || bucketLabel(n, { ...a.facet, kind: 'range' });
+      const expected = formatAttrValue(a, n, { withUnit: false });
       const got = Array.isArray(filterVal) ? filterVal[0] : filterVal;
       if (expected && String(got) !== String(expected)) {
         issues.push({
@@ -326,9 +326,12 @@ export function buildConfirmedAttributes(rec, dict, assigned = null) {
     let filterValue = null;
     if (assigned && assigned[name] != null) {
       filterValue = Array.isArray(assigned[name]) ? assigned[name][0] : assigned[name];
-    } else if (a.facet?.enabled && facetKind(a) === 'range' && typeof rec.attrs[a.code] === 'number') {
-      filterValue = matchBucket(rec.attrs[a.code], a.facet)
-        || bucketLabel(rec.attrs[a.code], { ...a.facet, kind: 'range' });
+    } else if (a.facet?.enabled && facetKind(a) === 'range' && rec.attrs[a.code] != null) {
+      const n = coerceFacetNumber(
+        typeof rec.attrs[a.code] === 'number' ? rec.attrs[a.code] : Number(rec.attrs[a.code]),
+        a,
+      );
+      filterValue = Number.isFinite(n) ? formatAttrValue(a, n, { withUnit: false }) : null;
     } else if (a.facet?.enabled && facetKind(a) === 'int_enum' && rec.attrs[a.code] != null) {
       filterValue = toIntEnum(coerceFacetNumber(Number(rec.attrs[a.code]), a), a.facet);
     } else if (a.facet?.enabled) {

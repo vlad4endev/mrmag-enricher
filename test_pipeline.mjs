@@ -2,11 +2,11 @@ import {
   loadConfig, loadDictionary, loadProducts, attrsWithCoverage, loadCategories,
   bootstrapDictionariesDir,
 } from './pipeline/dict.js';
-import { normalizeProduct, formatCounts } from './pipeline/normalize.js';
+import { normalizeProduct, formatCounts, deriveDimsFromAxes } from './pipeline/normalize.js';
 import { bucketLabel, buildFilters, facetKind } from './pipeline/facets.js';
 import { renderCard, annotationRows, MIN_ANNOTATION_ROWS, verifyDescription } from './pipeline/generate.js';
-import { compactAnnotation, compactHtml, serializeProduct, metaKeywords, buildCustomerExport, buildGoldShapeExport } from './pipeline/export.js';
-import { validateProducts, validateDescription, expectedFilters, PRODUCT_FIELDS } from './pipeline/validate.js';
+import { compactAnnotation, compactHtml, serializeProduct, metaKeywords, buildCustomerExport, buildGoldShapeExport, fillCardFiltersAfterEnrich } from './pipeline/export.js';
+import { validateProducts, validateDescription, expectedFilters, PRODUCT_FIELDS, isRangeBucketLabel } from './pipeline/validate.js';
 import { webInfoFrom, cleanReviewText, isReview } from './pipeline/reviews.js';
 import { dictForProducts } from './pipeline/schema.js';
 import { buildV2 } from './export_v2.js';
@@ -1563,15 +1563,24 @@ console.log('golden tests passed');
   assert.match(row.annotation_html, /Тип загрузки: фронтальная/);
   assert.ok(!/Бренд:/i.test(row.annotation_html), 'бренд не строка характеристик');
   assert.ok(Array.isArray(row.filters['Высота, см']));
-  assert.equal(row.filters['Высота, см'][0], '80-85');
-  assert.equal(row.filters['Скорость отжима, об/мин'][0], '1000-1200');
+  assert.equal(row.filters['Высота, см'][0], '84.6');
+  assert.equal(row.filters['Скорость отжима, об/мин'][0], '1000');
   const facetNames = new Set(built.filters.map(f => f.name));
   for (const name of Object.keys(row.filters)) {
     assert.ok(facetNames.has(name), name);
     assert.ok(Array.isArray(row.filters[name]) && row.filters[name].length);
   }
   for (const f of built.filters) {
-    if (row.filters[f.name]) assert.ok(f.value.includes(row.filters[f.name][0]), f.name);
+    const attr = d467.attrs.find(a => (a.facet?.label || a.name) === f.name);
+    if (facetKind(attr) === 'range') {
+      assert.ok(f.value.some(v => isRangeBucketLabel(v)), `витрина «${f.name}» — бакеты`);
+      if (row.filters[f.name]) {
+        assert.ok(
+          !isRangeBucketLabel(row.filters[f.name][0]),
+          `карточка «${f.name}» — точное число, не ${row.filters[f.name][0]}`,
+        );
+      }
+    }
   }
   assert.deepEqual(built.filters.map(f => Object.keys(f)), built.filters.map(() => ['name', 'value']));
   assert.ok(built.filters.every(f => Array.isArray(f.value)));
@@ -1894,6 +1903,75 @@ console.log('golden tests passed');
 }
 
 {
+  // Том со старым compressor_type без канона «Стандартный»: дописать канон,
+  // не затирая остальной справочник, и закрыть дыру фильтра.
+  const prev = process.env.DICTIONARIES_DIR;
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'dict-compressor-'));
+  const vol = path.join(tmp, 'dictionaries');
+  fs.mkdirSync(vol);
+  try {
+    const attrs = JSON.parse(fs.readFileSync(path.join('dictionaries', 'attributes_523.json'), 'utf8'));
+    const compressor = attrs.find(a => a.code === 'compressor_type');
+    assert.ok(compressor?.value_aliases?.Стандартный);
+    const rest = { ...compressor.value_aliases };
+    delete rest.Стандартный;
+    compressor.value_aliases = rest;
+    if (Array.isArray(compressor.facet?.enum_values)) {
+      compressor.facet.enum_values = compressor.facet.enum_values.filter(v => v !== 'Стандартный');
+    }
+    fs.writeFileSync(path.join(vol, 'attributes_523.json'), `${JSON.stringify(attrs, null, 2)}\n`);
+    const fspec = JSON.parse(fs.readFileSync(path.join('dictionaries', 'filters_spec_523.json'), 'utf8'));
+    const facet = (fspec.filters || []).find(f => f.code === 'compressor_type');
+    assert.ok(facet);
+    facet.values = (facet.values || []).filter(v => v !== 'Стандартный');
+    fs.writeFileSync(path.join(vol, 'filters_spec_523.json'), `${JSON.stringify(fspec, null, 2)}\n`);
+    process.env.DICTIONARIES_DIR = vol;
+    bootstrapDictionariesDir('.');
+    const mergedAttrs = JSON.parse(fs.readFileSync(path.join(vol, 'attributes_523.json'), 'utf8'));
+    assert.ok(
+      mergedAttrs.find(a => a.code === 'compressor_type')?.value_aliases?.Стандартный,
+      'attributes: дописан канон Стандартный',
+    );
+    const mergedFs = JSON.parse(fs.readFileSync(path.join(vol, 'filters_spec_523.json'), 'utf8'));
+    assert.ok(
+      mergedFs.filters.find(f => f.code === 'compressor_type')?.values?.includes('Стандартный'),
+      'filters_spec: дописан Стандартный',
+    );
+    const dVol = loadDictionary('523', '.');
+    const filled = fillCardFiltersAfterEnrich(
+      p523[260],
+      { specs: { система_охлаждения: 'Full No Frost', перенавешиваемые_двери: 'есть' }, description: '' },
+      dVol,
+      config,
+    );
+    assert.deepEqual(filled['Тип компрессора'], ['Стандартный']);
+    assert.ok(!filled['Дисплей']?.length, 'дисплей по-прежнему не выдумываем');
+  } finally {
+    if (prev === undefined) delete process.env.DICTIONARIES_DIR;
+    else process.env.DICTIONARIES_DIR = prev;
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+  console.log('ok bootstrapDictionariesDir merges compressor Стандартный');
+}
+
+{
+  // Лист 467: составные габариты из Ш/Г/В, даже если dims неполный или выключен.
+  const rec = normalizeProduct(p467[11391], d467, config);
+  rec.attrs.dims = { width: rec.attrs.width, height: rec.attrs.height };
+  deriveDimsFromAxes(rec, d467);
+  assert.equal(rec.attrs.dims.depth, 55);
+  rec.attrs.dims = { width: 59.6, height: 84.6 };
+  const { catalogFilterKeys } = await import('./pipeline/prose_align.js');
+  assert.deepEqual(catalogFilterKeys({}, rec, d467)['Габариты (ШхГхВ)'], ['59.6×55×84.6']);
+  const fridgeKeys = catalogFilterKeys({}, normalizeProduct(p523[260], d523, config), d523);
+  assert.ok(!Object.keys(fridgeKeys).some(k => /габарит/i.test(k)), '523: габариты не фильтр');
+  const card = fillCardFiltersAfterEnrich(p467[11391], { specs: {}, description: '' }, d467, config);
+  assert.deepEqual(card['Габариты (ШхГхВ)'], ['59.6×55×84.6']);
+  assert.ok(card['Высота, см']?.length && card['Ширина, см']?.length && card['Глубина, см']?.length);
+  console.log('ok 467 Габариты (ШхГхВ) из осей');
+}
+
+{
   const keys = v2FacetSpecKeys(d523);
   assert.ok(keys.has('тип_товара'));
   assert.ok(keys.has('цвет'), 'цвет холодильника — фильтр листа «да»');
@@ -2141,11 +2219,11 @@ console.log('golden tests passed');
   assert.match(a.annotation_html, /Уровень шума при стирке: 59 дБ/);
   assert.match(a.annotation_html, /Ширина: 59\.6 см/);
   assert.deepEqual(a.filters['Загрузка белья, кг'], ['6']);
-  assert.deepEqual(a.filters['Скорость отжима, об/мин'], ['1000-1200']);
-  assert.deepEqual(a.filters['Уровень шума, дБ'], ['55-60']);
-  assert.deepEqual(a.filters['Ширина, см'], ['55-60']);
-  assert.deepEqual(a.filters['Глубина, см'], ['55-60']);
-  assert.deepEqual(a.filters['Высота, см'], ['80-85']);
+  assert.deepEqual(a.filters['Скорость отжима, об/мин'], ['1000']);
+  assert.deepEqual(a.filters['Уровень шума, дБ'], ['59']);
+  assert.deepEqual(a.filters['Ширина, см'], ['59.6']);
+  assert.deepEqual(a.filters['Глубина, см'], ['55']);
+  assert.deepEqual(a.filters['Высота, см'], ['84.6']);
   assert.deepEqual(a.filters['Габариты (ШхГхВ)'], ['59.6×55×84.6']);
   assert.match(a.annotation_html, /Габариты \(ШхГхВ\): 59\.6×55×84\.6 см/);
   assert.ok(Object.keys(a.filters).length >= 8, Object.keys(a.filters).join(','));
@@ -2365,7 +2443,7 @@ console.log('golden tests passed');
   const built = buildFilters([hood], d929, config);
   const assigned = assignFilterValues(hood, d929, built.debug);
   assert.deepEqual(assigned['Количество скоростей'], ['2']);
-  assert.deepEqual(assigned['Ширина, см'], ['50-55']);
+  assert.deepEqual(assigned['Ширина, см'], ['50']);
   assert.ok(!('Ширина встраивания, см' in assigned) || !assigned['Ширина встраивания, см'],
     'install_width facet disabled — не в публичных filters');
 
@@ -2580,7 +2658,7 @@ console.log('golden tests passed');
   assert.equal(dimsAttr.type, 'dimensions');
   assert.equal(dimsAttr.unit, 'см');
   assert.equal(dimsAttr.facet?.enabled, true);
-  assert.equal(facetKind(dimsAttr), 'enum');
+  assert.equal(facetKind(dimsAttr), 'dimensions');
 
   const parsed = parseDimensions('Габариты (ШхГхВ)', '59.5×42×85 см');
   assert.ok(parsed?.dims);
@@ -2654,7 +2732,7 @@ console.log('golden tests passed');
   assert.ok(!JSON.stringify(row.filters).includes('[object Object]'));
 
   const exp = expectedFilters(d467).find(f => f.name === lab);
-  assert.equal(exp?.kind, 'enum');
+  assert.equal(exp?.kind, 'dimensions');
   const { errors } = validateProducts([row], d467, new Map([[r.id, r]]));
   assert.ok(!errors.some(e => e.kind === 'filter_unit_not_cm'), JSON.stringify(errors));
   assert.ok(!errors.some(e => e.kind === 'filter_object_stringified'));
@@ -3185,7 +3263,7 @@ console.log('golden tests passed');
 
   assert.equal(d467.byCode.get('dims').facet.enabled, true);
   assert.notEqual(d467.byCode.get('dims').facet.status, 'not_a_filter');
-  assert.equal(facetKind(d467.byCode.get('dims')), 'enum');
+  assert.equal(facetKind(d467.byCode.get('dims')), 'dimensions');
   assert.equal(d467.byCode.get('display').facet.enabled, true);
   assert.equal(d467.byCode.get('wash_class').facet.enabled, true);
   assert.equal(d467.byCode.get('washer_type').facet.enabled, true);
@@ -3289,7 +3367,11 @@ console.log('golden tests passed');
   const assignedS3 = assignFilterValues(empty, d467, builtS3.debug, config);
   assert.ok(Object.keys(assignedS3).length >= 8, Object.keys(assignedS3).join(','));
   assert.deepEqual(assignedS3['Загрузка белья, кг'], ['7']);
-  assert.deepEqual(assignedS3['Количество программ'], ['15-20']);
+  assert.deepEqual(assignedS3['Количество программ'], ['16']);
+  assert.ok(
+    (builtS3.filters.find(f => f.name === 'Количество программ')?.value || []).includes('15-20'),
+    'витрина programs — бакеты, не точное 16',
+  );
   assert.deepEqual(assignedS3['Габариты (ШхГхВ)'], ['60×54×85']);
 
   // filters в карточке — только после обогащения, из enriched.specs.
@@ -3317,7 +3399,7 @@ console.log('golden tests passed');
   );
   assert.ok(Object.keys(cardFilters).length >= 8, Object.keys(cardFilters).join(','));
   assert.deepEqual(cardFilters['Загрузка белья, кг'], ['7']);
-  assert.deepEqual(cardFilters['Количество программ'], ['15-20']);
+  assert.deepEqual(cardFilters['Количество программ'], ['16']);
   // Без обогащения — пусто. Пустой объект enriched: оси из исходника после
   // прогона (тайминг «после»), но без specs модели.
   assert.deepEqual(fillCardFiltersAfterEnrich(p467[460989], null, d467, config), {});
@@ -3360,6 +3442,7 @@ console.log('golden tests passed');
     assert.deepEqual(pozisFill['Размораживание морозильной камеры'], ['No Frost']);
     assert.ok(!pozisFill['Габариты (ШхВхГ)']?.length, 'габариты 523 не в filters');
     assert.deepEqual(pozisFill['Тип компрессора'], ['Стандартный']);
+    assert.ok(!pozisFill['Дисплей']?.length, 'дисплей 523 не выдумываем «нет»');
     const invFill = fillCardFiltersAfterEnrich({
       id: 11,
       name: 'Холодильник TEST INVERTER',
@@ -3461,8 +3544,8 @@ console.log('golden tests passed');
   const w343148 = filt(343148, d467, p467);
   assert.equal(w343148.r.attrs.height, 98.5);
   assert.equal(w343148.r.attrs.width, 70.1);
-  assert.deepEqual(w343148.assigned['Высота, см'], ['90+']);
-  assert.deepEqual(w343148.assigned['Ширина, см'], ['65+']);
+  assert.deepEqual(w343148.assigned['Высота, см'], ['98.5']);
+  assert.deepEqual(w343148.assigned['Ширина, см'], ['70.1']);
 
   const w388135 = filt(388135, d467, p467);
   assert.deepEqual(w388135.r.attrs.control_type, ['Электронное']);
@@ -3470,7 +3553,7 @@ console.log('golden tests passed');
 
   const w423424 = filt(423424, d467, p467);
   assert.equal(w423424.r.attrs.depth, 49);
-  assert.deepEqual(w423424.assigned['Глубина, см'], ['45-50']);
+  assert.deepEqual(w423424.assigned['Глубина, см'], ['49']);
 
   const messy = parseDimensions(
     'Размеры (ширина х глубина(*макс. корпус/ **с открытой дверцей) х высота, мм.)',
@@ -3479,7 +3562,7 @@ console.log('golden tests passed');
   assert.deepEqual(messy?.dims, { width: 60, depth: 55, height: 85 });
   const w406572 = filt(406572, d467, p467);
   assert.equal(w406572.r.attrs.height, 85);
-  assert.deepEqual(w406572.assigned['Высота, см'], ['85-90']);
+  assert.deepEqual(w406572.assigned['Высота, см'], ['85']);
 
   const w419718 = filt(419718, d467, p467);
   assert.equal(w419718.r.attrs.spin_max, null, 'не выдумывать об/мин из артикула');
@@ -3495,7 +3578,7 @@ console.log('golden tests passed');
 
   const w458847 = filt(458847, d467, p467);
   assert.equal(w458847.r.attrs.height, 52.5);
-  assert.deepEqual(w458847.assigned['Высота, см'], ['50-70']);
+  assert.deepEqual(w458847.assigned['Высота, см'], ['52.5']);
   assert.equal(w458847.r.attrs.spin_max, null);
 
   const abs = normalizeValue(d523.byCode.get('freezer_pos'), 'Отсутствует');
@@ -3515,7 +3598,7 @@ console.log('golden tests passed');
 
   const f316688 = filt(316688, d523, p523);
   assert.equal(f316688.r.attrs.height, 49.2);
-  assert.deepEqual(f316688.assigned['Высота, см'], ['40-50']);
+  assert.deepEqual(f316688.assigned['Высота, см'], ['49.2']);
 
   const f377295 = filt(377295, d523, p523);
   assert.equal(f377295.r.attrs.freezer_pos, 'Отсутствует');
@@ -3527,7 +3610,7 @@ console.log('golden tests passed');
 
   const f385186 = filt(385186, d523, p523);
   assert.equal(f385186.r.attrs.depth, 44.2);
-  assert.deepEqual(f385186.assigned['Глубина, см'], ['40-45']);
+  assert.deepEqual(f385186.assigned['Глубина, см'], ['44.2']);
 
   const f403857 = filt(403857, d523, p523);
   assert.equal(f403857.r.attrs.freezer_pos, 'Сбоку');
@@ -3535,7 +3618,7 @@ console.log('golden tests passed');
 
   const f408165 = filt(408165, d523, p523);
   assert.equal(f408165.r.attrs.depth, 72.6);
-  assert.deepEqual(f408165.assigned['Глубина, см'], ['70+']);
+  assert.deepEqual(f408165.assigned['Глубина, см'], ['72.6']);
 
   const f461138 = filt(461138, d523, p523);
   assert.equal(f461138.r.attrs.height, null, 'пустая карточка — не выдумывать габариты');
@@ -4041,7 +4124,7 @@ console.log('golden tests passed');
     }), dict, new Map(recs.map(r => [r.id, r])));
     const dirty = errors.filter(e => [
       'dirty_filter_value', 'filter_not_in_aliases', 'filter_object_stringified',
-      'filter_unknown', 'filter_not_bucketed', 'filter_unit_mismatch',
+      'filter_unknown', 'filter_bucketed_on_product', 'filter_unit_mismatch',
     ].includes(e.kind));
     assert.equal(dirty.length, 0, `cat ${catId} dirty filters: ${JSON.stringify(dirty.slice(0, 8))}`);
 

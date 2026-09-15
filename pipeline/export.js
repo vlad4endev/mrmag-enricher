@@ -552,7 +552,7 @@ export async function buildCustomerExport(products, {
     'filter_not_in_aliases',
     'filter_object_stringified',
     'filter_unknown',
-    'filter_not_bucketed',
+    'filter_bucketed_on_product',
     'filter_unit_mismatch',
   ]);
   const dirtyVerdict = verdict.errors.filter(e => dirtyKinds.has(e.kind));

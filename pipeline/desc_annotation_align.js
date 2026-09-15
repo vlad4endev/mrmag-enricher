@@ -391,16 +391,32 @@ function valuesAgree(topic, claimed, annValue) {
   return fold(String(claimed)) === ann;
 }
 
+/** Точка в «об./мин.», «310 л.» — не граница предложения. */
+const UNIT_ABBR_TAIL = /(?:^|[\s\d/])(?:л|мл|см|мм|кг|г|вт|квт|дб|шт|ч|мин|мес|об)$/i;
+
 function splitSentences(text) {
   const s = String(text || '');
   if (!s.trim()) return [];
   const parts = s.split(/([.!?…]+\s*)/);
-  const out = [];
+  const raw = [];
   for (let i = 0; i < parts.length; i += 2) {
     const body = parts[i] || '';
     const sep = parts[i + 1] || '';
     if (!body.trim() && !sep) continue;
-    out.push({ body, sep, full: body + sep });
+    raw.push({ body, sep, full: body + sep });
+  }
+  const out = [];
+  for (const p of raw) {
+    const prev = out[out.length - 1];
+    if (prev && /^[.]+/.test(String(prev.sep || ''))
+      && UNIT_ABBR_TAIL.test(String(prev.body).trimEnd())
+      && !/^\s*[A-ZА-ЯЁ]/.test(p.body)) {
+      prev.body += prev.sep + p.body;
+      prev.sep = p.sep;
+      prev.full = prev.body + prev.sep;
+      continue;
+    }
+    out.push({ body: p.body, sep: p.sep, full: p.full });
   }
   return out;
 }
@@ -554,15 +570,82 @@ function tidyPunct(s) {
     .replace(/\s+,/g, ',')
     .replace(/,\s*,+/g, ',')
     .replace(/[ \t]{2,}/g, ' ')
-    .replace(/\s+\./g, '.')
+    // «Среди функций — .» после вырезания клаузы: не схлопывать в «—.».
+    .replace(/[—–]\s*\.\s*/g, '— ')
+    .replace(/(?<![—–])\s+\./g, '.')
     .replace(/\.{2,}/g, '.')
     .replace(/\.\s*,/g, '.')
     .replace(/,\s*([.!?])/g, '$1')
+    .replace(/[—–]\s+,/g, '— ')
     .replace(/(?:^|[.!?…]\s+)и\s+/gi, (m) => m.replace(/\s+и\s+/i, ' '))
     .replace(/^\s*и\s+/i, '')
     .replace(/\(\s*\)/g, '')
     .replace(/\s{2,}/g, ' ')
     .trim();
+}
+
+/** Стык фактов без точки: «16 программ стирки Максимальная скорость…». */
+const FACT_LEAD_SRC = String.raw`(?:программ(?:ы|ами)?|режимов)\s+стирки|класс(?:а)?\s+отжима|скорост[а-яё]*\s+отжима|(?:макс(?:имальн[а-яё]*)?\s+)?загрузк[аеиу](?:\s+белья)?|об\.?\s*/\s*мин`;
+
+/** Элементы перечисления после тире, которые модель клеит пробелом. */
+const FEATURE_ITEM_SRC = String.raw`защита от детей|контроль дисбаланса|контроль пенообразования|отсрочк[а-яё]*\s+(?:старта|запуска)`;
+
+function commaSeparateFeatureItems(s) {
+  const item = FEATURE_ITEM_SRC;
+  return String(s || '').replace(
+    new RegExp(String.raw`(${item})\s+(?=(?:${item}|защита от |контроль ))`, 'gi'),
+    '$1, ',
+  );
+}
+
+function repairAssemblyPunctPlain(text, { sentences = true } = {}) {
+  let out = String(text || '');
+  if (!out.trim()) return out;
+  out = out.replace(/[—–]\s*\.\s*/g, '— ');
+  out = out.replace(/Функци[яи]\.\s+(?=[A-Za-z«"'])/g, m => m.replace('.', ''));
+  out = out.replace(/Есть\.\s+(?=[а-яё])/g, m => m.replace('.', ''));
+  if (sentences !== false) {
+    out = out.replace(new RegExp(String.raw`(${FACT_LEAD_SRC})\s+(?=[А-ЯЁ][а-яё]{3,})`, 'g'), '$1. ');
+  }
+  out = commaSeparateFeatureItems(out);
+  return tidyPunct(out);
+}
+
+/**
+ * Поломки сборки абзаца: нет точки между фактами, «—.», список через пробел.
+ * @returns {{ kind: string, match: string }[]}
+ */
+export function findAssemblyPunctIssues(text) {
+  const s = stripHtml(text);
+  if (!s.trim()) return [];
+  const hits = [];
+  const dash = s.match(/[—–]\s*\./);
+  if (dash) hits.push({ kind: 'dash_period', match: dash[0] });
+  const factRe = new RegExp(String.raw`(?:${FACT_LEAD_SRC})\s+[А-ЯЁ][а-яё]{3,}`, 'g');
+  let m;
+  while ((m = factRe.exec(s))) hits.push({ kind: 'missing_period', match: m[0] });
+  const listRe = new RegExp(String.raw`(?:${FEATURE_ITEM_SRC})\s+(?:${FEATURE_ITEM_SRC})`, 'gi');
+  while ((m = listRe.exec(s))) {
+    if (!/,/.test(m[0])) hits.push({ kind: 'list_spaces', match: m[0] });
+  }
+  return hits;
+}
+
+/**
+ * Вернуть точку/запятую на место при склейке фактов в абзац.
+ * HTML: правим содержимое блочных тегов, разметку не трогаем.
+ */
+export function repairAssemblyPunctuation(text, opts = {}) {
+  const raw = String(text || '');
+  if (!raw.trim()) return raw;
+  if (/<[a-z][\s\S]*>/i.test(raw)) {
+    return raw.replace(/<(p|li|h[1-6]|td|th|div)\b([^>]*)>([\s\S]*?)<\/\1>/gi, (full, tag, attrs, inner) => {
+      const next = repairAssemblyPunctPlain(inner, opts);
+      if (!String(next).trim()) return '';
+      return `<${tag}${attrs}>${next}</${tag}>`;
+    });
+  }
+  return repairAssemblyPunctPlain(raw, opts);
 }
 
 function dropFragmentsOrSentence(sentence, topic) {
@@ -571,6 +654,7 @@ function dropFragmentsOrSentence(sentence, topic) {
   if (!kept.length) return '';
   let next = tidyPunct(joinFragments(kept));
   if (findHangingFragments(next).length) return '';
+  if (/[—–]\s*$/.test(next)) return '';
   if (next.replace(/\s+/g, '').length < 12) return '';
   return next;
 }
@@ -586,6 +670,7 @@ function stripFabricationClause(sentence, topic) {
     const next = stripFabricatedProtectionItems(s, dropFeatForTopic(topic));
     s = tidyPunct(next);
     if (findHangingFragments(s).length) return '';
+    if (/[—–]\s*$/.test(s)) return '';
     if (clauseContainsTopic(s, topic)) return dropFragmentsOrSentence(s, topic);
     if (s.replace(/\s+/g, '').length < 12) return '';
     return s;
@@ -606,9 +691,9 @@ export function sanitizeHangingProse(text) {
       if (!String(next).trim()) return '';
       return `<${tag}${attrs}>${next}</${tag}>`;
     });
-    return html.replace(/<p>\s*<\/p>/gi, '').replace(/<li>\s*<\/li>/gi, '');
+    return repairAssemblyPunctuation(html.replace(/<p>\s*<\/p>/gi, '').replace(/<li>\s*<\/li>/gi, ''));
   }
-  return sanitizeHangingPlain(raw);
+  return repairAssemblyPunctuation(sanitizeHangingPlain(raw));
 }
 
 function sanitizeHangingPlain(text) {
@@ -622,7 +707,9 @@ function sanitizeHangingPlain(text) {
     if (!chunk) continue;
     if (findHangingFragments(chunk).length) continue;
     if (findHangingFragments(sent.full).length) continue;
-    out += chunk + (sent.sep || ( /[.!?…]$/.test(chunk) ? '' : '. '));
+    let sep = sent.sep || (/[.!?…]$/.test(chunk) ? '' : '. ');
+    if (/[—–]\s*$/.test(chunk)) sep = String(sep).replace(/^[.!?…]+/, ' ') || ' ';
+    out += chunk + sep;
   }
   s = tidyPunct(out);
   if (findHangingFragments(s).length) return '';
@@ -782,7 +869,12 @@ export function repairDescriptionPlain(text, annotationHtml) {
       rewritten = cleaned;
     }
 
-    out += rewritten + sent.sep;
+    let sep = sent.sep;
+    if (/[—–]\s*$/.test(rewritten)) {
+      sep = String(sep || '').replace(/^[.!?…]+/, ' ');
+      if (!sep) sep = ' ';
+    }
+    out += rewritten + sep;
   }
 
   return { text: sanitizeHangingProse(tidyPunct(out)), fixes };

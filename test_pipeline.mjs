@@ -4433,6 +4433,7 @@ console.log('golden tests passed');
 
   const {
     extractProtectionListItems, findHangingFragments, sanitizeHangingProse,
+    findAssemblyPunctIssues, repairAssemblyPunctuation,
   } = await import('./pipeline/desc_annotation_align.js');
 
   const list11391 = 'Предусмотрена защита от детей, от протечек и от скачков напряжения';
@@ -4473,6 +4474,50 @@ console.log('golden tests passed');
   const cleanedHang = sanitizeHangingProse('<p>, включая программу.</p><p>Надёжная модель с загрузкой 6 кг.</p>');
   assert.ok(!/<p>\s*,/i.test(cleanedHang), cleanedHang);
   assert.match(cleanedHang, /Надёжная модель/);
+
+  const gluedFacts = 'Машина имеет 16 программ стирки Максимальная скорость отжима — 1000 об/мин.';
+  assert.ok(findAssemblyPunctIssues(gluedFacts).some(i => i.kind === 'missing_period'), gluedFacts);
+  const gluedFixed = repairAssemblyPunctuation(gluedFacts);
+  assert.match(gluedFixed, /стирки\.\s+Максимальная/);
+  assert.equal(findAssemblyPunctIssues(gluedFixed).length, 0, gluedFixed);
+
+  const gluedInstr = repairAssemblyPunctuation(
+    'Модель с 13 программами стирки Скорость отжима достигает 800 об/мин.',
+  );
+  assert.match(gluedInstr, /стирки\.\s+Скорость/);
+
+  const dashPeriod = repairAssemblyPunctuation(
+    'Среди функций —. защита от детей контроль дисбаланса.',
+  );
+  assert.ok(!/[—–]\s*\./.test(dashPeriod), dashPeriod);
+  assert.match(dashPeriod, /Среди функций — защита от детей, контроль дисбаланса/);
+  assert.equal(findAssemblyPunctIssues(dashPeriod).length, 0, dashPeriod);
+
+  const dashModel = repairAssemblyPunctuation(
+    'В арсенале Candy AQUA 114D2-07 —. 16 программ стирки.',
+  );
+  assert.ok(!/[—–]\s*\./.test(dashModel), dashModel);
+  assert.match(dashModel, /114D2-07 — 16 программ стирки/);
+
+  const fnBrand = repairAssemblyPunctuation(
+    'Функция. Water Balance Plus автоматически распределяет воду.',
+  );
+  assert.match(fnBrand, /Функция Water Balance Plus/);
+  assert.ok(!/Функция\./.test(fnBrand), fnBrand);
+
+  const estList = repairAssemblyPunctuation(
+    'В арсенале 13 программ стирки Есть. защита от детей контроль дисбаланса.',
+  );
+  assert.match(estList, /стирки\.\s+Есть защита от детей, контроль дисбаланса/);
+  assert.ok(!/Есть\./.test(estList), estList);
+
+  const dashAfterLeak = repairDescriptionHtml(
+    '<p>Среди функций — защита от протечек, защита от детей контроль дисбаланса.</p>',
+    '<ul><li>Защита от детей: есть</li><li>Сушка: нет</li></ul>',
+  );
+  assert.ok(!/протеч/i.test(dashAfterLeak.html), dashAfterLeak.html);
+  assert.ok(!/[—–]\s*\./.test(dashAfterLeak.html), dashAfterLeak.html);
+  assert.match(dashAfterLeak.html, /детей,\s+контроль дисбаланса/i);
 
   console.log('ok desc↔annotation QA: фабрикация, противоречие, бак/барабан, экспорт');
 }

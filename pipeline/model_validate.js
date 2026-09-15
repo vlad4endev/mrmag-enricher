@@ -1,5 +1,5 @@
 import { cardProseSpecIssues } from './prose_align.js';
-import { findHangingFragments } from './desc_annotation_align.js';
+import { findHangingFragments, findAssemblyPunctIssues, repairAssemblyPunctuation } from './desc_annotation_align.js';
 
 /**
  * Контракт ответа модели и строгая валидация.
@@ -226,6 +226,7 @@ export function softFixCardTexts(card, opts = {}) {
   }
 
   if (typeof card.description === 'string' && card.description.trim()) {
+    card.description = repairAssemblyPunctuation(card.description);
     let paras = redistributeParagraphs(card.description, wantParas);
     if (paras.length > wantParas) paras = paras.slice(0, wantParas);
     let desc = paras.join('\n\n');
@@ -401,6 +402,13 @@ export function validateModelResponse(data, opts = {}) {
     }
   }
 
+  if (typeof data.description === 'string' && data.description.trim()) {
+    const punct = findAssemblyPunctIssues(data.description);
+    if (punct.length) {
+      add('description', 'пунктуация сборки («стирки Максимальная», «—.», список без запятых) — верни точки и запятые');
+    }
+  }
+
   return issues;
 }
 
@@ -427,6 +435,9 @@ export function validationFeedbackLine(issues, opts = {}) {
     if (field === 'description') {
       if (/висяч/i.test(reason)) {
         return 'description: не оставляй обрывки вроде «не имеет.» / «учтите.» / «., что» и абзацы, начинающиеся с запятой; перепиши абзац целиком';
+      }
+      if (/пунктуац/i.test(reason)) {
+        return 'description: между фактами нужна точка («16 программ стирки. Максимальная скорость…»); после тире не ставь точку; элементы списка через запятую («защита от детей, контроль дисбаланса»)';
       }
       if (/абзац/i.test(reason)) {
         return `description: ровно ${wantParas} абзаца через пустую строку (\\n\\n), без лишних`;

@@ -21,6 +21,7 @@
     "test:api": "node test_api.mjs",
     "quality": "node quality.mjs",
     "qa:desc": "node qa_desc_annotation.mjs",
+    "qa:issues": "node qa_validation_issues.mjs",
     "sample": "node sample.mjs",
     "smoke": "node smoke.mjs"
   },

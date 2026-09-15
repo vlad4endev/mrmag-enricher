@@ -14,6 +14,34 @@ function filterNamesFromDict(dict) {
     .map(a => a.facet.label || a.name);
 }
 
+function displayFilterValue(v) {
+  if (v == null || v === '') return '';
+  return Array.isArray(v) ? v.map(x => String(x)).filter(Boolean).join(', ') : String(v);
+}
+
+/**
+ * Тест одной карточки после обогащения: все витринные фильтры справочника
+ * и покрытие filled/total. Пустой filters даёт 0% — это тоже результат.
+ */
+export function cardFilterCoverage(filters, dict) {
+  const fromDict = filterNamesFromDict(dict);
+  const keys = Object.keys(filters || {});
+  const names = fromDict.length ? fromDict : keys;
+  const rows = names.map((name) => {
+    const ok = hasFilterValue(filters, name);
+    return { name, value: displayFilterValue(filters?.[name]), ok };
+  });
+  const filled = rows.filter(r => r.ok).length;
+  const total = rows.length;
+  return {
+    total,
+    filled,
+    empty: Math.max(0, total - filled),
+    coverage: total ? Math.round((filled / total) * 100) : 0,
+    rows,
+  };
+}
+
 function hasFilterValue(filters, name) {
   const v = filters?.[name];
   if (v == null || v === '') return false;

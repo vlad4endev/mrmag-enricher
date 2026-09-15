@@ -98,6 +98,7 @@ import { buildV2 } from './export_v2.js';
 import {
   buildCustomerExport, buildGoldShapeExport, buildFiltersOnly, fillCardFiltersAfterEnrich,
 } from './pipeline/export.js';
+import { cardFilterCoverage } from './pipeline/filter_report.js';
 import { dictForProducts, expectedDictCatId } from './pipeline/schema.js';
 import { collectParseHits, formatParseNotes, slimParseTrace } from './pipeline/parse.js';
 import { createJobStore } from './jobs.js';
@@ -1365,7 +1366,26 @@ function consistencyAgentOptions(body = {}) {
   return { ...base, mode };
 }
 
-/** Убрать внутренние поля (_built…) из ответа клиенту. */
+/**
+ * filters + тест покрытия витринных осей. Без справочника — пустой тест, UI
+ * покажет, почему таблицы нет.
+ */
+function cardFiltersAfterEnrich(schema, product, payload, note) {
+  if (!schema?.fromDictionary || !schema.dict) {
+    return { filters: {}, filter_coverage: null };
+  }
+  let filters = {};
+  try {
+    const config = loadConfig(ROOT);
+    if (payload && typeof payload === 'object') {
+      filters = fillCardFiltersAfterEnrich(product, payload, schema.dict, config);
+    }
+  } catch (e) {
+    note?.(`filters карточки не собраны: ${e.message}`, { step: 'filters', level: 'warn' });
+  }
+  return { filters, filter_coverage: cardFilterCoverage(filters, schema.dict) };
+}
+
 function publicExportPayload(out) {
   if (!out || typeof out !== 'object') return out;
   const {
@@ -1874,18 +1894,12 @@ async function enrichOne(product, { model, category, provider, onNote = () => {}
     };
 
     // filters карточки — только после обогащения, из specs/attrs (не при парсинге).
-    const cardFilters = (() => {
-      if (!schema.fromDictionary || !schema.dict) return {};
-      try {
-        const config = loadConfig(ROOT);
-        const payload = enriched || debug?.enriched_result;
-        if (!payload) return {};
-        return fillCardFiltersAfterEnrich(filled || product, payload, schema.dict, config);
-      } catch (e) {
-        note(`filters карточки не собраны: ${e.message}`, { step: 'filters', level: 'warn' });
-        return {};
-      }
-    })();
+    const { filters: cardFilters, filter_coverage: filterCoverage } = cardFiltersAfterEnrich(
+      schema,
+      filled || product,
+      enriched || debug?.enriched_result,
+      note,
+    );
 
     if (needs_review && !enriched) {
       note(`needs_review: ${(validation_issues || []).map(i => i.field).join(', ')}`, { step: 'validate', level: 'warn' });
@@ -1893,6 +1907,7 @@ async function enrichOne(product, { model, category, provider, onNote = () => {}
       return {
         enriched: preview,
         filters: cardFilters,
+        filter_coverage: filterCoverage,
         needs_review: true,
         validation_issues: validation_issues || [],
         schema: schema.slug,
@@ -1906,6 +1921,8 @@ async function enrichOne(product, { model, category, provider, onNote = () => {}
           model,
           status: 'needs_review',
           validation_issues: validation_issues || [],
+          filters: cardFilters,
+          filter_coverage: filterCoverage,
           ...origin,
           usage: { prompt_tokens: iT, completion_tokens: oT, cost, cost_source: costSource, attempts },
           ...detailTrace({
@@ -1918,13 +1935,19 @@ async function enrichOne(product, { model, category, provider, onNote = () => {}
       };
     }
 
-    if (Object.keys(cardFilters).length) {
+    if (filterCoverage) {
+      note(`тесты фильтров: ${filterCoverage.filled}/${filterCoverage.total} · ${filterCoverage.coverage}%`, {
+        step: 'filters',
+        level: filterCoverage.coverage >= 100 ? 'ok' : 'warn',
+      });
+    } else if (Object.keys(cardFilters).length) {
       note(`filters карточки: ${Object.keys(cardFilters).length} осей`, { step: 'filters' });
     }
 
     return {
       enriched,
       filters: cardFilters,
+      filter_coverage: filterCoverage,
       schema: schema.slug,
       provider: prov.id,
       ...origin,
@@ -1936,6 +1959,7 @@ async function enrichOne(product, { model, category, provider, onNote = () => {}
         model,
         status: 'ok',
         filters: cardFilters,
+        filter_coverage: filterCoverage,
         ...origin,
         usage: { prompt_tokens: iT, completion_tokens: oT, cost, cost_source: costSource, attempts },
         ...detailTrace(debug, { enriched }),

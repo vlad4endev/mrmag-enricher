@@ -360,8 +360,11 @@ export function createJobStore({
       job.results[k] = {
         enriched: d.enriched ?? null,
         ...(d.filters && typeof d.filters === 'object' ? { filters: d.filters } : {}),
+        ...(d.filter_coverage && typeof d.filter_coverage === 'object'
+          ? { filter_coverage: d.filter_coverage } : {}),
         ...(d.skipped ? { skipped: d.skipped } : {}),
-        ...(d.needs_review && !d.enriched ? { needs_review: true, validation_issues: d.validation_issues || [] } : {}),
+        ...(d.needs_review && !d.enriched ? { needs_review: true } : {}),
+        ...(d.validation_issues ? { validation_issues: d.validation_issues } : {}),
         ...(d.source_url ? { source: d.source_url } : {}),
         ...(d.parser ? { parser: true } : {}),
         ...(d.corrected ? { corrected: true } : {}),
@@ -394,12 +397,14 @@ export function createJobStore({
           corrected: Boolean(d.corrected),
         });
         const pretty = mark.charAt(0).toUpperCase() + mark.slice(1);
+        const cov = d.filter_coverage;
         pushLog(job, {
           level: 'ok', step: 'done', pos: k,
           msg: `✓ ${pretty} · in=${iT} out=${oT}`
             + (cost != null ? ` · $${cost.toFixed(5)}` : '')
             + (attempts > 1 ? ` · попыток ${attempts}` : '')
-            + (d.source_url ? ` · источник ${d.source_url}` : ''),
+            + (d.source_url ? ` · источник ${d.source_url}` : '')
+            + (cov ? ` · фильтры ${cov.filled}/${cov.total} (${cov.coverage}%)` : ''),
         });
       }
       storeDetail(job, k, d.detail || {
@@ -409,6 +414,8 @@ export function createJobStore({
         needs_review: Boolean(d.needs_review && !d.enriched),
         validation_issues: d.validation_issues || null,
         enriched: d.enriched ?? null,
+        filters: d.filters || null,
+        filter_coverage: d.filter_coverage || null,
         usage: d.usage || null,
         raw_response: d.detail?.raw_response ?? null,
         ...(d.source_url ? { source_url: d.source_url } : {}),

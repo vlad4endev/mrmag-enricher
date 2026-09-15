@@ -3001,6 +3001,18 @@ console.log('golden tests passed');
   assert.ok(typeof afterEmpty === 'object');
   assert.ok(!('Загрузка белья, кг' in afterEmpty) || afterEmpty['Загрузка белья, кг']);
 
+  const { cardFilterCoverage } = await import('./pipeline/filter_report.js');
+  const cov = cardFilterCoverage(cardFilters, d467);
+  assert.ok(cov.total >= 10, `ожидали витринные оси, получили ${cov.total}`);
+  assert.equal(cov.filled + cov.empty, cov.total);
+  const loadRow = cov.rows.find(r => r.name === 'Загрузка белья, кг');
+  assert.ok(loadRow?.ok);
+  assert.match(String(loadRow.value), /7/);
+  const emptyCov = cardFilterCoverage({}, d467);
+  assert.equal(emptyCov.filled, 0);
+  assert.equal(emptyCov.coverage, 0);
+  assert.ok(emptyCov.rows.every(r => !r.ok));
+
   const dryer = { id: 455270, name: 'Сушильная машина Pioneer DM-10701WH' };
   assert.ok(markCategoryMismatch(dryer, '467'));
   const acc = { id: 436864, name: 'Соединительный элемент CK-3' };

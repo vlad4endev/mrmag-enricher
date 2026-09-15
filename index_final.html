@@ -601,7 +601,7 @@ textarea{
 /* Дашборд парсинга / обогащения */
 .eboard{display:flex;flex-direction:column;gap:16px;margin:0 0 22px}
 .eboard-metrics{
-  display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;
+  display:grid;grid-template-columns:repeat(auto-fit,minmax(118px,1fr));gap:8px;
 }
 .emetric{
   display:flex;flex-direction:column;gap:4px;padding:10px 12px;
@@ -711,10 +711,40 @@ textarea{
 .eboard-legend .lg-new i{background:var(--green)}
 .eboard-legend .lg-chg i{background:var(--amber)}
 .eboard-legend .lg-ok i{background:var(--b2)}
+.filter-tests{
+  margin:8px 12px 10px;padding:12px 14px;
+  border:1px solid var(--b1);border-radius:var(--r2);background:var(--bg3);
+}
+.filter-tests.ok{border-color:var(--gbd);background:var(--gbg)}
+.filter-tests.warn{border-color:var(--abd);background:var(--abg)}
+.filter-tests.err{border-color:var(--rbd);background:var(--rbg)}
+.cov-head{font-family:var(--mono);font-size:12px;font-weight:650;margin:0 0 8px}
+.cov-head.ok{color:var(--green)}
+.cov-head.warn{color:var(--amber)}
+.cov-head.err{color:var(--red)}
+.cov-table{display:flex;flex-direction:column}
+.cov-row{
+  display:grid;grid-template-columns:minmax(0,1.4fr) minmax(0,1fr) auto;
+  gap:8px;align-items:baseline;padding:5px 0;border-bottom:1px dashed var(--b1);
+  font-size:12.5px;
+}
+.cov-row:last-child{border-bottom:none}
+.cov-row .cv-k{font-weight:550;color:var(--t1);min-width:0}
+.cov-row .cv-v{font-family:var(--mono);text-align:right;color:var(--t1);overflow-wrap:break-word}
+.cov-row .cv-st{
+  font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;
+  min-width:3.2em;text-align:right;
+}
+.cov-row.ok .cv-st{color:var(--green)}
+.cov-row.miss .cv-st{color:var(--red)}
+.cov-row.miss .cv-v{color:var(--t3)}
+.cov-cols{font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--t2)}
 @media(max-width:900px){
   .eboard-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}
   .eboard-pair{grid-template-columns:minmax(0,1fr) auto;gap:4px 10px}
   .eboard-pair .ep-where{grid-column:1/-1}
+  .cov-row{grid-template-columns:minmax(0,1fr) auto;gap:4px 10px}
+  .cov-row .cv-v{grid-column:1;text-align:left}
 }
 
 /* Страница товара во вкладке «Поля»: как эталон, а не простыня JSON. */
@@ -2075,6 +2105,7 @@ input[type=range]::-moz-range-thumb{
       </div>
       <pre class="runlog-body" id="runLogBody"><span class="runlog-empty">Здесь появятся шаги прогона.</span></pre>
     </div>
+    <div class="filter-tests" id="filterTests" style="display:none"></div>
     <div class="mid-list" id="midList">
       <div class="mid-empty">Здесь появятся товары.<br>Загрузите их в шаге 2.</div>
     </div>
@@ -5494,6 +5525,7 @@ function restoreResults(){
   selectResult(0);
   showActions();
   renderFoot(sumRun(),`восстановлен ${new Date(saved.at).toLocaleString('ru')}`);
+  renderFilterTestsBanner();
   syncSteps();
 }
 
@@ -5506,6 +5538,7 @@ function clearResults(){
   document.getElementById('rtabs').style.display='none';
   document.getElementById('foot').style.display='none';
   document.getElementById('midBarF').style.width='0';
+  renderFilterTestsBanner();
   renderList();
   setP('detail','<div class="empty"><p>Прогон удалён. Загрузите товары и запустите снова.</p></div>');
   syncSteps();
@@ -6584,6 +6617,105 @@ function scoreCorrectness({warnings=0, conflicts=0, review=false}={}){
 }
 
 /**
+ * Тест витринных фильтров карточки после обогащения.
+ * Берём server filter_coverage (все оси справочника, включая пустые),
+ * иначе — ключи r.filters.
+ */
+function filterTestOf(r){
+  const cov=r?.filter_coverage;
+  if(cov&&typeof cov==='object'&&Array.isArray(cov.rows)){
+    const rows=cov.rows.map(row=>({
+      name:String(row.name||''),
+      value:row.value==null?'':String(row.value),
+      ok:!!row.ok,
+    }));
+    const filled=typeof cov.filled==='number'?cov.filled:rows.filter(x=>x.ok).length;
+    const total=typeof cov.total==='number'?cov.total:rows.length;
+    return {
+      total,
+      filled,
+      empty:Math.max(0,total-filled),
+      coverage:typeof cov.coverage==='number'?cov.coverage:(total?Math.round(filled/total*100):0),
+      rows,
+    };
+  }
+  const f=r?.filters;
+  if(!f||typeof f!=='object'||Array.isArray(f)) return null;
+  const rows=Object.entries(f).map(([name,v])=>{
+    const ok=!(v==null||v===''||(Array.isArray(v)&&!v.length));
+    const value=Array.isArray(v)?v.join(', '):String(v??'');
+    return {name,value,ok};
+  });
+  if(!rows.length) return null;
+  const filled=rows.filter(x=>x.ok).length;
+  return {total:rows.length,filled,empty:rows.length-filled,coverage:Math.round(filled/rows.length*100),rows};
+}
+
+/** Сводка по всему прогону: фильтр | есть | нет | покрытие_% */
+function runFilterCoverageTable(){
+  const tests=results.map(r=>filterTestOf(r)).filter(Boolean);
+  if(!tests.length) return null;
+  const names=[];
+  const seen=new Set();
+  for(const t of tests){
+    for(const row of t.rows){
+      if(!row.name||seen.has(row.name)) continue;
+      seen.add(row.name);
+      names.push(row.name);
+    }
+  }
+  const total=tests.length;
+  const filters=names.map(name=>{
+    const filled=tests.filter(t=>t.rows.some(row=>row.name===name&&row.ok)).length;
+    return {name,filled,empty:total-filled,coverage:Math.round(filled/total*100),total};
+  });
+  return {total,filters};
+}
+
+function renderFilterTests(test, {live=false, title='Тесты фильтров'}={}){
+  if(live&&!test){
+    return `<div class="eboard-empty">Тесты фильтров появятся после обогащения.</div>`;
+  }
+  if(!test){
+    return `<div class="eboard-empty">Нет тестов фильтров — для категории нет справочника, либо filters не собрались.</div>`;
+  }
+  const tone=test.coverage>=100?'ok':(test.coverage>=70?'warn':'err');
+  return `<div class="cov-head ${tone}">${test.filled} / ${test.total} · покрытие ${test.coverage}%</div>`
+    +`<div class="cov-row cov-cols"><span>Фильтр</span><span>значение</span><span></span></div>`
+    +`<div class="cov-table">${test.rows.map(row=>
+      `<div class="cov-row ${row.ok?'ok':'miss'}">`
+      +`<span class="cv-k">${esc(row.name)}</span>`
+      +`<span class="cv-v">${esc(row.value||'—')}</span>`
+      +`<span class="cv-st">${row.ok?'есть':'нет'}</span>`
+      +`</div>`
+    ).join('')}</div>`;
+}
+
+function renderFilterTestsBanner(){
+  const el=document.getElementById('filterTests');
+  if(!el) return;
+  const table=runFilterCoverageTable();
+  if(!table||!table.filters.length){
+    el.style.display='none';
+    el.innerHTML='';
+    return;
+  }
+  const all=table.filters.filter(f=>f.coverage>=100).length;
+  const tone=all===table.filters.length?'ok':(all>0?'warn':'err');
+  el.style.display='block';
+  el.className=`filter-tests ${tone}`;
+  el.innerHTML=`<div class="spec-title">Тесты фильтров после обогащения <i>${all}/${table.filters.length} по 100% · ${table.total} карт.</i></div>`
+    +`<div class="cov-row cov-cols"><span>Фильтр</span><span>есть / нет</span><span>%</span></div>`
+    +`<div class="cov-table cov-table-run">${table.filters.map(f=>
+      `<div class="cov-row ${f.coverage>=100?'ok':'miss'}">`
+      +`<span class="cv-k">${esc(f.name)}</span>`
+      +`<span class="cv-v">${f.filled} / ${f.empty}</span>`
+      +`<span class="cv-st">${f.coverage}%</span>`
+      +`</div>`
+    ).join('')}</div>`;
+}
+
+/**
  * Модель дашборда: парсинг с источниками, % обогащения, diff, корректность блоков.
  * live — снимок хода прогона (parse ещё может доезжать).
  */
@@ -6743,6 +6875,14 @@ function enrichBoardModel(r, live){
         ?(r.validation_issues||[]).slice(0,2).map(i=>`${i.field}: ${i.reason}`).join('; ')
         :(conflicts.length?`${conflicts.length} конфликт(ов)`:'валидация пройдена'),
     });
+    const ft=filterTestOf(r);
+    blocks.push({
+      id:'filters',
+      name:'Тесты фильтров',
+      status:ft?(ft.coverage>=100?'ok':(ft.coverage>=70?'warn':'err')):'warn',
+      label:ft?`${ft.coverage}%`:'нет',
+      detail:ft?`${ft.filled} / ${ft.total} осей`:'справочник не вернул фильтры',
+    });
   }
 
   return {
@@ -6764,6 +6904,7 @@ function enrichBoardModel(r, live){
     live:!!live,
     hasEnriched:!!d,
     confidence:d?.confidence??null,
+    filterTest:d?filterTestOf(r):null,
   };
 }
 
@@ -6886,6 +7027,11 @@ function renderEnrichBoard(r, opts={}){
     +`<span class="emetric-v">${m.parseHits||0}</span>`
     +`<span class="emetric-s">${m.webHits?`сеть +${m.webHits}`:'пар характеристик'}</span>`
     +`</div>`
+    +`<div class="emetric ${m.filterTest?metricTone(m.filterTest.coverage):(m.live?'':'warn')}">`
+    +`<span class="emetric-k">Фильтры</span>`
+    +`<span class="emetric-v">${m.filterTest?`${m.filterTest.coverage}%`:(m.live?'…':'—')}</span>`
+    +`<span class="emetric-s">${m.filterTest?`${m.filterTest.filled}/${m.filterTest.total} осей`:'после обогащения'}</span>`
+    +`</div>`
     +`</div>`;
 
   const liveObj=live||(m.hasEnriched?{phase:'done'}:{phase:m.phase});
@@ -6900,6 +7046,9 @@ function renderEnrichBoard(r, opts={}){
       ?`<div class="eboard-sec"><div class="spec-title">Разница с исходником</div>${renderDiffSection(m)}</div>`
       :'')
     +`<div class="eboard-sec"><div class="spec-title">Корректность блоков</div>${renderBlocksSection(m.blocks)}</div>`
+    +`<div class="eboard-sec"><div class="spec-title">Тесты фильтров <i>${m.filterTest?m.filterTest.coverage+'%':'—'}</i></div>`
+    +renderFilterTests(m.filterTest,{live:m.live})
+    +`</div>`
     +`</section>`;
 }
 
@@ -7034,6 +7183,12 @@ function renderFoot(s,note){
   if(s.err)  parts.push(`<span style="color:var(--red)">Ошибок <b>${s.err}</b></span>`);
   if(s.warn) parts.push(`<span style="color:var(--amber)">Расхождений <b>${s.warn}</b></span>`);
   if(s.skip) parts.push(`<span>Пропущено <b>${s.skip}</b></span>`);
+  const cov=runFilterCoverageTable();
+  if(cov&&cov.filters.length){
+    const all=cov.filters.filter(f=>f.coverage>=100).length;
+    const tone=all===cov.filters.length?'var(--green)':'var(--amber)';
+    parts.push(`<span style="color:${tone}">Фильтры <b>${all}/${cov.filters.length}</b> по 100%</span>`);
+  }
   if(note)   parts.push(`<span>${esc(note)}</span>`);
   el.innerHTML=parts.join('<span class="fsep">│</span>');
 }
@@ -7551,7 +7706,13 @@ async function loadLogsDetail(pos){
       +logsBlock('2. System prompt', x.system_prompt, 'logsSys')
       +logsBlock('3. User content (что ушло в модель)', x.user_content, 'logsUser')
       +logsBlock('4. Ответ модели (сырой)', x.raw_response, 'logsRaw')
-      +logsBlock('5. Обогащённый результат', enriched, 'logsEnr');
+      +logsBlock('5. Обогащённый результат', enriched, 'logsEnr')
+      +(filterTestOf(x)
+        ? `<div class="set-card logs-block"><div class="logs-block-h"><b>6. Тесты фильтров</b>`
+          +`<button type="button" class="sbtn ghost" onclick="copyLogsBlock('logsCov')">Копировать</button></div>`
+          +renderFilterTests(filterTestOf(x))
+          +`<pre class="set-pre" id="logsCov" hidden>${esc(JSON.stringify(filterTestOf(x),null,2))}</pre></div>`
+        : '');
   }catch(e){
     detail.innerHTML=`<div class="logs-empty">Ошибка: ${esc(e.message)}</div>`;
   }
@@ -7567,7 +7728,7 @@ async function copyLogsBlock(id){
 
 async function copyLogsAll(){
   const parts=['# Лог обогащения',`Прогон: ${logsJobId||'—'}`,`Позиция: ${logsPos==null?'—':logsPos+1}`,''];
-  for(const id of ['logsSteps','logsParse','logsSrc','logsSys','logsUser','logsRaw','logsEnr']){
+  for(const id of ['logsSteps','logsParse','logsSrc','logsSys','logsUser','logsRaw','logsEnr','logsCov']){
     const el=document.getElementById(id);
     if(!el) continue;
     const title=el.closest?.('.logs-block')?.querySelector('b')?.textContent||id;
@@ -7645,6 +7806,7 @@ function applyJob(d){
       needs_review:r.needs_review||false,
       validation_issues:r.validation_issues||null,
       ...(r.filters&&typeof r.filters==='object'?{filters:r.filters}:{}),
+      ...(r.filter_coverage&&typeof r.filter_coverage==='object'?{filter_coverage:r.filter_coverage}:{}),
       source:r.source??null,parser:!!r.parser,corrected:!!r.corrected,iT:r.iT??0,oT:r.oT??0,
       cost:typeof r.cost==='number'?r.cost:null,
       ...(r.parse?{parse:r.parse}:{}),
@@ -7715,6 +7877,7 @@ async function follow(id){
       if(curIdx>=0&&(results[curIdx]||isRunningItem(curIdx))) renderDetail();
       saveResults();
       renderFoot(sumRun());
+      renderFilterTestsBanner();
 
       if(d.status!=='running'&&d.status!=='queued') break;
       await sleep(POLL_MS);
@@ -7746,11 +7909,13 @@ function finishRun(d){
     // Счётчики берём из самого прогона: результаты прошлых прогонов лежат
     // рядом, и общий s.ok показал бы больше, чем было в этой очереди.
     const okN=d?.usage?.ok??s.ok;
-    // У остановленного важно другое: сколько товаров успели пройти. «0 / 4»
-    // рядом с «Готово 3/4» в подвале выглядело так, будто не сделано ничего.
+    const cov=runFilterCoverageTable();
+    const covTxt=cov&&cov.filters.length
+      ? ` · фильтры ${cov.filters.filter(f=>f.coverage>=100).length}/${cov.filters.length} по 100%`
+      : '';
     setSt(d?.status==='stopped'?'wa':'ok',
       d?.status==='stopped'?`Остановлен: обработано ${d?.done??s.ok} из ${total}`
-                           :`Готово: ${okN} / ${total}`);
+                           :`Готово: ${okN} / ${total}${covTxt}`);
     renderFoot(s,[d?.status==='stopped'?'остановлен':null,el?`за ${el}с`:null,d?.error||null]
       .filter(Boolean).join(' · '));
     saveJobId(null);
@@ -7769,6 +7934,8 @@ function finishRun(d){
   showActions();
   syncSteps();
   saveResults();
+  renderFilterTestsBanner();
+  if(curIdx>=0&&results[curIdx]) renderDetail();
 
   // Если что-то требует внимания — сразу переводим на первую проблему.
   const firstBad=results.findIndex((_,i)=>['er','wa'].includes(statusOf(i).cls));
@@ -7886,6 +8053,7 @@ function downloadAll(fmt='json'){
     content=JSON.stringify({model:selModel?.id||null,rub_per_usd:RUB,rub_rate_date:RUB_DATE,
       items:doneRes().map(r=>({original:r.original,enriched:r.enriched,skipped:r.skipped,error:r.error,
         ...(r.filters&&typeof r.filters==='object'?{filters:r.filters}:{}),
+        ...(r.filter_coverage&&typeof r.filter_coverage==='object'?{filter_coverage:r.filter_coverage}:{}),
         ...(r.source?{source_url:r.source}:{}),
         _meta:r.cost!=null?{input_tokens:r.iT,output_tokens:r.oT,cost_usd:+r.cost.toFixed(6)}:{}}))},null,2);
     filename=`enriched_${Date.now()}.json`;
@@ -8061,7 +8229,11 @@ function exportStatusLine(d){
   const fixes=d?.filters_agent?.sanitize_fixes ?? 0;
   const comp=d?.filters?.find(f=>/компрессор/i.test(f.name));
   const hint=comp ? ` · компрессор: ${(comp.value||[]).slice(0,3).join(', ')}` : '';
-  return `товаров: ${n} · фасетов: ${fc} · agent=${mode}`+(fixes?` · sanitize=${fixes}`:'')+hint;
+  const cov=d?.coverage?.filters;
+  const covHint=Array.isArray(cov)&&cov.length
+    ? ` · тесты: ${cov.filter(f=>f.coverage>=100).length}/${cov.length} фильтров по 100%`
+    : '';
+  return `товаров: ${n} · фасетов: ${fc} · agent=${mode}`+(fixes?` · sanitize=${fixes}`:'')+hint+covHint;
 }
 
 async function downloadCategoryFiles(){
@@ -8348,18 +8520,11 @@ function renderVis(d, r){
         }).join('')}</div>`;
   }
 
-  // filters карточки — после обогащения (не парсинг). Показываем рядом со specs.
-  const cardFilters=r?.filters&&typeof r.filters==='object'&&!Array.isArray(r.filters)?r.filters:null;
-  if(cardFilters){
-    const fRows=Object.entries(cardFilters).filter(([,v])=>!isEmpty(v));
-    if(fRows.length){
-      out+=`<div class="spec-title mt">Filters <i>${fRows.length}</i></div>`
-        +`<div class="specs">${fRows.map(([k,v])=>{
-            const val=Array.isArray(v)?v.join(', '):String(v);
-            return `<div class="sp"><span class="sp-k">${esc(k)}</span>`
-              +`<span class="sp-d"></span><span class="sp-v">${esc(val)}</span></div>`;
-          }).join('')}</div>`;
-    }
+  // filters карточки — после обогащения (не парсинг). Таблица теста: все оси, включая пустые.
+  const filterTest=filterTestOf(r);
+  if(filterTest){
+    out+=`<div class="spec-title mt">Тесты фильтров <i>${filterTest.filled}/${filterTest.total} · ${filterTest.coverage}%</i></div>`
+      +renderFilterTests(filterTest);
   }
 
   if(Array.isArray(d.source_conflicts)&&d.source_conflicts.length){

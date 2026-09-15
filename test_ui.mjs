@@ -165,7 +165,7 @@ export const api={syncSteps,setCnt,setCntFree,applyCnt,applySource,setSource,pic
   calcModelsFromCatalog,syncCalcModels,toCalcModel,
   addDumpSection,openDumpDest,cancelDumpDest,dumpBodyWithName,matchDictCatalog,
   addPromptTemplate,selectPromptTab,onPromptScopeChange,onPromptSectionToggle,promptsForSave,
-  enrichBoardModel,alignParseKey};
+  enrichBoardModel,alignParseKey,filterTestOf,runFilterCoverageTable,renderFilterTests,renderFilterTestsBanner};
 export const st={get items(){return items},set items(v){items=v},
   get srcItems(){return srcItems},set srcItems(v){srcItems=v},
   get pickCat(){return pickCat},set pickCat(v){pickCat=v},get selCnt(){return selCnt},get results(){return results},
@@ -1112,6 +1112,53 @@ t('пропуск всё равно показывает, что нашёл па
   assert.match(h, /карточка/);
   assert.match(h, /Цвет/);
   assert.match(h, /белый/);
+});
+t('после обогащения видны тесты фильтров карточки и сводка прогона', () => {
+  st.items = [{ name: 'ATLANT 60C1010' }, { name: 'ATLANT XM' }];
+  st.results = [
+    {
+      ...ok(),
+      filters: { 'Загрузка белья, кг': ['7'], 'Цвет': ['Белый'] },
+      filter_coverage: {
+        total: 2, filled: 2, empty: 0, coverage: 100,
+        rows: [
+          { name: 'Загрузка белья, кг', value: '7', ok: true },
+          { name: 'Цвет', value: 'Белый', ok: true },
+        ],
+      },
+    },
+    {
+      ...ok(),
+      filters: { 'Загрузка белья, кг': ['6'] },
+      filter_coverage: {
+        total: 2, filled: 1, empty: 1, coverage: 50,
+        rows: [
+          { name: 'Загрузка белья, кг', value: '6', ok: true },
+          { name: 'Цвет', value: '', ok: false },
+        ],
+      },
+    },
+  ];
+  const one = api.filterTestOf(st.results[0]);
+  assert.strictEqual(one.coverage, 100);
+  assert.strictEqual(one.filled, 2);
+  const table = api.runFilterCoverageTable();
+  assert.strictEqual(table.total, 2);
+  const color = table.filters.find(f => f.name === 'Цвет');
+  assert.strictEqual(color.filled, 1);
+  assert.strictEqual(color.empty, 1);
+  assert.strictEqual(color.coverage, 50);
+  api.selectResult(0);
+  const h = G('detail').innerHTML;
+  assert.match(h, /Тесты фильтров/);
+  assert.match(h, /Загрузка белья, кг/);
+  assert.match(h, />100%</);
+  api.renderFilterTestsBanner();
+  const banner = G('filterTests').innerHTML;
+  assert.match(banner, /Тесты фильтров после обогащения/);
+  assert.match(banner, /есть \/ нет/);
+  assert.match(banner, /Цвет/);
+  assert.match(banner, /50%/);
 });
 t('поиск без характеристик всё равно показывает Yandex и запрос', () => {
   st.results = [{

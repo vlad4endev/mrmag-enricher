@@ -22,6 +22,7 @@ class El {
     this.id = id; this._cls = new Set(cls ? cls.split(' ') : []);
     this.style = {}; this._txt = ''; this._html = '';
     this.value = '';
+    this.hidden = false;
     this.dataset = {}; this.disabled = false; this.children = []; this.parent = null;
     this.classList = {
       add: c => this._cls.add(c),
@@ -62,6 +63,7 @@ const html = fs.readFileSync(path.join(ROOT, 'index_final.html'), 'utf-8');
 const ids = [...new Set([...html.slice(0, html.indexOf('<script>')).matchAll(/id="([^"]+)"/g)].map(m => m[1]))];
 
 const store = new Map(ids.map(id => [id, new El(id)]));
+if (store.has('filterTestsModal')) store.get('filterTestsModal').hidden = true;
 for (const n of ['step1', 'step2', 'step3']) store.get(n).appendChild(new El(n + '-b', 'step-b'));
 
 const groups = { '.cnt-grid .cnt-btn': [], '.fbtn': [], '.rtab': [], '.mitem': [], '.page': [], '.ntab': [] };
@@ -165,7 +167,7 @@ export const api={syncSteps,setCnt,setCntFree,applyCnt,applySource,setSource,pic
   calcModelsFromCatalog,syncCalcModels,toCalcModel,
   addDumpSection,openDumpDest,cancelDumpDest,dumpBodyWithName,matchDictCatalog,
   addPromptTemplate,selectPromptTab,onPromptScopeChange,onPromptSectionToggle,promptsForSave,
-  enrichBoardModel,alignParseKey,filterTestOf,runFilterCoverageTable,renderFilterTests,renderFilterTestsBanner};
+  enrichBoardModel,alignParseKey,filterTestOf,runFilterCoverageTable,renderFilterTests,renderFilterTestsBanner,openFilterTests,closeFilterTests,syncFilterTestsButton};
 export const st={get items(){return items},set items(v){items=v},
   get srcItems(){return srcItems},set srcItems(v){srcItems=v},
   get pickCat(){return pickCat},set pickCat(v){pickCat=v},get selCnt(){return selCnt},get results(){return results},
@@ -1151,14 +1153,21 @@ t('после обогащения видны тесты фильтров кар
   api.selectResult(0);
   const h = G('detail').innerHTML;
   assert.match(h, /Тесты фильтров/);
-  assert.match(h, /Загрузка белья, кг/);
   assert.match(h, />100%</);
-  api.renderFilterTestsBanner();
-  const banner = G('filterTests').innerHTML;
-  assert.match(banner, /Тесты фильтров после обогащения/);
-  assert.match(banner, /есть \/ нет/);
-  assert.match(banner, /Цвет/);
-  assert.match(banner, /50%/);
+  assert.doesNotMatch(h, /есть \/ нет/, 'таблица покрытия не в колонке карточки');
+  assert.doesNotMatch(G('midList').innerHTML, /есть \/ нет/, 'таблица покрытия не в списке товаров');
+  assert.doesNotMatch(G('runLog').innerHTML, /есть \/ нет/, 'таблица покрытия не в ходе обогащения');
+  api.openFilterTests();
+  const modal = G('filterTestsModal');
+  assert.strictEqual(modal.hidden, false);
+  const body = G('filterTestsBody').innerHTML;
+  assert.match(body, /Тесты фильтров после обогащения|Покрытие прогона/);
+  assert.match(body, /есть \/ нет/);
+  assert.match(body, /Цвет/);
+  assert.match(body, /50%/);
+  assert.match(body, /Загрузка белья, кг/);
+  api.closeFilterTests();
+  assert.strictEqual(G('filterTestsModal').hidden, true);
 });
 t('поиск без характеристик всё равно показывает Yandex и запрос', () => {
   st.results = [{

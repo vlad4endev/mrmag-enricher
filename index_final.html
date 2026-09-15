@@ -1559,11 +1559,20 @@ input[type=range]::-moz-range-thumb{
   position:fixed;inset:0;background:rgba(11,18,32,.4);display:flex;align-items:center;
   justify-content:center;padding:24px;z-index:80;
 }
+.ae-modal-wrap[hidden]{display:none}
 :root[data-theme="dark"] .ae-modal-wrap{background:rgba(0,0,0,.55)}
-.ae-modal{background:var(--bg2);border:1px solid var(--b1);border-radius:12px;width:min(560px,100%);max-height:80vh;display:flex;flex-direction:column}
-.ae-modal-head{display:flex;justify-content:space-between;align-items:center;padding:12px 16px;border-bottom:1px solid var(--b1)}
+.ae-modal{
+  background:var(--bg2);border:1px solid var(--b1);border-radius:12px;
+  max-height:min(88vh,900px);display:flex;flex-direction:column;overflow:hidden;
+  box-shadow:0 18px 48px rgba(11,18,32,.18);
+}
+.ae-modal.filter-tests-modal{width:min(720px,96vw)}
+.filter-tests-open{font:inherit;cursor:pointer;border:1px solid var(--b1);background:var(--bg3);color:var(--t1);border-radius:var(--r2);padding:6px 10px}
+.filter-tests-open:hover{border-color:var(--ac-b);background:var(--ac-w)}
+.ae-modal-head{display:flex;justify-content:space-between;align-items:center;padding:12px 16px;border-bottom:1px solid var(--b1);flex-shrink:0}
 .ae-modal-head h3{margin:0;font-size:15px}
-.ae-modal-body{overflow:auto;padding:12px 16px;display:flex;flex-direction:column;gap:14px}
+.ae-modal-body{overflow:auto;padding:12px 16px;display:flex;flex-direction:column;gap:14px;max-height:calc(88vh - 56px)}
+.ae-modal-body .filter-tests{margin:0}
 .ae-facet-name{font-weight:650;font-size:13px;margin-bottom:6px}
 .ae-facet-name .unit{color:var(--t3);font-weight:400}
 .ae-facet-vals{display:flex;flex-wrap:wrap;gap:5px}
@@ -2105,7 +2114,6 @@ input[type=range]::-moz-range-thumb{
       </div>
       <pre class="runlog-body" id="runLogBody"><span class="runlog-empty">Здесь появятся шаги прогона.</span></pre>
     </div>
-    <div class="filter-tests" id="filterTests" style="display:none"></div>
     <div class="mid-list" id="midList">
       <div class="mid-empty">Здесь появятся товары.<br>Загрузите их в шаге 2.</div>
     </div>
@@ -2128,6 +2136,7 @@ input[type=range]::-moz-range-thumb{
         <span class="bdg bdg-g" id="dlTxtBtn" style="display:none;cursor:pointer" onclick="downloadAll('txt')" title="Выгрузить все результаты в TXT"><i class="ti ti-file-text" aria-hidden="true"></i> TXT</span>
         <span class="bdg bdg-b" id="dlV2Btn" style="display:none;cursor:pointer" onclick="downloadV2()" title="Только обработанные карточки плюс categories: products_(id).json, filters_(id).json. Остаток дампа не входит."><i class="ti ti-braces" aria-hidden="true"></i> JSON v2</span>
         <span class="bdg bdg-b" id="dlCatBtn" style="display:none;cursor:pointer" onclick="downloadCategoryFiles()" title="Два файла заказчика: products_(id).json и filters_(id).json. Фильтры нормализуются отдельным проходом по категории."><i class="ti ti-files" aria-hidden="true"></i> 2 файла</span>
+        <span class="bdg bdg-g" id="filterTestsBtn" style="display:none;cursor:pointer" onclick="openFilterTests(event)" title="Покрытие витринных фильтров после обогащения">Тесты фильтров</span>
         <span class="bdg bdg-a" id="clrBtn" style="display:none;cursor:pointer" onclick="clearResults()" title="Удалить сохранённый прогон">✕ Сброс</span>
       </div>
     </div>
@@ -2149,6 +2158,16 @@ input[type=range]::-moz-range-thumb{
   </div>
 </div>
 <div class="foot" id="foot" style="display:none"></div>
+</div>
+
+<div class="ae-modal-wrap" id="filterTestsModal" hidden onclick="if(event.target===this)closeFilterTests()">
+  <div class="ae-modal filter-tests-modal" role="dialog" aria-modal="true" aria-labelledby="filterTestsTitle">
+    <div class="ae-modal-head">
+      <h3 id="filterTestsTitle">Тесты фильтров после обогащения</h3>
+      <button type="button" class="sbtn ghost" onclick="closeFilterTests()" aria-label="Закрыть">✕</button>
+    </div>
+    <div class="ae-modal-body" id="filterTestsBody"></div>
+  </div>
 </div>
 
 
@@ -5534,7 +5553,7 @@ function clearResults(){
   localStorage.removeItem(STORE_KEY);
   runStore.clear();
   results=[];curIdx=0;filter='all';runQueue=null;
-  ['cpyBtn','dlBtn','dlTxtBtn','dlV2Btn','dlCatBtn','confBdg','clrBtn'].forEach(hide);
+  ['cpyBtn','dlBtn','dlTxtBtn','dlV2Btn','dlCatBtn','confBdg','clrBtn','filterTestsBtn'].forEach(hide);
   document.getElementById('rtabs').style.display='none';
   document.getElementById('foot').style.display='none';
   document.getElementById('midBarF').style.width='0';
@@ -6691,20 +6710,14 @@ function renderFilterTests(test, {live=false, title='Тесты фильтров
     ).join('')}</div>`;
 }
 
-function renderFilterTestsBanner(){
-  const el=document.getElementById('filterTests');
-  if(!el) return;
-  const table=runFilterCoverageTable();
+function filterTestsSummaryHtml(table){
   if(!table||!table.filters.length){
-    el.style.display='none';
-    el.innerHTML='';
-    return;
+    return `<div class="eboard-empty">Нет тестов фильтров — обогатите товары со справочником категории.</div>`;
   }
   const all=table.filters.filter(f=>f.coverage>=100).length;
   const tone=all===table.filters.length?'ok':(all>0?'warn':'err');
-  el.style.display='block';
-  el.className=`filter-tests ${tone}`;
-  el.innerHTML=`<div class="spec-title">Тесты фильтров после обогащения <i>${all}/${table.filters.length} по 100% · ${table.total} карт.</i></div>`
+  return `<div class="filter-tests ${tone}">`
+    +`<div class="spec-title">Покрытие прогона <i>${all}/${table.filters.length} по 100% · ${table.total} карт.</i></div>`
     +`<div class="cov-row cov-cols"><span>Фильтр</span><span>есть / нет</span><span>%</span></div>`
     +`<div class="cov-table cov-table-run">${table.filters.map(f=>
       `<div class="cov-row ${f.coverage>=100?'ok':'miss'}">`
@@ -6712,7 +6725,57 @@ function renderFilterTestsBanner(){
       +`<span class="cv-v">${f.filled} / ${f.empty}</span>`
       +`<span class="cv-st">${f.coverage}%</span>`
       +`</div>`
-    ).join('')}</div>`;
+    ).join('')}</div></div>`;
+}
+
+function filterTestsModalHtml(){
+  const table=runFilterCoverageTable();
+  const card=results[curIdx]?filterTestOf(results[curIdx]):null;
+  let html=filterTestsSummaryHtml(table);
+  if(card){
+    html+=`<div class="spec-title mt">Текущая карточка <i>${card.filled}/${card.total} · ${card.coverage}%</i></div>`
+      +renderFilterTests(card);
+  }
+  return html;
+}
+
+function syncFilterTestsButton(){
+  const btn=document.getElementById('filterTestsBtn');
+  const body=document.getElementById('filterTestsBody');
+  const table=runFilterCoverageTable();
+  if(btn){
+    if(!table||!table.filters.length){
+      btn.style.display='none';
+    }else{
+      const all=table.filters.filter(f=>f.coverage>=100).length;
+      btn.style.display='inline-block';
+      btn.textContent=`Тесты ${all}/${table.filters.length}`;
+    }
+  }
+  if(body) body.innerHTML=filterTestsModalHtml();
+}
+
+/** Совместимость: раньше таблица жила в колонке списка. */
+function renderFilterTestsBanner(){
+  syncFilterTestsButton();
+}
+
+function isFilterTestsOpen(){
+  const el=document.getElementById('filterTestsModal');
+  return !!(el&&!el.hidden);
+}
+
+function openFilterTests(ev){
+  ev?.stopPropagation?.();
+  ev?.preventDefault?.();
+  syncFilterTestsButton();
+  const el=document.getElementById('filterTestsModal');
+  if(el) el.hidden=false;
+}
+
+function closeFilterTests(){
+  const el=document.getElementById('filterTestsModal');
+  if(el) el.hidden=true;
 }
 
 /**
@@ -7046,9 +7109,9 @@ function renderEnrichBoard(r, opts={}){
       ?`<div class="eboard-sec"><div class="spec-title">Разница с исходником</div>${renderDiffSection(m)}</div>`
       :'')
     +`<div class="eboard-sec"><div class="spec-title">Корректность блоков</div>${renderBlocksSection(m.blocks)}</div>`
-    +`<div class="eboard-sec"><div class="spec-title">Тесты фильтров <i>${m.filterTest?m.filterTest.coverage+'%':'—'}</i></div>`
-    +renderFilterTests(m.filterTest,{live:m.live})
-    +`</div>`
+    +(m.filterTest||m.hasEnriched
+      ?`<div class="eboard-sec"><button type="button" class="filter-tests-open" onclick="openFilterTests(event)">Тесты фильтров`+(m.filterTest?` · ${m.filterTest.coverage}%`:'')+`</button></div>`
+      :'')
     +`</section>`;
 }
 
@@ -7146,10 +7209,17 @@ function syncExportButtons(){
   (hasEnriched?show:hide)('dlV2Btn');
   (hasEnriched?show:hide)('dlCatBtn');
   (hasDone?show:hide)('clrBtn');
+  (hasDone?show:hide)('filterTestsBtn');
+  syncFilterTestsButton();
 }
 
 // Стрелками удобно просматривать сотню результатов подряд.
 document.addEventListener('keydown',e=>{
+  if(e.key==='Escape'&&isFilterTestsOpen()){
+    e.preventDefault();
+    closeFilterTests();
+    return;
+  }
   if(/^(INPUT|TEXTAREA)$/.test(e.target.tagName)||e.metaKey||e.ctrlKey) return;
   if(!items.length) return;
   const vis=items.map((_,i)=>i).filter(passesFilter);
@@ -7187,7 +7257,7 @@ function renderFoot(s,note){
   if(cov&&cov.filters.length){
     const all=cov.filters.filter(f=>f.coverage>=100).length;
     const tone=all===cov.filters.length?'var(--green)':'var(--amber)';
-    parts.push(`<span style="color:${tone}">Фильтры <b>${all}/${cov.filters.length}</b> по 100%</span>`);
+    parts.push(`<span style="color:${tone}"><button type="button" class="filter-tests-open" style="padding:0;border:none;background:none;color:inherit" onclick="openFilterTests(event)">Фильтры <b>${all}/${cov.filters.length}</b> по 100%</button></span>`);
   }
   if(note)   parts.push(`<span>${esc(note)}</span>`);
   el.innerHTML=parts.join('<span class="fsep">│</span>');
@@ -8520,11 +8590,11 @@ function renderVis(d, r){
         }).join('')}</div>`;
   }
 
-  // filters карточки — после обогащения (не парсинг). Таблица теста: все оси, включая пустые.
+  // Полная таблица тестов — в попапе, не в карточке.
   const filterTest=filterTestOf(r);
   if(filterTest){
-    out+=`<div class="spec-title mt">Тесты фильтров <i>${filterTest.filled}/${filterTest.total} · ${filterTest.coverage}%</i></div>`
-      +renderFilterTests(filterTest);
+    out+=`<div class="spec-title mt">Тесты фильтров <i>${filterTest.coverage}%</i></div>`
+      +`<button type="button" class="filter-tests-open" onclick="openFilterTests(event)">Открыть ${filterTest.filled}/${filterTest.total} осей</button>`;
   }
 
   if(Array.isArray(d.source_conflicts)&&d.source_conflicts.length){

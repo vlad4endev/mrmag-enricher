@@ -546,13 +546,15 @@ export async function buildCustomerExport(products, {
   });
   const clean = assertFiltersClean(built.filters, dict);
   const verdict = validateProducts(productsOut, dict, new Map(exported.map(r => [r.id, r])));
-  // Gate — грязь в каталоге filters_*.json. Бакет/чужой ключ на карточке
-  // уже сняты scrub: иначе 20/20 на экране и 422 на JSON v2.
-  // filter_missing — норма для частичной выгрузки / одного SKU.
+  // Gate только на грязь в значениях фасетов. filter_missing (фасет из schema
+  // ни у кого не заполнен) — норма для частичной выгрузки / одного SKU.
   const dirtyKinds = new Set([
     'dirty_filter_value',
     'filter_not_in_aliases',
     'filter_object_stringified',
+    'filter_unknown',
+    'filter_not_bucketed',
+    'filter_unit_mismatch',
   ]);
   const dirtyVerdict = verdict.errors.filter(e => dirtyKinds.has(e.kind));
   const validation = {

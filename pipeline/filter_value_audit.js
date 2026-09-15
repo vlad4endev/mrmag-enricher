@@ -166,21 +166,15 @@ function attrForFilterKey(dict, key) {
   return dict.attrs.find(a => (a.facet?.label || a.name) === key) || null;
 }
 
-function numbersClose(a, b) {
-  return Number.isFinite(a) && Number.isFinite(b) && Math.abs(a - b) <= 0.05;
-}
-
 function bucketOk(n, filterLabel, attr) {
   if (!Number.isFinite(n) || !filterLabel) return null;
-  const got = String(Array.isArray(filterLabel) ? filterLabel[0] : filterLabel);
-  const coerced = attr ? coerceFacetNumber(n, attr) : n;
-  const gotN = Number(String(got).replace(',', '.'));
-  if (numbersClose(gotN, coerced)) return true;
   if (attr && facetKind(attr) === 'range') {
-    const expected = matchBucket(coerced, attr.facet);
+    const got = String(Array.isArray(filterLabel) ? filterLabel[0] : filterLabel);
+    const expected = matchBucket(coerceFacetNumber(n, attr), attr.facet);
     if (expected) return String(got) === String(expected);
   }
-  return valueInBucket(n, got.split(',')[0].trim());
+  const inRange = valueInBucket(n, String(filterLabel).split(',')[0].trim());
+  return inRange;
 }
 
 /**

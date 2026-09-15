@@ -563,11 +563,14 @@ export function assignFilterValues(rec, dict, debugFacets, config = {}, unmapped
       continue;
     }
     if (kind === 'range') {
-      // Карточка: точное число (16 программ). Бакеты 10-15 / 15-20 — только filters_*.json.
       const raw = numericOf(v);
       if (raw == null) continue;
       const n = coerceFacetNumber(raw, attr);
-      const lab = Number.isFinite(n) ? displayValue(attr, n) : '';
+      const lab = snapToFacetBucket(n, facet) || (
+        hasExplicitBuckets(facet) || hasBreaks(facet)
+          ? null
+          : bucketLabel(n, { ...facet, kind: 'range' })
+      );
       if (!lab) {
         trackUnmapped(unmapped, f.name, v);
         continue;

@@ -63,8 +63,8 @@ export function isRangeBucketLabel(v) {
 }
 
 /**
- * Карточка хранит точное число; бакеты и ключи вне schema — только filters_*.json.
- * Снимаем их с товара, чтобы «чистота» не блокировала выгрузку при 100% покрытии.
+ * С карточки снимаем ключи вне schema и мусор вроде [object Object].
+ * Числовые range на товаре остаются бакетами витрины («10-15»).
  */
 export function scrubProductFilterValues(row, dict) {
   if (!row || !row.filters || typeof row.filters !== 'object' || Array.isArray(row.filters)) {
@@ -78,7 +78,6 @@ export function scrubProductFilterValues(row, dict) {
     const list = (Array.isArray(val) ? val : [val]).filter(v => {
       if (v == null || v === '') return false;
       if (String(v) === '[object Object]') return false;
-      if (spec.kind === 'range' && isRangeBucketLabel(v)) return false;
       return true;
     });
     if (list.length) next[name] = list;
@@ -222,11 +221,11 @@ export function validateProducts(rows, dict, sourceById = new Map()) {
       prev = pos;
 
       if (Array.isArray(val) && val.length > 1) multiValueSeen++;
-      // Карточка хранит точное число; бакеты («10-15», «90+») — только filters_*.json.
+      // Числовой фильтр обязан быть бакетирован: точное значение живёт в аннотации.
       if (spec.kind === 'range') {
         for (const v of (Array.isArray(val) ? val : [val])) {
-          if (isRangeBucketLabel(v)) {
-            add(r.id, 'filter_bucketed_on_product', `${name}=${v}`);
+          if (!isRangeBucketLabel(v)) {
+            add(r.id, 'filter_not_bucketed', `${name}=${v}`);
           }
         }
       }

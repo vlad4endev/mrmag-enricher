@@ -1108,6 +1108,50 @@ input[type=range]::-moz-range-thumb{
 .photo-drop .photo-drop-ico i{font-size:18px}
 .photo-drop b{display:block;font-size:13px;margin:0 0 4px;letter-spacing:-.02em}
 .photo-drop .hint{margin:0}
+
+.refine-page .photo-drop{margin-top:8px}
+.refine-files{display:flex;flex-direction:column;gap:6px;margin-top:8px}
+.refine-file{
+  display:flex;align-items:center;gap:8px;padding:7px 9px;border-radius:10px;
+  background:var(--bg3);border:1px solid var(--b1);font-size:12px;
+}
+.refine-file b{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:550}
+.refine-file .kind{font-size:10px;color:var(--t3);font-family:var(--mono)}
+.refine-file button{border:0;background:none;color:var(--t3);cursor:pointer;padding:0 2px}
+.refine-file button:hover{color:var(--red)}
+.refine-metrics{
+  display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:8px;
+}
+.refine-metric{
+  padding:8px 10px;border-radius:10px;background:var(--bg3);border:1px solid var(--b1);
+}
+.refine-metric b{display:block;font-size:16px;font-variant-numeric:tabular-nums;letter-spacing:-.03em}
+.refine-metric span{font-size:10.5px;color:var(--t3)}
+.refine-metric.warn b{color:var(--amber,#c47a12)}
+.refine-metric.bad b{color:var(--red)}
+.refine-metric.ok b{color:var(--green)}
+.refine-check{
+  display:flex;align-items:flex-start;gap:8px;margin-top:10px;font-size:12px;color:var(--t2);line-height:1.35;
+}
+.refine-check input{margin-top:2px}
+.refine-item{
+  display:grid;grid-template-columns:minmax(0,1fr) auto;gap:6px 10px;
+  padding:10px 12px;border-bottom:1px solid var(--b1);cursor:pointer;
+}
+.refine-item:hover{background:var(--bg3)}
+.refine-item.on{background:var(--ac-w)}
+.refine-item .nm{font-size:13px;font-weight:550;letter-spacing:-.02em}
+.refine-item .meta{font-size:11px;color:var(--t3);font-family:var(--mono)}
+.refine-pill{font-size:10.5px;padding:2px 7px;border-radius:999px;border:1px solid var(--b1);color:var(--t2)}
+.refine-pill.extra{color:var(--red);border-color:var(--rbd);background:var(--rbg,#fff4f2)}
+.refine-pill.missing{color:#b36b00;border-color:#e6c48a;background:#fff8e8}
+.refine-pill.ok{color:var(--green);border-color:var(--gbd);background:var(--gbg)}
+.refine-issue{padding:8px 0;border-bottom:1px dashed var(--b1);font-size:12.5px}
+.refine-issue .act{font-size:10.5px;color:var(--t3);font-family:var(--mono);margin-top:2px}
+.refine-cat{
+  width:100%;margin-top:8px;height:36px;border-radius:10px;border:1px solid var(--b1);
+  background:var(--bg3);color:var(--t1);padding:0 10px;font:500 12.5px var(--sans);
+}
 .photo-page .photo-run{
   display:grid;grid-template-columns:1fr auto;gap:8px;
 }
@@ -1937,6 +1981,10 @@ input[type=range]::-moz-range-thumb{
     <i class="ti ti-sparkles" aria-hidden="true"></i><span class="ico-fb">✦</span>
     <span class="tip">Обогащение</span>
   </button>
+  <button class="ntab rbtn" data-page="refine" onclick="showPage('refine',this)" aria-label="Доводка">
+    <i class="ti ti-adjustments" aria-hidden="true"></i><span class="ico-fb">↻</span>
+    <span class="tip">Доводка</span>
+  </button>
   <button class="ntab rbtn" data-page="photos" onclick="showPage('photos',this)" aria-label="Фото">
     <i class="ti ti-photo" aria-hidden="true"></i><span class="ico-fb">▣</span>
     <span class="tip">Фото</span>
@@ -2317,6 +2365,124 @@ input[type=range]::-moz-range-thumb{
             <li>Создайте <b>альбом</b> и загрузите фото.</li>
             <li>Выберите <b>модель AITUNNEL</b> и нажмите «Описать».</li>
             <li>Откройте фото в списке — справа будет <b>полный текст</b>.</li>
+          </ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+</div>
+
+<!-- ===== PAGE: REFINE ===== -->
+<div class="page refine-page" id="page-refine">
+  <header class="head">
+    <div>
+      <h1>Доводка</h1>
+      <div class="crumb">Готовые products + filters → лишнее срезать, дыры добрать. Основной прогон не трогаем.</div>
+    </div>
+  </header>
+<div class="app">
+  <aside class="left">
+    <header class="left-head">
+      <div class="left-title">Файлы</div>
+      <div class="left-lead">Загрузите выгрузку товаров и фильтров — как после обогащения.</div>
+      <div class="left-flow" aria-hidden="true"><span>файлы</span><i>→</i><span>анализ</span><i>→</i><span>доводка</span></div>
+    </header>
+    <div class="left-body">
+      <section class="photo-card">
+        <div class="photo-card-h"><b>Товары</b></div>
+        <div class="photo-drop" id="refineProdZone" tabindex="0" role="button" aria-label="Загрузить товары">
+          <div class="photo-drop-ico" aria-hidden="true"><i class="ti ti-file-text"></i></div>
+          <b>products_*.json</b>
+          <div class="hint">Эталон, JSON v2 или CLI</div>
+        </div>
+        <input type="file" id="refineProdFile" accept="application/json,.json" multiple hidden>
+        <div class="refine-files" id="refineProdList"></div>
+      </section>
+      <section class="photo-card">
+        <div class="photo-card-h"><b>Фильтры</b></div>
+        <div class="photo-drop" id="refineFiltZone" tabindex="0" role="button" aria-label="Загрузить фильтры">
+          <div class="photo-drop-ico" aria-hidden="true"><i class="ti ti-filter"></i></div>
+          <b>filters_*.json</b>
+          <div class="hint">Необязательно: пересоберём из карточек</div>
+        </div>
+        <input type="file" id="refineFiltFile" accept="application/json,.json" multiple hidden>
+        <div class="refine-files" id="refineFiltList"></div>
+      </section>
+      <section class="photo-card">
+        <div class="photo-card-h"><b>Категория</b></div>
+        <select class="refine-cat" id="refineCat" onchange="refineCatManual=true">
+          <option value="">определится из файлов</option>
+        </select>
+        <label class="refine-check">
+          <input type="checkbox" id="refineLookup" checked>
+          <span>Дыры, которых нет в файлах, добирать парсингом той же модели в сети</span>
+        </label>
+      </section>
+      <section class="photo-dock" aria-label="Доводка">
+        <div class="photo-card-h"><b>Прогон</b></div>
+        <div class="photo-run">
+          <button type="button" class="sbtn ghost" id="refineAuditBtn" onclick="refineAudit()"><i class="ti ti-search"></i> Анализ</button>
+          <button type="button" class="sbtn primary" id="refineRunBtn" onclick="refineStart()"><i class="ti ti-adjustments"></i> Доработать</button>
+        </div>
+        <div class="photo-status" id="refineStatusBox">
+          <div id="refineHint">Сначала файлы, затем анализ — без запроса к модели.</div>
+          <div id="refineStatus">Нет файлов</div>
+        </div>
+        <div class="refine-metrics" id="refineMetrics" hidden>
+          <div class="refine-metric extra"><span>Лишнего</span><b id="refineNExtra">0</b></div>
+          <div class="refine-metric missing"><span>Дыры</span><b id="refineNMiss">0</b></div>
+          <div class="refine-metric ok"><span>Чистых карточек</span><b id="refineNOk">0</b></div>
+          <div class="refine-metric"><span>Всего</span><b id="refineNAll">0</b></div>
+        </div>
+        <div class="photo-export" style="margin-top:10px">
+          <button type="button" class="sbtn primary" id="refineDlBtn" onclick="refineDownload()" disabled><i class="ti ti-download"></i> 2 файла</button>
+          <button type="button" class="sbtn ghost" id="refineDlV2Btn" onclick="refineDownloadV2()" disabled>v2</button>
+        </div>
+      </section>
+    </div>
+  </aside>
+
+  <div class="mid">
+    <div class="mid-h">
+      <div class="runline" id="refineRunline" aria-live="polite"></div>
+      <div class="filters" id="refineFilters">
+        <button type="button" class="fbtn on" data-rf="all" onclick="refineSetFilter(this)">Все</button>
+        <button type="button" class="fbtn" data-rf="extra" onclick="refineSetFilter(this)">Лишнее</button>
+        <button type="button" class="fbtn" data-rf="missing" onclick="refineSetFilter(this)">Дыры</button>
+        <button type="button" class="fbtn" data-rf="ok" onclick="refineSetFilter(this)">Чисто</button>
+      </div>
+    </div>
+    <div class="mid-bar"><div class="mid-bar-f" id="refineBarF"></div></div>
+    <div class="runlog" id="refineRunLog">
+      <div class="runlog-h" onclick="refineToggleLog(event)">
+        <span class="runlog-tog" aria-hidden="true">▸</span>
+        <span class="runlog-t">Ход доводки</span>
+        <span class="runlog-n" id="refineRunLogN">0 шагов</span>
+      </div>
+      <pre class="runlog-body" id="refineRunLogBody"><span class="runlog-empty">Сначала анализ, затем доработка.</span></pre>
+    </div>
+    <div class="mid-list" id="refineList">
+      <div class="mid-empty">Загрузите products и filters.<br>Система сама найдёт лишнее и пустые оси витрины.</div>
+    </div>
+  </div>
+
+  <div class="right">
+    <div class="ph">
+      <div class="ph-top">
+        <span class="pt" id="refineDetailTitle"><i class="ti ti-adjustments" aria-hidden="true"></i> Карточка</span>
+      </div>
+    </div>
+    <div class="pb" id="refineDetail">
+      <div class="empty">
+        <div class="guide">
+          <div class="guide-k">Доводка, не обогащение</div>
+          <h3>Готовые файлы → проверка → правка</h3>
+          Основной прогон не запускается. Лишние фасеты и значения просто снимаются. Пустые обязательные оси добираются из аннотации, описания и — если включено — страницы той же модели в сети.
+          <ol>
+            <li>Загрузите <b>products</b> и <b>filters</b>.</li>
+            <li>Нажмите <b>Анализ</b> — без модели и без оплаты.</li>
+            <li><b>Доработать</b> срежет лишнее и закроет дыры, затем скачайте пару файлов.</li>
           </ol>
         </div>
       </div>
@@ -3225,6 +3391,7 @@ function showPage(id, btn){
   if(id==='settings') loadSettings();
   if(id==='enricher') applyDefaultProviderModels();
   if(id==='photos') photoInit();
+  if(id==='refine') refineInit();
 }
 
 const SET_TABS={prov:['setProv','snProv'],net:['setNet','snNet'],parse:['setParse','snParse'],cond:['setCond','snCond'],dict:['setDict','snDict'],dumps:['setDumps','snDumps'],run:['setRun','snRun'],prompt:['setPrompt','snPrompt'],export:['setExport','snExport'],logs:['setLogs','snLogs']};
@@ -10101,6 +10268,308 @@ document.addEventListener('click',e=>{
     photoCloseDrop();
   }
 });
+
+// ── ДОВОДКА ГОТОВЫХ ФАЙЛОВ ──────────────────────────────────
+let refineProducts=[];
+let refineFilters=null;
+let refineFilenames=[];
+let refineProdFiles=[];
+let refineFiltFiles=[];
+let refineAuditData=null;
+let refineJob=null;
+let refinePoll=null;
+let refineFilter='all';
+let refineSel=null;
+let refineCatManual=false;
+let refineInited=false;
+
+function refineStatus(msg, ok){
+  const el=document.getElementById('refineStatus');
+  if(el) el.textContent=msg||'';
+  const box=document.getElementById('refineStatusBox');
+  if(box){
+    box.style.borderColor = ok===false ? 'var(--rbd)' : ok ? 'var(--gbd)' : '';
+  }
+}
+
+function refineBindDrop(zoneId, inputId, kind){
+  const zone=document.getElementById(zoneId);
+  const input=document.getElementById(inputId);
+  if(!zone||!input||zone.dataset.bound) return;
+  zone.dataset.bound='1';
+  zone.addEventListener('click',()=>input.click());
+  zone.addEventListener('keydown',e=>{ if(e.key==='Enter'||e.key===' '){ e.preventDefault(); input.click(); }});
+  zone.addEventListener('dragover',e=>{ e.preventDefault(); zone.classList.add('on'); });
+  zone.addEventListener('dragleave',()=>zone.classList.remove('on'));
+  zone.addEventListener('drop',e=>{
+    e.preventDefault(); zone.classList.remove('on');
+    refineAddFiles(kind, e.dataTransfer.files);
+  });
+  input.addEventListener('change',()=>{ refineAddFiles(kind, input.files); input.value=''; });
+}
+
+async function refineInit(){
+  if(refineInited) return;
+  refineInited=true;
+  refineBindDrop('refineProdZone','refineProdFile','products');
+  refineBindDrop('refineFiltZone','refineFiltFile','filters');
+  try{
+    const d=await apiJson('/api/dictionaries');
+    const sel=document.getElementById('refineCat');
+    const arr=d.dictionaries||[];
+    if(!sel) return;
+    for(const c of arr){
+      const opt=document.createElement('option');
+      opt.value=String(c.id);
+      opt.textContent=`${c.id} · ${c.name||'раздел'}`;
+      sel.appendChild(opt);
+    }
+  }catch{ /* справочники подгрузятся при анализе */ }
+}
+
+function refineGuessKind(name, data){
+  const n=String(name||'').toLowerCase();
+  if(/filters/.test(n)) return 'filters';
+  if(/products/.test(n)) return 'products';
+  if(Array.isArray(data)) return 'products';
+  if(data && Array.isArray(data.products)) return 'products';
+  if(data && Array.isArray(data.filters) && !data.products) return 'filters';
+  return 'products';
+}
+
+async function refineAddFiles(kind, fileList){
+  const files=[...fileList||[]];
+  for(const file of files){
+    let data;
+    try{ data=JSON.parse(await file.text()); }
+    catch{ refineStatus('не JSON: '+file.name, false); continue; }
+    const k=kind || refineGuessKind(file.name, data);
+    if(k==='filters'){
+      refineFilters=data;
+      refineFiltFiles=refineFiltFiles.filter(f=>f.name!==file.name).concat([{name:file.name,size:file.size}]);
+    }else{
+      const rows=Array.isArray(data)?data:(data.products||[]);
+      if(!Array.isArray(rows)||!rows.length){ refineStatus('в '+file.name+' нет товаров', false); continue; }
+      refineProducts=refineProducts.concat(rows);
+      refineProdFiles=refineProdFiles.filter(f=>f.name!==file.name).concat([{name:file.name,size:file.size,n:rows.length}]);
+    }
+    refineFilenames=[...refineProdFiles,...refineFiltFiles].map(f=>f.name);
+  }
+  refineAuditData=null;
+  refineJob=null;
+  refineRenderFiles();
+  const n=refineProducts.length;
+  refineStatus(n? n+' товаров загружено':'Нет файлов', !!n);
+  document.getElementById('refineDlBtn').disabled=true;
+  document.getElementById('refineDlV2Btn').disabled=true;
+}
+
+function refineRenderFiles(){
+  const prod=document.getElementById('refineProdList');
+  const filt=document.getElementById('refineFiltList');
+  if(prod){
+    prod.innerHTML=refineProdFiles.map((f,i)=>`<div class="refine-file"><span class="kind">${f.n||0}</span><b>${esc(f.name)}</b><button type="button" onclick="refineDropProd(${i})" aria-label="Убрать">✕</button></div>`).join('');
+  }
+  if(filt){
+    filt.innerHTML=refineFiltFiles.map((f,i)=>`<div class="refine-file"><span class="kind">filters</span><b>${esc(f.name)}</b><button type="button" onclick="refineDropFilt(${i})" aria-label="Убрать">✕</button></div>`).join('');
+  }
+}
+
+function refineDropProd(i){
+  refineProdFiles.splice(i,1);
+  refineProducts=[];
+  refineFilenames=[...refineProdFiles,...refineFiltFiles].map(f=>f.name);
+  refineRenderFiles();
+  refineStatus('список товаров сброшен — загрузите файлы заново', false);
+}
+
+function refineDropFilt(i){
+  refineFiltFiles.splice(i,1);
+  refineFilters=null;
+  refineFilenames=[...refineProdFiles,...refineFiltFiles].map(f=>f.name);
+  refineRenderFiles();
+}
+
+function refinePayload(){
+  const cat=document.getElementById('refineCat')?.value||null;
+  return {
+    products: refineProducts,
+    filters: refineFilters,
+    filenames: refineFilenames,
+    category: cat || undefined,
+    lookup: document.getElementById('refineLookup')?.checked!==false,
+  };
+}
+
+async function refineAudit(){
+  if(!refineProducts.length) return refineStatus('сначала товары', false);
+  const btn=document.getElementById('refineAuditBtn');
+  if(btn) btn.disabled=true;
+  refineStatus('анализ…');
+  try{
+    const audit=await apiJson('/api/refine/audit',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(refinePayload())});
+    refineAuditData=audit;
+    if(!refineCatManual && audit.category?.id){
+      const sel=document.getElementById('refineCat');
+      if(sel) sel.value=String(audit.category.id);
+    }
+    refineShowAudit(audit);
+    refineStatus(`раздел ${audit.category?.name||audit.category?.id||'—'} · лишнего ${audit.summary.extra} · дыр ${audit.summary.missing_required}`, true);
+  }catch(e){ refineStatus(e.message||'анализ не удался', false); }
+  finally{ if(btn) btn.disabled=false; }
+}
+
+function refineShowAudit(audit){
+  const s=audit.summary||{};
+  const box=document.getElementById('refineMetrics');
+  if(box) box.hidden=false;
+  const set=(id,v,cls)=>{
+    const el=document.getElementById(id);
+    if(el) el.textContent=v;
+    const cell=el?.parentElement;
+    if(cell){ cell.classList.remove('warn','bad','ok'); if(cls) cell.classList.add(cls); }
+  };
+  set('refineNExtra', s.extra||0, (s.extra||0)>0?'bad':'ok');
+  set('refineNMiss', s.missing_required||0, (s.missing_required||0)>0?'warn':'ok');
+  set('refineNOk', s.clean||0, 'ok');
+  set('refineNAll', audit.products_total||0);
+  refineRenderList();
+  const line=document.getElementById('refineRunline');
+  if(line) line.textContent=`${audit.category?.name||''} · ${audit.shape||''} · грязных ${s.dirty||0}`;
+}
+
+function refineSetFilter(btn){
+  refineFilter=btn.dataset.rf||'all';
+  document.querySelectorAll('#refineFilters .fbtn').forEach(b=>b.classList.toggle('on', b===btn));
+  refineRenderList();
+}
+
+function refineRenderList(){
+  const list=document.getElementById('refineList');
+  if(!list) return;
+  const items=refineAuditData?.items||[];
+  const vis=items.filter(it=>{
+    if(refineFilter==='extra') return it.status==='extra';
+    if(refineFilter==='missing') return it.status==='missing';
+    if(refineFilter==='ok') return it.status==='ok';
+    return true;
+  });
+  if(!vis.length){
+    list.innerHTML='<div class="mid-empty">Нет карточек в этом срезе.</div>';
+    return;
+  }
+  list.innerHTML=vis.map(it=>{
+    const pill=it.status==='ok'?'ok':it.status==='missing'?'missing':'extra';
+    const label=it.status==='ok'?'чисто':it.status==='missing'?'дыры':'лишнее';
+    const on=refineSel===it.id?' on':'';
+    return `<div class="refine-item${on}" onclick='refineOpen(${JSON.stringify(String(it.id))})'>
+      <div><div class="nm">${esc(it.name||it.id)}</div><div class="meta">#${esc(it.id)} · заполнено ${it.filled} · строк ${it.annotation_rows}</div></div>
+      <span class="refine-pill ${pill}">${label}</span>
+    </div>`;
+  }).join('');
+}
+
+function refineOpen(id){
+  id=String(id).trim();
+  refineSel=id;
+  refineRenderList();
+  const it=(refineAuditData?.items||[]).find(x=>String(x.id)===id);
+  const box=document.getElementById('refineDetail');
+  const title=document.getElementById('refineDetailTitle');
+  if(title) title.innerHTML=`<i class="ti ti-adjustments"></i> ${esc(it?.name||id)}`;
+  if(!it){ if(box) box.innerHTML='<div class="empty">Карточка не найдена</div>'; return; }
+  const rows=[];
+  for(const e of it.extra||[]) rows.push(`<div class="refine-issue"><b>Срезать:</b> ${esc(e.name)}${e.value!=null?` → ${esc(typeof e.value==='object'?JSON.stringify(e.value):e.value)}`:''}<div class="act">${esc(e.reason||e.kind)}</div></div>`);
+  for(const m of it.missing||[]) rows.push(`<div class="refine-issue"><b>${m.required?'Обязательно добрать':'Добрать'}:</b> ${esc(m.name)}<div class="act">${esc(m.code)}</div></div>`);
+  for(const i of it.issues||[]) rows.push(`<div class="refine-issue"><b>Проверить:</b> ${esc(i.detail||i.kind)}<div class="act">${esc(i.action||'')}</div></div>`);
+  if(!rows.length) rows.push('<div class="refine-issue">Карточка совпадает со справочником.</div>');
+  box.innerHTML=rows.join('');
+}
+
+async function refineStart(){
+  if(!refineProducts.length) return refineStatus('сначала товары', false);
+  const btn=document.getElementById('refineRunBtn');
+  if(btn) btn.disabled=true;
+  refineStatus('доработка…');
+  try{
+    const job=await apiJson('/api/refine/jobs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(refinePayload())});
+    refineJob=job;
+    refineWatch();
+  }catch(e){
+    refineStatus(e.message||'не запустилось', false);
+    if(btn) btn.disabled=false;
+  }
+}
+
+function refineWatch(){
+  if(refinePoll) clearInterval(refinePoll);
+  refinePoll=setInterval(refineTick, 1200);
+  refineTick();
+}
+
+async function refineTick(){
+  if(!refineJob?.id) return;
+  try{
+    const st=await apiJson(`/api/refine/jobs/${refineJob.id}?files=1`);
+    refineJob=st;
+    const body=document.getElementById('refineRunLogBody');
+    const n=document.getElementById('refineRunLogN');
+    const log=st.log||[];
+    if(n) n.textContent=log.length+' шагов';
+    if(body) body.textContent=log.map(l=>l.message||'').filter(Boolean).join('\n')||'…';
+    const bar=document.getElementById('refineBarF');
+    if(bar && st.total) bar.style.width=Math.round(100*(st.done||0)/st.total)+'%';
+    if(st.audit && !refineAuditData) { refineAuditData=st.audit; refineShowAudit(st.audit); }
+    if(st.status==='done'){
+      clearInterval(refinePoll); refinePoll=null;
+      if(st.after){
+        refineAuditData={ ...st.audit, ...st.after, summary: st.after.summary, items: st.after.items||st.audit?.items||[] };
+        refineShowAudit(refineAuditData);
+      }
+      document.getElementById('refineDlBtn').disabled=false;
+      document.getElementById('refineDlV2Btn').disabled=!st.files?.products_v2;
+      document.getElementById('refineRunBtn').disabled=false;
+      refineStatus(`готово · срезано ${st.report?.stripped||0} · добрано ${st.report?.filled_required||0}`, true);
+    }else if(st.status==='error'||st.status==='stopped'||st.status==='interrupted'){
+      clearInterval(refinePoll); refinePoll=null;
+      document.getElementById('refineRunBtn').disabled=false;
+      refineStatus(st.error||st.status, false);
+    }else{
+      refineStatus(`доводка ${st.done||0}/${st.total||0}`);
+    }
+  }catch(e){ refineStatus(e.message||'опрос не удался', false); }
+}
+
+function refineToggleLog(e){
+  const box=document.getElementById('refineRunLog');
+  if(!box) return;
+  box.classList.toggle('open');
+}
+
+function refineSaveJson(filename, data){
+  const blob=new Blob([JSON.stringify(data,null,2)+'\n'],{type:'application/json'});
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(blob);
+  a.download=filename;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+function refineDownload(){
+  const files=refineJob?.files;
+  if(!files?.products) return refineStatus('сначала доработка', false);
+  const id=refineJob.category?.id||'all';
+  refineSaveJson(`products_refined_${id}.json`, files.products);
+  refineSaveJson(`filters_refined_${id}.json`, files.filters);
+}
+
+function refineDownloadV2(){
+  const files=refineJob?.files;
+  if(!files?.products_v2) return refineStatus('v2 не собирался — вход был не v2', false);
+  const id=refineJob.category?.id||'all';
+  refineSaveJson(`products_v2_refined_${id}.json`, files.products_v2);
+  refineSaveJson(`filters_v2_refined_${id}.json`, files.filters_v2);
+}
 
 initTheme();
 checkIconFont();

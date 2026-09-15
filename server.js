@@ -46,6 +46,12 @@
  *   POST /api/filters/build   отдельный сбор filters после обогащения (агент)
  *   POST /api/filters         фильтры по переданному списку товаров (legacy catalog)
  *   POST /api/quality         качество исходных данных по списку товаров
+ *   POST /api/refine/audit    анализ готовых products+filters без сети
+ *   POST /api/refine/jobs     фоновая доводка готовых файлов
+ *   GET  /api/refine/jobs     список прогонов доводки
+ *   GET  /api/refine/jobs/:id состояние доводки
+ *   POST /api/refine/jobs/:id/stop
+ *   DELETE /api/refine/jobs/:id
  *   POST /api/enrich          обогащение одного товара {model, product, category?}
  *   POST /api/jobs            фоновый прогон {model, products[], indices?, category?}
  *   GET  /api/jobs            список прогонов: что идёт сейчас и что уже прошло
@@ -141,6 +147,7 @@ import {
 } from './pipeline/photos.js';
 import { describePhoto, defaultPhotoSystemPrompt, PHOTO_PROMPT_PLACEHOLDERS, resolvePhotoSystemPrompt } from './pipeline/photo_agent.js';
 import { createPhotoJobStore } from './pipeline/photo_jobs.js';
+import { analyzeFiles, createRefineJobStore } from './refine/index.js';
 import {
   isAitunnelProvider, fetchAitunnelBalance, providerSpentRub, touchProviderBalance,
   loadProviderUsage,
@@ -1329,6 +1336,53 @@ async function apiQuality(req, res) {
 }
 
 /**
+ * Доводка готовых файлов — отдельный контур, не /api/enrich.
+ * audit синхронный и бесплатный; jobs крутит срез лишнего и добор дыр.
+ */
+async function apiRefineAudit(req, res) {
+  const raw = await readBody(req, BULK_BODY_LIMIT);
+  let body;
+  try { body = JSON.parse(raw); } catch { return json(res, 400, { error: 'Тело запроса не JSON' }); }
+  const products = body?.products;
+  if (!Array.isArray(products) || !products.length) {
+    return json(res, 400, { error: 'Не передан список товаров' });
+  }
+  try {
+    const { audit } = analyzeFiles({
+      products,
+      filters: body.filters ?? null,
+      filenames: Array.isArray(body.filenames) ? body.filenames : [],
+      category: body.category ?? body.category_id ?? null,
+    }, ROOT);
+    return json(res, 200, audit);
+  } catch (e) {
+    return json(res, e.status || 500, { error: e.message });
+  }
+}
+
+async function apiRefineCreate(req, res) {
+  const raw = await readBody(req, BULK_BODY_LIMIT);
+  let body;
+  try { body = JSON.parse(raw); } catch { return json(res, 400, { error: 'Тело запроса не JSON' }); }
+  const products = body?.products;
+  if (!Array.isArray(products) || !products.length) {
+    return json(res, 400, { error: 'Не передан список товаров' });
+  }
+  try {
+    const job = refineStore.create({
+      products,
+      filters: body.filters ?? null,
+      filenames: Array.isArray(body.filenames) ? body.filenames : [],
+      category: body.category ?? body.category_id ?? null,
+      lookup: body.lookup !== false,
+    });
+    return json(res, 202, refineStore.summary(job));
+  } catch (e) {
+    return json(res, e.status || 500, { error: e.message });
+  }
+}
+
+/**
  * Опции filters_agent / consistency_agent для export / filters/build.
  * mode=heuristic|ai|auto; без ключа — эвристика.
  */
@@ -2023,7 +2077,7 @@ async function apiEnrich(req, res) {
 }
 
 /** Пересчёт filters после смены сборки — без повторного вызова модели. */
-const FILTER_FILL_REV = 4;
+const FILTER_FILL_REV = 6;
 
 function refreshJobCardFilters(product, result, category) {
   if (!product || !result || result.error || result.skipped) return null;
@@ -2106,6 +2160,12 @@ const photoStore = createPhotoJobStore({
   describeOne: describePhotoOne,
   dir: process.env.PHOTO_JOBS_DIR
     || (process.env.SETTINGS_PATH?.startsWith('/data/') ? '/data/photo_jobs' : path.join(ROOT, 'photo_jobs')),
+});
+
+const refineStore = createRefineJobStore({
+  dir: process.env.REFINE_JOBS_DIR
+    || (process.env.SETTINGS_PATH?.startsWith('/data/') ? '/data/refine_jobs' : path.join(ROOT, 'refine_jobs')),
+  root: ROOT,
 });
 
 function apiPhotosList(res) {
@@ -2491,6 +2551,7 @@ try {
 // не должен стоить оплаченных товаров.
 const resumedJobs = store.restore();
 const resumedPhotoJobs = photoStore.restore();
+const resumedRefineJobs = refineStore.restore();
 
 const server = http.createServer(async (req, res) => {
   const started = Date.now();
@@ -2571,6 +2632,33 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'POST' && u.pathname === '/api/filters/build') return await apiFiltersBuild(req, res);
     if (req.method === 'POST' && u.pathname === '/api/filters')    return apiFilters(req, res);
     if (req.method === 'POST' && u.pathname === '/api/quality')    return apiQuality(req, res);
+    if (req.method === 'POST' && u.pathname === '/api/refine/audit') return await apiRefineAudit(req, res);
+    if (req.method === 'POST' && u.pathname === '/api/refine/jobs') return await apiRefineCreate(req, res);
+    if (req.method === 'GET'  && u.pathname === '/api/refine/jobs') {
+      return json(res, 200, { jobs: refineStore.list() });
+    }
+    const refineJob = u.pathname.match(/^\/api\/refine\/jobs\/([\w-]+)(\/stop)?$/);
+    if (refineJob) {
+      const [, id, stopping] = refineJob;
+      if (req.method === 'GET' && !stopping) {
+        const job = refineStore.get(id);
+        if (!job) return json(res, 404, { error: 'Доводка не найдена' });
+        return json(res, 200, refineStore.state(job, {
+          logFrom: u.searchParams.get('logFrom'),
+          files: u.searchParams.get('files'),
+        }));
+      }
+      if (req.method === 'POST' && stopping) {
+        return refineStore.stop(id)
+          ? json(res, 200, { ok: true })
+          : json(res, 404, { error: 'Доводка не найдена' });
+      }
+      if (req.method === 'DELETE' && !stopping) {
+        return refineStore.remove(id)
+          ? json(res, 200, { ok: true })
+          : json(res, 404, { error: 'Доводка не найдена' });
+      }
+    }
     if (req.method === 'POST' && u.pathname === '/api/export-v2')  return await apiExportV2(req, res);
     if (req.method === 'POST' && u.pathname === '/api/export')     return await apiExport(req, res);
     if (req.method === 'GET'  && u.pathname === '/api/catalog')    return await apiCatalog(res, u.searchParams.get('category'), u.searchParams.get('limit'));
@@ -2662,6 +2750,7 @@ server.listen(PORT, HOST, () => {
   console.log(`  Дампы: ${dumpsDir(ROOT)}`);
   console.log(`  Фото: ${photosDir(ROOT)}`);
   if (resumedPhotoJobs) console.log(`  Фото-прогоны на диске: ${resumedPhotoJobs}`);
+  if (resumedRefineJobs) console.log(`  Доводка на диске: ${resumedRefineJobs}`);
   try {
     const settings = loadSettings(ROOT);
     const on = settings.providers.filter(p => p.enabled);

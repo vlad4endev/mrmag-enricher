@@ -18,6 +18,7 @@ const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PORT = 3400 + Math.floor(process.uptime() * 7) % 100;
 // Фоновые прогоны пишутся на диск — в тесте в свой каталог, не в рабочий.
 const JOBS_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'enricher-jobs-'));
+const REFINE_JOBS_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'enricher-refine-'));
 const DUMPS_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'enricher-dumps-'));
 const SETTINGS_PATH = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'enricher-cfg-')), 'config.json');
 fs.copyFileSync(path.join(ROOT, 'config.json'), SETTINGS_PATH);
@@ -36,6 +37,7 @@ const srvEnv = {
   HOST: '127.0.0.1',
   PAGE_CACHE_DIR: '.page_cache',
   JOBS_DIR,
+  REFINE_JOBS_DIR,
   SETTINGS_PATH,
   DUMPS_DIR,
   DUMP_SEED: '0',
@@ -73,7 +75,7 @@ try {
     assert.strictEqual((await r.json()).ok, true);
   });
   await t('без пароля закрыты и страница, и API', async () => {
-    for (const p of ['/', '/api/categories', '/api/models', '/api/parser', '/api/settings', '/api/dumps', '/api/dictionaries', '/schema_constructor.js', '/api/catalog?category=523', '/api/providers/aitunnel/balance']) {
+    for (const p of ['/', '/api/categories', '/api/models', '/api/parser', '/api/settings', '/api/dumps', '/api/dictionaries', '/schema_constructor.js', '/api/catalog?category=523', '/api/providers/aitunnel/balance', '/api/refine/jobs']) {
       assert.strictEqual((await fetch(url(p))).status, 401, `${p} должен требовать вход`);
     }
     const probe = await fetch(url('/api/parser/probe'), { method: 'POST', body: '{}' });
@@ -833,8 +835,39 @@ try {
     }
   });
 
+  console.log('\nДоводка');
+  const postRefineAudit = body => fetch(url('/api/refine/audit'), {
+    method: 'POST',
+    headers: { authorization: auth, 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  await t('без пароля не анализирует', async () => {
+    assert.strictEqual((await fetch(url('/api/refine/audit'), { method: 'POST', body: '{}' })).status, 401);
+  });
+  await t('пустой список — 400', async () => {
+    assert.strictEqual((await postRefineAudit({ products: [] })).status, 400);
+  });
+  await t('анализ готовой карточки находит лишний бренд', async () => {
+    const r = await postRefineAudit({
+      filenames: ['products_467.json'],
+      products: [{
+        id: 11391,
+        name: 'Стиральная машина Indesit IWUB 4085',
+        annotation_html: '<ul><li>Тип загрузки: фронтальная</li><li>Максимальная загрузка белья: 6 кг</li><li>Цвет: белый</li></ul>',
+        description_html: '<p>Фронтальная стиральная машина.</p>',
+        filters: { 'Тип загрузки': ['Фронтальная'], 'Бренд': ['Indesit'] },
+        web_info: null,
+      }],
+    });
+    assert.strictEqual(r.status, 200);
+    const d = await r.json();
+    assert.equal(String(d.category.id), '467');
+    assert.ok(d.items[0].extra.some(e => e.name === 'Бренд'), JSON.stringify(d.items[0].extra));
+  });
+
   console.log(`\n✅ ${n} проверок API пройдено\n`);
 } finally {
   srv.kill('SIGTERM');
   fs.rmSync(JOBS_DIR, { recursive: true, force: true });
+  fs.rmSync(REFINE_JOBS_DIR, { recursive: true, force: true });
 }

@@ -6,7 +6,7 @@
 import { expectedCategoryKind, inferProductKind } from './category_mismatch.js';
 import { storefrontFilterAttrs } from './required_filters.js';
 import { parseTriple, isCompleteDims } from './dimensions.js';
-import { aliasValue, defrostCanonFromCooling, hasStrictEnum, normalizeValue, unifyEnumValues } from './types.js';
+import { aliasValue, defrostCanonFromCooling, hasStrictEnum, isDripCooling, normalizeValue, unifyEnumValues } from './types.js';
 
 const COLOR_WORD = [
   [/бел(?:ый|ая|ое|ого)/i, 'Белый'],
@@ -419,7 +419,12 @@ export function fillStorefrontDefaults(rec, dict, product) {
     const fridge = defrostCanonFromCooling(cool, 'fridge');
     if (fridge) applyDerived(rec, dict, 'defrost_fridge', fridge, 'derived_defrost_from_cooling');
     const freezer = defrostCanonFromCooling(cool, 'freezer');
-    if (freezer) applyDerived(rec, dict, 'defrost_freezer', freezer, 'derived_defrost_from_cooling');
+    if (freezer) {
+      const dripNf = isDripCooling(cool) && /no[\s-]?frost/i.test(String(rec.attrs.defrost_freezer || ''));
+      applyDerived(rec, dict, 'defrost_freezer', freezer, 'derived_defrost_from_cooling', 'S0', {
+        overwrite: dripNf,
+      });
+    }
   }
   composeDimsFromAxes(rec, dict);
 }

@@ -17,7 +17,15 @@ import { scrubProductFilterValues, validateProducts } from './validate.js';
 import { markCategoryMismatch } from './category_mismatch.js';
 import { buildFilterCoverageReport } from './filter_report.js';
 import { completeStorefrontRecs } from './storefront_fill.js';
-import { repairDescriptionHtml, repairAssemblyPunctuation, findAssemblyPunctIssues } from './desc_annotation_align.js';
+import {
+  repairDescriptionHtml,
+  repairAssemblyPunctuation,
+  findAssemblyPunctIssues,
+  padStrongSpaces,
+  findStrongGlueIssues,
+  alignEnergyClassInText,
+  findEnergyClassMismatches,
+} from './desc_annotation_align.js';
 
 function esc(s) {
   return String(s)
@@ -286,9 +294,43 @@ export function serializeProduct(rec, dict, debugFacets, opts = {}) {
   const annotationHtml = renderAnnotation(rec, dict);
   // annotation — источник истины: срезать фабрикацию и выровнять противоречия.
   descHtml = repairDescriptionHtml(descHtml, annotationHtml).html;
+  descHtml = padStrongSpaces(descHtml);
   // Склейка фактов (стиралки и холодильники): точка/запятая до записи в выгрузку.
   if (findAssemblyPunctIssues(descHtml).length) {
     descHtml = repairAssemblyPunctuation(descHtml);
+    descHtml = padStrongSpaces(descHtml);
+  }
+  if (rec.attrs?.energy_class) {
+    descHtml = alignEnergyClassInText(descHtml, rec.attrs.energy_class);
+  }
+  let energyMiss = rec.attrs?.energy_class
+    ? findEnergyClassMismatches(descHtml, rec.attrs.energy_class)
+    : [];
+  if (energyMiss.length) {
+    descHtml = alignEnergyClassInText(descHtml, rec.attrs.energy_class);
+    energyMiss = findEnergyClassMismatches(descHtml, rec.attrs.energy_class);
+  }
+  if (energyMiss.length) {
+    rec.needs_review = true;
+    rec.validation_issues = [
+      ...(rec.validation_issues || []),
+      {
+        kind: 'energy_class_mismatch',
+        action: 'needs_review',
+        detail: `класс энергоэффективности ${energyMiss[0].claimed} ≠ ${energyMiss[0].expected}`,
+      },
+    ];
+  }
+  descHtml = padStrongSpaces(descHtml);
+  if (findStrongGlueIssues(descHtml).length) {
+    descHtml = padStrongSpaces(descHtml);
+  }
+  if (findStrongGlueIssues(descHtml).length) {
+    rec.needs_review = true;
+    rec.validation_issues = [
+      ...(rec.validation_issues || []),
+      { kind: 'strong_glue', action: 'needs_review', detail: 'слипшиеся слова вокруг <strong>' },
+    ];
   }
   return {
     id: rec.id,

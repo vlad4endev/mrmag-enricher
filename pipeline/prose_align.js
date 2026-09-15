@@ -13,7 +13,7 @@
 import { formatDimensions, formatAttrValue } from './types.js';
 import { dimsFromAxes } from './dimensions.js';
 import { approvedFilters, sheetToFilterKey } from './approved_filters.js';
-import { sanitizeHangingProse } from './desc_annotation_align.js';
+import { sanitizeHangingProse, alignEnergyClassInText } from './desc_annotation_align.js';
 
 /** @typedef {{ key: string, label: string, re: RegExp }} ProseClaim */
 
@@ -364,6 +364,7 @@ export function alignAssembledProse(text, rec, dict) {
   s = stripKnownUnknowns(s, rec);
   s = stripUnbackedBrandFeatures(s, rec);
   s = stripUnbackedWarranty(s, rec, dict);
+  if (rec?.attrs?.energy_class) s = alignEnergyClassInText(s, rec.attrs.energy_class);
   return sanitizeHangingProse(s);
 }
 

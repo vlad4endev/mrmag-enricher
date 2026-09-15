@@ -2,7 +2,7 @@
 
 import { parseProductFields } from './parse.js';
 import { matchKey } from './match.js';
-import { normalizeValue, countUnitsInValues, defrostCanonFromCooling } from './types.js';
+import { normalizeValue, countUnitsInValues, defrostCanonFromCooling, isDripCooling } from './types.js';
 import { parseDimensions, reconcileDimensions, isCompleteDims } from './dimensions.js';
 import { parseIdentity } from './identity.js';
 import { isPackingKey, normKey } from './text.js';
@@ -688,14 +688,19 @@ function deriveLinkedAttrs(rec, dict, product, config) {
   refreshDerivedFacets(rec, dict, product);
 }
 
+function isNoFrostLabel(v) {
+  return /no[\s-]?frost|ноу[\s-]?фрост/i.test(String(v || '').replace(/ё/g, 'е'));
+}
+
 /**
  * После specs/добора: разморозка из системы охлаждения и габариты из осей.
- * Для капельной морозилку из SEO «No Frost» не берём — это часто чужая камера.
+ * Капельная / «без No Frost»: морозилка — «Ручное». SEO «No Frost» не берём
+ * и не оставляем, если ось уже успела заполниться моделью.
  */
 export function refreshDerivedFacets(rec, dict, product) {
   const blob = factBlob(rec, product);
   const cooling = rec.attrs.cooling;
-  const drip = /капельн/i.test(String(cooling || ''));
+  const drip = isDripCooling(cooling);
   if (dict.byCode.has('defrost_fridge') && rec.attrs.defrost_fridge == null) {
     const label = defrostCanonFromCooling(cooling, 'fridge')
       || defrostCanonFromCooling(blob, 'fridge');
@@ -703,11 +708,25 @@ export function refreshDerivedFacets(rec, dict, product) {
       setDerived(rec, dict, 'defrost_fridge', label, 'derived_defrost_from_cooling', derivedLevel(rec, 'cooling'));
     }
   }
-  if (dict.byCode.has('defrost_freezer') && rec.attrs.defrost_freezer == null) {
+  if (dict.byCode.has('defrost_freezer')) {
     const label = defrostCanonFromCooling(cooling, 'freezer')
-      || (!drip ? defrostCanonFromCooling(blob, 'freezer') : null);
-    if (label) {
-      setDerived(rec, dict, 'defrost_freezer', label, 'derived_defrost_from_cooling', derivedLevel(rec, 'cooling'));
+      || (!drip ? defrostCanonFromCooling(blob, 'freezer') : 'Ручное');
+    const cur = rec.attrs.defrost_freezer;
+    if (cur == null) {
+      if (label) {
+        setDerived(rec, dict, 'defrost_freezer', label, 'derived_defrost_from_cooling', derivedLevel(rec, 'cooling'));
+      }
+    } else if (drip && isNoFrostLabel(cur) && label) {
+      rec.attrs.defrost_freezer = label;
+      rec.provenance = rec.provenance || {};
+      rec.provenance.defrost_freezer = {
+        level: derivedLevel(rec, 'cooling'),
+        raw: String(cooling || label),
+        model: null,
+        prompt: null,
+        how: 'derived_defrost_from_cooling',
+        previous: cur,
+      };
     }
   }
   deriveDimsFromAxes(rec, dict);

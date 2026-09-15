@@ -2863,7 +2863,7 @@ export async function enrichProduct(product, opts) {
 
     const filledSpecs = Object.values(enriched.specs || {}).filter(v => v != null).length;
     // DeepSeek часто даёт 6 bullets / 97 симв. short — чиним без второго запроса.
-    softFixCardTexts(enriched, { filledSpecs });
+    softFixCardTexts(enriched, { filledSpecs, energyClass: facts.класс_энергоэффективности });
     const issues = validateModelResponse({
       specs: enriched.specs,
       short_description: enriched.short_description,
@@ -2875,6 +2875,7 @@ export async function enrichProduct(product, opts) {
     }, {
       filledSpecs,
       requireSpecFill: Boolean(src && src.length >= MIN_SOURCE_CHARS),
+      energyClass: facts.класс_энергоэффективности,
     });
 
     const startSourceFix = (why) => {

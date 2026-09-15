@@ -286,23 +286,34 @@ function isBareBooleanWord(val) {
   return BOOL_TRUE.has(k) || BOOL_FALSE.has(k);
 }
 
+/** Капельная / «без No Frost»: холодильник капельный, морозилка ручная — не No Frost. */
+export function isDripCooling(cooling) {
+  const s = String(cooling || '').replace(/ё/g, 'е');
+  if (!s.trim()) return false;
+  if (/без\s*no[\s-]?frost|без\s*ноу[\s-]?фрост/i.test(s)) return true;
+  if (/full\s*no\s*frost|total\s*no\s*frost|\bfnf\b|no[\s-]?frost|ноу[\s-]?фрост|без наледи/i.test(s)) {
+    return false;
+  }
+  return /капельн/i.test(s);
+}
+
 /**
  * Канон «Размораживание …» из системы охлаждения.
  * Full/No Frost → обе камеры «No Frost».
- * Капельная → только холодильная камера («Капельная»);
- * морозильную не выдумываем: у капельных она часто ручная, но dump это не сказал.
+ * Капельная / «без No Frost» → холодильная «Капельная», морозильная «Ручное».
+ * Бюджетные капельные модели не имеют No Frost в морозилке (DON R-290 G, ATLANT XM 6023-031).
  */
 export function defrostCanonFromCooling(cooling, chamber) {
   const s = String(cooling || '').replace(/ё/g, 'е');
   if (!s.trim()) return null;
   // «Без No Frost» = капельная, не No Frost. Иначе /no frost/ срабатывает на отрицание.
   if (/без\s*no[\s-]?frost|без\s*ноу[\s-]?фрост/i.test(s)) {
-    return chamber === 'fridge' ? 'Капельная' : null;
+    return chamber === 'fridge' ? 'Капельная' : 'Ручное';
   }
   if (/full\s*no\s*frost|total\s*no\s*frost|\bfnf\b|no[\s-]?frost|ноу[\s-]?фрост|без наледи/i.test(s)) {
     return 'No Frost';
   }
-  if (chamber === 'fridge' && /капельн/i.test(s)) return 'Капельная';
+  if (/капельн/i.test(s)) return chamber === 'fridge' ? 'Капельная' : 'Ручное';
   if (/статическ|ручн/i.test(s)) return 'Ручное';
   return null;
 }

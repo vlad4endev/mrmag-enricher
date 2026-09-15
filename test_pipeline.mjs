@@ -3463,9 +3463,10 @@ console.log('golden tests passed');
     assert.ok(!drip['Габариты (ШхВхГ)']?.length, 'габариты 523 — характеристика, не фильтр');
     assert.deepEqual(drip['Размораживание холодильной камеры'], ['Капельная']);
     assert.ok(drip['Цвет корпуса']?.[0], 'цвет — строка листа «да»');
-    assert.ok(
-      !drip['Размораживание морозильной камеры']?.length,
-      'капельная морозилка: не выдумываем разморозку',
+    assert.deepEqual(
+      drip['Размораживание морозильной камеры'],
+      ['Ручное'],
+      'капельная система: морозилка — ручная разморозка, не No Frost',
     );
     assert.deepEqual(
       drip['Тип компрессора'],
@@ -4567,6 +4568,63 @@ console.log('golden tests passed');
   assert.ok(!/[—–]\s*\./.test(dashAfterLeak.html), dashAfterLeak.html);
   assert.match(dashAfterLeak.html, /детей,\s+контроль дисбаланса/i);
 
-  console.log('ok desc↔annotation QA: фабрикация, противоречие, бак/барабан, экспорт');
+  const {
+    alignEnergyClassInText,
+    findEnergyClassMismatches,
+    findStrongGlueIssues,
+  } = await import('./pipeline/desc_annotation_align.js');
+  const { renderAnnotation } = await import('./pipeline/generate.js');
+
+  const rec805 = normalizeProduct(p523[805], d523, config);
+  const ann805 = renderAnnotation(rec805, d523);
+  const e805 = repairDescriptionHtml(
+    '<p>Класс энергоэффективности E. Перед покупкой учтите класс энергоэффективности E.</p>',
+    ann805,
+  );
+  assert.ok(!findEnergyClassMismatches(e805.html, rec805.attrs.energy_class).length, e805.html);
+  assert.match(e805.html, /класс энергоэффективности A\+/i, e805.html);
+
+  const glueBlock = repairDescriptionHtml(
+    '<p>модель<strong>ATLANT</strong> серии.</p>',
+    ann805,
+  );
+  assert.equal(findStrongGlueIssues(glueBlock.html).length, 0, glueBlock.html);
+  assert.match(glueBlock.html, /<strong>ATLANT<\/strong>/, glueBlock.html);
+
+  for (const dripId of [8738, 11488]) {
+    const dripRec = normalizeProduct(p523[dripId], d523, config);
+    assert.equal(dripRec.attrs.cooling, 'Капельная', `id ${dripId} cooling`);
+    assert.equal(dripRec.attrs.defrost_freezer, 'Ручное', `id ${dripId} defrost_freezer`);
+    const dripAnn = renderAnnotation(dripRec, d523);
+    assert.match(dripAnn, /Размораживание морозильной камеры:\s*ручное/i, dripAnn);
+    assert.ok(!/Размораживание морозильной камеры:\s*No Frost/i.test(dripAnn), dripAnn);
+  }
+
+  const punct4355 = 'Объем морозильной камеры — 94 л. механическое управление общий объем 314 л.';
+  assert.ok(findAssemblyPunctIssues(punct4355).some(i => i.kind === 'abbr_new_sentence'), punct4355);
+  const fixed4355 = repairAssemblyPunctuation(punct4355);
+  assert.match(fixed4355, /94 л\.\s+Механическое управление/, fixed4355);
+  assert.equal(findAssemblyPunctIssues(fixed4355).length, 0, fixed4355);
+
+  const punct11490 = 'Класс энергоэффективности A уровень шума 40 дБ.';
+  assert.ok(findAssemblyPunctIssues(punct11490).some(i => i.kind === 'missing_period'), punct11490);
+  const fixed11490 = repairAssemblyPunctuation(punct11490);
+  assert.match(fixed11490, /A\.\s+Уровень шума/, fixed11490);
+
+  const built523 = buildFilters([], d523, config);
+  const export805 = serializeProduct(rec805, d523, built523.debug, {
+    enriched: {
+      description: 'Холодильник с нижней морозильной камерой предназначенная для семьи. Класс энергоэффективности E.',
+      bullets: [],
+      strong: ['нижней морозильной камерой'],
+    },
+    config,
+    root: '.',
+  });
+  assert.ok(!findEnergyClassMismatches(export805.description_html, rec805.attrs.energy_class).length,
+    export805.description_html);
+  assert.equal(findStrongGlueIssues(export805.description_html).length, 0, export805.description_html);
+
+  console.log('ok desc↔annotation QA: фабрикация, противоречие, бак/барабан, экспорт, 523');
 }
 

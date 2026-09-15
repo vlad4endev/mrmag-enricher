@@ -1,5 +1,5 @@
 import { cardProseSpecIssues } from './prose_align.js';
-import { findHangingFragments, findAssemblyPunctIssues, repairAssemblyPunctuation } from './desc_annotation_align.js';
+import { findHangingFragments, findAssemblyPunctIssues, repairAssemblyPunctuation, alignEnergyClassInText, findEnergyClassMismatches, padStrongSpaces, canonEnergyClass } from './desc_annotation_align.js';
 
 /**
  * Контракт ответа модели и строгая валидация.
@@ -199,6 +199,7 @@ export function softFixCardTexts(card, opts = {}) {
   const dMin = poor ? DESCR_POOR_MIN : DESCR_RICH_MIN;
   const dMax = poor ? DESCR_POOR_MAX : DESCR_RICH_MAX;
   const wantParas = poor ? 2 : 4;
+  const energyClass = opts.energyClass || null;
 
   if (Array.isArray(card.bullets) && card.bullets.length > BULLET_COUNT_MAX) {
     card.bullets = card.bullets.slice(0, BULLET_COUNT_MAX);
@@ -214,6 +215,7 @@ export function softFixCardTexts(card, opts = {}) {
   }
 
   if (typeof card.short_description === 'string' && card.short_description.trim()) {
+    if (energyClass) card.short_description = alignEnergyClassInText(card.short_description, energyClass);
     let s = oneSentence(card.short_description, SHORT_MIN, SHORT_MAX);
     if (s.length < SHORT_MIN) {
       const extra = [
@@ -226,6 +228,7 @@ export function softFixCardTexts(card, opts = {}) {
   }
 
   if (typeof card.description === 'string' && card.description.trim()) {
+    if (energyClass) card.description = alignEnergyClassInText(card.description, energyClass);
     card.description = repairAssemblyPunctuation(card.description);
     let paras = redistributeParagraphs(card.description, wantParas);
     if (paras.length > wantParas) paras = paras.slice(0, wantParas);
@@ -245,6 +248,11 @@ export function softFixCardTexts(card, opts = {}) {
       if (desc.length > dMax) desc = clipToMax(desc, dMax, dMin);
     }
     card.description = desc;
+  }
+
+  if (energyClass && Array.isArray(card.bullets)) {
+    card.bullets = card.bullets.map(b =>
+      (typeof b === 'string' ? alignEnergyClassInText(b, energyClass) : b));
   }
 
   return card;
@@ -409,6 +417,25 @@ export function validateModelResponse(data, opts = {}) {
     }
   }
 
+  if (opts.energyClass) {
+    const want = canonEnergyClass(opts.energyClass);
+    const specRaw = data.specs && typeof data.specs === 'object'
+      ? data.specs.класс_энергоэффективности
+      : null;
+    const spec = canonEnergyClass(specRaw);
+    if (want && spec && spec !== want) {
+      add('specs', `класс_энергоэффективности ${spec} не совпадает с источником ${want} — не подменяй шкалу EU 2021`);
+    }
+    const blob = [
+      data.description,
+      data.short_description,
+      ...(Array.isArray(data.bullets) ? data.bullets : []),
+    ].filter(Boolean).join('\n');
+    for (const m of findEnergyClassMismatches(blob, opts.energyClass)) {
+      add('description', `класс энергоэффективности ${m.claimed} не совпадает с источником ${m.expected}`);
+    }
+  }
+
   return issues;
 }
 
@@ -513,7 +540,7 @@ export function buildDescriptionHtml({ description, bullets, strong } = {}) {
       if (hit == null) continue;
       out = out.split(hit).join(`<strong>${hit}</strong>`);
     }
-    return out;
+    return padStrongSpaces(out);
   };
 
   const pTags = paras.map(p => `<p>${wrapStrong(p)}</p>`);

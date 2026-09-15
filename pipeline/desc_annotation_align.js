@@ -61,6 +61,18 @@ export const DESC_TOPICS = Object.freeze([
     annotationLabels: ['Сушка'],
     topicRe: /сушк/i,
   },
+  {
+    id: 'energy_class',
+    label: 'класс энергоэффективности',
+    annotationLabels: [
+      'Класс энергоэффективности',
+      'Класс энергопотребления',
+      'Класс энергосбережения',
+      'Энергопотребление',
+    ],
+    topicRe: /класс(?:а)?\s+энерго(?:эффективности|потребления|сбережения)|энергокласс/i,
+    energyClass: true,
+  },
 ]);
 
 const ASSERT_RE = /(?:не\s+)?(?:имеет|оснащен[аоы]?|предусмотрен[аоы]?|поддерживает)|отсутствует|(?:^|[^\wа-яё])(?:есть|нет)(?![а-яё])/i;
@@ -81,6 +93,83 @@ function stripHtml(s) {
 
 function fold(s) {
   return valueFold(s) || String(s || '').toLowerCase().replace(/ё/g, 'е').trim();
+}
+
+/** Буква шкалы A–G с плюсами. Кириллица А/В/С/Е → латиница. */
+export function canonEnergyClass(raw) {
+  const s = String(raw || '').trim();
+  if (!s) return null;
+  const m = s.match(/([A-Ga-gАаВССвсЕе])(\+{0,3})/);
+  if (!m) return null;
+  const map = {
+    А: 'A', а: 'A',
+    В: 'B', в: 'B',
+    С: 'C', с: 'C',
+    Е: 'E', е: 'E',
+  };
+  const letter = (map[m[1]] || m[1]).toUpperCase();
+  if (!/[A-G]/.test(letter)) return null;
+  return `${letter}${m[2]}`;
+}
+
+const ENERGY_CLASS_MENTION_RE = /класс(?:а)?\s+энерго(?:эффективности|потребления|сбережения)\s*[-–—:]?\s*([A-Ga-gАаВССвсЕе]\+{0,3})|энергокласс\s*[-–—:]?\s*([A-Ga-gАаВССвсЕе]\+{0,3})/gi;
+
+export function extractEnergyClassLetter(text) {
+  const re = new RegExp(ENERGY_CLASS_MENTION_RE.source, 'gi');
+  const m = re.exec(String(text || ''));
+  if (!m) return null;
+  return canonEnergyClass(m[1] || m[2]);
+}
+
+/** Любое «класс энергоэффективности X» в прозе → буква из attrs/annotation. */
+export function alignEnergyClassInText(text, expected) {
+  const want = canonEnergyClass(expected);
+  const raw = String(text || '');
+  if (!want || !raw.trim()) return raw;
+  const re = new RegExp(ENERGY_CLASS_MENTION_RE.source, 'gi');
+  return raw.replace(re, (full, g1, g2) => {
+    const token = g1 || g2;
+    const got = canonEnergyClass(token);
+    if (!got || got === want) return full;
+    return full.replace(token, want);
+  });
+}
+
+export function findEnergyClassMismatches(text, expected) {
+  const want = canonEnergyClass(expected);
+  if (!want) return [];
+  const hits = [];
+  const re = new RegExp(ENERGY_CLASS_MENTION_RE.source, 'gi');
+  let m;
+  while ((m = re.exec(String(text || '')))) {
+    const got = canonEnergyClass(m[1] || m[2]);
+    if (got && got !== want) {
+      hits.push({ claimed: got, expected: want, match: m[0] });
+    }
+  }
+  return hits;
+}
+
+/** Слипшиеся слова вокруг программного <strong>: «камерой</strong>предназначенная». */
+export const STRONG_GLUE_BEFORE_RE = /[а-яА-ЯёЁ]<strong>/g;
+export const STRONG_GLUE_AFTER_RE = /<\/strong>[а-яА-ЯёЁ]/g;
+
+export function findStrongGlueIssues(html) {
+  const s = String(html || '');
+  if (!s.trim()) return [];
+  const hits = [];
+  const before = new RegExp(STRONG_GLUE_BEFORE_RE.source, 'g');
+  const after = new RegExp(STRONG_GLUE_AFTER_RE.source, 'g');
+  let m;
+  while ((m = before.exec(s))) hits.push({ kind: 'strong_glue_before', match: m[0] });
+  while ((m = after.exec(s))) hits.push({ kind: 'strong_glue_after', match: m[0] });
+  return hits;
+}
+
+export function padStrongSpaces(html) {
+  return String(html || '')
+    .replace(/([а-яА-ЯёЁa-zA-Z0-9])<strong>/g, '$1 <strong>')
+    .replace(/<\/strong>([а-яА-ЯёЁa-zA-Z0-9—–-])/g, '</strong> $1');
 }
 
 /**
@@ -190,6 +279,7 @@ function isAssertive(sentence, topic) {
   if (topic.material && /барабан|бак[аеу]/.test(sentence) && MATERIAL_VALUE_RE.test(sentence)) {
     return true;
   }
+  if (topic.energyClass && extractEnergyClassLetter(sentence)) return true;
   // Каталожная строка, вклеенная в прозу: «Защита от детей — есть».
   if (/\s[-–—:]\s/.test(sentence) && topic.topicRe.test(sentence)) return true;
   return false;
@@ -377,6 +467,12 @@ function sentenceMentionsTopic(sentence, topic) {
 function valuesAgree(topic, claimed, annValue) {
   if (claimed == null || annValue == null) return true;
   const ann = fold(annValue);
+  if (topic.energyClass) {
+    const want = canonEnergyClass(annValue);
+    const got = canonEnergyClass(claimed);
+    if (want == null || got == null) return true;
+    return want === got;
+  }
   if (topic.material) {
     const claim = fold(claimed);
     return canonMaterial(claim) === canonMaterial(ann);
@@ -545,6 +641,7 @@ export function findDescAnnotationIssues(descriptionHtml, annotationHtml, { id =
 
       let claimed = null;
       if (topic.material) claimed = extractMaterialClaim(body, topic.id);
+      else if (topic.energyClass) claimed = extractEnergyClassLetter(body);
       else claimed = extractBoolClaim(body);
 
       if (claimed != null && !valuesAgree(topic, claimed, annVal)) {
@@ -589,10 +686,13 @@ const FACT_LEAD_SRC = [
   String.raw`\d+\s+программ(?:ы|ами)?(?:\s+стирки)?`,
   String.raw`(?:программ(?:ы|ами)?|режимов)\s+стирки`,
   String.raw`\d+\s+(?:полок|полки|ящиков|ящика|камер[аы]?|дверей|двери|компрессоров)`,
-  String.raw`класс(?:а)?\s+(?:отжима|энергоэффективности|энергопотребления)`,
+  String.raw`(?:одним|двумя|тремя)\s+компрессор(?:ом|ами)`,
+  String.raw`класс(?:а)?\s+(?:отжима|энергоэффективности|энергопотребления)(?:\s+[A-GА-ЯЁ]\+{0,3})?`,
   String.raw`скорост[а-яё]*\s+отжима`,
   String.raw`(?:макс(?:имальн[а-яё]*)?\s+)?загрузк[аеиу](?:\s+белья)?`,
   String.raw`объ[её]м(?:\s+(?:общий|холодильной\s+камеры|морозильной\s+камеры))?`,
+  String.raw`(?:механическ(?:ое|им)|электромеханическ(?:ое|им)|электронн(?:ое|ым))\s+управлени[ея]`,
+  String.raw`управлени[ея]`,
   String.raw`(?:Full|Total)\s+No\s+Frost|No\s+Frost`,
   String.raw`\d+(?:[.,]\d+)?\s*(?:об\.?\s*/\s*мин|дБ(?:А)?|кг(?:\s+белья)?|л|см|мм|шт)`,
   String.raw`об\.?\s*/\s*мин`,
@@ -603,7 +703,7 @@ const ABBR_WORD_RE = /^(?:л|мл|см|мм|кг|г|вт|квт|дб|шт|ч|м�
 
 /** Единица, после которой строчный факт в том же предложении → запятая. */
 const UNIT_TAIL_SRC = String.raw`об\.?\s*/\s*мин|дБ(?:А)?|кг(?:\/сут(?:ки)?)?|л|см|мм|шт`;
-const NEXT_FACT_LC_SRC = String.raw`класс|объ[её]м|уровень|система|тип |цвет |загрузк|скорост|хлад|управлен|климат`;
+const NEXT_FACT_LC_SRC = String.raw`класс|объ[её]м|уровень|система|тип |цвет |загрузк|скорост|хлад|управлен|климат|механическ|электромеханическ|электронн|общ`;
 
 /** Элементы перечисления, которые модель клеит пробелом. */
 const FEATURE_ITEM_SRC = String.raw`защита от детей|контроль дисбаланса|контроль пенообразования|отсрочк[а-яё]*\s+(?:старта|запуска)|зона свежести|суперзаморозк[а-яё]*|экспресс-заморозк[а-яё]*|генератор льда`;
@@ -635,6 +735,31 @@ function repairAssemblyPunctPlain(text, { sentences = true } = {}) {
     out = out.replace(new RegExp(String.raw`(${FACT_LEAD_SRC})\s+(?=[А-ЯЁ][а-яё]{3,})`, 'g'), '$1. ');
   }
   out = out.replace(new RegExp(String.raw`(${UNIT_TAIL_SRC})\s+(?=${NEXT_FACT_LC_SRC})`, 'gi'), '$1, ');
+  // «94 л. механическое» — точка после аббревиатуры, новое предложение со строчной.
+  // \b в JS не работает с кириллицей; (?<![а-яё]) — не «программ. Скорость».
+  out = out.replace(
+    new RegExp(String.raw`(?<![а-яёА-Яa-zA-Z])((?:\d+[.,]?\d*\s*)?(?:${UNIT_TAIL_SRC}))\.\s+(${NEXT_FACT_LC_SRC})`, 'gi'),
+    (full, unit, next) => {
+      if (/^[А-ЯЁ]/.test(next)) return full;
+      return `${unit}. ${next.charAt(0).toUpperCase()}${next.slice(1)}`;
+    },
+  );
+  // «Класс энергоэффективности A уровень шума» — пропущена точка между фактами.
+  out = out.replace(
+    new RegExp(
+      String.raw`((?:класс(?:а)?\s+энерго(?:эффективности|потребления|сбережения)|энергокласс)\s*[-–—:]?\s*[A-GА-Я]\+{0,3})\s+(${NEXT_FACT_LC_SRC})`,
+      'gi',
+    ),
+    (_, lead, next) => `${lead}. ${next.charAt(0).toUpperCase()}${next.slice(1)}`,
+  );
+  // «на морозильное одним компрессором» / «человек двумя компрессорами».
+  out = out.replace(
+    /([а-яё]{5,})\s+((?:одним|двумя|тремя)\s+компрессор(?:ом|ами))/gi,
+    (full, lead, rest) => {
+      if (/(?:компрессор|работа|оснащен|имеет|снабж|установлен|с)$/i.test(lead)) return full;
+      return `${lead}. ${rest.charAt(0).toUpperCase()}${rest.slice(1)}`;
+    },
+  );
   out = commaSeparateFeatureItems(out);
   return tidyPunct(out);
 }
@@ -654,7 +779,13 @@ export function findAssemblyPunctIssues(text) {
   while ((m = connRe.exec(s))) {
     const word = m[0].replace(/\.\s+[а-яё]$/, '');
     const bare = word.replace(/^[«"'(]+|[»"')]+$/g, '');
-    if (ABBR_WORD_RE.test(bare) || /^\d+[.)]?$/.test(bare)) continue;
+    const afterLc = m[0].match(/[а-яё]$/)?.[0];
+    const afterStart = s.slice(m.index + m[0].length - (afterLc ? 1 : 0));
+    const factAfter = new RegExp(String.raw`^(?:${NEXT_FACT_LC_SRC})`, 'i').test(afterStart);
+    if (ABBR_WORD_RE.test(bare) || /^\d+[.)]?$/.test(bare)) {
+      if (factAfter) hits.push({ kind: 'abbr_new_sentence', match: m[0] });
+      continue;
+    }
     hits.push({ kind: 'connector_period', match: m[0] });
   }
   const factRe = new RegExp(String.raw`(?:${FACT_LEAD_SRC})\s+[А-ЯЁ][а-яё]{3,}`, 'g');
@@ -666,6 +797,25 @@ export function findAssemblyPunctIssues(text) {
   const listRe = new RegExp(String.raw`(?:${FEATURE_ITEM_SRC})\s+(?:${FEATURE_ITEM_SRC})`, 'gi');
   while ((m = listRe.exec(s))) {
     if (!/,/.test(m[0])) hits.push({ kind: 'list_spaces', match: m[0] });
+  }
+  const abbrFactRe = new RegExp(
+    String.raw`(?<![а-яёА-Яa-zA-Z])(?:\d+[.,]?\d*\s*)?(?:${UNIT_TAIL_SRC})\.\s+(?:${NEXT_FACT_LC_SRC})`,
+    'gi',
+  );
+  while ((m = abbrFactRe.exec(s))) {
+    const tail = String(m[0]).split(/\.\s+/).pop() || '';
+    if (/^[А-ЯЁ]/.test(tail)) continue;
+    hits.push({ kind: 'abbr_new_sentence', match: m[0] });
+  }
+  const ecFactRe = new RegExp(
+    String.raw`(?:класс(?:а)?\s+энерго(?:эффективности|потребления|сбережения)|энергокласс)\s*[-–—:]?\s*[A-GА-Я]\+{0,3}\s+(?:${NEXT_FACT_LC_SRC})`,
+    'gi',
+  );
+  while ((m = ecFactRe.exec(s))) hits.push({ kind: 'missing_period', match: m[0] });
+  const compRe = /([а-яё]{5,})\s+(?:одним|двумя|тремя)\s+компрессор(?:ом|ами)/gi;
+  while ((m = compRe.exec(s))) {
+    if (/(?:компрессор|работа|оснащен|имеет|снабж|установлен|с)$/i.test(m[1])) continue;
+    hits.push({ kind: 'missing_period', match: m[0] });
   }
   return hits;
 }
@@ -781,6 +931,11 @@ function boolPhrase(annValue, topicLabel) {
  */
 function rewriteContradiction(sentence, topic, annValue) {
   let s = sentence;
+  if (topic.energyClass) {
+    const want = canonEnergyClass(annValue);
+    if (want) return tidyPunct(alignEnergyClassInText(s, want));
+    return tidyPunct(s);
+  }
   if (topic.material) {
     const phrase = materialPhrase(annValue);
     const mat = String.raw`нержавеющ(?:ей|ая)\s+стал[иь]|нержавейк[аи]|пластик[аеу]?|полипропилен[аеу]?|эмалированн(?:ой|ая)\s+стал[иь]|комбинированн(?:ый|ого)`;
@@ -846,7 +1001,9 @@ export function repairDescriptionPlain(text, annotationHtml) {
 
       const claimed = topic.material
         ? extractMaterialClaim(rewritten, topic.id)
-        : extractBoolClaim(rewritten);
+        : topic.energyClass
+          ? extractEnergyClassLetter(rewritten)
+          : extractBoolClaim(rewritten);
       if (claimed != null && !valuesAgree(topic, claimed, annVal)) {
         hitTopics.push({ topic, annVal });
       }
@@ -941,12 +1098,17 @@ export function repairDescriptionHtml(descriptionHtml, annotationHtml) {
   let blocks = 0;
   let html = s.replace(BLOCK_RE, (full, tag, attrs, inner) => {
     blocks += 1;
+    const origInner = inner;
     const orig = stripHtml(inner);
     const { text, fixes } = repairDescriptionPlain(orig, annotationHtml);
-    if (!fixes.length && text === orig && !findHangingFragments(inner).length) return full;
     allFixes.push(...fixes);
     if (!String(text).trim()) return '';
-    return `<${tag}${attrs}>${text}</${tag}>`;
+    if (!fixes.length && text === orig && !findHangingFragments(origInner).length) {
+      const padded = padStrongSpaces(origInner);
+      if (padded === origInner) return full;
+      return `<${tag}${attrs}>${padded}</${tag}>`;
+    }
+    return `<${tag}${attrs}>${padStrongSpaces(text)}</${tag}>`;
   });
 
   if (!blocks) {

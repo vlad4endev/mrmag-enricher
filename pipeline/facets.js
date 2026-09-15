@@ -213,6 +213,28 @@ function trackUnmapped(bag, name, raw) {
 }
 
 /**
+ * Значение есть в attrs/annotation, но не попало ни в один бакет/канон.
+ * На витрину его не поднимаем (9,5 кг ≠ «40–50»), но и не теряем молча:
+ * пишем в rec.filter_schema_gaps и в сводный unmapped.
+ */
+function recordFilterGap(rec, bag, name, raw, reason, code) {
+  trackUnmapped(bag, name, raw);
+  if (!rec || raw == null || raw === '') return;
+  const value = String(raw).trim();
+  if (!value) return;
+  if (!Array.isArray(rec.filter_schema_gaps)) rec.filter_schema_gaps = [];
+  if (rec.filter_schema_gaps.some(g => g.name === name && g.value === value)) return;
+  rec.filter_schema_gaps.push({
+    name,
+    code: code || null,
+    value,
+    reason: reason || 'unmapped',
+  });
+  if (!Array.isArray(rec.flags)) rec.flags = [];
+  if (!rec.flags.includes('filter_schema_gap')) rec.flags.push('filter_schema_gap');
+}
+
+/**
  * Начало полузакрытого интервала [a; b).
  * origin смещает сетку: шум 34–44 при step 10, а не 30–40.
  */
@@ -328,7 +350,7 @@ function fallbackFacetValues(attr, kind) {
   return [];
 }
 
-/** Пункты фильтра — только каноны value_aliases, в т.ч. class_scale (A+++…C). */
+/** Пункты фильтра — только каноны value_aliases, в т.ч. class_scale (A+++…G). */
 function filterAllowedLabels(attr) {
   const aliases = attr?.value_aliases;
   if (!aliases || typeof aliases !== 'object') return null;
@@ -554,6 +576,7 @@ export function buildFilters(recs, dict, config) {
  * ставит товар сразу в несколько значений фильтра.
  */
 export function assignFilterValues(rec, dict, debugFacets, config = {}, unmapped = null) {
+  if (rec) rec.filter_schema_gaps = [];
   const out = {};
   for (const f of debugFacets) {
     const v = rec.attrs[f._code];
@@ -580,26 +603,26 @@ export function assignFilterValues(rec, dict, debugFacets, config = {}, unmapped
           : bucketLabel(n, { ...facet, kind: 'range' })
       );
       if (!lab) {
-        trackUnmapped(unmapped, f.name, v);
+        recordFilterGap(rec, unmapped, f.name, v, 'no_matching_bucket', f._code);
         continue;
       }
       out[f.name] = [lab];
     } else if (kind === 'int_enum') {
       const raw = numericOf(v);
       if (raw == null) {
-        trackUnmapped(unmapped, f.name, v);
+        recordFilterGap(rec, unmapped, f.name, v, 'not_numeric', f._code);
         continue;
       }
       const lab = snapIntEnum(coerceFacetNumber(raw, attr), facet);
       if (!lab) {
-        trackUnmapped(unmapped, f.name, v);
+        recordFilterGap(rec, unmapped, f.name, v, 'no_matching_bucket', f._code);
         continue;
       }
       out[f.name] = [lab];
     } else if (kind === 'boolean') {
       const flag = coerceBooleanAttr(attr, v);
       if (flag !== true && flag !== false) {
-        trackUnmapped(unmapped, f.name, v);
+        recordFilterGap(rec, unmapped, f.name, v, 'not_boolean', f._code);
         continue;
       }
       out[f.name] = [displayValue(attr, flag)];
@@ -611,7 +634,7 @@ export function assignFilterValues(rec, dict, debugFacets, config = {}, unmapped
         const lab = displayValue(attr, p);
         if (!lab || labels.includes(lab)) continue;
         if (!allowed.has(lab)) {
-          trackUnmapped(unmapped, f.name, p);
+          recordFilterGap(rec, unmapped, f.name, p, 'value_not_in_schema', f._code);
           continue;
         }
         labels.push(lab);

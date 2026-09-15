@@ -3299,7 +3299,7 @@ console.log('golden tests passed');
 {
   const { matchBucket, toIntEnum, coerceFacetNumber, assignFilterValues, buildFilters } = await import('./pipeline/facets.js');
   const { applyEnrichedSpecs } = await import('./pipeline/export.js');
-  const { markCategoryMismatch, categoryMismatchOf } = await import('./pipeline/category_mismatch.js');
+  const { markCategoryMismatch, categoryMismatchOf, inferProductKind } = await import('./pipeline/category_mismatch.js');
   const { buildFilterCoverageReport } = await import('./pipeline/filter_report.js');
   const { aliasValue } = await import('./pipeline/types.js');
 
@@ -3315,6 +3315,7 @@ console.log('golden tests passed');
   assert.equal(matchBucket(15, progFacet), '15-20');
   assert.equal(matchBucket(10, progFacet), '10-15');
   assert.equal(matchBucket(90, progFacet), null);
+  assert.equal(matchBucket(35, progFacet), null);
 
   assert.equal(d467.byCode.get('dims').facet.enabled, true);
   assert.notEqual(d467.byCode.get('dims').facet.status, 'not_a_filter');
@@ -3394,7 +3395,8 @@ console.log('golden tests passed');
   assert.equal(matchBucket(44.2, d523.byCode.get('depth').facet), '40-45');
   assert.equal(matchBucket(49.2, d523.byCode.get('height').facet), '40-50');
   assert.ok(Object.keys(d467.byCode.get('energy_class').value_aliases).includes('C'));
-  assert.ok(!Object.keys(d467.byCode.get('energy_class').value_aliases).includes('D'));
+  assert.ok(Object.keys(d467.byCode.get('energy_class').value_aliases).includes('D'));
+  assert.ok(Object.keys(d467.byCode.get('energy_class').value_aliases).includes('G'));
   assert.ok(!Object.keys(d523.byCode.get('energy_class').value_aliases).includes('E'));
 
   assert.equal(coerceFacetNumber(850, d467.byCode.get('height')), 85);
@@ -3555,8 +3557,43 @@ console.log('golden tests passed');
   assert.ok(markCategoryMismatch(dryer, '467'));
   const acc = { id: 436864, name: 'Соединительный элемент CK-3' };
   assert.ok(markCategoryMismatch(acc, '467'));
+  assert.equal(acc.suggested_category_id, 487);
+  assert.equal(acc.product_kind, 'accessory');
   const washerOk = { id: 1, name: 'Стиральная машина ATLANT 60С1010' };
   assert.equal(markCategoryMismatch(washerOk, '467'), null);
+  assert.equal(washerOk.product_kind, 'washer');
+  assert.equal(inferProductKind('Cушильная машина Candy C43TD H9A2BSW-07 (9кг)'), 'dryer');
+  assert.equal(
+    inferProductKind('HD90-A2959 Сушильная машина Haier', 'для стиральной машины, цикл сушки'),
+    'dryer',
+  );
+  assert.ok(categoryMismatchOf('Cушильная машина Candy C43TD H9A2BSW-07 (9кг)', '467'));
+  assert.equal(inferProductKind('Cтиральная машина Renova WS-35E(BL)'), 'washer');
+  assert.equal(inferProductKind('C47TD H10A2BSW-07 суш маш Candy'), 'dryer');
+  assert.equal(
+    inferProductKind('Стиральная машина LG с функцией сушки F1296CDS0X'),
+    'washer-dryer',
+  );
+  assert.equal(
+    categoryMismatchOf('Стиральная машина LG с функцией сушки F1296CDS0X', '467'),
+    null,
+  );
+  assert.equal(inferProductKind('HWD70BP14929B Стиральная машина Haier'), 'washer-dryer');
+  assert.equal(inferProductKind('B3WFR572AB RU Ст-МашA1 Beyond'), 'washer');
+  assert.equal(
+    inferProductKind(
+      'Стиральная машина Beko WDB7425R2W',
+      'Объем - 7 (стирка)/4 (сушка) кг',
+    ),
+    'washer-dryer',
+  );
+  assert.equal(
+    inferProductKind(
+      'CSO 129T3/1-07 Стир.машин.Candy',
+      'габариты стиральной (сушильной) машины указаны по габаритам корпуса',
+    ),
+    'washer',
+  );
   {
     const dryerCov = cardFilterCoverage({}, d467, { category_mismatch: true });
     assert.equal(dryerCov.category_mismatch, true);
@@ -3635,6 +3672,45 @@ console.log('golden tests passed');
   assert.deepEqual(w458847.assigned['Количество программ'], ['до 10']);
   assert.equal(w458847.r.attrs.spin_max, null);
 
+  const energyD = normalizeProduct({
+    id: 900301,
+    name: 'Стиральная машина TEST ENERGY D',
+    annotation: '<p>Класс энергоэффективности: D</p>',
+    description: '',
+  }, d467, config);
+  assert.equal(energyD.attrs.energy_class, 'D');
+  {
+    const builtD = buildFilters([energyD], d467, config);
+    const assignedD = assignFilterValues(energyD, d467, builtD.debug, config);
+    assert.deepEqual(assignedD['Класс энергоэффективности'], ['D']);
+  }
+
+  const overProg = normalizeProduct({
+    id: 900302,
+    name: 'Стиральная машина TEST 35 PROG',
+    annotation: '<p>Количество программ: 35</p>',
+    description: '',
+  }, d467, config);
+  assert.equal(overProg.attrs.programs_qty, 35);
+  {
+    const builtP = buildFilters([overProg], d467, config);
+    const assignedP = assignFilterValues(overProg, d467, builtP.debug, config);
+    assert.equal(assignedP['Количество программ'], undefined);
+    assert.ok(
+      overProg.filter_schema_gaps.some(g => g.name === 'Количество программ' && g.value === '35'),
+      `ждали schema_gap на 35 программ, получили ${JSON.stringify(overProg.filter_schema_gaps)}`,
+    );
+  }
+
+  const ckFilters = fillCardFiltersAfterEnrich(
+    p467[436864],
+    { specs: {}, description: p467[436864].description || '' },
+    d467,
+    config,
+  );
+  assert.ok(!ckFilters['Установка']?.length, 'аксессуар CK-3: не подставлять «отдельностоящая»');
+  assert.ok(!ckFilters['Класс стирки']?.length, 'аксессуар: не выдумывать класс стирки');
+
   const abs = normalizeValue(d523.byCode.get('freezer_pos'), 'Отсутствует');
   assert.equal(abs.ok, true);
   assert.equal(abs.value, 'Отсутствует');
@@ -3692,6 +3768,10 @@ console.log('golden tests passed');
   });
   assert.equal(report.products_total, 2);
   assert.deepEqual(report.category_mismatch, [455270]);
+  assert.ok(Array.isArray(report.schema_gaps));
+  assert.ok(Array.isArray(report.suggested_moves));
+  assert.equal(acc.suggested_category_id, 487);
+  assert.ok(report.product_kinds.accessory >= 1 || report.product_kinds.dryer >= 1 || report.product_kinds.washer >= 1);
   assert.ok(report.filters.every(f => Array.isArray(f.unmapped_values)));
   const ctrl = report.filters.find(f => f.name === 'Тип управления');
   assert.deepEqual(ctrl.unmapped_values, [{ value: 'поворотный механизм', count: 4 }]);
@@ -4472,6 +4552,40 @@ console.log('golden tests passed');
   assert.ok(!/\.\s*,\s*(?:что|включая|глубину)/i.test(hangingSrc.html), hangingSrc.html);
   assert.ok(!findHangingFragments(hangingSrc.html).length, hangingSrc.html);
 
+  // LG F2J6TN0W: вырезание «защиты от протечек» не должно съедать соседние предложения.
+  const { renderAnnotation } = await import('./pipeline/generate.js');
+  const lgRec = normalizeProduct(p467[12957], d467, config);
+  const lgAnn = renderAnnotation(lgRec, d467);
+  const lgFull = 'Стиральная машина LG F2J6TN0W — это отдельностоящая модель с фронтальной загрузкой, рассчитанная на 8 кг белья. Она оснащена сенсорным управлением и цифровым дисплеем, что делает выбор программ интуитивно понятным. Машина имеет 14 программ стирки, включая специальные режимы для детской одежды, джинсов, спортивной одежды и пуховых вещей. Защита от детей и контроль дисбаланса обеспечивают безопасность и стабильность работы. Перед покупкой учтите, что машина не имеет защиты от протечек воды.';
+  const lgHtml = `<p>${lgFull}</p><ul><li>Инверторный двигатель с прямым приводом</li><li>Загрузка 8 кг</li><li>14 программ стирки</li></ul>`;
+  const lgList = extractProtectionListItems(
+    'Защита от детей и контроль дисбаланса обеспечивают безопасность и стабильность работы',
+  ).map(i => i.feat);
+  assert.deepEqual(lgList, ['детей'], JSON.stringify(lgList));
+  const lgGeneric = findGenericFeatureClaims(lgHtml, lgAnn, { id: 12957 });
+  assert.ok(!lgGeneric.some(i => /сенсорн|14 программ/i.test(i.topic)), JSON.stringify(lgGeneric));
+  const lgFixed = repairDescriptionHtml(lgHtml, lgAnn);
+  assert.ok(!/протеч/i.test(lgFixed.html), lgFixed.html);
+  assert.match(lgFixed.html, /оснащена сенсорным управлением и цифровым дисплеем/i);
+  assert.match(lgFixed.html, /14 программ стирки, включая специальные режимы/i);
+  assert.match(lgFixed.html, /контроль дисбаланса обеспечивают безопасность и стабильность работы/i);
+  assert.match(lgFixed.html, /загрузкой, рассчитанная на 8 кг/i);
+  assert.ok(!/Защита от детей\.\s*</.test(lgFixed.html), 'обрывок без сказуемого: ' + lgFixed.html);
+  assert.ok(!/учтите/i.test(lgFixed.html), lgFixed.html);
+
+  const sampleIds = [11391, 29921, 44772, 44773, 44782, 44783, 44792, 52904, 52905, 182681];
+  for (const id of sampleIds) {
+    const rec = normalizeProduct(p467[id], d467, config);
+    const name = rec.name || p467[id].name;
+    const sample = `${name} — это отдельностоящая модель с фронтальной загрузкой, рассчитанная на 6 кг белья. Она оснащена сенсорным управлением и цифровым дисплеем, что делает выбор программ интуитивно понятным. Машина имеет 13 программ стирки, включая специальные режимы для детской одежды, джинсов, спортивной одежды и пуховых вещей. Защита от детей и контроль дисбаланса обеспечивают безопасность и стабильность работы. Перед покупкой учтите, что машина не имеет защиты от протечек воды.`;
+    const fixed = repairDescriptionHtml(`<p>${sample}</p>`, renderAnnotation(rec, d467));
+    assert.ok(!/протеч/i.test(fixed.html), `${id} leak: ${fixed.html}`);
+    assert.match(fixed.html, /оснащена сенсорным управлением/i, String(id));
+    assert.match(fixed.html, /включая специальные режимы/i, String(id));
+    assert.match(fixed.html, /контроль дисбаланса обеспечивают/i, String(id));
+    assert.ok(!/Защита от детей\.\s*</.test(fixed.html), `${id} stub: ${fixed.html}`);
+  }
+
   const remnant = 'Машина не имеет. Учтите. Текст., что включая глубину.';
   assert.ok(findHangingFragments(remnant).length >= 2, remnant);
   const cleanedHang = sanitizeHangingProse('<p>, включая программу.</p><p>Надёжная модель с загрузкой 6 кг.</p>');
@@ -4630,7 +4744,6 @@ console.log('golden tests passed');
     stripEnergyClassOpinions,
     padStrongSpaces,
   } = await import('./pipeline/desc_annotation_align.js');
-  const { renderAnnotation } = await import('./pipeline/generate.js');
   const { applyEnrichedSpecs } = await import('./pipeline/export.js');
 
   const rec805 = normalizeProduct(p523[805], d523, config);

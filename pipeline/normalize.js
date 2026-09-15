@@ -13,7 +13,7 @@ import {
 import { parseDimensions, reconcileDimensions, isCompleteDims } from './dimensions.js';
 import { parseIdentity } from './identity.js';
 import { isPackingKey, normKey } from './text.js';
-import { inferProductKind } from './category_mismatch.js';
+import { inferProductKind, isWasherLike, markCategoryMismatch } from './category_mismatch.js';
 import { harvestStorefrontFacts } from './storefront_fill.js';
 
 /** Приоритет источников: исходный JSON важнее веб-страницы похожего товара. */
@@ -376,7 +376,7 @@ export function normalizeProduct(product, dict, config) {
   // Автомат / полуавтомат: из имени или раздела (953 — полуавтоматы).
   // Чистые сушилки и аксессуары пропускаем (не путать с «сушкой» в описании СМА).
   if (dict.byCode.has('washer_type') && rec.attrs.washer_type == null) {
-    const kind = inferProductKind(product.name);
+    const kind = recKind(rec, product);
     if (kind !== 'dryer' && kind !== 'accessory') {
       const n = String(product.name || '').toLowerCase().replace(/ё/g, 'е');
       const cat = `${product.category || ''} ${product.category_id || ''}`.toLowerCase().replace(/ё/g, 'е');
@@ -421,8 +421,19 @@ export function normalizeProduct(product, dict, config) {
 
   ingestPairs(rec, parsed.pairs, dict, config);
   deriveLinkedAttrs(rec, dict, product, config);
+  markCategoryMismatch(rec, dict.catId);
 
   return rec;
+}
+
+function recKind(rec, product) {
+  return inferProductKind(
+    product?.name || rec?.name,
+    [
+      product?.annotation || rec?.annotation || '',
+      product?.description || rec?.description || '',
+    ].join('\n'),
+  );
 }
 
 function factBlob(rec, product) {
@@ -505,39 +516,42 @@ function deriveLinkedAttrs(rec, dict, product, config) {
   const blob = factBlob(rec, product);
 
   if (dict.byCode.has('install') && rec.attrs.install == null) {
-    const builtIn = /встраиваем|встроенн/.test(blob);
-    const freestanding = /отдельн(?:о\s*)?стоя|напольн|свободностоя/.test(blob);
-    // Явная строка «Установка: …» важнее свободных упоминаний в SEO/meta.
-    const labeled = blob.match(/установк[а-яё]*\s*[-–—:]\s*([^\n,;<]+)/i);
-    let label = null;
-    if (labeled) {
-      const raw = labeled[1];
-      if (/встраиваем|встроенн/.test(raw)) label = 'Встраиваемая';
-      else if (/отдельн|напольн|свободностоя/.test(raw)) label = 'Отдельностоящая';
-      else if (/встраиван/.test(raw)) label = 'С возможностью встраивания';
-    }
-    if (!label) {
-      if (builtIn && freestanding) {
-        // Конфликт поверхностей — не угадываем; enum_align разберёт позже.
-        label = null;
-      } else if (builtIn) {
-        label = 'Встраиваемая';
-      } else {
-        // Стиралки без явного «встраиваемая» — отдельностоящие.
-        label = 'Отдельностоящая';
+    const kind = recKind(rec, product);
+    if (kind !== 'accessory') {
+      const builtIn = /встраиваем|встроенн/.test(blob);
+      const freestanding = /отдельн(?:о\s*)?стоя|напольн|свободностоя/.test(blob);
+      // Явная строка «Установка: …» важнее свободных упоминаний в SEO/meta.
+      const labeled = blob.match(/установк[а-яё]*\s*[-–—:]\s*([^\n,;<]+)/i);
+      let label = null;
+      if (labeled) {
+        const raw = labeled[1];
+        if (/встраиваем|встроенн/.test(raw)) label = 'Встраиваемая';
+        else if (/отдельн|напольн|свободностоя/.test(raw)) label = 'Отдельностоящая';
+        else if (/встраиван/.test(raw)) label = 'С возможностью встраивания';
       }
+      if (!label) {
+        if (builtIn && freestanding) {
+          // Конфликт поверхностей — не угадываем; enum_align разберёт позже.
+          label = null;
+        } else if (builtIn) {
+          label = 'Встраиваемая';
+        } else {
+          // Стиралки без явного «встраиваемая» — отдельностоящие.
+          label = 'Отдельностоящая';
+        }
+      }
+      if (label) setDerived(rec, dict, 'install', label, 'derived_install', 'S0');
     }
-    if (label) setDerived(rec, dict, 'install', label, 'derived_install', 'S0');
   }
 
   if (dict.byCode.has('load_type') && rec.attrs.load_type == null) {
-    const kind = inferProductKind(product?.name || rec.name);
+    const kind = recKind(rec, product);
     if (kind !== 'dryer' && kind !== 'accessory') {
       if (/вертикал/.test(blob)) {
         setDerived(rec, dict, 'load_type', 'Вертикальная', 'derived_load_type', 'S0');
       } else if (/фронтал/.test(blob)) {
         setDerived(rec, dict, 'load_type', 'Фронтальная', 'derived_load_type', 'S0');
-      } else if (kind === 'washer' || String(dict.catId) === '467') {
+      } else if (isWasherLike(kind) || String(dict.catId) === '467') {
         // Вертикальные почти всегда названы; остальные СМА — фронтальные.
         setDerived(rec, dict, 'load_type', 'Фронтальная', 'derived_load_type', 'S0');
       }
@@ -547,7 +561,7 @@ function deriveLinkedAttrs(rec, dict, product, config) {
   // Автомат vs полуавтомат: полуавтомат всегда сильнее; иначе явные маркеры
   // или стиралка/СМА в имени → автоматическая. Сушилки/аксессуары — не трогаем.
   if (dict.byCode.has('washer_type') && rec.attrs.washer_type == null) {
-    const kind = inferProductKind(product?.name || rec.name);
+    const kind = recKind(rec, product);
     if (kind !== 'dryer' && kind !== 'accessory') {
       let label = null;
       if (/полуавтомат/.test(blob)) {
@@ -556,7 +570,7 @@ function deriveLinkedAttrs(rec, dict, product, config) {
         /вид\s+стиральн\w*\s*[-–—:]\s*автомат/.test(blob)
         || /автоматическ\w*\s+стиральн/.test(blob)
         || /стиральн\w*\s+машин\w*[^\n.;]{0,40}автоматическ/.test(blob)
-        || kind === 'washer'
+        || isWasherLike(kind)
         || /стиральн|стир\.?\s*маш/.test(blob)
         || String(dict.catId) === '467'
       ) {
@@ -623,9 +637,10 @@ function deriveLinkedAttrs(rec, dict, product, config) {
     } else if (/тип\s+дисплея|led[\s-]?дисп|диспл\w*\s*[-–—:]?\s*(led|tft|lcd|есть|да)\b|цифров\w*\s+\(?символьн|сенсорн\w+\s+диспл|\btft\b|\blcd\b[\s-]?дисп|\boled\b/i.test(blob)) {
       flag = 'Есть';
     } else {
-      const kind = inferProductKind(product?.name || rec.name);
-      const inCat = kind === 'fridge' || kind === 'washer'
-        || String(dict.catId) === '467' || String(dict.catId) === '523';
+      const kind = recKind(rec, product);
+      const inCat = kind === 'fridge' || isWasherLike(kind)
+        || ((String(dict.catId) === '467' || String(dict.catId) === '523')
+          && kind !== 'accessory' && kind !== 'dryer');
       const ctrl = String(Array.isArray(rec.attrs.control_type)
         ? rec.attrs.control_type.join(' ')
         : (rec.attrs.control_type || ''));
@@ -640,25 +655,28 @@ function deriveLinkedAttrs(rec, dict, product, config) {
   }
 
   if (dict.byCode.has('drying') && rec.attrs.drying == null) {
-    const kind = inferProductKind(product?.name || rec.name);
+    const kind = recKind(rec, product);
     let flag = null;
-    if (kind === 'dryer' || /стирально-сушильн|с\s+сушкой|загрузк\w*.{0,24}для\s+сушк/i.test(blob)) {
+    if (kind === 'accessory') {
+      flag = null;
+    } else if (kind === 'dryer' || kind === 'washer-dryer'
+      || /стирально-сушильн|с\s+сушкой|загрузк\w*.{0,24}для\s+сушк/i.test(blob)) {
       flag = 'Есть';
     } else if (/сушк[ауи]\s*[-–—:]\s*(нет|не\s|отсутств)|без\s+сушк/i.test(blob)) {
       flag = 'Нет';
-    } else if (kind === 'washer' || String(dict.catId) === '467') {
+    } else if (isWasherLike(kind) || String(dict.catId) === '467') {
       flag = 'Нет';
     }
     if (flag) setDerived(rec, dict, 'drying', flag, 'derived_drying', 'S0');
   }
 
   if (dict.byCode.has('motor_type') && rec.attrs.motor_type == null) {
-    const kind = inferProductKind(product?.name || rec.name);
+    const kind = recKind(rec, product);
     let label = null;
     if (/инвертор|bldc|прямой\s+привод/i.test(blob)) label = 'Инверторный';
     else if (/щеточн|коллекторн/.test(blob)) label = 'Коллекторный';
     else if (
-      (kind === 'washer' || String(dict.catId) === '467')
+      (isWasherLike(kind) || String(dict.catId) === '467')
       && kind !== 'dryer'
       && kind !== 'accessory'
       && (rec.attrs.load_max != null || rec.attrs.spin_max != null || rec.attrs.energy_class != null)
@@ -683,7 +701,7 @@ function deriveLinkedAttrs(rec, dict, product, config) {
     else if (/\bfnf\b|no[\s-]?frost|ноу[\s-]?фрост/i.test(blob)) label = 'No Frost';
     else if (/ручн\w*\s+размороз/i.test(blob)) label = 'Статическая';
     else if (
-      inferProductKind(product?.name || rec.name) === 'fridge'
+      recKind(rec, product) === 'fridge'
       && /механическ|электромеханическ/.test(String(rec.attrs.control_type || ''))
     ) {
       label = 'Капельная';

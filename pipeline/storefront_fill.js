@@ -3,7 +3,7 @@
  * Пустой фасет на витрине хуже типичного значения той же категории.
  */
 
-import { expectedCategoryKind, inferProductKind } from './category_mismatch.js';
+import { expectedCategoryKind, inferProductKind, kindFitsCategory } from './category_mismatch.js';
 import { storefrontFilterAttrs } from './required_filters.js';
 import { parseTriple, isCompleteDims } from './dimensions.js';
 import { aliasValue, defrostCanonFromCooling, hasStrictEnum, isDripCooling, normalizeValue, unifyEnumValues } from './types.js';
@@ -239,7 +239,11 @@ function harvestSheetOnlyFacts(rec, dict, t, put) {
  */
 export function harvestStorefrontFacts(rec, dict, product) {
   const t = factText(rec, product);
-  const kind = inferProductKind(product?.name || rec.name);
+  const kind = inferProductKind(
+    product?.name || rec.name,
+    [product?.annotation || rec.annotation || '', product?.description || rec.description || ''].join('\n'),
+  );
+  if (kind === 'accessory') return;
   const put = (code, raw, how) => applyDerived(rec, dict, code, raw, how);
 
   {
@@ -248,7 +252,7 @@ export function harvestStorefrontFacts(rec, dict, product) {
       || t.match(/до\s+(\d+(?:[.,]\d+)?)\s*кг/i);
     if (m) put('load_max', m[1], 'harvest_load');
   }
-  {
+  if (kind !== 'dryer') {
     const m = t.match(/(?:скорость|число\s+оборот|отжим)[^0-9]{0,48}(\d{3,4})\s*(?:об|rpm)/i)
       || t.match(/(\d{3,4})\s*оборот/i);
     if (m && Number(m[1]) >= 400 && Number(m[1]) <= 2000) put('spin_max', m[1], 'harvest_spin');
@@ -260,26 +264,28 @@ export function harvestStorefrontFacts(rec, dict, product) {
       || cls(/\bкласс\s+([A-GА-Е]\+{1,3})\b/i, t),
     'harvest_energy',
   );
-  put('wash_class', cls(/класс(?:а)?\s+(?:эффективности\s+)?стирк[аи]\s*[-–—:]?\s*([A-GА-Е])/i, t), 'harvest_wash_class');
-  put('spin_class', cls(/класс(?:а)?\s+(?:эффективности\s+)?отжим[аеу]\s*[-–—:]?\s*([A-GА-Е])/i, t), 'harvest_spin_class');
+  if (kind !== 'dryer') {
+    put('wash_class', cls(/класс(?:а)?\s+(?:эффективности\s+)?стирк[аи]\s*[-–—:]?\s*([A-GА-Е])/i, t), 'harvest_wash_class');
+    put('spin_class', cls(/класс(?:а)?\s+(?:эффективности\s+)?отжим[аеу]\s*[-–—:]?\s*([A-GА-Е])/i, t), 'harvest_spin_class');
+  }
   {
     const m = t.match(/кол-?во\s+режимов\s*[-–—:]?\s*(\d{1,2})/i)
       || t.match(/(\d{1,2})\s*(?:программ|режимов(?:\s+стирк)?)/i)
       || t.match(/(\d{1,2})\s*пр\b/i);
     if (m && Number(m[1]) >= 3 && Number(m[1]) <= 40) put('programs_qty', m[1], 'harvest_programs');
   }
-  {
+  if (kind !== 'dryer') {
     const dual = t.match(/шум[^0-9]{0,24}(\d{2,3})\s*\/\s*(\d{2,3})\s*дБ/i);
     const m = dual
       || t.match(/шум[^0-9]{0,40}стирк[^0-9]{0,12}(\d{2,3})/i)
       || t.match(/при\s+стирке[^0-9]{0,8}(\d{2,3})/i);
     if (m && Number(m[1]) >= 30 && Number(m[1]) <= 90) put('noise_wash', m[1], 'harvest_noise');
     if (dual && Number(dual[2]) >= 40 && Number(dual[2]) <= 90) put('noise_spin', dual[2], 'harvest_noise_spin');
-  }
-  {
-    const m = t.match(/шум[^0-9]{0,40}отжим[^0-9]{0,12}(\d{2,3})/i)
+    const spinNoise = t.match(/шум[^0-9]{0,40}отжим[^0-9]{0,12}(\d{2,3})/i)
       || t.match(/при\s+отжиме[^0-9]{0,8}(\d{2,3})/i);
-    if (m && Number(m[1]) >= 40 && Number(m[1]) <= 90) put('noise_spin', m[1], 'harvest_noise_spin');
+    if (spinNoise && Number(spinNoise[1]) >= 40 && Number(spinNoise[1]) <= 90) {
+      put('noise_spin', spinNoise[1], 'harvest_noise_spin');
+    }
   }
   {
     const m = t.match(/вес(?:\s+нетто)?[^0-9]{0,16}(\d+(?:[.,]\d+)?)\s*кг/i);
@@ -312,7 +318,7 @@ export function harvestStorefrontFacts(rec, dict, product) {
     }
   }
 
-  if (kind === 'dryer' || /стирально-сушильн|с\s+сушкой/i.test(t)) {
+  if (kind === 'dryer' || kind === 'washer-dryer' || /стирально-сушильн|с\s+сушкой/i.test(t)) {
     put('drying', 'Есть', 'harvest_drying');
   } else if (/сушк[ауи]\s*[-–—:]\s*(нет|не\s|отсутств)|без\s+сушк/i.test(t)) {
     put('drying', 'Нет', 'harvest_drying');
@@ -390,9 +396,12 @@ function ensureFridgeCompressor(rec, dict, product) {
  * Закрывает пустые и неканонические витринные оси типичным значением категории.
  */
 export function fillStorefrontDefaults(rec, dict, product) {
-  const kind = inferProductKind(product?.name || rec.name);
+  const kind = inferProductKind(
+    product?.name || rec.name,
+    [product?.annotation || rec.annotation || '', product?.description || rec.description || ''].join('\n'),
+  );
   const expected = expectedCategoryKind(dict.catId);
-  if (expected && kind !== expected && kind !== 'other') return;
+  if (!kindFitsCategory(kind, expected)) return;
   const table = dict.byCode.has('compressor_type')
     ? FRIDGE_DEFAULTS
     : (dict.byCode.has('load_max') ? WASHER_DEFAULTS : FRIDGE_DEFAULTS);

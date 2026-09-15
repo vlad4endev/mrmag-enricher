@@ -469,6 +469,22 @@
       "C": [
         "C",
         "с"
+      ],
+      "D": [
+        "D",
+        "д"
+      ],
+      "E": [
+        "E",
+        "е"
+      ],
+      "F": [
+        "F",
+        "ф"
+      ],
+      "G": [
+        "G",
+        "г"
       ]
     }
   },
@@ -891,6 +907,11 @@
       "open_last": false,
       "buckets": [
         {
+          "label": "до 10",
+          "min": 0,
+          "max": 10
+        },
+        {
           "label": "10-15",
           "min": 10,
           "max": 15
@@ -998,14 +1019,20 @@
       "bound_rule": "left_closed",
       "open_last": true,
       "breaks": [
+        50,
         70,
         75,
         80,
         85,
         90
       ],
-      "origin": 70,
+      "origin": 50,
       "buckets": [
+        {
+          "label": "до 50",
+          "min": 0,
+          "max": 50
+        },
         {
           "label": "50-70",
           "min": 50,
@@ -1317,6 +1344,11 @@
       ],
       "origin": 40,
       "buckets": [
+        {
+          "label": "до 40",
+          "min": 0,
+          "max": 40
+        },
         {
           "label": "40-50",
           "min": 40,

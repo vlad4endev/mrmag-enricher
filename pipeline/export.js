@@ -440,7 +440,7 @@ export function fillCardFiltersAfterEnrich(product, enriched, dict, config) {
   rec._enriched = enriched;
   applyEnrichedSpecs(rec, enriched.specs, dict, config);
   markCategoryMismatch(rec, dict.catId);
-  if (config.storefront_complete !== false) completeStorefrontRecs([rec], dict);
+  if (config.storefront_complete !== false && !rec.category_mismatch) completeStorefrontRecs([rec], dict);
   refreshDerivedFacets(rec, dict, rec);
   finalizeRecord(rec, dict, { enriched, assigned: null });
   const built = buildFilters([rec], dict, config);

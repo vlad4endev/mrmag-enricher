@@ -313,6 +313,26 @@ function isLeakFeat(feat) {
   return /протеч|aquastop|aquaprotect|аквастоп/i.test(String(feat || ''));
 }
 
+/** Сказуемое в хвосте «защита от A и … обеспечивают» — не элемент списка. */
+const FINITE_VERB_IN_PHRASE = /(?:оснащен|оснащён|оснащена|оснащено|имеет|работает|снабж|предусмотрен|оборудован|использует|позволяет|охлажда|отлича|предназнач|рассчитан|комплекту|обеспеч|сохран|поддерж|управля|замораж|явля|выполнен|снабжен|снабжена|снабжено)[а-яё]*/i;
+
+/**
+ * Хвост после «защита от»: «A, от B и от C» — список; «A и контроль … обеспечивают» — нет.
+ * Сказуемое обрывает перечень: иначе «и» съедает соседнее подлежащее.
+ */
+function splitProtectionItemTexts(tail) {
+  const parts = String(tail || '')
+    .split(/\s*(?:,\s*|\s+и\s+)(?:от\s+)?/i)
+    .map(p => p.replace(/^от\s+/i, '').replace(/\s+/g, ' ').trim())
+    .filter(Boolean);
+  const items = [];
+  for (const feat of parts) {
+    if (FINITE_VERB_IN_PHRASE.test(feat)) break;
+    if (feat.length >= 3) items.push(feat);
+  }
+  return items;
+}
+
 function isChildLockFeat(feat) {
   return /детей|child\s*lock|блокировк/i.test(String(feat || ''));
 }
@@ -331,10 +351,7 @@ export function extractProtectionListItems(sentence) {
     const stop = after.search(/[.!?;]/);
     const tail = (stop < 0 ? after : after.slice(0, stop)).trim();
     if (!tail) continue;
-    const parts = tail.split(/\s*(?:,\s*|\s+и\s+)(?:от\s+)?/i)
-      .map(p => p.replace(/^от\s+/i, '').replace(/\s+/g, ' ').trim())
-      .filter(p => p.length >= 3);
-    for (const feat of parts) {
+    for (const feat of splitProtectionItemTexts(tail)) {
       out.push({ feat, index: m.index, lead: m[0] });
     }
   }
@@ -409,9 +426,9 @@ export function toGenitiveAfterOt(feat) {
 export function repairProtectionListGrammar(text) {
   const leadRe = /((?:частичн[а-яё]*|полн[а-яё]*|общ[а-яё]*)\s+)?(?:есть\s+)?(?:имеет\s+)?(защит[а-яё]*\s+от\s+)([^.;!?]+)/gi;
   return String(text || '').replace(leadRe, (full, adj, lead, tail) => {
-    const items = String(tail || '').split(/\s*(?:,\s*|\s+и\s+)(?:от\s+)?/i)
-      .map(p => p.replace(/^от\s+/i, '').replace(/\s+/g, ' ').trim())
-      .filter(Boolean);
+    // Смешанное «защита от детей и контроль … обеспечивают» — не список, не переписывать.
+    if (FINITE_VERB_IN_PHRASE.test(tail)) return full;
+    const items = splitProtectionItemTexts(tail);
     if (!items.length) return full;
     const fixed = items.map(toGenitiveAfterOt);
     if (fixed.every((f, i) => f === items[i])) return full;
@@ -438,9 +455,9 @@ function dropFeatForTopic(topic) {
 function stripFabricatedProtectionItems(sentence, dropFeat) {
   const leadRe = /((?:частичн[а-яё]*|полн[а-яё]*|общ[а-яё]*)\s+)?(защит[а-яё]*\s+от\s+)([^.;!?]+)/gi;
   return String(sentence || '').replace(leadRe, (full, adj, lead, tail) => {
-    const items = String(tail || '').split(/\s*(?:,\s*|\s+и\s+)(?:от\s+)?/i)
-      .map(p => p.replace(/^от\s+/i, '').replace(/\s+/g, ' ').trim())
-      .filter(Boolean);
+    const items = splitProtectionItemTexts(tail);
+    // «защита от детей и контроль … обеспечивают» — не перечень, хвост не трогаем.
+    if (FINITE_VERB_IN_PHRASE.test(tail) && items.length < 2) return full;
     if (!items.length) return full;
     const kept = items.filter(it => !dropFeat(it));
     if (!kept.length) return '';
@@ -596,8 +613,9 @@ function annotationHasFeature(dict, featureName) {
 }
 
 /**
- * Общий сканер: «защита от X» / «функция X» / «оснащена X» / «не имеет X»
- * без привязки к whitelist схемы. Если в annotation нет такой подписи — фабрикация.
+ * Общий сканер: «защита от X» / «функция X» без привязки к whitelist схемы.
+ * Если в annotation нет такой подписи — фабрикация.
+ * «оснащена/имеет …» сюда не входит: это пересказ паспортных полей, не имя функции.
  */
 export function findGenericFeatureClaims(descriptionHtml, annotationHtml, { id = null } = {}) {
   const dict = parseAnnotationDict(annotationHtml);
@@ -612,14 +630,8 @@ export function findGenericFeatureClaims(descriptionHtml, annotationHtml, { id =
       re: /функци[а-яё]*\s+([а-яёa-z0-9][а-яёa-z0-9\s\-–—]{1,40}?)(?=\s*[,;.!?)(]|$)/gi,
       labelOf: (x) => `функция ${x}`,
     },
-    {
-      re: /(?:не\s+)?оснащен[аоы]?\s+([а-яёa-z0-9][а-яёa-z0-9\s\-–—]{2,40}?)(?=\s*[,;.!?)(]|$)/gi,
-      labelOf: (x) => x,
-    },
-    {
-      re: /(?:не\s+)?имеет\s+([а-яёa-z0-9][а-яёa-z0-9\s\-–—]{2,40}?)(?=\s*[,;.!?)(]|$)/gi,
-      labelOf: (x) => x,
-    },
+    // Не ловить «оснащена/имеет …»: это пересказ уже известных полей
+    // («сенсорным управлением», «14 программ стирки»), а не именованная функция.
   ];
 
   for (const sent of splitSentences(plain)) {
@@ -773,8 +785,6 @@ const NEXT_FACT_LC_SRC = String.raw`класс|объ[её]м|уровень|с�
 
 /** Элементы перечисления, которые модель клеит пробелом. */
 const FEATURE_ITEM_SRC = String.raw`защита от детей|контроль дисбаланса|контроль пенообразования|отсрочк[а-яё]*\s+(?:старта|запуска)|зона свежести|суперзаморозк[а-яё]*|экспресс-заморозк[а-яё]*|генератор льда`;
-
-const FINITE_VERB_IN_PHRASE = /(?:оснащен|оснащён|оснащена|оснащено|имеет|работает|снабж|предусмотрен|оборудован|использует|позволяет|охлажда|отлича|предназнач|рассчитан|комплекту|обеспеч|сохран|поддерж|управля|замораж|явля|выполнен|снабжен|снабжена|снабжено)[а-яё]*/i;
 
 function isNestedCompressorBridge(str, offset, lead) {
   if (!/оснащен/i.test(String(lead || ''))) return false;
@@ -990,7 +1000,10 @@ function dropFragmentsOrSentence(sentence, topic) {
   const kept = frags.filter(f => !clauseContainsTopic(f.text, topic));
   if (!kept.length) return '';
   let next = tidyPunct(joinFragments(kept));
-  if (findHangingFragments(next).length) return '';
+  if (findHangingFragments(next).length) {
+    next = sanitizeHangingPlain(next);
+    if (!next || findHangingFragments(next).length) return '';
+  }
   if (/[—–]\s*$/.test(next)) return '';
   if (next.replace(/\s+/g, '').length < 12) return '';
   return next;
@@ -1006,7 +1019,10 @@ function stripFabricationClause(sentence, topic) {
   if (items.length >= 2) {
     const next = stripFabricatedProtectionItems(s, dropFeatForTopic(topic));
     s = tidyPunct(next);
-    if (findHangingFragments(s).length) return '';
+    if (findHangingFragments(s).length) {
+      s = sanitizeHangingPlain(s);
+      if (!s || findHangingFragments(s).length) return '';
+    }
     if (/[—–]\s*$/.test(s)) return '';
     if (clauseContainsTopic(s, topic)) return dropFragmentsOrSentence(s, topic);
     if (s.replace(/\s+/g, '').length < 12) return '';

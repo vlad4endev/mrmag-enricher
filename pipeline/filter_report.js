@@ -125,6 +125,29 @@ export function buildFilterCoverageReport({
       .map(r => r.id)
       .filter(id => id != null),
   )];
+  const product_kinds = {};
+  for (const r of recs || []) {
+    const k = r.product_kind || (r.category_mismatch ? 'mismatch' : 'washer');
+    product_kinds[k] = (product_kinds[k] || 0) + 1;
+  }
+  const schema_gaps = (recs || []).flatMap((r) => (
+    (r.filter_schema_gaps || []).map((g) => ({
+      id: r.id,
+      name: g.name,
+      code: g.code || null,
+      value: g.value,
+      reason: g.reason,
+    }))
+  ));
+  const suggested_moves = (recs || [])
+    .filter(r => r.suggested_category_id != null)
+    .map(r => ({
+      id: r.id,
+      name: r.name,
+      kind: r.product_kind,
+      from: Number(catId) || catId,
+      to: r.suggested_category_id,
+    }));
 
   const eligible = (products || []).filter((p) => {
     const rec = byId.get(String(p.id));
@@ -167,5 +190,8 @@ export function buildFilterCoverageReport({
     products_with_few_filters,
     products_missing_required_filters,
     category_mismatch: mismatchIds,
+    product_kinds,
+    schema_gaps,
+    suggested_moves,
   };
 }

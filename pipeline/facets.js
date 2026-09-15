@@ -148,6 +148,14 @@ export function snapToFacetBucket(value, facet) {
   if (hit) return hit;
   const buckets = facetBuckets(facet);
   if (!buckets?.length) return null;
+  // Явные buckets: значение ниже сетки не поднимаем в больший диапазон — товар
+  // выпадает из фильтра (компактные модели), а не попадает в «40–50» при 9,5 кг.
+  if (hasExplicitBuckets(facet) || hasBreaks(facet)) {
+    if (n < buckets[0].min) return null;
+    const last = buckets[buckets.length - 1];
+    if (facet.open_last && n >= last.min) return last.label;
+    return null;
+  }
   if (n < buckets[0].min) return buckets[0].label;
   return buckets[buckets.length - 1].label;
 }

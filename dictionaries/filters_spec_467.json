@@ -59,6 +59,11 @@
       "open_last": false,
       "buckets": [
         {
+          "label": "до 10",
+          "min": 0,
+          "max": 10
+        },
+        {
           "label": "10-15",
           "min": 10,
           "max": 15
@@ -167,6 +172,11 @@
       "bound_rule": "left_closed",
       "open_last": true,
       "buckets": [
+        {
+          "label": "до 50",
+          "min": 0,
+          "max": 50
+        },
         {
           "label": "50-70",
           "min": 50,
@@ -316,6 +326,11 @@
       "bound_rule": "left_closed",
       "open_last": true,
       "buckets": [
+        {
+          "label": "до 40",
+          "min": 0,
+          "max": 40
+        },
         {
           "label": "40-50",
           "min": 40,

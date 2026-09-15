@@ -3310,7 +3310,7 @@ console.log('golden tests passed');
   assert.equal(toIntEnum(7, loadFacet), '7');
 
   const progFacet = d467.byCode.get('programs_qty').facet;
-  assert.equal(matchBucket(3, progFacet), null);
+  assert.equal(matchBucket(3, progFacet), 'до 10');
   assert.equal(matchBucket(16, progFacet), '15-20');
   assert.equal(matchBucket(15, progFacet), '15-20');
   assert.equal(matchBucket(10, progFacet), '10-15');
@@ -3631,6 +3631,8 @@ console.log('golden tests passed');
   const w458847 = filt(458847, d467, p467);
   assert.equal(w458847.r.attrs.height, 52.5);
   assert.deepEqual(w458847.assigned['Высота, см'], ['50-70']);
+  assert.deepEqual(w458847.assigned['Вес, кг'], ['до 40']);
+  assert.deepEqual(w458847.assigned['Количество программ'], ['до 10']);
   assert.equal(w458847.r.attrs.spin_max, null);
 
   const abs = normalizeValue(d523.byCode.get('freezer_pos'), 'Отсутствует');
@@ -4559,6 +4561,59 @@ console.log('golden tests passed');
   );
   assert.match(fridgeNoise, /41 дБ, климатический класс ST/);
   assert.equal(findAssemblyPunctIssues(fridgeVol).length, 0, fridgeVol);
+
+  const {
+    repairProtectionListGrammar,
+    toGenitiveAfterOt,
+    repairDescriptionHtml: repairDescHtml2,
+  } = await import('./pipeline/desc_annotation_align.js');
+
+  assert.equal(toGenitiveAfterOt('обработка паром'), 'обработки паром');
+  assert.equal(toGenitiveAfterOt('стирка паром'), 'стирки паром');
+  assert.equal(toGenitiveAfterOt('блокировка от детей'), 'детей');
+
+  const genList = repairProtectionListGrammar(
+    'есть защита от детей и от обработка паром, от стирка паром',
+  );
+  assert.match(genList, /защита от детей, от обработки паром и от стирки паром/);
+  assert.equal(
+    repairProtectionListGrammar('Защита от блокировка от детей'),
+    'Защита от детей',
+  );
+  const gen425 = repairProtectionListGrammar(
+    'Предусмотрена защита от детей, от обработка паром и от блокировка от детей',
+  );
+  assert.match(gen425, /от детей, от обработки паром и от детей/);
+
+  const orphanSelf = repairAssemblyPunctuation(
+    'Встроена самодиагностика. Предусмотрены. Перед покупкой учтите габариты.',
+  );
+  assert.ok(!/Предусмотрены\./.test(orphanSelf), orphanSelf);
+  assert.match(orphanSelf, /самодиагностика\.\s+Перед покупкой/);
+
+  const orphanFn = repairAssemblyPunctuation(
+    'В модели предусмотрено 16 программ. Функция. Управление электронное.',
+  );
+  assert.ok(!/Функция\./.test(orphanFn), orphanFn);
+  assert.match(orphanFn, /16 программ\.\s+Управление/);
+
+  const orphanDot = repairAssemblyPunctuation(
+    'Доступно 15 автоматических программ Предусмотрены дополнительные функции.',
+  );
+  assert.match(orphanDot, /15 автоматических программ\.\s+Предусмотрены дополнительные/);
+
+  const orphanMid = repairAssemblyPunctuation(
+    'Бак — из пластика. В модели предусмотрены. 15 программ стирки.',
+  );
+  assert.match(orphanMid, /предусмотрены 15 программ/);
+
+  const annChildYes = '<ul><li>Защита от детей: есть</li><li>Сушка: нет</li></ul>';
+  const comboNeg = repairDescHtml2(
+    '<p>Перед покупкой учтите, что машина не имеет сушки и защиты от детей.</p>',
+    annChildYes,
+  );
+  assert.match(comboNeg.html, /не имеет сушки/i);
+  assert.ok(!/защит[а-яё]*\s+от\s+детей/i.test(comboNeg.html), comboNeg.html);
 
   const dashAfterLeak = repairDescriptionHtml(
     '<p>Среди функций — защита от протечек, защита от детей контроль дисбаланса.</p>',

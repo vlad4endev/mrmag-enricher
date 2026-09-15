@@ -377,6 +377,48 @@ function joinProtectionItems(items) {
   return `${list[0]}, ${rest.slice(0, -1).join(', ')} и ${rest[rest.length - 1]}`;
 }
 
+/** Именительный/творительный из фильтров → родительный после «от». */
+const GENITIVE_AFTER_OT = Object.freeze({
+  'обработка паром': 'обработки паром',
+  'стирка паром': 'стирки паром',
+  'стирка с паром': 'стирки с паром',
+  'подача пара': 'подачи пара',
+  'блокировка от детей': 'детей',
+  'блокировка панели управления': 'блокировки панели управления',
+  'блокировка панели': 'блокировки панели',
+  'блокировка кнопок': 'блокировки кнопок',
+});
+
+/** «блокировка от детей» / «блокировка» в списке «защита от …» → «детей». */
+export function toGenitiveAfterOt(feat) {
+  let raw = String(feat || '').replace(/^от\s+/i, '').replace(/\s+/g, ' ').trim();
+  if (!raw) return raw;
+  if (/^блокировк[а-яё]*(?:\s+(?:панели|кнопок|управления))?\s+от\s+детей$/i.test(raw)) {
+    return 'детей';
+  }
+  const mapped = GENITIVE_AFTER_OT[fold(raw)];
+  if (mapped) return mapped;
+  const mCia = raw.match(/^([а-яё]+)ция(\s+.+)?$/i);
+  if (mCia) return `${mCia[1]}ции${mCia[2] || ''}`;
+  const mKa = raw.match(/^([а-яё]{4,})ка(\s+.+)?$/i);
+  if (mKa) return `${mKa[1]}ки${mKa[2] || ''}`;
+  return raw;
+}
+
+/** Согласование «защита от A, от B и от C» — каждый элемент в родительном падеже. */
+export function repairProtectionListGrammar(text) {
+  const leadRe = /((?:частичн[а-яё]*|полн[а-яё]*|общ[а-яё]*)\s+)?(?:есть\s+)?(?:имеет\s+)?(защит[а-яё]*\s+от\s+)([^.;!?]+)/gi;
+  return String(text || '').replace(leadRe, (full, adj, lead, tail) => {
+    const items = String(tail || '').split(/\s*(?:,\s*|\s+и\s+)(?:от\s+)?/i)
+      .map(p => p.replace(/^от\s+/i, '').replace(/\s+/g, ' ').trim())
+      .filter(Boolean);
+    if (!items.length) return full;
+    const fixed = items.map(toGenitiveAfterOt);
+    if (fixed.every((f, i) => f === items[i])) return full;
+    return `${adj || ''}${lead}${joinProtectionItems(fixed)}`;
+  });
+}
+
 function dropFeatForTopic(topic) {
   return (feat) => {
     const f = String(feat || '');
@@ -796,12 +838,33 @@ function stripFalseSentencePeriods(s) {
   });
 }
 
+/** Связка «Предусмотрены»/«Функция» без списка после вырезания функций. */
+function repairOrphanConnectors(s) {
+  let out = String(s || '');
+  const orphanTail = String.raw`Перед|Управлен|Максимал|Скорост|Класс|Габарит|Потреб|Модель|В\s+модели|Среди\s+функций`;
+  out = out.replace(
+    new RegExp(String.raw`(?<![а-яёА-Яa-zA-Z0-9])(?:Предусмотрен[аоы]?|Предусмотрено|Есть|Функци[яи])(?:\.\s+|\s+)(?=${orphanTail})`, 'gi'),
+    '',
+  );
+  out = out.replace(
+    /(\d+\s+(?:автоматических\s+)?программ(?:\s+стирки)?)\s+(?=Предусмотрен[аоы]?|Предусмотрено|Есть\s+(?:защит|контроль|дополнительн))/gi,
+    '$1. ',
+  );
+  out = out.replace(
+    /(?<![а-яёА-Яa-zA-Z0-9])(предусмотрен[аоы]?|предусмотрено)\.\s+(\d+\s+(?:автоматических\s+)?программ)/gi,
+    '$1 $2',
+  );
+  return out;
+}
+
 function repairAssemblyPunctPlain(text, { sentences = true } = {}) {
   let out = String(text || '');
   if (!out.trim()) return out;
   out = out.replace(/[—–]\s*\.\s*/g, '— ');
   out = out.replace(/Функци[яи]\.\s+(?=[A-Za-z«"'])/g, m => m.replace('.', ''));
+  out = repairOrphanConnectors(out);
   out = stripFalseSentencePeriods(out);
+  out = repairProtectionListGrammar(out);
   if (sentences !== false) {
     out = out.replace(new RegExp(String.raw`(${FACT_LEAD_SRC})\s+(?=[А-ЯЁ][а-яё]{3,})`, 'g'), '$1. ');
   }
@@ -1011,6 +1074,27 @@ function boolPhrase(annValue, topicLabel) {
 }
 
 /**
+ * «не имеет сушки и защиты от детей» — вторая часть может быть ложной,
+ * если в annotation защита от детей = «есть», а «не имеет» относилось только к сушке.
+ */
+function repairCombinedNegations(sentence, annotationHtml) {
+  let s = String(sentence || '');
+  const dict = parseAnnotationDict(annotationHtml);
+  const childTopic = DESC_TOPICS.find(t => t.id === 'child_lock');
+  if (!childTopic || !hasTopicField(childTopic, dict)) return s;
+  const annVal = annotationValueFor(childTopic, dict);
+  const ann = fold(annVal);
+  const childPos = /^(?:есть|да|true|имеется)$/i.test(String(annVal ?? '').trim())
+    || (!/^(?:нет|отсутствует|false)$/i.test(String(annVal ?? '').trim()) && /есть|да/.test(ann));
+  if (!childPos) return s;
+  s = s.replace(
+    /(?<![а-яёА-Яa-zA-Z0-9])(не\s+имеет\s+)([^,.!?]+?)(\s+и\s+)(?:защит[а-яё]*\s+от\s+детей|блокировк[а-яё]*\s+(?:панели|кнопок)[^.]{0,24}дет)/gi,
+    (_, neg, first) => `${neg}${first.trim()}`,
+  );
+  return tidyPunct(s);
+}
+
+/**
  * Переписывает клаузу противоречия под значение annotation.
  * Бак и барабан в одном предложении правятся независимо.
  */
@@ -1068,7 +1152,7 @@ export function repairDescriptionPlain(text, annotationHtml) {
     }
 
     let drop = false;
-    let rewritten = body;
+    let rewritten = repairCombinedNegations(body, annotationHtml);
     const hitTopics = [];
     const fabTopics = [];
 

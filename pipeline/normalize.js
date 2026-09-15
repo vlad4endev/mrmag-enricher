@@ -659,7 +659,9 @@ function deriveLinkedAttrs(rec, dict, product, config) {
   }
 
   if (dict.byCode.has('compressor_type') && rec.attrs.compressor_type == null) {
-    if (/инвертор/.test(blob)) {
+    if (/линейн|linear/.test(blob)) {
+      setDerived(rec, dict, 'compressor_type', 'Линейный', 'derived_compressor', 'S0');
+    } else if (/инвертор/.test(blob)) {
       setDerived(rec, dict, 'compressor_type', 'Инверторный', 'derived_compressor', 'S0');
     }
   }

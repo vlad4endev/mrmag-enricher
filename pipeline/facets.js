@@ -1,6 +1,7 @@
 /** Фильтры строго по facet.* справочника. Вид и шаг из справочника, не из данных. */
 
-import { formatAttrValue, hasStrictEnum, isBrandAttr, isBrandFilterKey, looksLikeEnumFragment, unifyEnumValues } from './types.js';
+import { formatAttrValue, hasStrictEnum, isBrandAttr, isBrandFilterKey, looksLikeEnumFragment, parseBooleanValue, unifyEnumValues } from './types.js';
+import { isRequiredFilter } from './required_filters.js';
 
 /** Доля товаров на одно значение, выше которой фильтр перестаёт различать товары. */
 const DOMINANT_SHARE = 95;
@@ -267,6 +268,30 @@ function displayValue(attr, v) {
   return formatAttrValue(attr, v, { withUnit: false });
 }
 
+function coerceBooleanAttr(attr, v) {
+  if (v === true || v === false) return v;
+  const parsed = parseBooleanValue(attr, v);
+  return parsed.ok ? parsed.value : null;
+}
+
+/** Каноны оси, если в текущей выборке ещё нет ни одного значения. */
+function fallbackFacetValues(attr, kind) {
+  if (kind === 'boolean') return ['Есть', 'Нет'];
+  if (kind === 'int_enum') {
+    const vals = attr.facet?.int_values;
+    if (Array.isArray(vals) && vals.length) return vals.map(String);
+  }
+  if (kind === 'range') {
+    const buckets = facetBuckets(attr.facet);
+    if (buckets?.length) return buckets.map(b => b.label).filter(Boolean);
+  }
+  const aliases = attr.value_aliases;
+  if (aliases && typeof aliases === 'object') {
+    return Object.keys(aliases).map(k => displayValue(attr, k)).filter(Boolean);
+  }
+  return [];
+}
+
 /** Пункты фильтра — только каноны value_aliases, в т.ч. class_scale (A+++…C). */
 function filterAllowedLabels(attr) {
   const aliases = attr?.value_aliases;
@@ -350,7 +375,7 @@ export function buildFilters(recs, dict, config) {
         mapped.push(lab);
         counts.set(lab, (counts.get(lab) || 0) + 1);
       }
-      if (!mapped.length) continue;
+      if (!mapped.length && !isRequiredFilter(attr)) continue;
       if (counts.size > 8) {
         warnings.push({
           code: attr.code,
@@ -376,9 +401,9 @@ export function buildFilters(recs, dict, config) {
       }
     } else if (kind === 'boolean') {
       for (const r of filled) {
-        const v = r.attrs[attr.code];
+        const v = coerceBooleanAttr(attr, r.attrs[attr.code]);
         if (v !== true && v !== false) {
-          trackUnmapped(unmapped, fname, v);
+          trackUnmapped(unmapped, fname, r.attrs[attr.code]);
           continue;
         }
         const lab = displayValue(attr, v);
@@ -423,7 +448,7 @@ export function buildFilters(recs, dict, config) {
       }
     }
 
-    const values = [...counts]
+    let values = [...counts]
       .filter(([, c]) => c > 0)
       .sort((a, b) => {
         const na = parseFloat(a[0]), nb = parseFloat(b[0]);
@@ -432,10 +457,14 @@ export function buildFilters(recs, dict, config) {
       })
       .map(([value]) => value);
 
-    if (!values.length) continue;
+    if (!values.length) {
+      values = fallbackFacetValues(attr, kind);
+      if (!values.length) continue;
+    }
 
-    const topShare = (Math.max(...counts.values()) / total) * 100;
-    if (topShare > DOMINANT_SHARE) {
+    const occupied = counts.size ? Math.max(...counts.values()) : 0;
+    const topShare = (occupied / total) * 100;
+    if (counts.size && topShare > DOMINANT_SHARE) {
       warnings.push({
         code: attr.code,
         name: fname,
@@ -515,11 +544,12 @@ export function assignFilterValues(rec, dict, debugFacets, config = {}, unmapped
       }
       out[f.name] = [lab];
     } else if (kind === 'boolean') {
-      if (v !== true && v !== false) {
+      const flag = coerceBooleanAttr(attr, v);
+      if (flag !== true && flag !== false) {
         trackUnmapped(unmapped, f.name, v);
         continue;
       }
-      out[f.name] = [displayValue(attr, v)];
+      out[f.name] = [displayValue(attr, flag)];
     } else {
       const allowed = new Set(f.value);
       const labels = [];

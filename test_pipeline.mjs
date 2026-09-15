@@ -293,13 +293,20 @@ console.log('golden tests passed');
     'Максимальная загрузка белья - 6 кг',
     'Максимальная скорость отжима - 1000 об/мин',
     'Класс энергоэффективности - A++',
+    'Класс эффективности отжима - B',
     'Уровень шума при стирке - 59 дБ',
     'Количество программ - 16',
     'Класс стирки - A',
     'Дисплей - есть',
+    'Высота - 85 см',
     'Ширина - 59.6 см',
     'Глубина - 45 см',
+    'Цвет корпуса - белый',
+    'Тип управления - электронное',
+    'Вес - 60 кг',
+    'Установка - отдельностоящая',
     'Тип двигателя - Инверторный',
+    'Сушка - нет',
   ].join('<br>');
   const desc = 'Макс. загрузка - 9 кг<br>Скорость отжима - 800 об/мин<br>Высота - 85 см<br>Цвет - белый<br>Дисплей - есть';
   const parsed = parseProductFields({ annotation: requiredAnn, description: desc }, d467);
@@ -351,11 +358,20 @@ console.log('golden tests passed');
     { name: 'Максимальная загрузка белья', value: '6 кг' },
     { name: 'Максимальная скорость отжима', value: '1000 об/мин' },
     { name: 'Класс энергоэффективности', value: 'A++' },
+    { name: 'Класс стирки', value: 'A' },
+    { name: 'Класс эффективности отжима', value: 'B' },
     { name: 'Уровень шума при стирке', value: '59 дБ' },
     { name: 'Количество программ', value: '16' },
+    { name: 'Дисплей', value: 'есть' },
+    { name: 'Высота', value: '85 см' },
     { name: 'Ширина', value: '59.6 см' },
     { name: 'Глубина', value: '45 см' },
+    { name: 'Цвет корпуса', value: 'белый' },
+    { name: 'Тип управления', value: 'электронное' },
+    { name: 'Вес', value: '60 кг' },
+    { name: 'Установка', value: 'отдельностоящая' },
     { name: 'Тип двигателя', value: 'Инверторный' },
+    { name: 'Сушка', value: 'нет' },
   ];
   const desc = 'Макс. загрузка - 9 кг<br>Скорость отжима - 800 об/мин<br>Цвет - белый';
   const parsed = parseProductFields({ annotation: '', description: desc, attributes: attrs }, d467);
@@ -782,7 +798,7 @@ console.log('golden tests passed');
   assert.equal(missingRequiredCodes(rec, d467).length, 0);
   assert.equal(needsMissingLookup(rec, d467), false, 'полная карточка — сеть не открываем');
   rec.attrs.color = null;
-  assert.equal(missingRequiredCodes(rec, d467).length, 0, 'цвет не обязателен, но в сети его всё равно ищем');
+  assert.ok(missingRequiredCodes(rec, d467).includes('color'), 'цвет обязателен — дыра уходит в сеть');
   assert.ok(missingStorefrontCodes(rec, d467).includes('color'));
   assert.equal(needsMissingLookup(rec, d467), true);
 
@@ -1934,10 +1950,11 @@ console.log('golden tests passed');
     assert.equal(isRequiredFilter(d467.byCode.get('wash_class')), true);
     assert.equal(isRequiredFilter(d467.byCode.get('load_type')), true);
     assert.equal(isRequiredFilter(d467.byCode.get('load_max')), true);
-    assert.equal(isRequiredFilter(d467.byCode.get('color')), false);
+    assert.equal(isRequiredFilter(d467.byCode.get('color')), true);
+    assert.equal(isRequiredFilter(d467.byCode.get('drying')), true);
     assert.equal(isRequiredFilter(d467.byCode.get('brand')), false);
     assert.ok(requiredFilterAttrs(d467).some(a => a.code === 'energy_class'));
-    assert.ok(optionalFilterAttrs(d467).some(a => a.code === 'color'));
+    assert.ok(optionalFilterAttrs(d467).some(a => a.code === 'dims'));
     const { heuristicSuggest, buildImportSuggestPrompt } = await import('./pipeline/schema_import.js');
     assert.match(buildImportSuggestPrompt(d467.attrs, { catId: '467' }), /ОБЯЗАТЕЛЬНЫЕ ФИЛЬТРЫ КАТЕГОРИИ/);
     const hsReq = heuristicSuggest([{ id: 'i1', raw: 'Производительность — 650', label: 'Производительность', value: '650' }], []);
@@ -3657,7 +3674,6 @@ console.log('golden tests passed');
   for (const [catId, dict] of dictCats) {
     const catalogNames = new Set(expectedFilters(dict).map(f => f.name));
     const honestGap = new Set([
-      'Тип компрессора',
       'Размораживание морозильной камеры',
     ]);
     assert.ok(catalogNames.size, `cat ${catId}: filters.json не пустой`);

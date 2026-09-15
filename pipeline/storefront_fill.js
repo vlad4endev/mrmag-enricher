@@ -56,6 +56,7 @@ const FRIDGE_DEFAULTS = {
   vol_fridge: '200',
   vol_freezer: '100',
   freeze_power: '5',
+  compressor_type: 'Стандартный',
   height: '180',
   width: '60',
   depth: '60',
@@ -78,11 +79,20 @@ function applyDerived(rec, dict, code, rawLabel, how, level = 'S0', opts = {}) {
 function storefrontVacant(rec, attr) {
   const v = rec.attrs[attr.code];
   if (v == null || v === '') return true;
+  if (attr.type === 'boolean') return v !== true && v !== false;
   const parts = Array.isArray(v) ? v : [v];
   if (hasStrictEnum(attr) || attr.type === 'class_scale') {
     return !parts.some(x => x != null && x !== '' && aliasValue(attr, String(x)));
   }
   return false;
+}
+
+function coerceStorefrontAttr(rec, dict, attr) {
+  const v = rec.attrs[attr.code];
+  if (v == null || v === '') return;
+  if (attr.type === 'boolean' && v !== true && v !== false) {
+    applyDerived(rec, dict, attr.code, String(v), 'coerce_boolean', 'S0', { overwrite: true });
+  }
 }
 
 function factText(rec, product) {
@@ -176,6 +186,20 @@ export function harvestStorefrontFacts(rec, dict, product) {
   if (/инвертор/i.test(t)) put('motor_type', 'Инверторный', 'harvest_motor');
   else if (/коллектор|щеточн/i.test(t)) put('motor_type', 'Коллекторный', 'harvest_motor');
 
+  if (dict.byCode.has('compressor_type')) {
+    if (/линейн|linear/i.test(t)) put('compressor_type', 'Линейный', 'harvest_compressor');
+    else if (/инвертор|inverter/i.test(t)) put('compressor_type', 'Инверторный', 'harvest_compressor');
+    else if (/стандартн\w*\s+компрессор|компрессор\s*[-–—:]\s*стандарт/i.test(t)) {
+      put('compressor_type', 'Стандартный', 'harvest_compressor');
+    }
+  }
+
+  if (kind === 'dryer' || /стирально-сушильн|с\s+сушкой/i.test(t)) {
+    put('drying', 'Есть', 'harvest_drying');
+  } else if (/сушк[ауи]\s*[-–—:]\s*(нет|не\s|отсутств)|без\s+сушк/i.test(t)) {
+    put('drying', 'Нет', 'harvest_drying');
+  }
+
   if (dict.byCode.has('load_max')) {
     if (/сенсорн/i.test(t)) put('control_type', 'Сенсорное', 'harvest_control');
     else if (/электронн/i.test(t)) put('control_type', 'Электронное', 'harvest_control');
@@ -203,10 +227,6 @@ export function harvestStorefrontFacts(rec, dict, product) {
       else put('door_reversible', 'Да', 'harvest_doorside');
     }
   }
-
-  if (kind === 'dryer') {
-    put('drying', 'Есть', 'harvest_drying');
-  }
 }
 
 /**
@@ -222,6 +242,7 @@ export function fillStorefrontDefaults(rec, dict, product) {
     applyDerived(rec, dict, 'load_type', 'Фронтальная', 'storefront_default');
   }
   for (const attr of storefrontFilterAttrs(dict)) {
+    coerceStorefrontAttr(rec, dict, attr);
     if (!storefrontVacant(rec, attr)) continue;
     let raw = table[attr.code];
     if (raw == null) continue;
@@ -262,6 +283,7 @@ function composeDimsFromAxes(rec, dict) {
 export function completeStorefrontRecs(recs, dict) {
   unifyEnumValues(recs, dict);
   for (const rec of recs || []) {
+    harvestStorefrontFacts(rec, dict, rec);
     fillStorefrontDefaults(rec, dict, rec);
   }
   return recs;

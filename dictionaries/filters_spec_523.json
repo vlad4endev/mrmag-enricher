@@ -11,7 +11,8 @@
       "code": "fridge_type",
       "name": "Тип холодильника",
       "status": "filter",
-      "type": "enum"
+      "type": "enum",
+      "required": true
     },
     {
       "code": "chambers",
@@ -19,7 +20,13 @@
       "status": "filter",
       "type": "int_enum",
       "round": "nearest",
-      "values": [1, 2, 3, 4]
+      "values": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "required": true
     },
     {
       "code": "doors",
@@ -27,13 +34,20 @@
       "status": "filter",
       "type": "int_enum",
       "round": "nearest",
-      "values": [1, 2, 3, 4]
+      "values": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "required": true
     },
     {
       "code": "freezer_pos",
       "name": "Расположение морозильной камеры",
       "status": "filter",
-      "type": "enum"
+      "type": "enum",
+      "required": true
     },
     {
       "code": "vol_total",
@@ -43,13 +57,38 @@
       "bound_rule": "left_closed",
       "open_last": true,
       "buckets": [
-        {"label": "0-100", "min": 0, "max": 100},
-        {"label": "100-200", "min": 100, "max": 200},
-        {"label": "200-300", "min": 200, "max": 300},
-        {"label": "300-400", "min": 300, "max": 400},
-        {"label": "400-500", "min": 400, "max": 500},
-        {"label": "500+", "min": 500, "max": null}
-      ]
+        {
+          "label": "0-100",
+          "min": 0,
+          "max": 100
+        },
+        {
+          "label": "100-200",
+          "min": 100,
+          "max": 200
+        },
+        {
+          "label": "200-300",
+          "min": 200,
+          "max": 300
+        },
+        {
+          "label": "300-400",
+          "min": 300,
+          "max": 400
+        },
+        {
+          "label": "400-500",
+          "min": 400,
+          "max": 500
+        },
+        {
+          "label": "500+",
+          "min": 500,
+          "max": null
+        }
+      ],
+      "required": true
     },
     {
       "code": "vol_fridge",
@@ -59,14 +98,43 @@
       "bound_rule": "left_closed",
       "open_last": true,
       "buckets": [
-        {"label": "0-50", "min": 0, "max": 50},
-        {"label": "50-100", "min": 50, "max": 100},
-        {"label": "100-150", "min": 100, "max": 150},
-        {"label": "150-200", "min": 150, "max": 200},
-        {"label": "200-250", "min": 200, "max": 250},
-        {"label": "250-300", "min": 250, "max": 300},
-        {"label": "300+", "min": 300, "max": null}
-      ]
+        {
+          "label": "0-50",
+          "min": 0,
+          "max": 50
+        },
+        {
+          "label": "50-100",
+          "min": 50,
+          "max": 100
+        },
+        {
+          "label": "100-150",
+          "min": 100,
+          "max": 150
+        },
+        {
+          "label": "150-200",
+          "min": 150,
+          "max": 200
+        },
+        {
+          "label": "200-250",
+          "min": 200,
+          "max": 250
+        },
+        {
+          "label": "250-300",
+          "min": 250,
+          "max": 300
+        },
+        {
+          "label": "300+",
+          "min": 300,
+          "max": null
+        }
+      ],
+      "required": true
     },
     {
       "code": "vol_freezer",
@@ -76,18 +144,40 @@
       "bound_rule": "left_closed",
       "open_last": true,
       "buckets": [
-        {"label": "0-50", "min": 0, "max": 50},
-        {"label": "50-100", "min": 50, "max": 100},
-        {"label": "100-150", "min": 100, "max": 150},
-        {"label": "150-200", "min": 150, "max": 200},
-        {"label": "200+", "min": 200, "max": null}
-      ]
+        {
+          "label": "0-50",
+          "min": 0,
+          "max": 50
+        },
+        {
+          "label": "50-100",
+          "min": 50,
+          "max": 100
+        },
+        {
+          "label": "100-150",
+          "min": 100,
+          "max": 150
+        },
+        {
+          "label": "150-200",
+          "min": 150,
+          "max": 200
+        },
+        {
+          "label": "200+",
+          "min": 200,
+          "max": null
+        }
+      ],
+      "required": true
     },
     {
       "code": "cooling",
       "name": "Система охлаждения",
       "status": "filter",
-      "type": "enum"
+      "type": "enum",
+      "required": true
     },
     {
       "code": "defrost_fridge",
@@ -105,13 +195,15 @@
       "code": "energy_class",
       "name": "Класс энергоэффективности",
       "status": "filter",
-      "type": "enum"
+      "type": "enum",
+      "required": true
     },
     {
       "code": "compressor_type",
       "name": "Тип компрессора",
       "status": "filter",
-      "type": "enum"
+      "type": "enum",
+      "required": true
     },
     {
       "code": "noise",
@@ -121,10 +213,23 @@
       "bound_rule": "left_closed",
       "open_last": false,
       "buckets": [
-        {"label": "35-40", "min": 35, "max": 40},
-        {"label": "40-45", "min": 40, "max": 45},
-        {"label": "45-50", "min": 45, "max": 50}
-      ]
+        {
+          "label": "35-40",
+          "min": 35,
+          "max": 40
+        },
+        {
+          "label": "40-45",
+          "min": 40,
+          "max": 45
+        },
+        {
+          "label": "45-50",
+          "min": 45,
+          "max": 50
+        }
+      ],
+      "required": true
     },
     {
       "code": "freeze_power",
@@ -134,23 +239,42 @@
       "bound_rule": "left_closed",
       "open_last": true,
       "buckets": [
-        {"label": "0-5", "min": 0, "max": 5},
-        {"label": "5-10", "min": 5, "max": 10},
-        {"label": "10-15", "min": 10, "max": 15},
-        {"label": "15+", "min": 15, "max": null}
-      ]
+        {
+          "label": "0-5",
+          "min": 0,
+          "max": 5
+        },
+        {
+          "label": "5-10",
+          "min": 5,
+          "max": 10
+        },
+        {
+          "label": "10-15",
+          "min": 10,
+          "max": 15
+        },
+        {
+          "label": "15+",
+          "min": 15,
+          "max": null
+        }
+      ],
+      "required": true
     },
     {
       "code": "height",
       "name": "Высота, см",
       "status": "filter",
-      "type": "range"
+      "type": "range",
+      "required": true
     },
     {
       "code": "width",
       "name": "Ширина, см",
       "status": "filter",
-      "type": "range"
+      "type": "range",
+      "required": true
     },
     {
       "code": "depth",
@@ -160,14 +284,43 @@
       "bound_rule": "left_closed",
       "open_last": true,
       "buckets": [
-        {"label": "40-45", "min": 40, "max": 45},
-        {"label": "45-50", "min": 45, "max": 50},
-        {"label": "50-55", "min": 50, "max": 55},
-        {"label": "55-60", "min": 55, "max": 60},
-        {"label": "60-65", "min": 60, "max": 65},
-        {"label": "65-70", "min": 65, "max": 70},
-        {"label": "70+", "min": 70, "max": null}
-      ]
+        {
+          "label": "40-45",
+          "min": 40,
+          "max": 45
+        },
+        {
+          "label": "45-50",
+          "min": 45,
+          "max": 50
+        },
+        {
+          "label": "50-55",
+          "min": 50,
+          "max": 55
+        },
+        {
+          "label": "55-60",
+          "min": 55,
+          "max": 60
+        },
+        {
+          "label": "60-65",
+          "min": 60,
+          "max": 65
+        },
+        {
+          "label": "65-70",
+          "min": 65,
+          "max": 70
+        },
+        {
+          "label": "70+",
+          "min": 70,
+          "max": null
+        }
+      ],
+      "required": true
     },
     {
       "code": "dims",
@@ -179,25 +332,29 @@
       "code": "color",
       "name": "Цвет корпуса",
       "status": "filter",
-      "type": "enum"
+      "type": "enum",
+      "required": true
     },
     {
       "code": "control_type",
       "name": "Тип управления",
       "status": "filter",
-      "type": "enum"
+      "type": "enum",
+      "required": true
     },
     {
       "code": "display",
       "name": "Дисплей",
       "status": "filter",
-      "type": "boolean"
+      "type": "boolean",
+      "required": true
     },
     {
       "code": "door_reversible",
       "name": "Перенавешиваемые двери",
       "status": "filter",
-      "type": "boolean"
+      "type": "boolean",
+      "required": true
     }
   ]
 }

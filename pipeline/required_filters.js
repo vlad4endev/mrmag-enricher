@@ -14,7 +14,8 @@ export function isStorefrontFilter(attr) {
 /**
  * Явный facet.required перекрывает эвристику.
  * Иначе highlight или tier A среди включённых фасетов — тип, ёмкость, размер,
- * энергокласс, ключевая технология. Цвет/дисплей без флага — необязательные.
+ * энергокласс, ключевая технология. Цвет/дисплей без флага остаются
+ * необязательными, пока spec не поставит required:true.
  */
 export function isRequiredFilter(attr) {
   if (!isStorefrontFilter(attr)) return false;

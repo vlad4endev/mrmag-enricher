@@ -468,6 +468,21 @@ console.log('golden tests passed');
     d467,
   );
   assert.equal(Object.fromEntries(commented.map(p => [p.key, p.value]))['Загрузка'], '6 кг');
+  const legal = extractPairsFromPage(
+    '<h1>Холодильник Pozis RK FNF-172 W</h1>'
+    + '<p>Страна производства - Россия Производитель на свое усмотрение и без дополнительных уведомлений '
+    + 'оставляет за собой право на внесение изменений в конструкцию, комплектацию, дизайн</p>',
+    d523,
+  );
+  const country = legal.find(p => /стран/i.test(p.key));
+  assert.equal(country?.value, 'Россия', JSON.stringify(country));
+  assert.doesNotMatch(String(country?.value || ''), /усмотрение|конструкци/);
+  const fromSep = extractPairs(
+    'Страна производства - Россия Производитель на свое усмотрение и без дополнительных уведомлений '
+    + 'оставляет за собой право на внесение изменений в конструкцию, комплектацию, дизайн, стр',
+    d523,
+  );
+  assert.equal(fromSep.find(p => /стран/i.test(p.key))?.value, 'Россия');
   console.log('ok page parser: orphaned li, class=name, JSON-LD comments');
 }
 

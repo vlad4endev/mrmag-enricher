@@ -574,6 +574,7 @@ export function isGluedFactDump(v) {
     return true;
   }
   if (/^да\s+/i.test(s) && /габарит|перевеш|перенавеш|размер/i.test(s)) return true;
+  if (/производитель\s+на\s+сво[её]\s+усмотрение|оставляет\s+за\s+собой\s+право/i.test(s)) return true;
   return false;
 }
 

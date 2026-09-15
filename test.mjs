@@ -2194,6 +2194,16 @@ console.log('\nТовар без описания: поиск в сети');
     );
   });
 
+  t('юридический хвост vasko.ru не прилипает к стране', () => {
+    const page = `<h1>Холодильник Pozis RK FNF-172 W</h1>
+      <p>Страна производства - Россия Производитель на свое усмотрение и без дополнительных уведомлений
+      оставляет за собой право на внесение изменений в конструкцию, комплектацию, дизайн, страну производства.</p>`;
+    const got = parseAnyProductPage(page);
+    const country = got.attributes.find(a => /стран/i.test(a.name));
+    assert.equal(country?.value, 'Россия');
+    assert.doesNotMatch(got.annotation, /усмотрение|оставляет за собой/);
+  });
+
   t('модель в JSON-LD принимается, соседний артикул без границы токена — нет', () => {
     const ld = `<script type="application/ld+json">{"@type":"Product","name":"LG GC-Q247CAMT","sku":"GC-Q247CAMT"}</script>`;
     assert.strictEqual(pageDescribesProduct(ld, { name: 'Холодильник LG GC-Q247CAMT' }).ok, true);

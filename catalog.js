@@ -31,7 +31,7 @@ import { normalizeProduct } from './pipeline/normalize.js';
 import { lookupMissing, needsMissingLookup, parseMissingFromPage, missingStorefrontCodes } from './pipeline/external.js';
 import { CRAWL_SLUGS } from './pipeline/schema.js';
 import { containsTokenSequence, identityMatches, nameKeyTokens, parseIdentity } from './pipeline/identity.js';
-import { extractPairsFromPage, visibleText, collectPageHits, formatParseNotes } from './pipeline/parse.js';
+import { extractPairsFromPage, visibleText, collectPageHits, formatParseNotes, trimLegalTail } from './pipeline/parse.js';
 import {
   isDuckDuckGoBlocked, isJunkHost, parseDuckDuckGoResults,
   searchWeb as pipelineSearchWeb, countryQuery, missingQuery, searchQuery,
@@ -473,7 +473,7 @@ export function parseAnyProductPage(html, dict) {
   const seen = new Set();
   const push = (name, value, via) => {
     const n = String(name || '').replace(/\s+/g, ' ').trim();
-    const v = String(value || '').replace(/\s+/g, ' ').trim();
+    const v = trimLegalTail(String(value || '').replace(/\s+/g, ' ').trim());
     if (!n || !v) return;
     const key = n.toLowerCase();
     if (seen.has(key)) return;
@@ -630,10 +630,12 @@ function countryFromHtml(html, schema, dict) {
   const found = parseAnyProductPage(html, dict);
   const text = [found.annotation, found.description].filter(Boolean).join('\n');
   const v = extractFacts(text, schema).страна_производства;
-  if (v != null && String(v).trim()) return String(v).trim();
+  const fromFacts = v != null ? trimLegalTail(String(v).trim()) : '';
+  if (fromFacts) return fromFacts;
   const hit = (found.attributes || []).find(a =>
     /стран[аы][\s-]*(?:производств|изготовлен|производитель)/i.test(a.name) && a.value);
-  return hit ? String(hit.value).trim() : null;
+  const fromHit = hit ? trimLegalTail(String(hit.value).trim()) : '';
+  return fromHit || null;
 }
 
 function withCountryLine(product, country, url) {

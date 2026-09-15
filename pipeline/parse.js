@@ -7,6 +7,28 @@ import { requiredFilterAttrs } from './required_filters.js';
 /** Явные разделители M1: первое вхождение. */
 const SEP = /\s+[-–—]\s+|\s*:\s+/;
 
+/**
+ * Юридический хвост магазинов, который прилипает к последней характеристике:
+ * «Россия Производитель на свое усмотрение и без дополнительных уведомлений…».
+ */
+const LEGAL_TAIL = /(?:^|\s)\*?\s*(?:производитель\s+(?:на\s+сво[её]\s+усмотрение|оставляет\s+за\s+собой\s+право|вправе\s)|внешний\s+вид\s+товара\s+может|характеристик[аи]\s+могут\s+(?:быть\s+изменены|отличаться)|информация\s+о\s+технических\s+характеристиках)/iu;
+
+export function trimLegalTail(value) {
+  const s = String(value || '').replace(/\s+/g, ' ').trim();
+  if (!s) return s;
+  const m = s.match(LEGAL_TAIL);
+  if (!m || m.index == null) return s;
+  if (m.index === 0) return '';
+  return s.slice(0, m.index).replace(/[.,;:*\s]+$/, '').trim();
+}
+
+function cleanPair(p) {
+  if (!p) return null;
+  const value = trimLegalTail(p.value);
+  if (!value) return null;
+  return value === p.value ? p : { ...p, value };
+}
+
 function hasExplicitSep(text) {
   return SEP.test(String(text));
 }
@@ -203,10 +225,12 @@ function collectPairs(chunks, dict) {
       if (!p) break;
       const split = splitOffNextPair(p.value, dict);
       if (split) {
-        pairs.push(pairFromSplitHead(p, split.head, dict));
+        const head = cleanPair(pairFromSplitHead(p, split.head, dict));
+        if (head) pairs.push(head);
         rest = split.rest;
       } else {
-        pairs.push(promoteNestedValue(p, dict));
+        const one = cleanPair(promoteNestedValue(p, dict));
+        if (one) pairs.push(one);
         break;
       }
     }
@@ -393,7 +417,7 @@ export function pairsFromAttributes(attributes) {
   const pairs = [];
   for (const a of Array.isArray(attributes) ? attributes : []) {
     const key = String(a?.name ?? a?.key ?? '').replace(/\s+/g, ' ').trim();
-    const value = String(a?.value ?? '').replace(/\s+/g, ' ').trim();
+    const value = trimLegalTail(String(a?.value ?? '').replace(/\s+/g, ' ').trim());
     if (!key || !value) continue;
     pairs.push({ key, value, source: 'S0', via: 'attr' });
   }
@@ -475,7 +499,7 @@ export function extractPairsFromPage(html, dict) {
   const seen = new Set();
   const add = (key, value, via) => {
     const k = String(key || '').replace(/\s+/g, ' ').trim();
-    const v = String(value || '').replace(/\s+/g, ' ').trim();
+    const v = trimLegalTail(String(value || '').replace(/\s+/g, ' ').trim());
     if (!k || !v || k === v) return;
     if (k.length > 80 || v.length > 240 || /^https?:/i.test(v)) return;
     if (isHeadingLine(k)) return;

@@ -1545,6 +1545,7 @@ console.log('golden tests passed');
   const { matchKey } = await import('./pipeline/match.js');
   const {
     stripHallucinationClaims, checkDescriptionClaims,
+    SPEC_DUMP_HEADING_RE, auditAssembledCards,
   } = await import('./pipeline/quality_validate.js');
   const { expectedDictCatId } = await import('./pipeline/schema.js');
   const { dedupeAnnotationValue } = await import('./pipeline/export.js');
@@ -1643,6 +1644,25 @@ console.log('golden tests passed');
   const strippedDump = stripHallucinationClaims(claimDump);
   assert.ok(!/В характеристиках/i.test(strippedDump), strippedDump);
   assert.match(strippedDump, /Холодильник двухкамерный/);
+  const gluedDump = 'Страна производства — Россия. В характеристиках: Тип холодильника — Двухкамерный; '
+    + 'Размораживание холодильной камеры — Автоматическое (No Frost); '
+    + 'Размораживание морозильной камеры — Автоматическое (No Frost); '
+    + 'Материал полок — Стекло; Тип — двухкамерный, морозильник снизу; '
+    + 'Общий объем — 344 л (220 + 124 л).';
+  const strippedGlued = stripHallucinationClaims(gluedDump);
+  assert.ok(!/В характеристиках/i.test(strippedGlued), strippedGlued);
+  assert.match(strippedGlued, /Страна производства — Россия/);
+  assert.ok(!/344 л/.test(strippedGlued));
+  const headingVariants = [
+    'Параметры модели: Тип — двухкамерный; Общий объем — 344 л.',
+    'По данным карточки: Тип холодильника — Двухкамерный; Материал полок — Стекло',
+    'Основные характеристики: Цвет — Белый; Общий объем — 268 л.',
+  ];
+  for (const h of headingVariants) {
+    const stripped = stripHallucinationClaims(`Проза до дампа. ${h}`);
+    assert.ok(!SPEC_DUMP_HEADING_RE.test(stripped), stripped);
+    assert.match(stripped, /Проза до дампа/);
+  }
 
   const goldDesc = buildGoldShapeExport([{
     id: 99,
@@ -1651,8 +1671,44 @@ console.log('golden tests passed');
     enriched: { description: claimA, bullets: ['a', 'b', 'c'], strong: [], meta_keywords: 'а, б, в, г, д, е, ж', web_info: null },
   }]);
   assert.ok(!/говорит о над[её]жност/i.test(goldDesc.products[0].description_html));
+  assert.equal(goldDesc.products[0].web_info, null);
   assert.deepEqual(goldDesc.filters, []);
   assert.ok(goldDesc.needs_review?.length >= 1);
+
+  const pozisRec = normalizeProduct(p523[260], d523, config);
+  const pozisDump = [
+    'Холодильник Pozis RK FNF-172 W двухкамерный, с нижней морозилкой.',
+    'Корпус белый, полки стеклянные, общий объём 344 л.',
+    'Обе камеры размораживаются автоматически по схеме No Frost.',
+    'Страна производства — Россия. В характеристиках: Тип холодильника — Двухкамерный; '
+    + 'Размораживание холодильной камеры — Автоматическое (No Frost); '
+    + 'Размораживание морозильной камеры — Автоматическое (No Frost); '
+    + 'Материал полок — Стекло; Тип — двухкамерный, морозильник снизу; '
+    + 'Общий объем — 344 л (220 + 124 л).',
+  ].join('\n\n');
+  const pozisRow = serializeProduct(pozisRec, d523, buildFilters([pozisRec], d523, config).debug, {
+    enriched: {
+      description: pozisDump,
+      bullets: ['Тип — двухкамерный', 'Объём — 344 л', 'No Frost'],
+      strong: [],
+      meta_keywords: 'холодильник, Pozis, No Frost, 344 л, двухкамерный, белый, Россия',
+      web_info: null,
+    },
+  });
+  assert.equal(pozisRow.web_info, null);
+  assert.ok(!SPEC_DUMP_HEADING_RE.test(pozisRow.description_html), pozisRow.description_html);
+  assert.match(pozisRow.description_html, /Страна производства — Россия/);
+  const assemblyAudit = auditAssembledCards([
+    pozisRow,
+    goldDesc.products[0],
+    { id: 'bad-web', web_info: '', description_html: '<p>ok</p>' },
+    { id: 'bad-dump', web_info: null, description_html: '<p>В характеристиках: Тип — x</p>' },
+  ], { last: 50 });
+  assert.deepEqual(assemblyAudit.empty_web_info, ['bad-web']);
+  assert.deepEqual(assemblyAudit.spec_dump, ['bad-dump']);
+  assert.equal(assemblyAudit.ok, false);
+  assert.equal(auditAssembledCards([pozisRow, goldDesc.products[0]]).ok, true);
+  console.log('ok web_info null + spec-dump strip on serialize');
 
   // Annotation dedup
   assert.equal(

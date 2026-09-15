@@ -15,7 +15,7 @@ export const EXPORT_PLACEHOLDERS = [
   { key: '{{description_html}}', note: 'описание карточки' },
   { key: '{{annotation_html}}', note: 'список характеристик' },
   { key: '{{filters}}', note: 'фасеты карточки' },
-  { key: '{{web_info}}', note: 'отзыв или пустая строка' },
+  { key: '{{web_info}}', note: 'сравнение с рынком или null' },
   { key: '{{category}}', note: 'имя раздела' },
   { key: '{{category_id}}', note: 'id раздела' },
   { key: '{{slug}}', note: 'slug раздела' },

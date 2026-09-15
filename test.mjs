@@ -983,7 +983,7 @@ t('валидатор: порог description зависит от числа spe
     ...base, short_description: unitShort, specs: { a: 1, b: 2, c: 3, d: 4, e: 5 }, description: caseDesc,
   }, { filledSpecs: 5 }).filter(i => i.field === 'short_description'), []);
 });
-t('мягкая правка: одно предложение и короткий description не уходят на проверку', () => {
+t('мягкая правка: одно предложение; description не дописывается дампом specs', () => {
   const two = 'Холодильник LG стоит на кухне. Система No Frost не требует разморозки и держит продукты свежими каждый день без лишней работы.';
   const card = {
     specs: { объем_общий_л: 310, вес_кг: 62, ширина_мм: 595, высота_мм: 1900, система_охлаждения: 'No Frost' },
@@ -998,14 +998,17 @@ t('мягкая правка: одно предложение и коротки�
     web_info: null,
   };
   assert.ok(card.description.length < 900, `desc=${card.description.length}`);
+  const beforeDesc = card.description;
   softFixCardTexts(card, { filledSpecs: 5 });
   assert.ok(!two.startsWith(card.short_description) || !card.short_description.includes('. С'), 'склеили в одно предложение');
   assert.match(card.short_description, /[.!?…]$/);
   assert.ok((card.short_description.match(/[.!?…](?=\s+[A-ZА-ЯЁ])/g) || []).length === 0);
   assert.ok(card.short_description.length >= 95 && card.short_description.length <= 200, card.short_description.length);
-  assert.ok(card.description.length >= 900 && card.description.length <= 1600, `padded=${card.description.length}`);
   assert.equal(card.description.split(/\n\s*\n/).filter(Boolean).length, 4);
-  assert.deepStrictEqual(validateModelResponse(card, { filledSpecs: 5, checkProseSpecs: false }), []);
+  assert.ok(!/В характеристиках:|Параметры модели:|По данным карточки:|Основные характеристики:/i.test(card.description));
+  assert.ok(!/Объем общий\s*—/i.test(card.description), 'specs dump must not pad description');
+  assert.ok(!/Вес\s*—\s*62/i.test(card.description), 'specs dump must not pad description');
+  assert.ok(card.description.length <= beforeDesc.length + 20, 'description is not grown with a spec dump');
 });
 t('strong вне description отбрасывается при нормализации', () => {
   const r = normalizeResponse({

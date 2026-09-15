@@ -19,6 +19,23 @@ export const HALLUCINATION_RE = new RegExp(
   'i',
 );
 
+/** Служебный дамп specs, который нельзя оставлять в description_html. */
+export const SPEC_DUMP_HEADING_RE = /В характеристиках:|Параметры модели:|По данным карточки:|Основные характеристики:/i;
+const SPEC_DUMP_HEADING_SRC = String.raw`(?:В характеристиках|Параметры модели|По данным карточки|Основные характеристики)`;
+
+/**
+ * Хвост «В характеристиках: Ключ — Значение; …» до конца текста/абзаца.
+ * Не режем по первой точке: внутри дампа бывают «л.» и «об./мин.».
+ */
+function stripSpecDumpTail(text) {
+  const s = String(text || '');
+  if (!s) return s;
+  const re = new RegExp(String.raw`${SPEC_DUMP_HEADING_SRC}\s*:[\s\S]*$`, 'i');
+  const m = s.match(re);
+  if (!m) return s;
+  return s.slice(0, m.index).trimEnd();
+}
+
 /**
  * Механическое удаление маркетинговых клауз/предложений.
  * Без rewrite: только известные claim-фразы и отсев предложений по HALLUCINATION_RE.
@@ -27,10 +44,7 @@ export const HALLUCINATION_RE = new RegExp(
 function stripClaimsPlain(text, { trimEnd = true } = {}) {
   let s = String(text || '');
   if (!s.trim()) return s;
-  s = s.replace(
-    /\s*(?:В характеристиках|Параметры модели|По данным карточки)\s*:\s*[^.!?]*[.!?]?/gi,
-    '',
-  );
+  s = stripSpecDumpTail(s);
   s = s.replace(/,?\s*что\s+говорит\s+о\s+над[её]жност[иь](?:\s+конструкции)?\.?/gi, '.');
   s = s.replace(/,?\s*что\s+подтверждает\s+над[её]жност[иь][^.!?\n]*/gi, '');
   s = s.replace(/,?\s*(?:и\s+)?подтверждает(?:ют)?\s+экономичность(?:\s+модели)?\.?/gi, '');
@@ -55,9 +69,32 @@ export function stripHallucinationClaims(text) {
   const s = String(text || '');
   if (!s.trim()) return s;
   if (/<[a-z][\s\S]*>/i.test(s)) {
-    return s.replace(/(^|>)([^<]*)/g, (_, edge, frag) => edge + stripClaimsPlain(frag, { trimEnd: false }));
+    const out = s.replace(/(^|>)([^<]*)/g, (_, edge, frag) => edge + stripClaimsPlain(frag, { trimEnd: false }));
+    return out.replace(/<p>\s*<\/p>/gi, '').replace(/<li>\s*<\/li>/gi, '');
   }
   return stripClaimsPlain(s);
+}
+
+/**
+ * Регресс сборки карточки: web_info === "" и служебный дамп specs в description_html.
+ * @param {object[]} rows записи с id / web_info / description_html
+ * @param {{ last?: number }} [opts]
+ */
+export function auditAssembledCards(rows, { last = 50 } = {}) {
+  const list = (Array.isArray(rows) ? rows : []).filter(r => r && typeof r === 'object');
+  const slice = last > 0 ? list.slice(-last) : list;
+  const emptyWeb = [];
+  const specDump = [];
+  for (const r of slice) {
+    if (r.web_info === '') emptyWeb.push(r.id);
+    if (SPEC_DUMP_HEADING_RE.test(String(r.description_html || ''))) specDump.push(r.id);
+  }
+  return {
+    scanned: slice.length,
+    empty_web_info: emptyWeb,
+    spec_dump: specDump,
+    ok: emptyWeb.length === 0 && specDump.length === 0,
+  };
 }
 
 const SOURCE_BUCKET = {

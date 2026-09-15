@@ -145,38 +145,6 @@ export function oneSentence(text, min = SHORT_MIN, max = SHORT_MAX) {
   return clipToMax(withPeriod(out), max, min);
 }
 
-const SPEC_UNIT = {
-  л: 'л', мл: 'мл', кг: 'кг', г: 'г', мм: 'мм', см: 'см', м: 'м',
-  вт: 'Вт', квт: 'кВт', дб: 'дБ', мес: 'мес', ч: 'ч', мин: 'мин',
-  об_мин: 'об/мин', кг_сут: 'кг/сут', л_цикл: 'л/цикл',
-};
-
-function specCaption(key) {
-  const parts = String(key || '').split('_');
-  for (const take of [2, 1]) {
-    if (parts.length <= take) continue;
-    const unit = SPEC_UNIT[parts.slice(-take).join('_')];
-    if (unit) return { label: parts.slice(0, -take).join(' '), unit };
-  }
-  return { label: parts.join(' '), unit: '' };
-}
-
-function proseSpecLines(specs) {
-  const skip = new Set(['бренд', 'модель', 'тип_товара', 'размеры_мм']);
-  const lines = [];
-  for (const [k, v] of Object.entries(specs || {})) {
-    if (skip.has(k) || v == null || v === '' || typeof v === 'object') continue;
-    const { label, unit } = specCaption(k);
-    if (!label) continue;
-    const raw = typeof v === 'boolean' ? (v ? 'да' : 'нет') : String(v).trim();
-    if (!raw) continue;
-    const withUnit = unit && !String(raw).includes(unit) && /^\d/.test(raw) ? `${raw} ${unit}` : raw;
-    const name = label.charAt(0).toUpperCase() + label.slice(1);
-    lines.push(`${name} — ${withUnit}`);
-  }
-  return lines;
-}
-
 function redistributeParagraphs(text, n) {
   const paras = paragraphs(text);
   if (n < 1) return paras;
@@ -209,36 +177,6 @@ function redistributeParagraphs(text, n) {
   return out.length ? out : paras;
 }
 
-function padWithFacts(text, extras, min, max) {
-  let desc = String(text || '').trim();
-  if (desc.length >= min) return desc;
-  const hay = desc.toLocaleLowerCase('ru');
-  const unused = extras.filter((line) => {
-    const val = line.split('—')[1]?.trim().toLocaleLowerCase('ru');
-    return val ? !hay.includes(val) : !hay.includes(line.toLocaleLowerCase('ru'));
-  });
-  const pool = unused.length ? unused : extras.slice();
-  const queue = pool.map((line) => {
-    const t = String(line || '').trim();
-    if (!t) return '';
-    return /[.!?…]$/.test(t) ? t : `${t}.`;
-  }).filter(Boolean);
-  let i = 0;
-  let guard = 0;
-  while (desc.length < min && queue.length && guard++ < 40) {
-    const room = max - desc.length - 1;
-    if (room < 12) break;
-    let chunk = queue[i];
-    i++;
-    if (!chunk) break;
-    if (desc.includes(chunk)) continue;
-    if (chunk.length > room) chunk = clipToMax(chunk, room, Math.min(20, room));
-    if (!chunk) break;
-    desc = `${desc} ${chunk}`.trim();
-  }
-  return desc.length > max ? clipToMax(desc, max, min) : desc;
-}
-
 export function isPoorDataCard(card, filledSpecs) {
   const n = filledSpecs ?? (card?.specs && typeof card.specs === 'object'
     ? Object.values(card.specs).filter(v => v != null && v !== '').length
@@ -248,9 +186,10 @@ export function isPoorDataCard(card, filledSpecs) {
 
 /**
  * Мягкая правка карточки до валидации: обрезка bullets/strong/meta,
- * одно предложение в short, число абзацев, длина description.
- * Короткий текст дописываем фактами из specs — иначе 829 симв. уходит
- * и модель правит карточку ИИ, не откладывая товар «на проверку».
+ * одно предложение в short, число абзацев, обрезка слишком длинного description.
+ * Короткий description не дописываем дампом specs: bullets уже держат сводку,
+ * повтор «Ключ — Значение; …» в последнем абзаце выглядит как часть текста.
+ * Недобор длины ловит валидатор — модель правит карточку, а не конвейер.
  * Мутирует card, возвращает тот же объект.
  */
 export function softFixCardTexts(card, opts = {}) {
@@ -277,7 +216,6 @@ export function softFixCardTexts(card, opts = {}) {
     let s = oneSentence(card.short_description, SHORT_MIN, SHORT_MAX);
     if (s.length < SHORT_MIN) {
       const extra = [
-        ...proseSpecLines(card.specs),
         ...splitRealSentences(card.description),
         ...(Array.isArray(card.bullets) ? card.bullets : []),
       ].filter(Boolean);
@@ -290,16 +228,6 @@ export function softFixCardTexts(card, opts = {}) {
     let paras = redistributeParagraphs(card.description, wantParas);
     if (paras.length > wantParas) paras = paras.slice(0, wantParas);
     let desc = paras.join('\n\n');
-    const extras = [
-      ...proseSpecLines(card.specs),
-      ...(Array.isArray(card.bullets) ? card.bullets.map(b => String(b).trim()).filter(Boolean) : []),
-    ];
-    if (desc.length < dMin) {
-      desc = padWithFacts(desc, extras, dMin, dMax);
-      paras = redistributeParagraphs(desc, wantParas);
-      desc = paras.join('\n\n');
-      if (desc.length < dMin) desc = padWithFacts(desc, extras, dMin, dMax);
-    }
     if (desc.length > dMax) {
       paras = paragraphs(desc);
       while (desc.length > dMax && paras.length > 1) {
@@ -313,7 +241,6 @@ export function softFixCardTexts(card, opts = {}) {
       paras = redistributeParagraphs(desc, wantParas);
       desc = paras.join('\n\n');
       if (desc.length > dMax) desc = clipToMax(desc, dMax, dMin);
-      if (desc.length < dMin) desc = padWithFacts(desc, extras, dMin, dMax);
     }
     card.description = desc;
   }

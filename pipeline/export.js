@@ -201,6 +201,20 @@ function reviewSource(rec) {
 }
 
 /**
+ * web_info карточки: null модели остаётся null. Пустая строка — не замена null.
+ */
+export function catalogWebInfo(enr, rec) {
+  if (enr && Object.prototype.hasOwnProperty.call(enr, 'web_info')) {
+    const v = enr.web_info;
+    if (v == null) return null;
+    const s = String(v).trim();
+    return s || null;
+  }
+  const fromReview = webInfoFrom(reviewSource(rec || {}));
+  return fromReview || null;
+}
+
+/**
  * Одна запись products_{id}.json — шесть полей в порядке эталона:
  * id, meta_keywords, description_html, annotation_html, filters, web_info.
  * name не выгружается: заказчик сопоставляет по id. description_html — из ответа модели.
@@ -250,7 +264,7 @@ export function serializeProduct(rec, dict, debugFacets, opts = {}) {
   const descSrc = enr?.description != null
     ? stripHallucinationClaims(enr.description)
     : null;
-  const descHtml = descSrc
+  const descHtml = stripHallucinationClaims(descSrc
     ? compactHtml(buildDescriptionHtml({
       description: descSrc,
       bullets: Array.isArray(enr.bullets)
@@ -258,17 +272,14 @@ export function serializeProduct(rec, dict, debugFacets, opts = {}) {
         : enr?.bullets,
       strong: enr.strong,
     }))
-    : compactHtml(renderDescription(rec, dict, opts));
-  const web = enr && 'web_info' in enr
-    ? (enr.web_info == null ? '' : String(enr.web_info))
-    : webInfoFrom(reviewSource(rec));
+    : compactHtml(renderDescription(rec, dict, opts)));
   return {
     id: rec.id,
     meta_keywords: meta,
     description_html: descHtml,
     annotation_html: renderAnnotation(rec, dict),
     filters: asFilterArrays(assigned),
-    web_info: web,
+    web_info: catalogWebInfo(enr, rec),
   };
 }
 
@@ -316,7 +327,7 @@ export function toPipelineProduct(p) {
       ?? p?.review
       ?? p?.external?.web_info
       ?? p?.external?.review
-      ?? '',
+      ?? null,
   };
 }
 
@@ -365,7 +376,7 @@ export function fillCardFiltersAfterEnrich(product, enriched, dict, config) {
   if (!enriched || typeof enriched !== 'object') return {};
   const src = toPipelineProduct(product || {});
   const rec = normalizeProduct(src, dict, config);
-  rec.web_info = enriched.web_info ?? src.web_info;
+  rec.web_info = catalogWebInfo(enriched, rec);
   if (product?.name) rec.name = product.name;
   rec._enriched = enriched;
   applyEnrichedSpecs(rec, enriched.specs, dict, config);
@@ -409,7 +420,7 @@ export async function buildCustomerExport(products, {
     }
     const src = toPipelineProduct(p);
     const rec = normalizeProduct(src, dict, config);
-    rec.web_info = p.enriched?.web_info ?? src.web_info;
+    rec.web_info = catalogWebInfo(p.enriched, rec);
     rec.name = p.name;
     rec._enriched = p.enriched || null;
     applyEnrichedSpecs(rec, p.enriched?.specs, dict, config);
@@ -672,7 +683,7 @@ export function serializeLooseProduct(p) {
     }
   }
   const descIssues = checkDescriptionClaims(enr || { description: src.description });
-  const desc = enr?.description
+  const desc = stripHallucinationClaims(enr?.description
     ? compactHtml(buildDescriptionHtml({
       description: enr.description,
       bullets: enr.bullets,
@@ -683,17 +694,14 @@ export function serializeLooseProduct(p) {
       || enr?.short_description
       || stripHallucinationClaims(src.description)
       || '',
-    ));
-  const web = enr && 'web_info' in enr
-    ? (enr.web_info == null ? '' : String(enr.web_info))
-    : webInfoFrom(reviewSource({ ...src, ...p }));
+    )));
   return {
     id: src.id,
     meta_keywords: keywordsFrom(p),
     description_html: desc,
     annotation_html: annotation,
     filters: {},
-    web_info: web,
+    web_info: catalogWebInfo(enr, { ...src, ...p }),
     _gold_needs_review: true,
     _gold_issues: descIssues,
     _gold_name: p?.name ?? src.name,

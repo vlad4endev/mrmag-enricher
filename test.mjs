@@ -34,7 +34,7 @@ import { parseListing, parseProductPage, buildFilters, assignMissingBrands, writ
 import http from 'http';
 import { buildV2, splitKey } from './export_v2.js';
 import { loadDictionary } from './pipeline/dict.js';
-import { parseProxy, startBridge, setupProxy, mergeNoProxy, applyDirectHosts, fetchDirect } from './socks.js';
+import { parseProxy, startBridge, setupProxy, mergeNoProxy, applyDirectHosts, fetchDirect, applyProxyConfig } from './socks.js';
 import net from 'net';
 
 // fetch подменяется в разделе про запросы к модели. Возвращаем именно исходный,
@@ -1863,9 +1863,11 @@ console.log('\nМост SOCKS5 → HTTP CONNECT');
     assert.match(process.env.NO_PROXY, /mrmag\.ru/, 'каталог не должен ходить через заграничный прокси');
     assert.match(process.env.NO_PROXY, /api\.deepseek\.com/, 'DeepSeek не должен ходить через SOCKS OpenRouter');
     assert.match(process.env.NO_PROXY, /searchapi\.api\.cloud\.yandex\.net/, 'Yandex Cloud не должен ходить через SOCKS OpenRouter');
-    await p.close(); socks.close();
+    assert.equal(p.active, true);
+    socks.close();
     delete process.env.SOCKS_PROXY; delete process.env.HTTPS_PROXY;
     delete process.env.NODE_USE_ENV_PROXY; delete process.env.NO_PROXY;
+    await applyProxyConfig({ enabled: false });
   });
 
   await tAsync('карточки магазинов не гоняем через SOCKS OpenRouter', async () => {
@@ -1894,9 +1896,11 @@ console.log('\nМост SOCKS5 → HTTP CONNECT');
     assert.match(process.env.NO_PROXY, /mrmag\.ru/);
     assert.match(process.env.NO_PROXY, /api\.deepseek\.com/);
     assert.match(process.env.NO_PROXY, /searchapi\.api\.cloud\.yandex\.net/);
-    await p.close(); socks.close();
+    assert.equal(p.active, true);
+    socks.close();
     delete process.env.SOCKS_PROXY; delete process.env.HTTPS_PROXY;
     delete process.env.NODE_USE_ENV_PROXY; delete process.env.NO_PROXY;
+    await applyProxyConfig({ enabled: false });
   });
 
   echo.close();
@@ -2420,10 +2424,11 @@ console.log('\nТовар без описания: поиск в сети');
     assert.ok(got.page_parse?.error, 'ошибка поиска должна быть в Парсинге');
     assert.match(got.page_parse.query, /60С1010/);
     assert.ok(
-      serpQueries.some(q => /двигател/i.test(q)) || /двигател/i.test(got.page_parse.query),
-      `ждали поиск по типу двигателя, выдача: ${serpQueries.join(' | ')}`,
+      serpQueries.some(q => /характеристик|цвет|двигател/i.test(q))
+        || /характеристик|цвет|двигател/i.test(got.page_parse.query),
+      `ждали поиск недостающих витринных фильтров, выдача: ${serpQueries.join(' | ')}`,
     );
-    assert.match(notes.join('\n'), /двигател|стран/i);
+    assert.match(notes.join('\n'), /недостающ|характеристик|двигател|стран/i);
     web.resetWebSearch();
     assert.equal(web.isWebSearchDisabled(), false);
   });

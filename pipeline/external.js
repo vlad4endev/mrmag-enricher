@@ -1,5 +1,5 @@
 /**
- * Добор характеристик у товаров без своих данных (S3), дыр в обязательных
+ * Добор характеристик у товаров без своих данных (S3), дыр в витринных
  * фильтрах и страны производства.
  *
  * 1. По имени ищем ту же модель в поисковике.
@@ -7,9 +7,10 @@
  *    слова имени) не совпадут.
  * 3. Таблицу характеристик разбираем тем же парсером, что и свой фид,
  *    и дописываем пустые поля. Уже заполненное из annotation не трогаем.
- * 4. Если своих данных достаточно, но обязательный фильтр (отжим, шум,
- *    энергокласс…) в исходнике пуст — отдельный поиск по модели, как для
- *    страны. Не восстанавливаем число из артикула (F12, 5109).
+ * 4. Если своих данных достаточно, но витринный фильтр (отжим, цвет,
+ *    энергокласс, дисплей…) в исходнике пуст — отдельный поиск по модели,
+ *    как для страны. Не восстанавливаем число из артикула (F12, 5109)
+ *    и не подставляем типичное значение категории.
  * 5. Если страны производства в исходнике нет — поиск «бренд модель
  *    страна производства».
  *
@@ -21,7 +22,7 @@ import { extractPairsFromPage, visibleText } from './parse.js';
 import { identityMatches, nameKeyTokens } from './identity.js';
 import { ingestPairs } from './normalize.js';
 import { matchKey } from './match.js';
-import { requiredFilterAttrs } from './required_filters.js';
+import { requiredFilterAttrs, storefrontFilterAttrs } from './required_filters.js';
 import { searchWeb, fetchPage, searchQuery, countryQuery, missingQuery, resolveSearchSettings, firstMatchingPage } from './search.js';
 
 const MIN_PAIRS = 2;
@@ -62,20 +63,32 @@ function isEmptyAttr(rec, code) {
   return false;
 }
 
+function emptyFilterCodes(rec, dict, attrs) {
+  if (!dict || rec?.category_mismatch) return [];
+  return (attrs || [])
+    .map(a => a.code)
+    .filter(code => isEmptyAttr(rec, code));
+}
+
 /**
  * Обязательные оси витрины, которых нет в карточке.
  * Страна сюда не входит: у неё свой запрос и parseCountryFromPage.
  */
 export function missingRequiredCodes(rec, dict) {
-  if (!dict) return [];
-  return requiredFilterAttrs(dict)
-    .map(a => a.code)
-    .filter(code => isEmptyAttr(rec, code));
+  return emptyFilterCodes(rec, dict, requiredFilterAttrs(dict));
 }
 
-/** Карточка живая, но покупательский фильтр (отжим, шум, габарит…) пуст. */
+/**
+ * Любая включённая ось витрины без значения: цвет и дисплей тоже.
+ * Не выдумываем типичное «A / белый» — дыру закрывает страница модели.
+ */
+export function missingStorefrontCodes(rec, dict) {
+  return emptyFilterCodes(rec, dict, storefrontFilterAttrs(dict));
+}
+
+/** Карточка живая, но покупательский фильтр (отжим, цвет, шум…) пуст. */
 export function needsMissingLookup(rec, dict) {
-  if (!missingRequiredCodes(rec, dict).length) return false;
+  if (!missingStorefrontCodes(rec, dict).length) return false;
   return identifiable(rec);
 }
 
@@ -234,7 +247,7 @@ export async function lookupCountry(rec, dict, config, io = {}) {
 }
 
 /**
- * Обязательный фильтр пуст в исходнике → поиск по модели, как для страны.
+ * Витринный фильтр пуст в исходнике → поиск по модели, как для страны.
  * Артикул (F12, 5109) в об/мин не переводим: берём только пару со страницы.
  */
 export async function lookupMissing(rec, dict, config, io = {}) {
@@ -242,9 +255,9 @@ export async function lookupMissing(rec, dict, config, io = {}) {
   if (!settings.enabled) {
     return { rec, ok: false, reason: 'поиск выключен' };
   }
-  const codes = missingRequiredCodes(rec, dict);
+  const codes = missingStorefrontCodes(rec, dict);
   if (!codes.length || !identifiable(rec)) {
-    return { rec, ok: false, reason: 'обязательные фильтры уже заполнены или искать не по чему' };
+    return { rec, ok: false, reason: 'витринные фильтры уже заполнены или искать не по чему' };
   }
   const query = io.query || missingQuery(rec, dict, codes);
   if (!query) return { rec, ok: false, reason: 'пустой поисковый запрос' };

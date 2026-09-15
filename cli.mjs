@@ -233,8 +233,7 @@ async function writeOutputs({ recs, dict, config, catId, cov, covAfter, formats,
   console.log(`filters_agent: mode=${agent.mode} map=${agent.mappings.length} skip_stats=${agent.stats.skipped}`);
 
   for (const rec of exported) markCategoryMismatch(rec, catId);
-  const facetRecs = exported.filter(r => !r.category_mismatch);
-  let built = buildFilters(facetRecs.length ? facetRecs : exported, dict, config);
+  let built = buildFilters(exported, dict, config);
   const { sanitizeFilterCatalog } = await import('./pipeline/fix_filters.js');
   const sanitized = sanitizeFilterCatalog(built.filters, dict);
   built = {

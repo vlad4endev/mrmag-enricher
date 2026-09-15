@@ -101,7 +101,8 @@ export function stripUnconfirmedNegatives(rec, dict) {
     if (!isFalseyClaim(a, v)) continue;
     const prov = rec.provenance?.[a.code];
     const raw = String(prov?.raw || '');
-    const explicit = /(?:нет|отсутств|не\s+поддержив|не\s+предусмотр|false|выключен)/i.test(raw);
+    const explicit = /(?:нет|отсутств|не\s+поддержив|не\s+предусмотр|false|выключен|без)/i.test(raw)
+      || /^derived_/.test(String(prov?.how || ''));
     if (explicit) continue;
     rec.attrs[a.code] = null;
     if (rec.provenance) delete rec.provenance[a.code];

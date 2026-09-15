@@ -139,6 +139,38 @@ export function matchBucket(value, facet) {
   return hits[0].label;
 }
 
+export function snapToFacetBucket(value, facet) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return null;
+  const hit = matchBucket(n, facet);
+  if (hit) return hit;
+  const buckets = facetBuckets(facet);
+  if (!buckets?.length) return null;
+  if (n < buckets[0].min) return buckets[0].label;
+  return buckets[buckets.length - 1].label;
+}
+
+export function snapIntEnum(value, facet = {}) {
+  const lab = toIntEnum(value, facet);
+  if (lab) return lab;
+  const n = Number(value);
+  if (!Number.isFinite(n)) return null;
+  const allowed = (facet.int_values || []).map(Number).filter(Number.isFinite).sort((a, b) => a - b);
+  if (!allowed.length) return String(Math.round(n));
+  if (n <= allowed[0]) return String(allowed[0]);
+  if (n >= allowed[allowed.length - 1]) return String(allowed[allowed.length - 1]);
+  let best = allowed[0];
+  let bestD = Math.abs(n - best);
+  for (const x of allowed) {
+    const d = Math.abs(n - x);
+    if (d < bestD) {
+      best = x;
+      bestD = d;
+    }
+  }
+  return String(best);
+}
+
 export function toIntEnum(value, facet = {}) {
   const n = Number(value);
   if (!Number.isFinite(n)) return null;
@@ -306,7 +338,7 @@ export function buildFilters(recs, dict, config) {
         const raw = numericOf(r.attrs[attr.code]);
         if (raw == null) continue;
         const n = coerceFacetNumber(raw, attr);
-        const lab = matchBucket(n, facet) || (
+        const lab = snapToFacetBucket(n, facet) || (
           hasExplicitBuckets(facet) || hasBreaks(facet)
             ? null
             : bucketLabel(n, { ...facet, kind: 'range' })
@@ -335,7 +367,7 @@ export function buildFilters(recs, dict, config) {
           continue;
         }
         const n = coerceFacetNumber(raw, attr);
-        const lab = toIntEnum(n, facet);
+        const lab = snapIntEnum(n, facet);
         if (!lab) {
           trackUnmapped(unmapped, fname, r.attrs[attr.code]);
           continue;
@@ -460,12 +492,12 @@ export function assignFilterValues(rec, dict, debugFacets, config = {}, unmapped
       const raw = numericOf(v);
       if (raw == null) continue;
       const n = coerceFacetNumber(raw, attr);
-      const lab = matchBucket(n, facet) || (
+      const lab = snapToFacetBucket(n, facet) || (
         hasExplicitBuckets(facet) || hasBreaks(facet)
           ? null
           : bucketLabel(n, { ...facet, kind: 'range' })
       );
-      if (!lab || !f.value.includes(lab)) {
+      if (!lab) {
         trackUnmapped(unmapped, f.name, v);
         continue;
       }
@@ -476,8 +508,8 @@ export function assignFilterValues(rec, dict, debugFacets, config = {}, unmapped
         trackUnmapped(unmapped, f.name, v);
         continue;
       }
-      const lab = toIntEnum(coerceFacetNumber(raw, attr), facet);
-      if (!lab || !f.value.includes(lab)) {
+      const lab = snapIntEnum(coerceFacetNumber(raw, attr), facet);
+      if (!lab) {
         trackUnmapped(unmapped, f.name, v);
         continue;
       }

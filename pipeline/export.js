@@ -15,6 +15,7 @@ import { runConsistencyAgent } from './consistency_agent.js';
 import { validateProducts } from './validate.js';
 import { markCategoryMismatch } from './category_mismatch.js';
 import { buildFilterCoverageReport } from './filter_report.js';
+import { completeStorefrontRecs } from './storefront_fill.js';
 
 function esc(s) {
   return String(s)
@@ -370,7 +371,7 @@ export function fillCardFiltersAfterEnrich(product, enriched, dict, config) {
   applyEnrichedSpecs(rec, enriched.specs, dict, config);
   markCategoryMismatch(rec, dict.catId);
   finalizeRecord(rec, dict, { enriched, assigned: null });
-  if (rec.category_mismatch) return {};
+  if (config.storefront_complete !== false) completeStorefrontRecs([rec], dict);
   const built = buildFilters([rec], dict, config);
   const assigned = assignFilterValues(rec, dict, built.debug || [], config);
   return asFilterArrays(assigned);
@@ -422,6 +423,9 @@ export async function buildCustomerExport(products, {
   for (const rec of exported) {
     finalizeRecord(rec, dict, { enriched: rec._enriched, assigned: null });
   }
+  if (config.storefront_complete !== false) {
+    completeStorefrontRecs(exported, dict);
+  }
 
   const agentOpts = filtersAgent && typeof filtersAgent === 'object' ? filtersAgent : {};
   const agent = await runFiltersAgent({
@@ -432,9 +436,13 @@ export async function buildCustomerExport(products, {
     ...agentOpts,
   });
 
-  // Сушилка в разделе стиральных машин не должна задавать пункты каталога.
-  const facetRecs = exported.filter(r => !r.category_mismatch);
-  let built = buildFilters(facetRecs.length ? facetRecs : exported, dict, config);
+  if (config.storefront_complete !== false) {
+    completeStorefrontRecs(exported, dict);
+  }
+
+  // Каталог значений — по всем SKU, иначе сушилка/комплект в разделе стиралок
+  // не попадает в filters.json и карточка остаётся без «Габаритов».
+  let built = buildFilters(exported, dict, config);
   // Финальный проход: схлопнуть синонимы (No Frost / Inverter / Электронная),
   // даже если сырой attrs или старый сервер пропустил unify.
   const { sanitizeFilterCatalog } = await import('./fix_filters.js');
@@ -470,8 +478,15 @@ export async function buildCustomerExport(products, {
   });
 
   // После правок attrs каталог фасетов мог устареть — пересобрать.
-  if ((consistency.stats?.applied || 0) > 0 || (consistency.stats?.auto_fixed || 0) > 0) {
-    const facetRecs2 = exported.filter(r => !r.category_mismatch);
+  if (config.storefront_complete !== false) {
+    completeStorefrontRecs(exported, dict);
+  }
+  if (
+    config.storefront_complete !== false
+    || (consistency.stats?.applied || 0) > 0
+    || (consistency.stats?.auto_fixed || 0) > 0
+  ) {
+    const facetRecs2 = exported;
     let rebuilt = buildFilters(facetRecs2.length ? facetRecs2 : exported, dict, config);
     const sanitized2 = sanitizeFilterCatalog(rebuilt.filters, dict);
     built = {

@@ -70,7 +70,40 @@ const ECHO_LEAD = /^(?:цвет|тип|товара|значение|корпу�
 const ECHO_TAIL = /\s+(?:загрузк[аиеу]|корпуса?|товара|машины?|цвет)$/i;
 const ADJ_END = /(ый|ий|ой|ая|яя|ое|ее|ые|ие)$/;
 
-/** Сравнение значений без регистра, пробелов, дефисов и латинской x в кириллице. */
+/**
+ * Boolean из карточки: голое да/нет, синонимы «Есть»/«Нет»,
+ * «есть цифровой дисплей», «без сушки», тип экрана («TOUCH», «LED»).
+ */
+export function parseBooleanValue(attr, raw) {
+  const v = String(raw ?? '').trim();
+  if (!v) return { ok: false, value: null, reason: 'empty' };
+  const k = v.toLowerCase().replace(/ё/g, 'е').replace(/\s+/g, ' ');
+  const aliased = aliasValue(attr, v);
+  if (aliased === 'Есть' || aliased === true) return { ok: true, value: true };
+  if (aliased === 'Нет' || aliased === false) return { ok: true, value: false };
+  if (BOOL_TRUE.has(k) || k === '1' || /^\+$/.test(k)) return { ok: true, value: true };
+  if (BOOL_FALSE.has(k) || /не\s+поддержива|не\s+предусмотр|не\s+имеется/i.test(k)) {
+    return { ok: true, value: false };
+  }
+  if (/^(нет|без)\b/.test(k)) return { ok: true, value: false };
+  if (/^(есть|да|имеется)\b/.test(k)) return { ok: true, value: true };
+  const code = String(attr?.code || '');
+  const name = String(attr?.name || attr?.facet?.label || '');
+  if (code === 'display' || /дисплей|индикац/i.test(name)) {
+    if (/без\s+диспл|\bнет\b.{0,16}диспл|диспл\w*\s+(нет|отсутств)/i.test(k)) {
+      return { ok: true, value: false };
+    }
+    if (/цифр|символьн|сенсор|touch|led|tft|lcd|oled|экран|индикац/i.test(k)) {
+      return { ok: true, value: true };
+    }
+  }
+  if (code === 'drying' || /сушк/i.test(name)) {
+    if (/без\s+сушк/i.test(k)) return { ok: true, value: false };
+    if (/\bс\s+сушк|есть\s+сушк|сушка\s+есть/i.test(k)) return { ok: true, value: true };
+  }
+  return { ok: false, value: null, reason: 'not_boolean', raw };
+}
+
 export function valueFold(s) {
   let t = String(s || '')
     .toLowerCase()
@@ -578,22 +611,22 @@ export function normalizeValue(attr, raw, { keyText = '' } = {}) {
       return { ok: true, value: n, unit: attr.unit || srcUnit };
     }
     if (typ === 'boolean') {
-      const k = v.trim().toLowerCase().replace(/ё/g, 'е');
-      if (BOOL_TRUE.has(k) || k === '1' || /^\+$/.test(k)) return { ok: true, value: true };
-      if (BOOL_FALSE.has(k) || /не\s+поддержива|не\s+предусмотр|не\s+имеется/i.test(k)) {
-        return { ok: true, value: false };
-      }
-      // Отсутствие явного да/нет — unknown, не «нет» и не догадка «да».
+      const parsed = parseBooleanValue(attr, v);
+      if (parsed.ok) return parsed;
       return { ok: false, value: null, reason: 'not_boolean', raw: v };
     }
     if (typ === 'class_scale') {
       const s = String(v).trim();
-      // Не брать «а» из слова «класс»: только отдельный токен A/A+/A++.
-      const m = s.match(/(?<![а-яёa-z])([A-Ga-gА-Еа-еСсC])(\+{0,3})(?![а-яёa-z])/u)
-        || s.match(/^([A-Ga-gА-Еа-еСсC])(\+{0,3})$/u);
-      if (!m) return { ok: false, value: null, reason: 'not_class', raw: v };
-      const letter = CLASS_CYR[m[1].toLowerCase()] || m[1].toUpperCase().replace('С', 'C');
-      return { ok: true, value: letter + m[2] };
+      // Граница — любая буква, иначе «ЕС»/«EU» читаются как класс E.
+      const re = /(?<![A-Za-zА-Яа-яЁё])([A-Ga-gА-Еа-еСсC])(\+{0,3})(?![A-Za-zА-Яа-яЁё])/gu;
+      const hits = [];
+      let m;
+      while ((m = re.exec(s))) hits.push(m);
+      hits.sort((a, b) => b[2].length - a[2].length || a.index - b.index);
+      const picked = hits[0] || s.match(/^([A-Ga-gА-Еа-еСсC])(\+{0,3})$/u);
+      if (!picked) return { ok: false, value: null, reason: 'not_class', raw: v };
+      const letter = CLASS_CYR[picked[1].toLowerCase()] || picked[1].toUpperCase().replace('С', 'C');
+      return { ok: true, value: letter + picked[2] };
     }
     if (typ === 'enum' || typ === 'text') {
       // Хладагент: «R600a,58» / «R600a 57 г» → только код, не qty_in_enum.

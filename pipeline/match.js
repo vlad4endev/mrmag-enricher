@@ -1,6 +1,7 @@
 /** Сопоставление ключа со справочником: blacklist → синоним → bag-of-words → нечёткое. */
 
 import { normKey, tokens } from './text.js';
+import { aliasValue } from './types.js';
 
 function dice(a, b) {
   if (!a || !b) return 0;
@@ -169,6 +170,19 @@ export function fuzzyMatch(key, dict, minScore) {
  * 4. нечёткое; кандидат из blacklist любого атрибута → отказ
  * 5. unmapped
  */
+/**
+ * Голый ключ «Тип» в карточке магазина чаще значит «тип товара».
+ * Если значение — автомат/полуавтомат, это вид стиральной машины.
+ */
+function rescueWasherTypeByValue(dict, key, value) {
+  if (normKey(key) !== 'тип') return null;
+  const wt = dict?.byCode?.get('washer_type');
+  if (!wt || value == null || String(value).trim() === '') return null;
+  const canon = aliasValue(wt, value);
+  if (canon !== 'Автоматическая' && canon !== 'Полуавтоматическая') return null;
+  return { attr: wt, raw: key, confidence: 1, how: 'value_disambiguate' };
+}
+
 export function matchKey(key, dict, { value = '', fuzzyMin = 0.9 } = {}) {
   const nk = normKey(key);
   if (!nk) return { attr: null, raw: key, confidence: 0, how: 'unmapped' };
@@ -178,6 +192,9 @@ export function matchKey(key, dict, { value = '', fuzzyMin = 0.9 } = {}) {
 
   const bag = bagOfWordsMatch(key, dict, value);
   if (bag) return bag;
+
+  const rescued = rescueWasherTypeByValue(dict, key, value);
+  if (rescued) return rescued;
 
   const banned = blacklistHit(nk, dict);
   if (banned) return { attr: null, raw: key, confidence: 0, how: 'blacklist', banned };

@@ -9,10 +9,18 @@
     },
     {
       "code": "washer_type",
-      "name": "Вид стиральной машины",
+      "name": "Тип",
       "status": "filter",
       "type": "enum",
+      "required": true,
       "values": ["Автоматическая", "Полуавтоматическая"]
+    },
+    {
+      "code": "load_type",
+      "name": "Тип загрузки",
+      "status": "filter",
+      "type": "enum",
+      "values": ["Вертикальная", "Фронтальная"]
     },
     {
       "code": "load_max",
@@ -34,6 +42,24 @@
         {"label": "15-20", "min": 15, "max": 20},
         {"label": "20-25", "min": 20, "max": 25}
       ]
+    },
+    {
+      "code": "energy_class",
+      "name": "Класс энергоэффективности",
+      "status": "filter",
+      "type": "enum"
+    },
+    {
+      "code": "wash_class",
+      "name": "Класс стирки",
+      "status": "filter",
+      "type": "enum"
+    },
+    {
+      "code": "spin_class",
+      "name": "Класс эффективности отжима",
+      "status": "filter",
+      "type": "enum"
     },
     {
       "code": "spin_max",
@@ -115,6 +141,51 @@
     {
       "code": "display",
       "name": "Дисплей",
+      "status": "filter",
+      "type": "boolean"
+    },
+    {
+      "code": "color",
+      "name": "Цвет корпуса",
+      "status": "filter",
+      "type": "enum"
+    },
+    {
+      "code": "control_type",
+      "name": "Тип управления",
+      "status": "filter",
+      "type": "enum"
+    },
+    {
+      "code": "weight",
+      "name": "Вес, кг",
+      "status": "filter",
+      "type": "range",
+      "bound_rule": "left_closed",
+      "open_last": true,
+      "buckets": [
+        {"label": "40-50", "min": 40, "max": 50},
+        {"label": "50-60", "min": 50, "max": 60},
+        {"label": "60-70", "min": 60, "max": 70},
+        {"label": "70-80", "min": 70, "max": 80},
+        {"label": "80+", "min": 80, "max": null}
+      ]
+    },
+    {
+      "code": "install",
+      "name": "Установка",
+      "status": "filter",
+      "type": "enum"
+    },
+    {
+      "code": "motor_type",
+      "name": "Тип двигателя",
+      "status": "filter",
+      "type": "enum"
+    },
+    {
+      "code": "drying",
+      "name": "Сушка",
       "status": "filter",
       "type": "boolean"
     },

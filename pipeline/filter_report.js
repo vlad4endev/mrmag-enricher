@@ -59,9 +59,8 @@ export function buildFilterCoverageReport({
       .map(r => r.id)
       .filter(id => id != null),
   )];
-  const mismatchSet = new Set(mismatchIds.map(String));
 
-  const eligible = (products || []).filter(p => !mismatchSet.has(String(p.id)));
+  const eligible = products || [];
   const denom = eligible.length || 1;
 
   const filters = names.map((name) => {

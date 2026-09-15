@@ -28,7 +28,7 @@ import { netError, isEnrichable, modelToken, MIN_SOURCE_CHARS, extractFacts, has
 import { specFacets, enrichedRows } from './export_v2.js';
 import { loadConfig, loadCategories, hasDictionary } from './pipeline/dict.js';
 import { normalizeProduct } from './pipeline/normalize.js';
-import { lookupMissing, needsMissingLookup, parseMissingFromPage, missingRequiredCodes } from './pipeline/external.js';
+import { lookupMissing, needsMissingLookup, parseMissingFromPage, missingStorefrontCodes } from './pipeline/external.js';
 import { CRAWL_SLUGS } from './pipeline/schema.js';
 import { containsTokenSequence, identityMatches, nameKeyTokens, parseIdentity } from './pipeline/identity.js';
 import { extractPairsFromPage, visibleText, collectPageHits, formatParseNotes } from './pipeline/parse.js';
@@ -670,7 +670,7 @@ function pageFetch(url) {
 }
 
 /**
- * Со совпавшей страницы добираем страну и дыры в обязательных фильтрах.
+ * Со совпавшей страницы добираем страну и дыры в витринных фильтрах.
  * Отдельный поиск не нужен, если таблица уже на руках.
  */
 function harvestGapsFromHtml(product, html, url, schema) {
@@ -761,9 +761,9 @@ async function fillCountryFromWeb(product, schema, { onNote = () => {} } = {}) {
 }
 
 /**
- * Обязательный фильтр (отжим, шум, энергокласс…) пуст при живой карточке —
- * тот же поиск по модели, что и для страны. Не открываем сеть из‑за цвета
- * или дисплея. Совпавшая страница дописывает только пустые поля.
+ * Витринный фильтр (отжим, цвет, энергокласс, дисплей…) пуст при живой
+ * карточке — тот же поиск по модели, что и для страны. Совпавшая страница
+ * дописывает только пустые поля, типичные значения категории не подставляем.
  */
 async function fillMissingFiltersFromWeb(product, schema, { onNote = () => {} } = {}) {
   const dict = dictOf(schema);
@@ -773,7 +773,7 @@ async function fillMissingFiltersFromWeb(product, schema, { onNote = () => {} } 
   catch { return { ok: false, product }; }
   if (!needsMissingLookup(rec, dict)) return { ok: false, product };
   const origin = searchEngineLabel();
-  const codes = missingRequiredCodes(rec, dict);
+  const codes = missingStorefrontCodes(rec, dict);
   const query = missingQuery(rec, dict, codes);
   if (isWebSearchDisabled()) {
     const why = webSearchSkippedReason();
@@ -820,9 +820,10 @@ async function fillMissingFiltersFromWeb(product, schema, { onNote = () => {} } 
  * таймаут не пропускает карточку, модели уходит исходное имя. Чужие
  * характеристики без совпадения модели по-прежнему не подставляются.
  *
- * Страна производства и дыры в обязательных фильтрах — отдельные случаи:
- * своих характеристик может быть достаточно, а отжима или страны в исходнике
- * нет. Тогда ищем их по модели. Артикул (F12, 5109) в об/мин не переводим.
+ * Страна производства и дыры в витринных фильтрах — отдельные случаи:
+ * своих характеристик может быть достаточно, а отжима, цвета или страны
+ * в исходнике нет. Тогда ищем их по модели. Артикул (F12, 5109) в об/мин
+ * не переводим и типичный класс «A» не выдумываем.
  *
  * Атрибуты магазина остаются нетронутыми: они задают фасеты каталога, и
  * подмешивать в них чужую таблицу нельзя — спор «каталога с самим собой»

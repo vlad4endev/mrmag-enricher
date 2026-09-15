@@ -737,7 +737,10 @@ textarea{
 }
 .cov-row.ok .cv-st{color:var(--green)}
 .cov-row.miss .cv-st{color:var(--red)}
+.cov-row.extra .cv-st{color:var(--amber)}
+.cov-row.mismatch .cv-st{color:var(--amber)}
 .cov-row.miss .cv-v{color:var(--t3)}
+.cov-note{font-size:12px;color:var(--t2);line-height:1.45;margin:0 0 10px}
 .cov-cols{font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--t2)}
 @media(max-width:900px){
   .eboard-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}
@@ -1566,7 +1569,7 @@ input[type=range]::-moz-range-thumb{
   max-height:min(88vh,900px);display:flex;flex-direction:column;overflow:hidden;
   box-shadow:0 18px 48px rgba(11,18,32,.18);
 }
-.ae-modal.filter-tests-modal{width:min(720px,96vw)}
+.ae-modal.filter-tests-modal{width:min(860px,96vw)}
 .filter-tests-open{font:inherit;cursor:pointer;border:1px solid var(--b1);background:var(--bg3);color:var(--t1);border-radius:var(--r2);padding:6px 10px}
 .filter-tests-open:hover{border-color:var(--ac-b);background:var(--ac-w)}
 .ae-modal-head{display:flex;justify-content:space-between;align-items:center;padding:12px 16px;border-bottom:1px solid var(--b1);flex-shrink:0}
@@ -6636,70 +6639,275 @@ function scoreCorrectness({warnings=0, conflicts=0, review=false}={}){
 }
 
 /**
- * Тест витринных фильтров карточки после обогащения.
- * Берём server filter_coverage (все оси справочника, включая пустые),
- * иначе — ключи r.filters.
+ * Согласованный лист («Есть ли в фильтре? = да»). Покрытие считаем по нему,
+ * а не по ключам выходного filters.
  */
-function filterTestOf(r){
+const APPROVED_YES_UI={
+  467:['Тип загрузки','Максимальная загрузка белья','Максимальная скорость отжима','Класс энергоэффективности','Класс стирки','Класс эффективности отжима','Уровень шума при стирке','Цвет корпуса','Тип управления','Количество программ','Дисплей','Высота','Ширина','Глубина','Габариты (ШхГхВ)','Вес','Установка','Тип двигателя','Сушка','Тип'],
+  523:['Тип холодильника','Количество камер','Количество дверей','Расположение морозильной камеры','Общий объём','Объём холодильной камеры','Объём морозильной камеры','Система охлаждения','Размораживание холодильной камеры','Размораживание морозильной камеры','Класс энергоэффективности','Тип компрессора','Уровень шума','Мощность замораживания','Высота','Ширина','Глубина','Габариты (ШхВхГ)','Цвет корпуса','Тип управления','Дисплей','Перенавешиваемые двери'],
+};
+const APPROVED_NO_UI={467:['Бренд'],523:['Бренд']};
+const APPROVED_MAP_UI={
+  467:{'Тип':'Тип','Вид стиральной машины':'Тип','Тип загрузки':'Тип загрузки','Максимальная загрузка белья':'Загрузка белья, кг','Загрузка белья, кг':'Загрузка белья, кг','Максимальная скорость отжима':'Скорость отжима, об/мин','Скорость отжима, об/мин':'Скорость отжима, об/мин','Класс энергоэффективности':'Класс энергоэффективности','Класс стирки':'Класс стирки','Класс эффективности отжима':'Класс эффективности отжима','Уровень шума при стирке':'Уровень шума, дБ','Уровень шума, дБ':'Уровень шума, дБ','Цвет корпуса':'Цвет корпуса','Цвет':'Цвет корпуса','Тип управления':'Тип управления','Количество программ':'Количество программ','Дисплей':'Дисплей','Высота':'Высота, см','Высота, см':'Высота, см','Ширина':'Ширина, см','Ширина, см':'Ширина, см','Глубина':'Глубина, см','Глубина, см':'Глубина, см','Габариты':'Габариты (ШхГхВ)','Габариты (ШхГхВ)':'Габариты (ШхГхВ)','Вес':'Вес, кг','Вес, кг':'Вес, кг','Установка':'Установка','Тип двигателя':'Тип двигателя','Сушка':'Сушка'},
+  523:{'Тип холодильника':'Тип холодильника','Количество камер':'Количество камер','Количество дверей':'Количество дверей','Расположение морозильной камеры':'Расположение морозильной камеры','Общий объём':'Общий объём, л','Общий объём, л':'Общий объём, л','Объём холодильной камеры':'Объём холодильной камеры, л','Объём холодильной камеры, л':'Объём холодильной камеры, л','Объём морозильной камеры':'Объём морозильной камеры, л','Объём морозильной камеры, л':'Объём морозильной камеры, л','Система охлаждения':'Система охлаждения','Размораживание холодильной камеры':'Размораживание холодильной камеры','Размораживание морозильной камеры':'Размораживание морозильной камеры','Класс энергоэффективности':'Класс энергоэффективности','Тип компрессора':'Тип компрессора','Уровень шума':'Уровень шума, дБ','Уровень шума, дБ':'Уровень шума, дБ','Мощность замораживания':'Мощность замораживания, кг/сут','Мощность замораживания, кг/сут':'Мощность замораживания, кг/сут','Высота':'Высота, см','Высота, см':'Высота, см','Ширина':'Ширина, см','Ширина, см':'Ширина, см','Глубина':'Глубина, см','Глубина, см':'Глубина, см','Габариты':'Габариты (ШхВхГ)','Габариты (ШхВхГ)':'Габариты (ШхВхГ)','Цвет корпуса':'Цвет корпуса','Цвет':'Цвет корпуса','Тип управления':'Тип управления','Дисплей':'Дисплей','Перенавешиваемые двери':'Перенавешиваемые двери'},
+};
+
+function approvedCatId(v){
+  const s=String(v||'').trim();
+  if(s==='467'||/стиральн/i.test(s)) return '467';
+  if(s==='523'||/холодильник/i.test(s)) return '523';
+  return /^\d+$/.test(s)?s:'';
+}
+function runFilterCatId(r, idx){
+  const i=idx==null?results.indexOf(r):idx;
+  const it=i>=0?items[i]:null;
+  return approvedCatId(
+    r?.filter_coverage?.category_id
+    || r?.category_id
+    || r?.schema
+    || it?.category_id
+    || it?.category
+    || pickCat
+  );
+}
+function filterFilled(v){
+  if(v==null||v==='') return false;
+  return Array.isArray(v)?v.length>0:true;
+}
+function filterValueText(v){
+  if(v==null||v==='') return '';
+  return Array.isArray(v)?v.map(x=>String(x)).filter(Boolean).join(', '):String(v);
+}
+function filterPlain(html){
+  return String(html||'').replace(/<br\s*\/?>/gi,'\n').replace(/<\/(li|p|div)>/gi,'\n').replace(/<[^>]+>/g,' ').replace(/&nbsp;/gi,' ').replace(/&times;/gi,'×').replace(/\s+/g,' ').trim();
+}
+function toCmUi(n, unit){
+  if(!Number.isFinite(n)) return null;
+  const u=String(unit||'').toLowerCase();
+  if(u==='мм'||u==='mm') return n/10;
+  if(n>=100&&n<=2500&&(!u||u==='мм'||u==='mm')) return n/10;
+  return n;
+}
+function parseBucketUi(label){
+  const s=String(label||'').trim();
+  const plus=s.match(/^(\d+(?:[.,]\d+)?)\+\s*$/);
+  if(plus) return {min:parseFloat(plus[1].replace(',','.')), max:Infinity};
+  const span=s.match(/^(\d+(?:[.,]\d+)?)\s*[-–—]\s*(\d+(?:[.,]\d+)?)$/);
+  if(!span) return null;
+  return {min:parseFloat(span[1].replace(',','.')), max:parseFloat(span[2].replace(',','.'))};
+}
+function inBucketUi(n, label){
+  const r=parseBucketUi(label);
+  if(!r||!Number.isFinite(n)) return null;
+  if(r.max===Infinity) return n>=r.min;
+  return n>=r.min && n<=r.max;
+}
+function dimTriplesUi(text){
+  const src=String(text||'');
+  const out=[];
+  const re=/(\d+(?:[.,]\d+)?)\s*[×xх]\s*(\d+(?:[.,]\d+)?)\s*[×xх]\s*(\d+(?:[.,]\d+)?)\s*(мм|см|mm|cm)?/gi;
+  let m;
+  while((m=re.exec(src))){
+    const prefix=src.slice(Math.max(0,m.index-56), m.index).toLowerCase();
+    const a=parseFloat(m[1].replace(',','.'));
+    const b=parseFloat(m[2].replace(',','.'));
+    const c=parseFloat(m[3].replace(',','.'));
+    const unit=m[4]||(Math.max(a,b,c)>100?'мм':'см');
+    let width, depth, height;
+    if(/в\s*[×xх]\s*ш\s*[×xх]\s*г/.test(prefix)){ height=a; width=b; depth=c; }
+    else if(/ш\s*[×xх]\s*в\s*[×xх]\s*г/.test(prefix)){ width=a; height=b; depth=c; }
+    else { width=a; depth=b; height=c; }
+    out.push({width:toCmUi(width,unit), depth:toCmUi(depth,unit), height:toCmUi(height,unit)});
+  }
+  return out;
+}
+function labeledCmUi(text, labels){
+  for(const lab of labels){
+    const re=new RegExp(lab.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+'[^0-9]{0,28}(\\d+(?:[.,]\\d+)?)\\s*(мм|см|mm|cm)?','i');
+    const m=String(text||'').match(re);
+    if(!m) continue;
+    return toCmUi(parseFloat(m[1].replace(',','.')), m[2]);
+  }
+  return null;
+}
+function allowedKeysUi(cat){
+  const yes=APPROVED_YES_UI[cat]||[];
+  const map=APPROVED_MAP_UI[cat]||{};
+  const out=new Set();
+  for(const n of yes){ out.add(n); out.add(map[n]||n); }
+  return out;
+}
+function lookupApprovedUi(filters, sheetName, cat){
+  const key=(APPROVED_MAP_UI[cat]||{})[sheetName]||sheetName;
+  if(filterFilled(filters?.[key])) return {key, value:filters[key], ok:true};
+  if(key!==sheetName && filterFilled(filters?.[sheetName])) return {key:sheetName, value:filters[sheetName], ok:true};
+  return {key, value:null, ok:false};
+}
+function unapprovedUi(filters, cat){
+  const allowed=allowedKeysUi(cat);
+  const no=new Set(APPROVED_NO_UI[cat]||[]);
+  const rows=[];
+  for(const [name, raw] of Object.entries(filters||{})){
+    if(!filterFilled(raw)) continue;
+    if(allowed.has(name)) continue;
+    rows.push({
+      name, value:filterValueText(raw), ok:false, kind:'unapproved',
+      reason: no.has(name)?'запрещён':'несогласованный фильтр',
+    });
+  }
+  return rows;
+}
+function mismatchesUi(filters, cat, description, annotation){
+  const issues=[];
+  const desc=filterPlain(description);
+  const ann=filterPlain(annotation);
+  const depthKey=lookupApprovedUi(filters,'Глубина',cat);
+  const depthLabel=filterValueText(depthKey.value);
+  const triplesD=dimTriplesUi(desc);
+  const triplesA=dimTriplesUi(ann);
+  const annDepth=labeledCmUi(ann,['глубина','глубина, см']) ?? triplesA[0]?.depth;
+  const descDepth=labeledCmUi(desc,['глубина','глубина, см']) ?? triplesD[0]?.depth;
+  if(depthLabel && descDepth!=null && inBucketUi(descDepth, depthLabel.split(',')[0].trim())===false){
+    issues.push({
+      name:'Глубина', kind:'cross_field',
+      detail:`Глубина: в description ${descDepth} см, бакет filters «${depthLabel}»`,
+      description:descDepth, filter:depthLabel, annotation:annDepth,
+    });
+  }else if(depthLabel && descDepth!=null && annDepth!=null && Math.abs(descDepth-annDepth)>0.6){
+    issues.push({
+      name:'Глубина', kind:'cross_field',
+      detail:`Глубина: description ${descDepth} ≠ annotation ${annDepth} (фильтр «${depthLabel}»)`,
+      description:descDepth, annotation:annDepth, filter:depthLabel,
+    });
+  }
+  if(/тип\s+двигателя\s+не\s+указан|двигател\w*\s+не\s+указан/i.test(desc) && filterFilled(filters?.['Тип двигателя'])){
+    issues.push({
+      name:'Тип двигателя', kind:'cross_field',
+      detail:`description говорит «тип двигателя не указан», filters = «${filterValueText(filters['Тип двигателя'])}»`,
+      description:'не указан', filter:filterValueText(filters['Тип двигателя']),
+    });
+  }
+  return issues;
+}
+function clientFilterTest(r, idx){
+  const cat=runFilterCatId(r, idx);
+  const names=APPROVED_YES_UI[cat]||[];
+  const filters=r?.filters;
+  if(!names.length){
+    if(!filters||typeof filters!=='object'||Array.isArray(filters)) return null;
+    const rows=Object.entries(filters).map(([name,v])=>({
+      name, value:filterValueText(v), ok:filterFilled(v), kind:'approved',
+    }));
+    if(!rows.length) return null;
+    const filled=rows.filter(x=>x.ok).length;
+    return {total:rows.length, filled, empty:rows.length-filled, coverage:Math.round(filled/rows.length*100), rows, unapproved:[], mismatches:[], approved_names:rows.map(x=>x.name)};
+  }
+  const f=(filters&&typeof filters==='object'&&!Array.isArray(filters))?filters:{};
+  const rows=names.map(name=>{
+    const hit=lookupApprovedUi(f, name, cat);
+    return {name, key:hit.key, value:filterValueText(hit.value), ok:hit.ok, kind:'approved'};
+  });
+  const filled=rows.filter(x=>x.ok).length;
+  const i=idx==null?results.indexOf(r):idx;
+  const it=i>=0?items[i]:null;
+  const desc=r?.enriched?.description||r?.description_html||r?.original?.description||it?.description||'';
+  const ann=r?.annotation_html||r?.original?.annotation||r?.enriched?.annotation||it?.annotation||'';
+  const unapproved=unapprovedUi(f, cat);
+  const mismatches=mismatchesUi(f, cat, desc, ann);
+  return {
+    category_id:cat,
+    approved_names:names,
+    total:rows.length, filled, empty:rows.length-filled,
+    coverage:rows.length?Math.round(filled/rows.length*100):0,
+    rows, unapproved, mismatches,
+  };
+}
+
+function filterTestOf(r, idx){
   const cov=r?.filter_coverage;
   if(cov&&typeof cov==='object'&&Array.isArray(cov.rows)){
     const rows=cov.rows.map(row=>({
       name:String(row.name||''),
       value:row.value==null?'':String(row.value),
       ok:!!row.ok,
+      kind:row.kind||'approved',
     }));
     const filled=typeof cov.filled==='number'?cov.filled:rows.filter(x=>x.ok).length;
     const total=typeof cov.total==='number'?cov.total:rows.length;
     return {
+      category_id:cov.category_id||runFilterCatId(r, idx),
+      approved_names:Array.isArray(cov.approved_names)&&cov.approved_names.length?cov.approved_names:rows.map(x=>x.name),
       total,
       filled,
       empty:Math.max(0,total-filled),
       coverage:typeof cov.coverage==='number'?cov.coverage:(total?Math.round(filled/total*100):0),
       rows,
+      unapproved:Array.isArray(cov.unapproved)?cov.unapproved:[],
+      mismatches:Array.isArray(cov.mismatches)?cov.mismatches:[],
     };
   }
-  const f=r?.filters;
-  if(!f||typeof f!=='object'||Array.isArray(f)) return null;
-  const rows=Object.entries(f).map(([name,v])=>{
-    const ok=!(v==null||v===''||(Array.isArray(v)&&!v.length));
-    const value=Array.isArray(v)?v.join(', '):String(v??'');
-    return {name,value,ok};
-  });
-  if(!rows.length) return null;
-  const filled=rows.filter(x=>x.ok).length;
-  return {total:rows.length,filled,empty:rows.length-filled,coverage:Math.round(filled/rows.length*100),rows};
+  return clientFilterTest(r, idx);
 }
 
-/** Сводка по всему прогону: фильтр | есть | нет | покрытие_% */
+/** Сводка по батчу: знаменатель — согласованный лист, не ключи выдачи. */
 function runFilterCoverageTable(){
-  const tests=results.map(r=>filterTestOf(r)).filter(Boolean);
-  if(!tests.length) return null;
-  const names=[];
-  const seen=new Set();
-  for(const t of tests){
-    for(const row of t.rows){
-      if(!row.name||seen.has(row.name)) continue;
-      seen.add(row.name);
-      names.push(row.name);
+  const packed=[];
+  results.forEach((r,i)=>{
+    if(!r) return;
+    const t=filterTestOf(r,i);
+    if(t) packed.push({t,i});
+  });
+  if(!packed.length) return null;
+  let names=packed.find(p=>p.t.approved_names?.length)?.t.approved_names;
+  if(!names?.length){
+    const cat=runFilterCatId(packed[0].t, packed[0].i);
+    names=APPROVED_YES_UI[cat]?APPROVED_YES_UI[cat].slice():[];
+  }
+  if(!names?.length){
+    const seen=new Set();
+    names=[];
+    for(const {t} of packed){
+      for(const row of t.rows||[]){
+        if(!row.name||seen.has(row.name)) continue;
+        seen.add(row.name);
+        names.push(row.name);
+      }
     }
   }
-  const total=tests.length;
+  const total=packed.length;
   const filters=names.map(name=>{
-    const filled=tests.filter(t=>t.rows.some(row=>row.name===name&&row.ok)).length;
-    return {name,filled,empty:total-filled,coverage:Math.round(filled/total*100),total};
+    const filled=packed.filter(p=>p.t.rows.some(row=>row.name===name&&row.ok)).length;
+    return {name, filled, empty:total-filled, coverage:Math.round(filled/total*100), total};
   });
-  return {total,filters};
+  const extraMap=new Map();
+  const mismatches=[];
+  for(const {t,i} of packed){
+    for(const u of t.unapproved||[]){
+      const prev=extraMap.get(u.name)||{name:u.name, filled:0, empty:0, coverage:0, total, reason:u.reason||'несогласованный фильтр'};
+      prev.filled+=1;
+      extraMap.set(u.name, prev);
+    }
+    const id=items[i]?.id??results[i]?.original?.id??null;
+    for(const m of t.mismatches||[]){
+      mismatches.push({...m, id});
+    }
+  }
+  const unapproved=[...extraMap.values()].map(u=>({...u, empty:total-u.filled, coverage:Math.round(u.filled/total*100)}));
+  return {total, filters, unapproved, mismatches};
 }
 
-function renderFilterTests(test, {live=false, title='Тесты фильтров'}={}){
+function renderFilterTests(test, {live=false}={}){
   if(live&&!test){
     return `<div class="eboard-empty">Тесты фильтров появятся после обогащения.</div>`;
   }
   if(!test){
-    return `<div class="eboard-empty">Нет тестов фильтров — для категории нет справочника, либо filters не собрались.</div>`;
+    return `<div class="eboard-empty">Нет тестов фильтров — нет согласованного листа или filters не собрались.</div>`;
   }
-  const tone=test.coverage>=100?'ok':(test.coverage>=70?'warn':'err');
-  return `<div class="cov-head ${tone}">${test.filled} / ${test.total} · покрытие ${test.coverage}%</div>`
+  const extras=test.unapproved||[];
+  const bad=test.mismatches||[];
+  const tone=(!test.rows.some(r=>!r.ok)&&!extras.length&&!bad.length)?'ok':(test.coverage>=70&&!extras.length?'warn':'err');
+  let html=`<div class="cov-note">Тест одной карточки — присутствие по листу «да», не % покрытия прогона.</div>`
+    +`<div class="cov-head ${tone}">${test.filled} / ${test.total} согласованных</div>`
     +`<div class="cov-row cov-cols"><span>Фильтр</span><span>значение</span><span></span></div>`
     +`<div class="cov-table">${test.rows.map(row=>
       `<div class="cov-row ${row.ok?'ok':'miss'}">`
@@ -6708,16 +6916,40 @@ function renderFilterTests(test, {live=false, title='Тесты фильтров
       +`<span class="cv-st">${row.ok?'есть':'нет'}</span>`
       +`</div>`
     ).join('')}</div>`;
+  if(extras.length){
+    html+=`<div class="spec-title mt">Несогласованные фильтры</div>`
+      +`<div class="cov-table">${extras.map(row=>
+        `<div class="cov-row extra">`
+        +`<span class="cv-k">${esc(row.name)}</span>`
+        +`<span class="cv-v">${esc(row.value||'—')}</span>`
+        +`<span class="cv-st">${esc(row.reason||'лишний')}</span>`
+        +`</div>`
+      ).join('')}</div>`;
+  }
+  if(bad.length){
+    html+=`<div class="spec-title mt">Расхождение значений</div>`
+      +`<div class="cov-table">${bad.map(row=>
+        `<div class="cov-row mismatch">`
+        +`<span class="cv-k">${esc(row.name||row.kind||'факт')}</span>`
+        +`<span class="cv-v">${esc(row.detail||'')}</span>`
+        +`<span class="cv-st">сверка</span>`
+        +`</div>`
+      ).join('')}</div>`;
+  }
+  return html;
 }
 
 function filterTestsSummaryHtml(table){
   if(!table||!table.filters.length){
-    return `<div class="eboard-empty">Нет тестов фильтров — обогатите товары со справочником категории.</div>`;
+    return `<div class="eboard-empty">Нет тестов фильтров — обогатите товары выбранной категории.</div>`;
   }
   const all=table.filters.filter(f=>f.coverage>=100).length;
-  const tone=all===table.filters.length?'ok':(all>0?'warn':'err');
-  return `<div class="filter-tests ${tone}">`
+  const extras=table.unapproved||[];
+  const bad=table.mismatches||[];
+  const tone=(all===table.filters.length&&!extras.length&&!bad.length)?'ok':(all>0?'warn':'err');
+  let html=`<div class="filter-tests ${tone}">`
     +`<div class="spec-title">Покрытие прогона <i>${all}/${table.filters.length} по 100% · ${table.total} карт.</i></div>`
+    +`<div class="cov-note">Знаменатель — согласованный лист («есть в фильтре = да»), не ключи выдачи. % = заполнено / карточек в батче.</div>`
     +`<div class="cov-row cov-cols"><span>Фильтр</span><span>есть / нет</span><span>%</span></div>`
     +`<div class="cov-table cov-table-run">${table.filters.map(f=>
       `<div class="cov-row ${f.coverage>=100?'ok':'miss'}">`
@@ -6725,15 +6957,37 @@ function filterTestsSummaryHtml(table){
       +`<span class="cv-v">${f.filled} / ${f.empty}</span>`
       +`<span class="cv-st">${f.coverage}%</span>`
       +`</div>`
-    ).join('')}</div></div>`;
+    ).join('')}</div>`;
+  if(extras.length){
+    html+=`<div class="spec-title mt">Несогласованные фильтры</div>`
+      +`<div class="cov-row cov-cols"><span>Ключ в выдаче</span><span>карточек</span><span></span></div>`
+      +`<div class="cov-table">${extras.map(f=>
+        `<div class="cov-row extra">`
+        +`<span class="cv-k">${esc(f.name)}</span>`
+        +`<span class="cv-v">${f.filled} / ${table.total}</span>`
+        +`<span class="cv-st">${esc(f.reason||'лишний')}</span>`
+        +`</div>`
+      ).join('')}</div>`;
+  }
+  if(bad.length){
+    html+=`<div class="spec-title mt">Расхождение значений</div>`
+      +`<div class="cov-table">${bad.map(row=>
+        `<div class="cov-row mismatch">`
+        +`<span class="cv-k">${esc(row.id!=null?`id ${row.id}`:(row.name||''))}</span>`
+        +`<span class="cv-v">${esc(row.detail||row.name||'')}</span>`
+        +`<span class="cv-st">сверка</span>`
+        +`</div>`
+      ).join('')}</div>`;
+  }
+  return html+`</div>`;
 }
 
 function filterTestsModalHtml(){
   const table=runFilterCoverageTable();
-  const card=results[curIdx]?filterTestOf(results[curIdx]):null;
+  const card=results[curIdx]?filterTestOf(results[curIdx], curIdx):null;
   let html=filterTestsSummaryHtml(table);
   if(card){
-    html+=`<div class="spec-title mt">Текущая карточка <i>${card.filled}/${card.total} · ${card.coverage}%</i></div>`
+    html+=`<div class="spec-title mt">Тест одной карточки</div>`
       +renderFilterTests(card);
   }
   return html;
@@ -7877,6 +8131,7 @@ function applyJob(d){
       validation_issues:r.validation_issues||null,
       ...(r.filters&&typeof r.filters==='object'?{filters:r.filters}:{}),
       ...(r.filter_coverage&&typeof r.filter_coverage==='object'?{filter_coverage:r.filter_coverage}:{}),
+      ...(r.category_id?{category_id:r.category_id}:{}),
       source:r.source??null,parser:!!r.parser,corrected:!!r.corrected,iT:r.iT??0,oT:r.oT??0,
       cost:typeof r.cost==='number'?r.cost:null,
       ...(r.parse?{parse:r.parse}:{}),

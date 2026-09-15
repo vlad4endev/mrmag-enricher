@@ -1383,7 +1383,19 @@ function cardFiltersAfterEnrich(schema, product, payload, note) {
   } catch (e) {
     note?.(`filters карточки не собраны: ${e.message}`, { step: 'filters', level: 'warn' });
   }
-  return { filters, filter_coverage: cardFilterCoverage(filters, schema.dict) };
+  const description = payload?.description
+    || payload?.description_html
+    || product?.description
+    || '';
+  const annotation = product?.annotation || product?.annotation_html || '';
+  return {
+    filters,
+    filter_coverage: cardFilterCoverage(filters, schema.dict, {
+      catId: schema.dict.catId,
+      description,
+      annotation,
+    }),
+  };
 }
 
 function publicExportPayload(out) {

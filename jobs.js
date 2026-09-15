@@ -362,6 +362,7 @@ export function createJobStore({
         ...(d.filters && typeof d.filters === 'object' ? { filters: d.filters } : {}),
         ...(d.filter_coverage && typeof d.filter_coverage === 'object'
           ? { filter_coverage: d.filter_coverage } : {}),
+        ...(job.category ? { category_id: job.category } : {}),
         ...(d.skipped ? { skipped: d.skipped } : {}),
         ...(d.needs_review && !d.enriched ? { needs_review: true } : {}),
         ...(d.validation_issues ? { validation_issues: d.validation_issues } : {}),

@@ -1169,6 +1169,52 @@ t('после обогащения видны тесты фильтров кар
   api.closeFilterTests();
   assert.strictEqual(G('filterTestsModal').hidden, true);
 });
+t('панель 11391: лист «да», лишний вид, сверка глубины', () => {
+  st.pickCat = '467';
+  st.items = [{
+    id: 11391,
+    name: 'Стиральная машина ATLANT 60С1010',
+    annotation: '<ul><li>Глубина - 55 см</li><li>Тип двигателя - Коллекторный</li></ul>',
+  }];
+  st.results = [{
+    ...ok(),
+    original: {
+      id: 11391,
+      annotation: '<ul><li>Глубина - 55 см</li><li>Тип двигателя - Коллекторный</li></ul>',
+    },
+    filters: {
+      'Вид стиральной машины': ['Автоматическая'],
+      'Глубина, см': ['55-60'],
+      'Тип двигателя': ['Коллекторный'],
+      'Тип загрузки': ['Фронтальная'],
+    },
+    enriched: {
+      specs: {},
+      warnings: [],
+      description: 'Габариты (В×Ш×Г) — 846×596×482 мм. Машина не имеет сушки, тип двигателя не указан.',
+    },
+  }];
+  const one = api.filterTestOf(st.results[0], 0);
+  const dims = one.rows.find(r => r.name === 'Габариты (ШхГхВ)');
+  assert.ok(dims, 'Габариты есть в списке листа');
+  assert.strictEqual(dims.ok, false);
+  assert.ok(one.unapproved.some(u => u.name === 'Вид стиральной машины'));
+  assert.ok(one.mismatches.some(m => /глубин/i.test(m.name+m.detail)));
+  const table = api.runFilterCoverageTable();
+  assert.ok(table.total >= 1);
+  const dimsRow = table.filters.find(f => f.name === 'Габариты (ШхГхВ)');
+  assert.strictEqual(dimsRow.coverage, 0);
+  const extra = table.unapproved.find(f => f.name === 'Вид стиральной машины');
+  assert.ok(extra);
+  api.selectResult(0);
+  api.openFilterTests();
+  const body = G('filterTestsBody').innerHTML;
+  assert.match(body, /Габариты \(ШхГхВ\)/);
+  assert.match(body, /несогласованный фильтр|Вид стиральной машины/);
+  assert.match(body, /482|48\.2|55-60|глубин/i);
+  api.closeFilterTests();
+  st.pickCat = null;
+});
 t('поиск без характеристик всё равно показывает Yandex и запрос', () => {
   st.results = [{
     ...ok(),

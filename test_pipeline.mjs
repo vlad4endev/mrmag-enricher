@@ -3106,13 +3106,41 @@ console.log('golden tests passed');
   const cov = cardFilterCoverage(cardFilters, d467);
   assert.ok(cov.total >= 10, `ожидали витринные оси, получили ${cov.total}`);
   assert.equal(cov.filled + cov.empty, cov.total);
-  const loadRow = cov.rows.find(r => r.name === 'Загрузка белья, кг');
+  const loadRow = cov.rows.find(r =>
+    r.name === 'Максимальная загрузка белья'
+    || r.name === 'Загрузка белья, кг'
+    || r.key === 'Загрузка белья, кг'
+  );
   assert.ok(loadRow?.ok);
   assert.match(String(loadRow.value), /7/);
   const emptyCov = cardFilterCoverage({}, d467);
   assert.equal(emptyCov.filled, 0);
   assert.equal(emptyCov.coverage, 0);
   assert.ok(emptyCov.rows.every(r => !r.ok));
+  assert.ok(emptyCov.rows.some(r => r.name === 'Габариты (ШхГхВ)'), 'лист «да» включает габариты даже при пустом filters');
+
+  {
+    const buggy11391 = cardFilterCoverage({
+      'Вид стиральной машины': ['Автоматическая'],
+      'Глубина, см': ['55-60'],
+      'Тип двигателя': ['Коллекторный'],
+      'Тип загрузки': ['Фронтальная'],
+    }, d467, {
+      description: 'Габариты (В×Ш×Г) — 846×596×482 мм. Машина не имеет сушки, тип двигателя не указан.',
+      annotation: '<ul><li>Глубина - 55 см</li><li>Тип двигателя - Коллекторный</li></ul>',
+    });
+    const dims = buggy11391.rows.find(r => r.name === 'Габариты (ШхГхВ)');
+    assert.ok(dims, 'Габариты должны быть в списке проверки');
+    assert.equal(dims.ok, false, 'отсутствующий ключ = провал, не «нет в списке»');
+    assert.ok(
+      buggy11391.unapproved.some(u => u.name === 'Вид стиральной машины'),
+      `ждали несогласованный «Вид стиральной машины», получили ${JSON.stringify(buggy11391.unapproved)}`,
+    );
+    assert.ok(
+      buggy11391.mismatches.some(m => /глубин/i.test(m.name) && /48|482|55-60/.test(String(m.detail))),
+      `ждали сверку глубины 482 vs 55-60, получили ${JSON.stringify(buggy11391.mismatches)}`,
+    );
+  }
 
   const dryer = { id: 455270, name: 'Сушильная машина Pioneer DM-10701WH' };
   assert.ok(markCategoryMismatch(dryer, '467'));

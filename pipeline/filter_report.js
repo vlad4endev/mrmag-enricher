@@ -4,6 +4,15 @@
 
 import { isBrandAttr } from './types.js';
 import { requiredFilterAttrs } from './required_filters.js';
+import {
+  approvedFilters,
+  unapprovedFilterRows,
+  lookupApprovedValue,
+  displayFilterValue,
+  hasFilterValue,
+  catKey,
+} from './approved_filters.js';
+import { auditFilterValues } from './filter_value_audit.js';
 
 const FEW_FILTERS = 5;
 
@@ -14,39 +23,61 @@ function filterNamesFromDict(dict) {
     .map(a => a.facet.label || a.name);
 }
 
-function displayFilterValue(v) {
-  if (v == null || v === '') return '';
-  return Array.isArray(v) ? v.map(x => String(x)).filter(Boolean).join(', ') : String(v);
-}
-
 /**
- * Тест одной карточки после обогащения: все витринные фильтры справочника
- * и покрытие filled/total. Пустой filters даёт 0% — это тоже результат.
+ * Тест одной карточки: строки листа «да», не ключи выходного filters.
+ * Отсутствующий ключ = провал. Лишний ключ → unapproved, не успех.
  */
-export function cardFilterCoverage(filters, dict) {
+export function cardFilterCoverage(filters, dict, opts = {}) {
+  const catId = catKey(opts.catId || dict?.catId || '');
+  const sheetNames = approvedFilters(catId);
   const fromDict = filterNamesFromDict(dict);
-  const keys = Object.keys(filters || {});
-  const names = fromDict.length ? fromDict : keys;
+  const names = sheetNames.length
+    ? sheetNames
+    : (fromDict.length ? fromDict : Object.keys(filters || {}));
+  const usingSheet = sheetNames.length > 0;
+
   const rows = names.map((name) => {
+    if (usingSheet) {
+      const hit = lookupApprovedValue(filters, name, catId);
+      return {
+        name,
+        key: hit.key,
+        value: displayFilterValue(hit.value),
+        ok: hit.ok,
+        kind: 'approved',
+      };
+    }
     const ok = hasFilterValue(filters, name);
-    return { name, value: displayFilterValue(filters?.[name]), ok };
+    return { name, key: name, value: displayFilterValue(filters?.[name]), ok, kind: 'approved' };
   });
   const filled = rows.filter(r => r.ok).length;
   const total = rows.length;
+  const unapproved = usingSheet ? unapprovedFilterRows(filters, catId) : [];
+  const mismatches = auditFilterValues({
+    filters,
+    dict,
+    category: catId,
+    description: opts.description || opts.description_html || '',
+    annotation: opts.annotation || opts.annotation_html || '',
+  });
   return {
+    category_id: catId || null,
+    approved_names: names,
     total,
     filled,
     empty: Math.max(0, total - filled),
     coverage: total ? Math.round((filled / total) * 100) : 0,
     rows,
+    unapproved,
+    mismatches,
+    ok: total > 0
+      && filled === total
+      && unapproved.length === 0
+      && mismatches.length === 0,
   };
 }
 
-function hasFilterValue(filters, name) {
-  const v = filters?.[name];
-  if (v == null || v === '') return false;
-  return Array.isArray(v) ? v.length > 0 : true;
-}
+export { hasFilterValue, displayFilterValue };
 
 function unmappedList(mapForName) {
   if (!mapForName) return [];

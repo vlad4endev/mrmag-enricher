@@ -70,10 +70,12 @@ export function cardFilterCoverage(filters, dict, opts = {}) {
     rows,
     unapproved,
     mismatches,
-    ok: total > 0
-      && filled === total
-      && unapproved.length === 0
-      && mismatches.length === 0,
+    category_mismatch: Boolean(opts.category_mismatch),
+    ok: Boolean(opts.category_mismatch)
+      || (total > 0
+        && filled === total
+        && unapproved.length === 0
+        && mismatches.length === 0),
   };
 }
 

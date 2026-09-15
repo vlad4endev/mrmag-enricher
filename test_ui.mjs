@@ -1169,7 +1169,7 @@ t('после обогащения видны тесты фильтров кар
   api.closeFilterTests();
   assert.strictEqual(G('filterTestsModal').hidden, true);
 });
-t('панель 11391: лист «да», лишний вид, сверка глубины', () => {
+t('панель 11391: лист «да», вид как тип, сверка глубины', () => {
   st.pickCat = '467';
   st.items = [{
     id: 11391,
@@ -1187,6 +1187,7 @@ t('панель 11391: лист «да», лишний вид, сверка гл
       'Глубина, см': ['55-60'],
       'Тип двигателя': ['Коллекторный'],
       'Тип загрузки': ['Фронтальная'],
+      'Серия': ['ATLANT'],
     },
     enriched: {
       specs: {},
@@ -1198,21 +1199,84 @@ t('панель 11391: лист «да», лишний вид, сверка гл
   const dims = one.rows.find(r => r.name === 'Габариты (ШхГхВ)');
   assert.ok(dims, 'Габариты есть в списке листа');
   assert.strictEqual(dims.ok, false);
-  assert.ok(one.unapproved.some(u => u.name === 'Вид стиральной машины'));
+  const typeRow = one.rows.find(r => r.name === 'Тип');
+  assert.ok(typeRow?.ok, 'вид закрывает согласованный тип');
+  assert.ok(!one.unapproved.some(u => u.name === 'Вид стиральной машины'));
+  assert.ok(one.unapproved.some(u => u.name === 'Серия'));
   assert.ok(one.mismatches.some(m => /глубин/i.test(m.name+m.detail)));
   const table = api.runFilterCoverageTable();
   assert.ok(table.total >= 1);
   const dimsRow = table.filters.find(f => f.name === 'Габариты (ШхГхВ)');
   assert.strictEqual(dimsRow.coverage, 0);
-  const extra = table.unapproved.find(f => f.name === 'Вид стиральной машины');
-  assert.ok(extra);
+  assert.ok(!table.unapproved.find(f => f.name === 'Вид стиральной машины'));
+  assert.ok(table.unapproved.find(f => f.name === 'Серия'));
   api.selectResult(0);
   api.openFilterTests();
   const body = G('filterTestsBody').innerHTML;
   assert.match(body, /Габариты \(ШхГхВ\)/);
-  assert.match(body, /несогласованный фильтр|Вид стиральной машины/);
+  assert.match(body, /Серия/);
+  assert.match(body, /несогласованный фильтр/);
+  assert.doesNotMatch(body, /cov-row extra[\s\S]*Вид стиральной машины/);
   assert.match(body, /482|48\.2|55-60|глубин/i);
   api.closeFilterTests();
+  st.pickCat = null;
+});
+t('сушилка не в знаменателе покрытия прогона', () => {
+  st.pickCat = '467';
+  st.items = [
+    { id: 1, name: 'Стиральная машина ATLANT 60С1010' },
+    { id: 2, name: 'Сушильная машина Pioneer DM-10701WH' },
+  ];
+  st.results = [
+    {
+      ...ok(),
+      original: { name: 'Стиральная машина ATLANT 60С1010' },
+      filters: { 'Цвет корпуса': ['Белый'] },
+      filter_coverage: {
+        category_id: '467',
+        total: 1, filled: 1, empty: 0, coverage: 100,
+        rows: [{ name: 'Цвет корпуса', value: 'Белый', ok: true }],
+      },
+    },
+    {
+      ...ok(),
+      original: { name: 'Сушильная машина Pioneer DM-10701WH' },
+      filters: {},
+      filter_coverage: {
+        category_id: '467',
+        total: 1, filled: 0, empty: 1, coverage: 0,
+        rows: [{ name: 'Цвет корпуса', value: '', ok: false }],
+      },
+    },
+  ];
+  const table = api.runFilterCoverageTable();
+  assert.strictEqual(table.total, 1);
+  assert.strictEqual(table.skipped, 1);
+  const color = table.filters.find(f => f.name === 'Цвет корпуса');
+  assert.strictEqual(color.filled, 1);
+  assert.strictEqual(color.empty, 0);
+  assert.strictEqual(color.coverage, 100);
+  api.openFilterTests();
+  assert.match(G('filterTestsBody').innerHTML, /1 своих · 1 не категория/);
+  api.closeFilterTests();
+  st.pickCat = null;
+});
+t('поздний алиас вида не в несогласованных даже из сохранённого покрытия', () => {
+  st.pickCat = '467';
+  st.items = [{ id: 1, name: 'Стиральная машина X' }];
+  st.results = [{
+    ...ok(),
+    filters: { 'Вид стиральной машины': ['Автоматическая'] },
+    filter_coverage: {
+      category_id: '467',
+      total: 1, filled: 0, empty: 1, coverage: 0,
+      rows: [{ name: 'Тип', value: '', ok: false }],
+      unapproved: [{ name: 'Вид стиральной машины', reason: 'несогласованный фильтр' }],
+    },
+  }];
+  const one = api.filterTestOf(st.results[0], 0);
+  assert.ok(one.rows.find(r => r.name === 'Тип')?.ok);
+  assert.ok(!one.unapproved.some(u => u.name === 'Вид стиральной машины'));
   st.pickCat = null;
 });
 t('поиск без характеристик всё равно показывает Yandex и запрос', () => {

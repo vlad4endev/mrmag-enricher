@@ -99,6 +99,7 @@ import {
   buildCustomerExport, buildGoldShapeExport, buildFiltersOnly, fillCardFiltersAfterEnrich,
 } from './pipeline/export.js';
 import { cardFilterCoverage } from './pipeline/filter_report.js';
+import { categoryMismatchOf } from './pipeline/category_mismatch.js';
 import { dictForProducts, expectedDictCatId } from './pipeline/schema.js';
 import { collectParseHits, formatParseNotes, slimParseTrace } from './pipeline/parse.js';
 import { createJobStore } from './jobs.js';
@@ -1388,12 +1389,14 @@ function cardFiltersAfterEnrich(schema, product, payload, note) {
     || product?.description
     || '';
   const annotation = product?.annotation || product?.annotation_html || '';
+  const mismatch = Boolean(categoryMismatchOf(product?.name || product?.title, schema.dict.catId));
   return {
     filters,
     filter_coverage: cardFilterCoverage(filters, schema.dict, {
       catId: schema.dict.catId,
       description,
       annotation,
+      category_mismatch: mismatch,
     }),
   };
 }
@@ -2019,10 +2022,30 @@ async function apiEnrich(req, res) {
   }
 }
 
+/** Пересчёт filters после смены сборки — без повторного вызова модели. */
+const FILTER_FILL_REV = 3;
+
+function refreshJobCardFilters(product, result, category) {
+  if (!product || !result || result.error || result.skipped) return null;
+  try {
+    const schema = schemaForProduct(product, category, ROOT);
+    const payload = result.enriched && typeof result.enriched === 'object'
+      ? result.enriched
+      : { specs: {}, description: result.description_html || product.description || '' };
+    return cardFiltersAfterEnrich(schema, product, payload);
+  } catch {
+    return null;
+  }
+}
+
 // ── ФОНОВЫЕ ПРОГОНЫ ──────────────────────────────────────────
 // Цикл по товарам крутит сервер, а не вкладка: закрытый браузер больше не
 // обрывает работу на середине. Подробности и формат — в jobs.js.
-const store = createJobStore({ enrichOne });
+const store = createJobStore({
+  enrichOne,
+  refreshFilters: refreshJobCardFilters,
+  filterFillRev: FILTER_FILL_REV,
+});
 
 async function describePhotoOne({ albumId, itemId, model, provider, onNote = () => {} }) {
   const settings = loadSettings(ROOT);

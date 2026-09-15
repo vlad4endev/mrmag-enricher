@@ -3125,7 +3125,7 @@ console.log('golden tests passed');
 {
   const { matchBucket, toIntEnum, coerceFacetNumber, assignFilterValues, buildFilters } = await import('./pipeline/facets.js');
   const { applyEnrichedSpecs } = await import('./pipeline/export.js');
-  const { markCategoryMismatch } = await import('./pipeline/category_mismatch.js');
+  const { markCategoryMismatch, categoryMismatchOf } = await import('./pipeline/category_mismatch.js');
   const { buildFilterCoverageReport } = await import('./pipeline/filter_report.js');
   const { aliasValue } = await import('./pipeline/types.js');
 
@@ -3339,6 +3339,23 @@ console.log('golden tests passed');
     const dryerCov = cardFilterCoverage({}, d467, { category_mismatch: true });
     assert.equal(dryerCov.category_mismatch, true);
     assert.equal(dryerCov.ok, true, 'mismatch не считается дырой покрытия');
+    const holes = {};
+    let eligible = 0;
+    for (const p of loadProducts('data_467.json')) {
+      if (categoryMismatchOf(p.name, '467')) continue;
+      eligible++;
+      const f = fillCardFiltersAfterEnrich(p, { specs: {}, description: p.description || '' }, d467, config);
+      const cov = cardFilterCoverage(f, d467, { catId: '467' });
+      for (const row of cov.rows) {
+        if (!row.ok) holes[row.name] = (holes[row.name] || 0) + 1;
+      }
+    }
+    const bad = Object.entries(holes).filter(([, n]) => n > 0);
+    assert.equal(
+      bad.length,
+      0,
+      `дыры на ${eligible} своих 467: ${JSON.stringify(Object.fromEntries(bad))}`,
+    );
   }
 
   const { parseDimensions } = await import('./pipeline/dimensions.js');

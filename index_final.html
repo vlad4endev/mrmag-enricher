@@ -6670,6 +6670,29 @@ function runFilterCatId(r, idx){
     || pickCat
   );
 }
+const CAT_KIND_UI={467:'washer',523:'fridge',929:'hood'};
+function inferProductKindUi(name){
+  const n=String(name||'').replace(/ё/g,'е');
+  if(/соединительн|элемент\s*ck|комплект\s*для\s*колонн|переходник/i.test(n)&&!/стиральн/i.test(n)&&!/холодильник/i.test(n)) return 'accessory';
+  if(/сушильн|суш(?:ильная)?\s*маш/i.test(n)&&!/стиральн/i.test(n)) return 'dryer';
+  if(/стиральн/i.test(n)) return 'washer';
+  if(/холодильник/i.test(n)) return 'fridge';
+  if(/вытяжк|воздухоочист/i.test(n)) return 'hood';
+  return 'other';
+}
+function productNameOf(r, idx){
+  const i=idx==null?results.indexOf(r):idx;
+  const it=i>=0?items[i]:null;
+  return it?.name||it?.title||r?.original?.name||r?.name||'';
+}
+/** Сушилка в 467 не портит % стиральных осей. Флаг с сервера или имя. */
+function isCategoryMismatchUi(r, idx){
+  if(r?.filter_coverage?.category_mismatch) return true;
+  const expected=CAT_KIND_UI[runFilterCatId(r, idx)];
+  if(!expected) return false;
+  const got=inferProductKindUi(productNameOf(r, idx));
+  return got!==expected && got!=='other';
+}
 function filterFilled(v){
   if(v==null||v==='') return false;
   return Array.isArray(v)?v.length>0:true;
@@ -6730,18 +6753,28 @@ function labeledCmUi(text, labels){
   }
   return null;
 }
+function aliasKeysUi(sheetName, cat){
+  const map=APPROVED_MAP_UI[cat]||{};
+  const canonical=map[sheetName]||sheetName;
+  const keys=new Set([sheetName, canonical].filter(Boolean));
+  for(const [from,to] of Object.entries(map)){
+    if(to===canonical||to===sheetName||from===sheetName||from===canonical){
+      keys.add(from); keys.add(to);
+    }
+  }
+  return keys;
+}
 function allowedKeysUi(cat){
   const yes=APPROVED_YES_UI[cat]||[];
-  const map=APPROVED_MAP_UI[cat]||{};
   const out=new Set();
-  for(const n of yes){ out.add(n); out.add(map[n]||n); }
+  for(const n of yes) for(const k of aliasKeysUi(n,cat)) out.add(k);
   return out;
 }
 function lookupApprovedUi(filters, sheetName, cat){
-  const key=(APPROVED_MAP_UI[cat]||{})[sheetName]||sheetName;
-  if(filterFilled(filters?.[key])) return {key, value:filters[key], ok:true};
-  if(key!==sheetName && filterFilled(filters?.[sheetName])) return {key:sheetName, value:filters[sheetName], ok:true};
-  return {key, value:null, ok:false};
+  for(const key of aliasKeysUi(sheetName, cat)){
+    if(filterFilled(filters?.[key])) return {key, value:filters[key], ok:true};
+  }
+  return {key:(APPROVED_MAP_UI[cat]||{})[sheetName]||sheetName, value:null, ok:false};
 }
 function unapprovedUi(filters, cat){
   const allowed=allowedKeysUi(cat);
@@ -6820,30 +6853,41 @@ function clientFilterTest(r, idx){
     total:rows.length, filled, empty:rows.length-filled,
     coverage:rows.length?Math.round(filled/rows.length*100):0,
     rows, unapproved, mismatches,
+    category_mismatch:isCategoryMismatchUi(r, idx),
   };
 }
 
 function filterTestOf(r, idx){
   const cov=r?.filter_coverage;
+  const cat=runFilterCatId(r, idx);
+  const filters=(r?.filters&&typeof r.filters==='object'&&!Array.isArray(r.filters))?r.filters:{};
+  const allowed=cat?allowedKeysUi(cat):null;
   if(cov&&typeof cov==='object'&&Array.isArray(cov.rows)){
-    const rows=cov.rows.map(row=>({
-      name:String(row.name||''),
-      value:row.value==null?'':String(row.value),
-      ok:!!row.ok,
-      kind:row.kind||'approved',
-    }));
-    const filled=typeof cov.filled==='number'?cov.filled:rows.filter(x=>x.ok).length;
+    const rows=cov.rows.map(row=>{
+      const name=String(row.name||'');
+      let ok=!!row.ok;
+      let value=row.value==null?'':String(row.value);
+      if(!ok && cat){
+        const hit=lookupApprovedUi(filters, name, cat);
+        if(hit.ok){ ok=true; value=filterValueText(hit.value); }
+      }
+      return { name, value, ok, kind:row.kind||'approved' };
+    });
+    const filled=rows.filter(x=>x.ok).length;
     const total=typeof cov.total==='number'?cov.total:rows.length;
+    let unapproved=Array.isArray(cov.unapproved)?cov.unapproved.slice():[];
+    if(allowed) unapproved=unapproved.filter(u=>!allowed.has(u.name));
     return {
-      category_id:cov.category_id||runFilterCatId(r, idx),
+      category_id:cov.category_id||cat,
       approved_names:Array.isArray(cov.approved_names)&&cov.approved_names.length?cov.approved_names:rows.map(x=>x.name),
       total,
       filled,
       empty:Math.max(0,total-filled),
-      coverage:typeof cov.coverage==='number'?cov.coverage:(total?Math.round(filled/total*100):0),
+      coverage:total?Math.round(filled/total*100):0,
       rows,
-      unapproved:Array.isArray(cov.unapproved)?cov.unapproved:[],
+      unapproved,
       mismatches:Array.isArray(cov.mismatches)?cov.mismatches:[],
+      category_mismatch:!!cov.category_mismatch||isCategoryMismatchUi(r, idx),
     };
   }
   return clientFilterTest(r, idx);
@@ -6855,18 +6899,22 @@ function runFilterCoverageTable(){
   results.forEach((r,i)=>{
     if(!r) return;
     const t=filterTestOf(r,i);
-    if(t) packed.push({t,i});
+    if(!t) return;
+    packed.push({t,i,mismatch:!!t.category_mismatch||isCategoryMismatchUi(r,i)});
   });
   if(!packed.length) return null;
-  let names=packed.find(p=>p.t.approved_names?.length)?.t.approved_names;
+  const skipped=packed.filter(p=>p.mismatch);
+  const used=packed.filter(p=>!p.mismatch);
+  const source=used.length?used:packed;
+  let names=source.find(p=>p.t.approved_names?.length)?.t.approved_names;
   if(!names?.length){
-    const cat=runFilterCatId(packed[0].t, packed[0].i);
+    const cat=runFilterCatId(source[0].t, source[0].i);
     names=APPROVED_YES_UI[cat]?APPROVED_YES_UI[cat].slice():[];
   }
   if(!names?.length){
     const seen=new Set();
     names=[];
-    for(const {t} of packed){
+    for(const {t} of source){
       for(const row of t.rows||[]){
         if(!row.name||seen.has(row.name)) continue;
         seen.add(row.name);
@@ -6874,14 +6922,14 @@ function runFilterCoverageTable(){
       }
     }
   }
-  const total=packed.length;
+  const total=source.length;
   const filters=names.map(name=>{
-    const filled=packed.filter(p=>p.t.rows.some(row=>row.name===name&&row.ok)).length;
-    return {name, filled, empty:total-filled, coverage:Math.round(filled/total*100), total};
+    const filled=source.filter(p=>p.t.rows.some(row=>row.name===name&&row.ok)).length;
+    return {name, filled, empty:total-filled, coverage:total?Math.round(filled/total*100):0, total};
   });
   const extraMap=new Map();
   const mismatches=[];
-  for(const {t,i} of packed){
+  for(const {t,i} of source){
     for(const u of t.unapproved||[]){
       const prev=extraMap.get(u.name)||{name:u.name, filled:0, empty:0, coverage:0, total, reason:u.reason||'несогласованный фильтр'};
       prev.filled+=1;
@@ -6892,8 +6940,8 @@ function runFilterCoverageTable(){
       mismatches.push({...m, id});
     }
   }
-  const unapproved=[...extraMap.values()].map(u=>({...u, empty:total-u.filled, coverage:Math.round(u.filled/total*100)}));
-  return {total, filters, unapproved, mismatches};
+  const unapproved=[...extraMap.values()].map(u=>({...u, empty:total-u.filled, coverage:total?Math.round(u.filled/total*100):0}));
+  return {total, skipped:skipped.length, batch:packed.length, filters, unapproved, mismatches};
 }
 
 function renderFilterTests(test, {live=false}={}){
@@ -6916,6 +6964,9 @@ function renderFilterTests(test, {live=false}={}){
       +`<span class="cv-st">${row.ok?'есть':'нет'}</span>`
       +`</div>`
     ).join('')}</div>`;
+  if(test.category_mismatch){
+    html=`<div class="cov-note">Товар другой категории — оси этого раздела не требуются.</div>`+html;
+  }
   if(extras.length){
     html+=`<div class="spec-title mt">Несогласованные фильтры</div>`
       +`<div class="cov-table">${extras.map(row=>
@@ -6947,9 +6998,12 @@ function filterTestsSummaryHtml(table){
   const extras=table.unapproved||[];
   const bad=table.mismatches||[];
   const tone=(all===table.filters.length&&!extras.length&&!bad.length)?'ok':(all>0?'warn':'err');
+  const skipTxt=table.skipped
+    ? `${table.total} своих · ${table.skipped} не категория`
+    : `${table.total} карт.`;
   let html=`<div class="filter-tests ${tone}">`
-    +`<div class="spec-title">Покрытие прогона <i>${all}/${table.filters.length} по 100% · ${table.total} карт.</i></div>`
-    +`<div class="cov-note">Знаменатель — согласованный лист («есть в фильтре = да»), не ключи выдачи. % = заполнено / карточек в батче.</div>`
+    +`<div class="spec-title">Покрытие прогона <i>${all}/${table.filters.length} по 100% · ${skipTxt}</i></div>`
+    +`<div class="cov-note">Знаменатель — согласованный лист («есть в фильтре = да») по товарам своей категории. % = заполнено / своих карточек.</div>`
     +`<div class="cov-row cov-cols"><span>Фильтр</span><span>есть / нет</span><span>%</span></div>`
     +`<div class="cov-table cov-table-run">${table.filters.map(f=>
       `<div class="cov-row ${f.coverage>=100?'ok':'miss'}">`

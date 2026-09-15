@@ -35,6 +35,8 @@ export const JOB_CONCURRENCY = Math.max(1, Math.min(8, Number(process.env.JOB_CO
 
 export function createJobStore({
   enrichOne,
+  refreshFilters = null,
+  filterFillRev = 0,
   dir = process.env.JOBS_DIR || 'jobs',
   // Неделя: столько живёт результат, за который заплатили и который могли не
   // успеть выгрузить. Дальше он мусор.
@@ -240,6 +242,7 @@ export function createJobStore({
    * detailPos=N — полный пакет одного товара (промпт/ответ/результат).
    */
   function state(job, { from = 0, products = false, logFrom = 0, details = false, detailPos = null } = {}) {
+    refreshStoredFilters(job);
     const at = Math.max(0, Math.min(Number(from) || 0, job.total));
     const log = Array.isArray(job.log) ? job.log : [];
     const lf = Math.max(0, Math.min(Number(logFrom) || 0, log.length));
@@ -294,7 +297,30 @@ export function createJobStore({
     return out;
   }
 
-  function get(id)  { return jobs.get(id) || null; }
+  function refreshStoredFilters(job) {
+    if (!refreshFilters || !filterFillRev) return;
+    if (job.filter_fill_rev === filterFillRev) return;
+    if (job.status !== 'done' && job.status !== 'stopped') return;
+    let changed = false;
+    for (let k = 0; k < (job.results || []).length; k++) {
+      const r = job.results[k];
+      const product = job.products?.[k];
+      if (!r || !product) continue;
+      const next = refreshFilters(product, r, job.category);
+      if (!next?.filters) continue;
+      r.filters = next.filters;
+      if (next.filter_coverage) r.filter_coverage = next.filter_coverage;
+      changed = true;
+    }
+    job.filter_fill_rev = filterFillRev;
+    if (changed) save(job, true);
+  }
+
+  function get(id) {
+    const job = jobs.get(id) || null;
+    if (job) refreshStoredFilters(job);
+    return job;
+  }
   function list()   {
     return [...jobs.values()].sort((a, b) => b.at - a.at).map(summary);
   }
@@ -518,6 +544,7 @@ export function createJobStore({
       pos: null,
       at: now(),
     };
+    refreshStoredFilters(job);
     save(job, true);
     log(`■ job ${job.id}: ${job.status}, готово ${u.ok}, пропущено ${u.skip}, ошибок ${u.err}, $${u.cost.toFixed(5)}`);
   }

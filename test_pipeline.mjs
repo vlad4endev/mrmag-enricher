@@ -18,14 +18,14 @@ import {
 } from './pipeline/dumps.js';
 import { displayEnum, isBrandFilterKey, valueFold } from './pipeline/types.js';
 import { identityMatches, nameKeyTokens, parseIdentity } from './pipeline/identity.js';
-import { extractPairsFromPage, pairFromTableCells, parseProductFields, needDescriptionParse, collectParseHits, collectPageHits, formatParseNotes } from './pipeline/parse.js';
+import { extractPairs, extractPairsFromPage, pairFromTableCells, parseProductFields, needDescriptionParse, collectParseHits, collectPageHits, formatParseNotes } from './pipeline/parse.js';
 import { needsExternal, parseProductBySpecs, lookupExternal, enrichMissing, needsCountry, lookupCountry, parseCountryFromPage, needsMissingLookup, lookupMissing, parseMissingFromPage, missingRequiredCodes, missingStorefrontCodes } from './pipeline/external.js';
 import {
   parseSearchResults, parseDuckDuckGoResults, isDuckDuckGoBlocked,
   parseYandexSearchXml, parseYandexSearchResponse,
   searchQuery, countryQuery, missingQuery, searchWeb, searchDuckDuckGo, searchYandex,
   resolveSearchSettings, publicParserStatus, isTimeoutError, fetchPage, firstMatchingPage,
-  probeParser, explainSearchError,
+  probeParser, explainSearchError, canonicalPageUrl,
 } from './pipeline/search.js';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -452,6 +452,26 @@ console.log('golden tests passed');
 }
 
 {
+  const started = Date.now();
+  const orphaned = '<nav>' + '<li>Каталог</li>'.repeat(40)
+    + '</nav><p>Макс. загрузка: 6 кг. Скорость отжима: 1000 об/мин.</p>';
+  const fromOrphan = extractPairs(orphaned, d467);
+  assert.ok(Date.now() - started < 2000, 'голые li не должны зацикливать разбор');
+  assert.ok(fromOrphan.some(p => /загрузк/i.test(p.key)), fromOrphan.map(p => p.key).join('|'));
+  const named = extractPairsFromPage(
+    '<div class="name">Цвет</div><div class="value">белый</div>',
+    d467,
+  );
+  assert.equal(Object.fromEntries(named.map(p => [p.key, p.value]))['Цвет'], 'белый');
+  const commented = extractPairsFromPage(
+    `<script type="application/ld+json"><!--{"@type":"Product","additionalProperty":[{"name":"Загрузка","value":"6 кг"}]}--></script>`,
+    d467,
+  );
+  assert.equal(Object.fromEntries(commented.map(p => [p.key, p.value]))['Загрузка'], '6 кг');
+  console.log('ok page parser: orphaned li, class=name, JSON-LD comments');
+}
+
+{
   const parsed = collectParseHits({
     annotation: 'Макс. загрузка - 6 кг<br>Скорость отжима - 1000 об/мин',
     description: 'Цвет - белый<br>Тип загрузки - фронтальная<br>Установка - отдельно стоящая<br>Дисплей - есть',
@@ -500,6 +520,16 @@ console.log('golden tests passed');
   );
   const donId = parseIdentity('Холодильник DON R 290 G', d523);
   assert.equal(needsExternal({ identity: donId, name: donId.name, attrs: {}, provenance: {} }), true);
+  assert.equal(
+    identityMatches('Стиральная машина ATLANT SMA 60C1010 белая', { brand: 'ATLANT', model: '60С1010' }, d467),
+    true,
+    'латинская C на странице = кириллическая С в модели',
+  );
+  assert.equal(
+    identityMatches('Стиральная машина ATLANT 60С1010', { brand: 'ATLANT', model: '60C1010' }, d467),
+    true,
+    'кириллическая С на странице = латинская C в запросе',
+  );
   console.log('ok identity match: full model, not a neighbour');
 }
 
@@ -588,6 +618,34 @@ console.log('golden tests passed');
     assert.equal(failed.ok, true);
     assert.equal(failed.url, 'https://b.test/ok');
     assert.match(failed.tried.join(' '), /не открылась \(HTTP 403/);
+    const threw = await firstMatchingPage(['https://shop.example/boom', 'https://shop.example/ok'], {
+      fetchHtml: async url => (url.includes('boom') ? '<nav><li>меню</li></nav>' : '<p>ok</p>'),
+      match: html => {
+        if (/меню/.test(html)) throw new Error('Maximum call stack size exceeded');
+        return { ok: /ok/.test(html) };
+      },
+    });
+    assert.equal(threw.ok, true);
+    assert.match(threw.tried.join(' '), /разбор не удался \(Maximum call stack/);
+    const skipped401 = await firstMatchingPage([
+      'https://www.dns-shop.ru/product/characteristics/abc/slug/',
+      'https://a.test/down',
+      'https://b.test/card',
+    ], {
+      maxPages: 2,
+      fetchHtml: async url => {
+        if (url.includes('dns-shop')) throw new Error('HTTP 401 на ' + url);
+        if (url.includes('down')) throw new Error('HTTP 403 на ' + url);
+        return '<p>ok</p>';
+      },
+      match: html => ({ ok: /ok/.test(html) }),
+    });
+    assert.equal(skipped401.ok, true, skipped401.tried.join('; '));
+    assert.equal(skipped401.url, 'https://b.test/card');
+    assert.equal(
+      canonicalPageUrl('https://www.dns-shop.ru/product/characteristics/b9047d4a4f763361/stiralnaa-masina-atlant-sma-60s1010-belyj/'),
+      'https://www.dns-shop.ru/product/b9047d4a4f763361/stiralnaa-masina-atlant-sma-60s1010-belyj/',
+    );
     console.log('ok firstMatchingPage keeps SERP order and fetches in parallel');
 }
 

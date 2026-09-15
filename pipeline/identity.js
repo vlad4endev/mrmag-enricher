@@ -1,6 +1,6 @@
 /** Бренд, модель, артикул — только чтение name, без обратной записи. */
 
-import { fold } from './text.js';
+import { fold, foldLookalikes } from './text.js';
 
 function aliasesOf(dict) {
   const attr = dict.byCode.get('brand');
@@ -89,9 +89,11 @@ function escapeRe(s) {
 export function containsTokenSequence(text, phrase) {
   const tokens = String(phrase || '').split(/[\s\-_/,]+/).filter(Boolean);
   if (!tokens.length) return false;
-  const body = tokens.map(escapeRe).join('[\\s\\-_/]*');
+  const folded = tokens.map(t => foldLookalikes(t)).filter(Boolean);
+  if (!folded.length) return false;
+  const body = folded.map(escapeRe).join('[\\s\\-_/]*');
   const re = new RegExp(`(^|[^A-Za-zА-Яа-яЁё0-9])${body}([^A-Za-zА-Яа-яЁё0-9]|$)`, 'i');
-  return re.test(String(text || ''));
+  return re.test(foldLookalikes(text));
 }
 
 export function brandAliases(brand, dict) {

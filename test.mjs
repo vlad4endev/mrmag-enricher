@@ -2169,6 +2169,31 @@ console.log('\nТовар без описания: поиск в сети');
     assert.equal(byName['Цвет'], 'белый');
   });
 
+  t('карточка ATLANT с меню из li не роняет разбор и отдаёт страну', () => {
+    const page = `<h1>Стиральная машина ATLANT СМА 60С1010 - 00</h1>
+      <nav>${'<li>Пункт меню</li>'.repeat(30)}</nav>
+      <dl>
+        <dt>Максимальная загрузка, кг</dt><dd>6</dd>
+        <dt>Страна-производитель</dt><dd>Беларусь</dd>
+        <dt>Максимальная скорость отжима, об/мин</dt><dd>1000</dd>
+      </dl>
+      <div class="name">Цвет</div><div class="value">белый</div>`;
+    const got = parseAnyProductPage(page);
+    const byName = Object.fromEntries(got.attributes.map(a => [a.name, a.value]));
+    assert.equal(byName['Страна-производитель'], 'Беларусь');
+    assert.equal(byName['Максимальная загрузка, кг'], '6');
+    assert.equal(byName['Цвет'], 'белый');
+    assert.equal(
+      pageDescribesProduct(page, { name: 'Стиральная машина ATLANT 60С1010' }).ok,
+      true,
+    );
+    assert.equal(
+      pageDescribesProduct(page, { name: 'Стиральная машина ATLANT 60C1010' }).ok,
+      true,
+      'латинская C в имени = кириллическая С на странице',
+    );
+  });
+
   t('модель в JSON-LD принимается, соседний артикул без границы токена — нет', () => {
     const ld = `<script type="application/ld+json">{"@type":"Product","name":"LG GC-Q247CAMT","sku":"GC-Q247CAMT"}</script>`;
     assert.strictEqual(pageDescribesProduct(ld, { name: 'Холодильник LG GC-Q247CAMT' }).ok, true);

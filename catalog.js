@@ -35,7 +35,7 @@ import { extractPairsFromPage, visibleText, collectPageHits, formatParseNotes } 
 import {
   isDuckDuckGoBlocked, isJunkHost, parseDuckDuckGoResults,
   searchWeb as pipelineSearchWeb, countryQuery, missingQuery, searchQuery,
-  firstMatchingPage, publicParserStatus,
+  firstMatchingPage, publicParserStatus, canonicalPageUrl,
 } from './pipeline/search.js';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
@@ -108,8 +108,15 @@ export async function fetchPage(url, { noCache = false, ua = UA, timeoutMs = 45_
     res = await fetchDirect(url, {
       headers: {
         'User-Agent': ua,
-        'Accept-Language': 'ru,en;q=0.8',
-        Accept: 'text/html,application/xhtml+xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'ru-RU,ru;q=0.9,en;q=0.8',
+        Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+        'Accept-Encoding': 'gzip, deflate, br',
+        'Upgrade-Insecure-Requests': '1',
+        'Cache-Control': 'no-cache',
+        'Sec-Fetch-Dest': 'document',
+        'Sec-Fetch-Mode': 'navigate',
+        'Sec-Fetch-Site': 'none',
+        'Sec-Fetch-User': '?1',
       },
       timeoutMs,
     });
@@ -666,7 +673,7 @@ function withSpecLines(product, pairs, url) {
 }
 
 function pageFetch(url) {
-  return fetchPage(url, { ua: WEB_UA, timeoutMs: WEB_PAGE_TIMEOUT });
+  return fetchPage(canonicalPageUrl(url), { ua: WEB_UA, timeoutMs: WEB_PAGE_TIMEOUT });
 }
 
 /**

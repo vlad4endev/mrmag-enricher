@@ -333,17 +333,44 @@ function fetchFailReason(err) {
 }
 
 /**
+ * Вкладка «характеристики» у DNS — отдельный URL, который без сессии
+ * отвечает 401. Читаем карточку товара. То же для хвоста /harakteristiki/.
+ */
+export function canonicalPageUrl(url) {
+  let u;
+  try { u = new URL(url); } catch { return url; }
+  const host = u.hostname.replace(/^www\./, '').toLowerCase();
+  let path = u.pathname;
+  if (host === 'dns-shop.ru' || host.endsWith('.dns-shop.ru')) {
+    path = path.replace(/\/product\/characteristics\//i, '/product/');
+  }
+  path = path.replace(/\/(?:characteristics|specifications|harakteristiki)\/?$/i, '/');
+  if (path === u.pathname) return url;
+  u.pathname = path;
+  return u.href;
+}
+
+function parseFailReason(err) {
+  const raw = String(err?.message || err || '').replace(/\s+/g, ' ').trim().slice(0, 80);
+  return raw ? `разбор не удался (${raw})` : 'разбор не удался';
+}
+
+/**
  * Читает до maxPages адресов сразу, принимает первую подходящую в порядке
  * выдачи. Качество то же, что у последовательного обхода: чужая страница
  * раньше в SERP по-прежнему отбрасывается раньше своей. Зависшая первая
  * ссылка больше не держит следующие 20 секунд в очереди — они уже качаются.
+ *
+ * 401/403 в первых ссылках не должны съедать всю квоту: берём до maxPages*2
+ * адресов, чтобы после DNS characteristics ещё остались живые карточки.
  */
 export async function firstMatchingPage(urls, {
   fetchHtml,
   match,
   maxPages = 3,
 } = {}) {
-  const slice = (urls || []).slice(0, maxPages);
+  const cap = Math.max(1, Number(maxPages) || 3);
+  const slice = (urls || []).slice(0, Math.min((urls || []).length, cap * 2));
   const tried = [];
   if (!slice.length) return { ok: false, tried };
   if (typeof fetchHtml !== 'function' || typeof match !== 'function') {
@@ -373,8 +400,8 @@ export async function firstMatchingPage(urls, {
         }
         let got;
         try { got = match(cur.html, cur.url); }
-        catch {
-          tried.push(`${host}: разбор не удался`);
+        catch (e) {
+          tried.push(`${host}: ${parseFailReason(e)}`);
           continue;
         }
         if (got && got.ok) {
@@ -386,13 +413,14 @@ export async function firstMatchingPage(urls, {
     };
 
     slice.forEach((url, i) => {
+      const target = canonicalPageUrl(url);
       Promise.resolve()
-        .then(() => fetchHtml(url))
+        .then(() => fetchHtml(target))
         .then(html => {
-          results[i] = { url, html: html == null ? null : html };
+          results[i] = { url: target, html: html == null ? null : html };
         })
         .catch(error => {
-          results[i] = { url, html: null, error };
+          results[i] = { url: target, html: null, error };
         })
         .finally(() => {
           inflight -= 1;
@@ -412,8 +440,10 @@ export async function fetchPage(url, { timeoutMs = 20_000 } = {}) {
     const res = await fetch(url, {
       headers: {
         'User-Agent': UA,
-        'Accept-Language': 'ru,en;q=0.8',
-        Accept: 'text/html,application/xhtml+xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'ru-RU,ru;q=0.9,en;q=0.8',
+        Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+        'Upgrade-Insecure-Requests': '1',
+        'Cache-Control': 'no-cache',
       },
       signal: AbortSignal.timeout(timeoutMs),
       redirect: 'follow',

@@ -253,7 +253,7 @@ function promoteNestedValue(p, dict) {
   return p;
 }
 
-export function extractPairs(html, dict) {
+export function extractPairs(html, dict, depth = 0) {
   const chunks = stitchKeyValueLines(splitHtmlChunks(html));
   let pairs = collectPairs(chunks, dict);
   if (chunks.length <= 1 && pairs.length <= 1) {
@@ -261,10 +261,14 @@ export function extractPairs(html, dict) {
     if (expanded) pairs = collectPairs(expanded, dict);
   }
   // <ul> забирает только li: соседний <p> с объёмами иначе выпадает.
-  if (hasLi(html)) {
-    const rest = String(html).replace(/<(ul|ol)\b[\s\S]*?<\/\1>/gi, ' ');
+  // Голые <li> без ul/ol раньше оставляли те же li в rest — бесконечная
+  // рекурсия и «разбор не удался» на карточках магазинов.
+  if (depth < 3 && hasLi(html)) {
+    const rest = String(html)
+      .replace(/<(ul|ol)\b[\s\S]*?<\/\1>/gi, ' ')
+      .replace(/<li\b[\s\S]*?<\/li>/gi, ' ');
     if (stripHtml(rest).length > 20) {
-      pairs = pairs.concat(extractPairs(rest, dict));
+      pairs = pairs.concat(extractPairs(rest, dict, depth + 1));
     }
   }
   return pairs;
@@ -325,11 +329,24 @@ function walkJsonLd(node, add, depth = 0) {
   if (node['@graph']) walkJsonLd(node['@graph'], add, depth + 1);
 }
 
+function parseJsonLdText(raw) {
+  let s = String(raw || '').trim()
+    .replace(/^\/\/<!\[CDATA\[|\/\/\]\]>$/g, '')
+    .replace(/^<!\[CDATA\[|\]\]>$/g, '')
+    .trim();
+  if (/^<!--/.test(s) && /-->$/.test(s)) {
+    s = s.replace(/^<!--/, '').replace(/-->$/, '').trim();
+  }
+  if (!s) return null;
+  try { return JSON.parse(s); } catch { /* */ }
+  try { return JSON.parse(s.replace(/,\s*([}\]])/g, '$1')); } catch { /* */ }
+  return null;
+}
+
 function pairsFromJsonLd(html, add) {
   for (const m of String(html || '').matchAll(/<script[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi)) {
-    let data;
-    try { data = JSON.parse(m[1]); } catch { continue; }
-    walkJsonLd(data, add);
+    const data = parseJsonLdText(m[1]);
+    if (data) walkJsonLd(data, add);
   }
 }
 
@@ -393,10 +410,29 @@ function namedBlockRe() {
   const name = String.raw`-name|_name|__name|-title|_title|__title|-label|_label|__label|-key|_key|__key`;
   const value = String.raw`-value|_value|__value|-val|_val|__val|-text|_text|__text`;
   return new RegExp(
-    String.raw`<(div|span|dt|th)[^>]*class="[^"]*(?:${name})[^"]*"[^>]*>([\s\S]*?)</\1>\s*`
-    + String.raw`<(div|span|dd|td)[^>]*class="[^"]*(?:${value})[^"]*"[^>]*>([\s\S]*?)</\3>`,
+    String.raw`<(div|span|dt|th)[^>]*class=["'][^"']*(?:${name})[^"']*["'][^>]*>([\s\S]*?)</\1>\s*`
+    + String.raw`<(div|span|dd|td)[^>]*class=["'][^"']*(?:${value})[^"']*["'][^>]*>([\s\S]*?)</\3>`,
     'gi',
   );
+}
+
+/** class="name" / class="value" целиком, не product-name. */
+function namedTokenBlockRe() {
+  const name = String.raw`(?:[^"']*\s)?(?:name|title|label|key)(?:\s[^"']*)?`;
+  const value = String.raw`(?:[^"']*\s)?(?:value|val)(?:\s[^"']*)?`;
+  return new RegExp(
+    String.raw`<(div|span|dt|th)[^>]*class=["']${name}["'][^>]*>([\s\S]*?)</\1>\s*`
+    + String.raw`<(div|span|dd|td)[^>]*class=["']${value}["'][^>]*>([\s\S]*?)</\3>`,
+    'gi',
+  );
+}
+
+function pairsFromNamedBlocks(body, add) {
+  for (const re of [namedBlockRe(), namedTokenBlockRe()]) {
+    for (const m of body.matchAll(re)) {
+      add(stripHtml(m[2]), stripHtml(m[4]), 'div');
+    }
+  }
 }
 
 function pairsFromColumnRows(body, add) {
@@ -423,6 +459,8 @@ function pairsFromItemprop(body, add) {
     const fromAttr = String(m[2] || '').match(/content=["']([^"']*)["']/i)?.[1];
     add(stripHtml(m[1]), stripHtml(fromAttr || m[3] || ''), 'jsonld');
   }
+  const meta = /itemprop=["']name["'][^>]*content=["']([^"']+)["'][^>]*>[\s\S]{0,240}?itemprop=["']value["'][^>]*content=["']([^"']+)["']/gi;
+  for (const m of body.matchAll(meta)) add(m[1], m[2], 'jsonld');
 }
 
 /**
@@ -455,10 +493,7 @@ export function extractPairsFromPage(html, dict) {
   for (const pair of body.matchAll(/<dt[^>]*>([\s\S]*?)<\/dt>\s*<dd[^>]*>([\s\S]*?)<\/dd>/gi)) {
     add(stripHtml(pair[1]), stripHtml(pair[2]), 'dl');
   }
-  const divPair = namedBlockRe();
-  for (const m of body.matchAll(divPair)) {
-    add(stripHtml(m[2]), stripHtml(m[4]), 'div');
-  }
+  pairsFromNamedBlocks(body, add);
   pairsFromColumnRows(body, add);
   pairsFromListItems(body, add);
   pairsFromItemprop(body, add);
@@ -467,9 +502,14 @@ export function extractPairsFromPage(html, dict) {
     .replace(/<table\b[\s\S]*?<\/table>/gi, ' ')
     .replace(/<dl\b[\s\S]*?<\/dl>/gi, ' ')
     .replace(columnPairRe(), ' ')
-    .replace(namedBlockRe(), ' ');
+    .replace(namedBlockRe(), ' ')
+    .replace(namedTokenBlockRe(), ' ');
   if (stripHtml(rest).length > 20) {
-    for (const p of extractPairs(rest, dict)) add(p.key, p.value, p.via || 'text');
+    try {
+      for (const p of extractPairs(rest, dict)) add(p.key, p.value, p.via || 'text');
+    } catch {
+      // Хвост меню/скриптов не должен ронять уже снятую таблицу.
+    }
   }
   return pairs;
 }

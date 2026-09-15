@@ -5724,6 +5724,7 @@ function restoreResults(){
   renderFoot(sumRun(),`восстановлен ${new Date(saved.at).toLocaleString('ru')}`);
   renderFilterTestsBanner();
   syncSteps();
+  hydrateNamesFromDump();
 }
 
 function clearResults(){
@@ -6151,16 +6152,19 @@ function applySource(){
 }
 
 /** Новый источник товаров: файл с диска или адрес фида. */
-function setSource(all){
+function setSource(all, opts={}){
   srcItems=Array.isArray(all)?all:[];
   pickCat=null;
   srcFilters=new Map();
   runStore.clear();   // другой список товаров — другой прогон
   results=[];
+  dumpNameById=new Map();
+  sourceFileCatId=opts.catId!=null?String(opts.catId):null;
   applySource();
   document.getElementById('prod').value=JSON.stringify(items,null,2);
   selectResult(0);
   loadQuality();
+  hydrateNamesFromDump();
 }
 
 // Фильтры из filters_*.json, если их загрузили вместе с товарами. Ключ — id
@@ -6233,21 +6237,98 @@ function normalizeCatalogProduct(p, catName){
   return out;
 }
 
-/** Подпись товара в списке и шапке: имя, не артикул. */
-function productName(p, i){
-  if(p==null) return i!=null?`Товар №${i+1}`:'Товар';
+let dumpNameById=new Map();
+let sourceFileCatId=null;
+
+/** id карточки: в дампе это id, в фиде часто sku. */
+function productId(p){
+  if(!p||typeof p!=='object') return null;
   const id=p.id??p.sku??p.article;
-  const idStr=id!=null?String(id).trim():'';
-  const candidates=[p.name,p.title,p.product_name,p.label];
-  for(const c of candidates){
+  if(id==null) return null;
+  const s=String(id).trim();
+  return s?s:null;
+}
+
+function isGenericProductLabel(s, idStr){
+  const t=String(s||'').trim();
+  if(!t) return true;
+  if(idStr && t===idStr) return true;
+  if(idStr && /^товар(?:\s+№?)?\s*/i.test(t) && t.endsWith(idStr)) return true;
+  return false;
+}
+
+/** Наименование из полей карточки. Голый id / «Товар 11391» — не имя. */
+function catalogNameOf(p){
+  if(p==null) return '';
+  const idStr=productId(p);
+  for(const c of [p.name,p.title,p.product_name,p.label]){
     const s=String(c??'').trim();
-    if(!s) continue;
-    // «name» = тот же id — это не название, ищем дальше.
-    if(idStr && s===idStr) continue;
+    if(isGenericProductLabel(s, idStr)) continue;
     return s;
   }
-  if(idStr) return `Товар ${idStr}`;
-  return i!=null?`Товар №${i+1}`:'Товар';
+  return '';
+}
+
+function productName(p){
+  const own=catalogNameOf(p);
+  if(own) return own;
+  const idStr=productId(p);
+  return (idStr && dumpNameById.get(idStr)) || '';
+}
+
+function productCatId(p){
+  const direct=p?.category_id??p?.cat_id??null;
+  if(direct!=null && /^\d+$/.test(String(direct))) return String(direct);
+  const cat=String(p?.category||'').trim();
+  if(/^\d+$/.test(cat)) return cat;
+  if(!cat) return null;
+  const fromSchema=Object.values(schemas||{}).find(s=>s && (s.name===cat || String(s.id)===cat));
+  if(fromSchema?.id!=null) return String(fromSchema.id);
+  const fromCat=(categories||[]).find(c=>c && (c.name===cat || String(c.id)===cat));
+  if(fromCat?.id!=null) return String(fromCat.id);
+  return null;
+}
+
+function sourceCatId(){
+  const fromItems=(srcItems||[]).map(productCatId).find(Boolean);
+  if(fromItems) return fromItems;
+  if(sourceFileCatId) return sourceFileCatId;
+  if(pickCat!=null && /^\d+$/.test(String(pickCat))) return String(pickCat);
+  if(pickCat) return productCatId({category:pickCat});
+  return null;
+}
+
+/** products_*.json без name — подпись из дампа той же категории, по id. */
+async function hydrateNamesFromDump(){
+  const pool=srcItems||[];
+  const need=pool.filter(p=>!catalogNameOf(p));
+  if(!need.length) return;
+  const catId=sourceCatId();
+  if(!catId) return;
+  try{
+    const d=await apiJson('/api/dumps/'+encodeURIComponent(catId));
+    if(srcItems!==pool) return;
+    for(const row of d.products||[]){
+      const id=productId(row);
+      const name=String(row?.name||row?.title||'').trim();
+      if(id && name && !isGenericProductLabel(name, id)) dumpNameById.set(id, name);
+    }
+    let n=0;
+    srcItems=pool.map(p=>{
+      if(catalogNameOf(p)) return p;
+      const id=productId(p);
+      const name=id?dumpNameById.get(id):'';
+      if(!name) return p;
+      n++;
+      return {...p, name};
+    });
+    if(!n) return;
+    applySource();
+    const ta=document.getElementById('prod');
+    if(ta) ta.value=JSON.stringify(items,null,2);
+    renderList();
+    if(items.length) selectResult(curIdx);
+  }catch{ /* дампа нет — в списке останется id */ }
 }
 
 function classifyPayload(parsed, filename){
@@ -6328,7 +6409,12 @@ async function loadFile(inp){
     if(!loaded.length){
       throw new Error('Выбраны только файлы фильтров — добавьте data_*.json с товарами');
     }
-    setSource(loaded);
+    sourceFileCatId=null;
+    for(const f of list){
+      const id=catIdFromFilename(f.name);
+      if(id) sourceFileCatId=id;
+    }
+    setSource(loaded, {catId:sourceFileCatId});
     srcFilters=nextFilters;
     document.getElementById('urlIn').value='';
     const extra=loaded.length!==items.length?` · в окне ${items.length}`:'';
@@ -6368,6 +6454,7 @@ function readProd(){
   srcFilters=new Map();
   srcItems=arr.map(p=>normalizeCatalogProduct(p,''));
   applySource();
+  hydrateNamesFromDump();
   return null;
 }
 
@@ -6413,7 +6500,9 @@ async function fetchProducts(){
     const data=await apiJson('/api/product?url='+encodeURIComponent(fetchUrl));
     const all=Array.isArray(data)?data:(data.items??data.products??data.data??[data]);
     if(!Array.isArray(all)||!all.length) throw new Error('В ответе нет товаров');
-    setSource(all.map(p=>normalizeCatalogProduct(p,'')));
+    let urlCat=null;
+    try{ urlCat=catIdFromFilename(new URL(url).pathname); }catch{ urlCat=catIdFromFilename(url); }
+    setSource(all.map(p=>normalizeCatalogProduct(p,'')), {catId:urlCat});
     hint.textContent=`Загружено ${items.length} из ${all.length} доступных`;
     setSrcTab('url');
   }catch(e){
@@ -6488,16 +6577,10 @@ function isRunningItem(i){
 }
 function itemTitle(i){
   const p=items[i];
-  const fromItem=productName(p,i);
-  // Если в окне остался голый id — имя могло сохраниться в original прогона.
-  if(p && fromItem===`Товар ${p.id??p.sku??p.article}`){
-    const orig=results[i]?.original;
-    if(orig){
-      const alt=productName(orig,i);
-      if(alt!==fromItem) return alt;
-    }
-  }
-  return fromItem;
+  const orig=results[i]?.original;
+  const name=productName(p)||productName(orig);
+  if(name) return name;
+  return productId(p)||productId(orig)||(i!=null?`№${i+1}`:'');
 }
 
 // ── СПИСОК ТОВАРОВ (он же прогресс) ──────────────────────────
@@ -6653,7 +6736,7 @@ function renderList(){
   el.innerHTML=visible.map(([it,i])=>{
     const st=statusOf(i);
     const name=itemTitle(i);
-    const art=it.sku??it.id??it.article;
+    const id=productId(it)||productId(results[i]?.original);
     // Причину «без данных» пишем в строку: иначе непонятно, почему товар в
     // фильтре и что с ним делать — она же уйдёт в skipped при прогоне.
     const why=!results[i]&&isThin(i)?` · без данных: ${quality[i].reason}${quality[i].web?' · поищем описание в сети по названию':''}`
@@ -6661,7 +6744,7 @@ function renderList(){
     const d=dateKey?dateOf(it):null;
     const pn=(results[i]?.parse?.card?.hits?.length||0)+(results[i]?.parse?.web?.hits?.length||0);
     const metaBits=[`${i+1}`,esc(st.txt)];
-    if(art!=null && String(name)!==`Товар ${art}`) metaBits.push(`арт. ${esc(String(art))}`);
+    if(id) metaBits.push(`id ${esc(String(id))}`);
     if(pn) metaBits.push(`парсинг ${pn}`);
     if(d!=null) metaBits.push(dayStr(d));
     const row=`<button class="ri s-${st.cls}${i===curIdx?' on':''}" onclick="selectResult(${i})" title="${esc(String(name))}${why?esc(why):''}">`
@@ -7685,8 +7768,9 @@ function renderDetail(){
   const it=items[curIdx], r=results[curIdx];
   const name=itemTitle(curIdx);
   const meta=[];
-  if(it?.sku!=null)   meta.push(`арт. <b>${esc(String(it.sku))}</b>`);
-  else if(it?.id!=null) meta.push(`id <b>${esc(String(it.id))}</b>`);
+  const id=productId(it)||productId(r?.original);
+  if(id) meta.push(`id <b>${esc(String(id))}</b>`);
+  if(it?.sku!=null && String(it.sku)!==String(it.id??id??'')) meta.push(`арт. <b>${esc(String(it.sku))}</b>`);
   if(it?.price!=null) meta.push(`<b>${Number(it.price).toLocaleString('ru')} ₽</b>`);
   if(items.length>1)  meta.push(`${curIdx+1} из ${items.length}`);
   document.getElementById('detailTitle').innerHTML=
@@ -8192,11 +8276,13 @@ async function loadLogsSummaries(){
     if(logsPos<0) logsPos=0;
     list.innerHTML=rows.map(r=>{
       const [cls,lab]=logsStatusLabel(r.status, r);
-      const name=r.product?.name||r.label||`товар №${r.pos+1}`;
-      const sku=r.product?.sku?` · ${r.product.sku}`:'';
+      const id=r.product?.id||r.product?.sku||'';
+      const name=productName(r.product)||r.product?.name||'';
+      const title=name||id||`№${r.pos+1}`;
+      const idBit=id?` · id ${id}`:'';
       return `<li class="${r.pos===logsPos?'on':''}" data-pos="${r.pos}" onclick="selectLogsItem(${r.pos})">`
-        +`<span><span class="logs-st ${cls}">${esc(lab)}</span> ${esc(name)}</span>`
-        +`<span class="ll-meta">#${r.pos+1}${esc(sku)}</span></li>`;
+        +`<span><span class="logs-st ${cls}">${esc(lab)}</span> ${esc(String(title))}</span>`
+        +`<span class="ll-meta">#${r.pos+1}${esc(idBit)}</span></li>`;
     }).join('');
     await loadLogsDetail(logsPos);
     // Пока прогон идёт — подтягиваем список раз в 2 с.
@@ -8580,6 +8666,7 @@ async function attachJob(id){
     renderDataCats();
     document.getElementById('prod').value=JSON.stringify(items,null,2);
     loadQuality();
+    hydrateNamesFromDump();
   }
   if(!selModel&&d.model) pick(d.model);
 

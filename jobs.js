@@ -197,12 +197,22 @@ export function createJobStore({
     };
   }
 
+  function productRef(p) {
+    if (!p || typeof p !== 'object') return { name: null, sku: null, id: null };
+    const id = p.id != null ? String(p.id) : (p.sku != null ? String(p.sku) : null);
+    const name = String(p.name || p.title || '').trim();
+    return {
+      name: name && name !== id ? name : null,
+      sku: p.sku != null ? String(p.sku) : null,
+      id,
+    };
+  }
+
   function productLabel(p, pos) {
-    if (!p || typeof p !== 'object') return `товар №${pos + 1}`;
-    const name = p.name || p.title || null;
-    const sku = p.sku != null ? String(p.sku) : (p.id != null ? String(p.id) : null);
-    if (name && sku) return `${name} (арт. ${sku})`;
-    return name || (sku ? `арт. ${sku}` : `товар №${pos + 1}`);
+    if (!p || typeof p !== 'object') return `№${pos + 1}`;
+    const ref = productRef(p);
+    if (ref.name && ref.id) return `${ref.name} (id ${ref.id})`;
+    return ref.name || (ref.id ? `id ${ref.id}` : `№${pos + 1}`);
   }
 
   /** Итог по задаче: то же, что подвал интерфейса считает по результатам. */
@@ -269,11 +279,7 @@ export function createJobStore({
           status: job.results[k]
             ? (job.results[k].error ? 'error' : job.results[k].skipped ? 'skip' : job.results[k].enriched ? 'ok' : 'pending')
             : (Array.isArray(job.active) && job.active.includes(k) ? 'running' : 'pending'),
-          product: {
-            name: p?.name || p?.title || null,
-            sku: p?.sku != null ? String(p.sku) : null,
-            id: p?.id != null ? String(p.id) : null,
-          },
+          product: productRef(p),
           label: productLabel(p, k),
         };
       });
@@ -287,10 +293,7 @@ export function createJobStore({
         : {
             pos: k,
             status: 'pending',
-            product: {
-              name: job.products[k]?.name || job.products[k]?.title || null,
-              sku: job.products[k]?.sku != null ? String(job.products[k].sku) : null,
-            },
+            product: productRef(job.products[k]),
             steps: log.filter(e => e.pos === k),
           };
     }
@@ -435,7 +438,7 @@ export function createJobStore({
         });
       }
       storeDetail(job, k, d.detail || {
-        product: { name: job.products[k]?.name || null, sku: job.products[k]?.sku != null ? String(job.products[k].sku) : null },
+        product: productRef(job.products[k]),
         status: d.skipped ? 'skip' : (d.needs_review && !d.enriched) ? 'needs_review' : 'ok',
         skipped: d.skipped || null,
         needs_review: Boolean(d.needs_review && !d.enriched),
@@ -460,7 +463,7 @@ export function createJobStore({
       };
       pushLog(job, { level: 'err', step: 'error', pos: k, msg: `✗ Ошибка: ${e.message}` });
       storeDetail(job, k, e.detail || {
-        product: { name: job.products[k]?.name || null, sku: job.products[k]?.sku != null ? String(job.products[k].sku) : null },
+        product: productRef(job.products[k]),
         status: 'error',
         error: e.message,
         usage: e.usage

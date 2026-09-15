@@ -159,7 +159,7 @@ export const api={syncSteps,setCnt,setCntFree,applyCnt,applySource,setSource,pic
   resetRunLog,applyLog,applyLive,renderRunLog,copyRunLog,clearRunLog,toggleRunLog,logLineText,
   openEnrichLogs,refreshLogsJobs,onLogsJobChange,selectLogsItem,loadLogsDetail,copyLogsAll,
   loadFile,classifyPayload,normalizeCatalogProduct,catIdFromFilename,catNameFromId,
-  productsFromPayload,isFiltersPayload,filtersForExport,
+  productsFromPayload,isFiltersPayload,filtersForExport,productName,productId,itemTitle,catalogNameOf,
   showPage,setTab,renderSettings,addProvider,removeProvider,addEngine,readSettingsPatch,
   renderParserProbe,runParserProbe,
   renderExportTemplates,applyExportTemplate,shapeProductsFile,shapeFiltersFile,exportPack,
@@ -859,6 +859,29 @@ t('живой data_523.json из репозитория читается как 
   const p = api.normalizeCatalogProduct(products[0], 'Холодильники');
   assert.strictEqual(p.sku, p.id);
   assert.strictEqual(p.category, 'Холодильники');
+});
+t('список показывает наименование и id, не «Товар 11391»', () => {
+  st.items = [{ id: 11391, sku: 11391, name: 'Стиральная машина ATLANT 60С1010' }];
+  st.results = [null];
+  st.quality = [];
+  api.renderList();
+  const html = G('midList').innerHTML;
+  assert.match(html, /Стиральная машина ATLANT 60С1010/);
+  assert.match(html, /id 11391/);
+  assert.doesNotMatch(html, /Товар 11391/);
+  assert.strictEqual(api.productName(st.items[0]), 'Стиральная машина ATLANT 60С1010');
+  assert.strictEqual(api.productId(st.items[0]), '11391');
+});
+t('products.json без name не маскирует карточку словом «Товар»', () => {
+  st.items = [{ id: 11391, sku: 11391, description_html: '<p>x</p>', annotation_html: '<ul></ul>', filters: {} }];
+  st.results = [null];
+  st.quality = [];
+  api.renderList();
+  const html = G('midList').innerHTML;
+  assert.doesNotMatch(html, /Товар 11391/);
+  assert.match(html, /id 11391/);
+  assert.strictEqual(api.productName(st.items[0]), '');
+  assert.strictEqual(api.catalogNameOf(st.items[0]), '');
 });
 t('вставка filters_*.json в textarea не принимается за товар', () => {
   G('prod').value = JSON.stringify(FILTERS_FMT);

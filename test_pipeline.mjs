@@ -1638,6 +1638,11 @@ console.log('golden tests passed');
   assert.ok(!/говорит о над[её]жност/i.test(strippedC));
   const claimD = 'Стиральная машина с загрузкой 6 кг и отжимом 1000 об/мин.';
   assert.equal(stripHallucinationClaims(claimD), claimD);
+  const claimDump = 'Холодильник двухкамерный. В характеристиках: Тип холодильника — Двухкамерный; '
+    + 'Размораживание холодильной камеры — Автоматическое (No Frost); Габариты: 595×2025×630 мм, вес 74 кг.';
+  const strippedDump = stripHallucinationClaims(claimDump);
+  assert.ok(!/В характеристиках/i.test(strippedDump), strippedDump);
+  assert.match(strippedDump, /Холодильник двухкамерный/);
 
   const goldDesc = buildGoldShapeExport([{
     id: 99,
@@ -1866,7 +1871,7 @@ console.log('golden tests passed');
   const exported = all.filter(r => annotationRows(r, d467).length >= MIN_ANNOTATION_ROWS);
   const built = buildFilters(exported, d467, config);
   assert.equal(expectedFilters(d467).length, 20);
-  assert.equal(expectedFilters(d523).length, 20);
+  assert.equal(expectedFilters(d523).length, 22);
   {
     const { isRequiredFilter, requiredFilterAttrs, optionalFilterAttrs } = await import('./pipeline/required_filters.js');
     assert.equal(isRequiredFilter(d467.byCode.get('washer_type')), true);
@@ -2561,8 +2566,8 @@ console.log('golden tests passed');
 
   const fridge = d523.byCode.get('defrost_fridge');
   const freezer = d523.byCode.get('defrost_freezer');
-  assert.equal(fridge.facet?.enabled, false, 'defrost_fridge не фасет витрины');
-  assert.equal(freezer.facet?.enabled, false, 'defrost_freezer не фасет витрины');
+  assert.equal(fridge.facet?.enabled, true, 'defrost_fridge — фасет витрины');
+  assert.equal(freezer.facet?.enabled, true, 'defrost_freezer — фасет витрины');
   for (const v of ['No Frost', 'NoFrost', 'Автоматическое', 'Автоматическое (No Frost)']) {
     assert.equal(aliasValue(fridge, v), 'Автоматическое (No Frost)', v);
   }
@@ -2585,7 +2590,15 @@ console.log('golden tests passed');
   const clone = structuredClone(recs);
   await runFiltersAgent({ recs: clone, dict: d523, mode: 'heuristic', catId: '523' });
   const built = buildFilters(clone, d523, config);
-  assert.ok(!built.filters.some(f => /Размораживание/i.test(f.name)));
+  const df = built.filters.find(f => f.name === 'Размораживание холодильной камеры');
+  const dz = built.filters.find(f => f.name === 'Размораживание морозильной камеры');
+  assert.ok(df, 'defrost_fridge facet present');
+  assert.ok(dz, 'defrost_freezer facet present');
+  assert.ok(df.value.includes('Автоматическое (No Frost)'));
+  assert.equal(df.value.filter(v => /no\s*frost|автоматическ/i.test(v)).length, 1);
+  assert.ok(df.value.includes('Капельная система'));
+  assert.ok(df.value.includes('Ручное'));
+  assert.ok(!df.value.includes('No Frost'));
   const cool = built.filters.find(f => f.name === 'Система охлаждения');
   assert.ok(cool, 'cooling facet present');
   assert.ok(cool.value.includes('No Frost'));
@@ -3553,11 +3566,44 @@ console.log('golden tests passed');
   assert.equal(typed.attrs.noise_wash, 55, 'dual noise: стирка');
   assert.equal(typed.attrs.noise_spin, 73, 'dual noise: отжим');
 
-  const atlantFridge = normalizeProduct(p523[11494] || p523[260], d523, config);
-  assert.ok(atlantFridge.attrs.compressor_type, 'холодильник: тип компрессора выведен');
+  const centekLike = normalizeProduct({
+    id: 900202,
+    name: 'Стиральная машина Centek CT-1971 (серый) 1200 / 6кг / 10пр / LED-Дисп',
+    annotation: '<ul><li>Класс - A++</li><li>Кол-во режимов - 10</li>'
+      + '<li>Уровень шума - 60/76 дБ (стирка/отжим)</li>'
+      + '<li>Дисплей - LED</li><li>Управление - Сенсорное</li></ul>',
+    description: '',
+  }, d467, config);
+  assert.equal(centekLike.attrs.energy_class, 'A++', 'Класс - A++ → energy_class');
+  assert.equal(centekLike.attrs.programs_qty, 10);
+  assert.equal(centekLike.attrs.noise_wash, 60, 'шум в значении: стирка');
+  assert.equal(centekLike.attrs.noise_spin, 76, 'шум в значении: отжим');
+  assert.equal(centekLike.attrs.display, true, 'Дисплей - LED → Есть');
+  assert.equal(centekLike.attrs.control_type?.[0] || centekLike.attrs.control_type, 'Сенсорное');
+  assert.equal(matchKey('Класс', d467, { value: 'A++' }).attr?.code, 'energy_class');
+
+  const pozis = normalizeProduct(p523[260], d523, config);
+  assert.equal(pozis.attrs.compressor_type, null, 'количество компрессоров ≠ тип компрессора');
+  assert.equal(pozis.attrs.defrost_fridge, 'Автоматическое (No Frost)');
+  assert.equal(pozis.attrs.defrost_freezer, 'Автоматическое (No Frost)');
+  {
+    const builtPozis = buildFilters([pozis], d523, config);
+    const rowPozis = serializeProduct(pozis, d523, builtPozis.debug);
+    assert.deepEqual(rowPozis.filters['Размораживание холодильной камеры'], ['Автоматическое (No Frost)']);
+    assert.deepEqual(rowPozis.filters['Размораживание морозильной камеры'], ['Автоматическое (No Frost)']);
+    assert.ok(
+      !rowPozis.filters['Тип компрессора']?.length,
+      'тип компрессора не выдумываем из «Количество компрессоров: 1»',
+    );
+    assert.ok(!/В характеристиках:/i.test(rowPozis.description_html));
+  }
 
   for (const [catId, dict] of dictCats) {
     const catalogNames = new Set(expectedFilters(dict).map(f => f.name));
+    const honestGap = new Set([
+      'Тип компрессора',
+      'Размораживание морозильной камеры',
+    ]);
     assert.ok(catalogNames.size, `cat ${catId}: filters.json не пустой`);
     if (catId === '467') {
       assert.ok(catalogNames.has('Тип'), 'filters.json 467 содержит «Тип»');
@@ -3582,6 +3628,10 @@ console.log('golden tests passed');
     }
 
     const rows = recs.map(r => serializeProduct(r, dict, built.debug));
+    const eligibleRows = rows.filter((r) => {
+      const rec = recs.find(x => x.id === r.id);
+      return rec && !rec.category_mismatch;
+    });
     const { errors } = validateProducts(rows.filter(r => {
       const rec = recs.find(x => x.id === r.id);
       return rec && !rec.category_mismatch && annotationRows(rec, dict).length >= MIN_ANNOTATION_ROWS;
@@ -3592,8 +3642,9 @@ console.log('golden tests passed');
     ].includes(e.kind));
     assert.equal(dirty.length, 0, `cat ${catId} dirty filters: ${JSON.stringify(dirty.slice(0, 8))}`);
 
-    for (const row of rows) {
+    for (const row of eligibleRows) {
       for (const name of catalogNames) {
+        if (honestGap.has(name)) continue;
         const v = row.filters?.[name];
         const ok = Array.isArray(v) ? v.length > 0 : Boolean(v);
         assert.ok(ok, `cat ${catId} id=${row.id}: нет фильтра «${name}»`);
@@ -3618,8 +3669,8 @@ console.log('golden tests passed');
       threshold: config.facet_min_coverage ?? 70,
     });
 
-    const mustFull = coverage.filters.map(f => f.name);
-    assert.equal(coverage.eligible_products, rows.length, `cat ${catId}: покрытие по всем карточкам`);
+    const mustFull = coverage.filters.map(f => f.name).filter(n => !honestGap.has(n));
+    assert.equal(coverage.eligible_products, eligibleRows.length, `cat ${catId}: покрытие без mismatch`);
     for (const name of mustFull) {
       const row = coverage.filters.find(f => f.name === name);
       assert.ok(row, `cat ${catId}: нет строки покрытия «${name}»`);

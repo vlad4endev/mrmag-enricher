@@ -3,10 +3,10 @@
  * Пустой фасет на витрине хуже типичного значения той же категории.
  */
 
-import { inferProductKind } from './category_mismatch.js';
+import { expectedCategoryKind, inferProductKind } from './category_mismatch.js';
 import { storefrontFilterAttrs } from './required_filters.js';
 import { parseTriple } from './dimensions.js';
-import { aliasValue, hasStrictEnum, normalizeValue, unifyEnumValues } from './types.js';
+import { aliasValue, defrostCanonFromCooling, hasStrictEnum, normalizeValue, unifyEnumValues } from './types.js';
 
 const COLOR_WORD = [
   [/бел(?:ый|ая|ое|ого)/i, 'Белый'],
@@ -49,7 +49,6 @@ const FRIDGE_DEFAULTS = {
   display: 'Нет',
   door_reversible: 'Да',
   control_type: 'Механическое',
-  compressor_type: 'Стандартный',
   color: 'Белый',
   energy_class: 'A',
   noise: '40',
@@ -127,15 +126,25 @@ export function harvestStorefrontFacts(rec, dict, product) {
       || t.match(/(\d{3,4})\s*оборот/i);
     if (m && Number(m[1]) >= 400 && Number(m[1]) <= 2000) put('spin_max', m[1], 'harvest_spin');
   }
-  put('energy_class', cls(/класс(?:а)?\s+энерго\w*\s*[-–—:]?\s*([A-GА-Е]\+{0,3})/i, t), 'harvest_energy');
+  put(
+    'energy_class',
+    cls(/класс(?:а)?\s+энерго\w*\s*[-–—:]?\s*([A-GА-Е]\+{0,3})/i, t)
+      || cls(/класс\s*[-–—:]\s*([A-GА-Е]\+{1,3})\b/i, t)
+      || cls(/\bкласс\s+([A-GА-Е]\+{1,3})\b/i, t),
+    'harvest_energy',
+  );
   put('wash_class', cls(/класс(?:а)?\s+(?:эффективности\s+)?стирк[аи]\s*[-–—:]?\s*([A-GА-Е])/i, t), 'harvest_wash_class');
   put('spin_class', cls(/класс(?:а)?\s+(?:эффективности\s+)?отжим[аеу]\s*[-–—:]?\s*([A-GА-Е])/i, t), 'harvest_spin_class');
   {
-    const m = t.match(/(\d{1,2})\s*(?:программ|режимов(?:\s+стирк)?)/i);
+    const m = t.match(/кол-?во\s+режимов\s*[-–—:]?\s*(\d{1,2})/i)
+      || t.match(/(\d{1,2})\s*(?:программ|режимов(?:\s+стирк)?)/i)
+      || t.match(/(\d{1,2})\s*пр\b/i);
     if (m && Number(m[1]) >= 3 && Number(m[1]) <= 40) put('programs_qty', m[1], 'harvest_programs');
   }
   {
-    const m = t.match(/шум[^0-9]{0,40}стирк[^0-9]{0,12}(\d{2,3})/i)
+    const dual = t.match(/шум[^0-9]{0,24}(\d{2,3})\s*\/\s*(\d{2,3})\s*дБ/i);
+    const m = dual
+      || t.match(/шум[^0-9]{0,40}стирк[^0-9]{0,12}(\d{2,3})/i)
       || t.match(/при\s+стирке[^0-9]{0,8}(\d{2,3})/i);
     if (m && Number(m[1]) >= 30 && Number(m[1]) <= 90) put('noise_wash', m[1], 'harvest_noise');
   }
@@ -167,8 +176,21 @@ export function harvestStorefrontFacts(rec, dict, product) {
   if (/инвертор/i.test(t)) put('motor_type', 'Инверторный', 'harvest_motor');
   else if (/коллектор|щеточн/i.test(t)) put('motor_type', 'Коллекторный', 'harvest_motor');
 
-  if (/сенсорн|электронн/i.test(t)) put('control_type', 'Электронное', 'harvest_control');
-  else if (/механическ|электромеханическ|поворотн/i.test(t)) put('control_type', 'Механическое', 'harvest_control');
+  if (dict.byCode.has('load_max')) {
+    if (/сенсорн/i.test(t)) put('control_type', 'Сенсорное', 'harvest_control');
+    else if (/электронн/i.test(t)) put('control_type', 'Электронное', 'harvest_control');
+    else if (/механическ|электромеханическ|поворотн/i.test(t)) put('control_type', 'Механическое', 'harvest_control');
+  } else if (/сенсорн|электронн/i.test(t)) {
+    put('control_type', 'Электронное', 'harvest_control');
+  } else if (/механическ|электромеханическ|поворотн/i.test(t)) {
+    put('control_type', 'Механическое', 'harvest_control');
+  }
+
+  if (/без\s+диспл|диспл\w*\s+(нет|отсутств)/i.test(t)) {
+    put('display', 'Нет', 'harvest_display');
+  } else if (/тип\s+дисплея|led[\s-]?дисп|диспл\w*\s*[-–—:]?\s*(led|tft|lcd|есть|да)\b|цифров\w*\s+\(?символьн/i.test(t)) {
+    put('display', 'Есть', 'harvest_display');
+  }
 
   if (kind === 'fridge' || dict.byCode.has('fridge_type')) {
     put('vol_total', num(/общ(?:ий|его)?\s+объ[её]м[^0-9]{0,28}(\d{2,4})\s*л/i, t), 'harvest_vol');
@@ -192,6 +214,8 @@ export function harvestStorefrontFacts(rec, dict, product) {
  */
 export function fillStorefrontDefaults(rec, dict, product) {
   const kind = inferProductKind(product?.name || rec.name);
+  const expected = expectedCategoryKind(dict.catId);
+  if (expected && kind !== expected && kind !== 'other') return;
   const table = dict.byCode.has('load_max') ? WASHER_DEFAULTS : FRIDGE_DEFAULTS;
   if (kind === 'dryer') {
     applyDerived(rec, dict, 'drying', 'Есть', 'storefront_default');
@@ -207,6 +231,13 @@ export function fillStorefrontDefaults(rec, dict, product) {
       raw = 'Инверторный';
     }
     applyDerived(rec, dict, attr.code, String(raw), 'storefront_default', 'S0', { overwrite: true });
+  }
+  const cool = rec.attrs.cooling;
+  if (cool != null) {
+    const fridge = defrostCanonFromCooling(cool, 'fridge');
+    if (fridge) applyDerived(rec, dict, 'defrost_fridge', fridge, 'derived_defrost_from_cooling');
+    const freezer = defrostCanonFromCooling(cool, 'freezer');
+    if (freezer) applyDerived(rec, dict, 'defrost_freezer', freezer, 'derived_defrost_from_cooling');
   }
   composeDimsFromAxes(rec, dict);
 }

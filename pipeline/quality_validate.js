@@ -27,6 +27,10 @@ export const HALLUCINATION_RE = new RegExp(
 function stripClaimsPlain(text, { trimEnd = true } = {}) {
   let s = String(text || '');
   if (!s.trim()) return s;
+  s = s.replace(
+    /\s*(?:В характеристиках|Параметры модели|По данным карточки)\s*:\s*[^.!?]*[.!?]?/gi,
+    '',
+  );
   s = s.replace(/,?\s*что\s+говорит\s+о\s+над[её]жност[иь](?:\s+конструкции)?\.?/gi, '.');
   s = s.replace(/,?\s*что\s+подтверждает\s+над[её]жност[иь][^.!?\n]*/gi, '');
   s = s.replace(/,?\s*(?:и\s+)?подтверждает(?:ют)?\s+экономичность(?:\s+модели)?\.?/gi, '');

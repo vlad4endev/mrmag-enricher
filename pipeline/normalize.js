@@ -2,7 +2,7 @@
 
 import { parseProductFields } from './parse.js';
 import { matchKey } from './match.js';
-import { normalizeValue, countUnitsInValues } from './types.js';
+import { normalizeValue, countUnitsInValues, defrostCanonFromCooling } from './types.js';
 import { parseDimensions, reconcileDimensions } from './dimensions.js';
 import { parseIdentity } from './identity.js';
 import { isPackingKey, normKey } from './text.js';
@@ -190,7 +190,10 @@ function applyDims(rec, dims, prov, dict) {
 /** «Уровень шума (стирка / отжим) — 55 / 73 дБ»: первое число — стирка, второе — отжим. */
 function parseDualWashSpinNoise(key, value) {
   const k = String(key || '').toLowerCase().replace(/ё/g, 'е');
-  if (!/шум/.test(k) || !/стирк/.test(k) || !/отжим|вращен/.test(k)) return null;
+  const v = String(value || '').toLowerCase().replace(/ё/g, 'е');
+  const blob = `${k} ${v}`;
+  // Подписи «стирка/отжим» бывают в ключе ИЛИ в значении: «60/76 дБ (стирка/отжим)».
+  if (!/шум/.test(blob) || !/стирк/.test(blob) || !/отжим|вращен/.test(blob)) return null;
   const nums = String(value || '').replace(',', '.').match(/\d+(?:\.\d+)?/g);
   if (!nums || nums.length < 2) return null;
   const wash = Number(nums[0]);
@@ -607,14 +610,21 @@ function deriveLinkedAttrs(rec, dict, product, config) {
     let flag = null;
     if (/без\s+диспл|\bнет\b.{0,16}диспл|диспл\w*\s+(нет|отсутств)/i.test(blob)) {
       flag = 'Нет';
-    } else if (/тип\s+дисплея|led[\s-]?дисп|цифров\w*\s+\(?символьн|сенсорн\w+\s+диспл|\btft\b|\blcd\b[\s-]?дисп|\boled\b/i.test(blob)) {
+    } else if (/тип\s+дисплея|led[\s-]?дисп|диспл\w*\s*[-–—:]?\s*(led|tft|lcd|есть|да)\b|цифров\w*\s+\(?символьн|сенсорн\w+\s+диспл|\btft\b|\blcd\b[\s-]?дисп|\boled\b/i.test(blob)) {
       flag = 'Есть';
-    } else if (
-      inferProductKind(product?.name || rec.name) === 'fridge'
-      && /механическ|электромеханическ|электро-механическ/.test(String(rec.attrs.control_type || blob))
-      && !/диспл|индикац\w+\s+температур/i.test(blob)
-    ) {
-      flag = 'Нет';
+    } else {
+      const kind = inferProductKind(product?.name || rec.name);
+      const inCat = kind === 'fridge' || kind === 'washer'
+        || String(dict.catId) === '467' || String(dict.catId) === '523';
+      const ctrl = String(Array.isArray(rec.attrs.control_type)
+        ? rec.attrs.control_type.join(' ')
+        : (rec.attrs.control_type || ''));
+      const mechanical = /механическ|электромеханическ|электро-механическ/.test(ctrl)
+        || (!ctrl && /механическ|электромеханическ|электро-механическ/.test(blob)
+          && !/электронн|сенсорн/.test(blob));
+      if (inCat && mechanical && !/диспл|индикац\w+\s+температур/i.test(blob)) {
+        flag = 'Нет';
+      }
     }
     if (flag) setDerived(rec, dict, 'display', flag, 'derived_display', 'S0');
   }
@@ -633,17 +643,24 @@ function deriveLinkedAttrs(rec, dict, product, config) {
   }
 
   if (dict.byCode.has('motor_type') && rec.attrs.motor_type == null) {
+    const kind = inferProductKind(product?.name || rec.name);
     let label = null;
     if (/инвертор|bldc|прямой\s+привод/i.test(blob)) label = 'Инверторный';
     else if (/щеточн|коллекторн/.test(blob)) label = 'Коллекторный';
+    else if (
+      (kind === 'washer' || String(dict.catId) === '467')
+      && kind !== 'dryer'
+      && kind !== 'accessory'
+      && (rec.attrs.load_max != null || rec.attrs.spin_max != null || rec.attrs.energy_class != null)
+    ) {
+      label = 'Коллекторный';
+    }
     if (label) setDerived(rec, dict, 'motor_type', label, 'derived_motor_type', 'S0');
   }
 
   if (dict.byCode.has('compressor_type') && rec.attrs.compressor_type == null) {
-    const kind = inferProductKind(product?.name || rec.name);
-    if (kind === 'fridge') {
-      const label = /инвертор/.test(blob) ? 'Инверторный' : 'Стандартный';
-      setDerived(rec, dict, 'compressor_type', label, 'derived_compressor', 'S0');
+    if (/инвертор/.test(blob)) {
+      setDerived(rec, dict, 'compressor_type', 'Инверторный', 'derived_compressor', 'S0');
     }
   }
 
@@ -663,6 +680,21 @@ function deriveLinkedAttrs(rec, dict, product, config) {
   }
 
   harvestStorefrontFacts(rec, dict, product);
+
+  if (dict.byCode.has('defrost_fridge') && rec.attrs.defrost_fridge == null) {
+    const label = defrostCanonFromCooling(rec.attrs.cooling, 'fridge')
+      || defrostCanonFromCooling(blob, 'fridge');
+    if (label) {
+      setDerived(rec, dict, 'defrost_fridge', label, 'derived_defrost_from_cooling', derivedLevel(rec, 'cooling'));
+    }
+  }
+  if (dict.byCode.has('defrost_freezer') && rec.attrs.defrost_freezer == null) {
+    const label = defrostCanonFromCooling(rec.attrs.cooling, 'freezer')
+      || defrostCanonFromCooling(blob, 'freezer');
+    if (label) {
+      setDerived(rec, dict, 'defrost_freezer', label, 'derived_defrost_from_cooling', derivedLevel(rec, 'cooling'));
+    }
+  }
 
   deriveDimsFromAxes(rec, dict);
 }

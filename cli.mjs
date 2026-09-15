@@ -37,6 +37,7 @@ import { buildFilters } from './pipeline/facets.js';
 import { buildReport } from './pipeline/report.js';
 import { renderCard, annotationRows, MIN_ANNOTATION_ROWS } from './pipeline/generate.js';
 import { serializeProducts, buildCustomerExport } from './pipeline/export.js';
+import { completeStorefrontRecs } from './pipeline/storefront_fill.js';
 import { resolveExportPack, shapeProductsFile, shapeFiltersFile, shapeCategoriesFile } from './pipeline/export_template.js';
 import { validateProducts } from './pipeline/validate.js';
 import { webInfoFrom } from './pipeline/reviews.js';
@@ -233,6 +234,9 @@ async function writeOutputs({ recs, dict, config, catId, cov, covAfter, formats,
   console.log(`filters_agent: mode=${agent.mode} map=${agent.mappings.length} skip_stats=${agent.stats.skipped}`);
 
   for (const rec of exported) markCategoryMismatch(rec, catId);
+  if (config.storefront_complete !== false) {
+    completeStorefrontRecs(exported, dict);
+  }
   let built = buildFilters(exported, dict, config);
   const { sanitizeFilterCatalog } = await import('./pipeline/fix_filters.js');
   const sanitized = sanitizeFilterCatalog(built.filters, dict);

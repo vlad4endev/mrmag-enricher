@@ -218,15 +218,11 @@ function padWithFacts(text, extras, min, max) {
     return val ? !hay.includes(val) : !hay.includes(line.toLocaleLowerCase('ru'));
   });
   const pool = unused.length ? unused : extras.slice();
-  const list = pool.join('; ');
-  const queue = list
-    ? [
-      `В характеристиках: ${list}.`,
-      `Параметры модели: ${list}.`,
-      `По данным карточки: ${list}.`,
-      ...pool,
-    ]
-    : extras.slice();
+  const queue = pool.map((line) => {
+    const t = String(line || '').trim();
+    if (!t) return '';
+    return /[.!?…]$/.test(t) ? t : `${t}.`;
+  }).filter(Boolean);
   let i = 0;
   let guard = 0;
   while (desc.length < min && queue.length && guard++ < 40) {

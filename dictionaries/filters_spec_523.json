@@ -90,6 +90,18 @@
       "type": "enum"
     },
     {
+      "code": "defrost_fridge",
+      "name": "Размораживание холодильной камеры",
+      "status": "filter",
+      "type": "enum"
+    },
+    {
+      "code": "defrost_freezer",
+      "name": "Размораживание морозильной камеры",
+      "status": "filter",
+      "type": "enum"
+    },
+    {
       "code": "energy_class",
       "name": "Класс энергоэффективности",
       "status": "filter",

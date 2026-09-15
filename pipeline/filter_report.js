@@ -88,7 +88,10 @@ export function buildFilterCoverageReport({
       .filter(id => id != null),
   )];
 
-  const eligible = products || [];
+  const eligible = (products || []).filter((p) => {
+    const rec = byId.get(String(p.id));
+    return !rec?.category_mismatch;
+  });
   const denom = eligible.length || 1;
 
   const filters = names.map((name) => {

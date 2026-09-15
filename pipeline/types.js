@@ -287,6 +287,23 @@ function isBareBooleanWord(val) {
 }
 
 /**
+ * Канон «Размораживание …» из системы охлаждения.
+ * Full/No Frost → обе камеры «Автоматическое (No Frost)».
+ * Капельная → только холодильная камера («Капельная система»);
+ * морозильную не выдумываем: у капельных она часто ручная, но dump это не сказал.
+ */
+export function defrostCanonFromCooling(cooling, chamber) {
+  const s = String(cooling || '').replace(/ё/g, 'е');
+  if (!s.trim()) return null;
+  if (/full\s*no\s*frost|total\s*no\s*frost|\bfnf\b|no[\s-]?frost|ноу[\s-]?фрост|без наледи/i.test(s)) {
+    return 'Автоматическое (No Frost)';
+  }
+  if (chamber === 'fridge' && /капельн/i.test(s)) return 'Капельная система';
+  if (/статическ|ручн/i.test(s)) return 'Ручное';
+  return null;
+}
+
+/**
  * «Инверторный двигатель: Да» → значение «Инверторный», если ключ — синоним,
  * а не каноническое имя атрибута («Тип двигателя»).
  */

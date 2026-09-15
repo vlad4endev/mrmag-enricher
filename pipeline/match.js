@@ -183,6 +183,19 @@ function rescueWasherTypeByValue(dict, key, value) {
   return { attr: wt, raw: key, confidence: 1, how: 'value_disambiguate' };
 }
 
+/**
+ * Голый ключ «Класс» в дампах часто значит энергокласс: «Класс - A++».
+ * Плюсы в шкале однозначно указывают на energy_class, не на стирку/отжим.
+ */
+function rescueEnergyClassByValue(dict, key, value) {
+  if (normKey(key) !== 'класс') return null;
+  const s = String(value || '').trim();
+  if (!/^[a-gа-е]\+{1,3}$/iu.test(s)) return null;
+  const attr = dict?.byCode?.get('energy_class');
+  if (!attr) return null;
+  return { attr, raw: key, confidence: 0.95, how: 'value_disambiguate' };
+}
+
 export function matchKey(key, dict, { value = '', fuzzyMin = 0.9 } = {}) {
   const nk = normKey(key);
   if (!nk) return { attr: null, raw: key, confidence: 0, how: 'unmapped' };
@@ -193,7 +206,8 @@ export function matchKey(key, dict, { value = '', fuzzyMin = 0.9 } = {}) {
   const bag = bagOfWordsMatch(key, dict, value);
   if (bag) return bag;
 
-  const rescued = rescueWasherTypeByValue(dict, key, value);
+  const rescued = rescueWasherTypeByValue(dict, key, value)
+    || rescueEnergyClassByValue(dict, key, value);
   if (rescued) return rescued;
 
   const banned = blacklistHit(nk, dict);

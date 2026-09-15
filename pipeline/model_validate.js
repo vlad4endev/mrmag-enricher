@@ -1,4 +1,5 @@
 import { cardProseSpecIssues } from './prose_align.js';
+import { findHangingFragments } from './desc_annotation_align.js';
 
 /**
  * Контракт ответа модели и строгая валидация.
@@ -388,6 +389,18 @@ export function validateModelResponse(data, opts = {}) {
     }
   }
 
+  const hangScan = [
+    ['description', data.description],
+    ['short_description', data.short_description],
+    ...(Array.isArray(data.bullets) ? data.bullets.map((b, i) => [`bullets[${i}]`, b]) : []),
+  ];
+  for (const [field, text] of hangScan) {
+    if (typeof text !== 'string' || !text.trim()) continue;
+    if (findHangingFragments(text).length) {
+      add(field, 'висячие фрагменты («не имеет.», «учтите.», «., что» / абзац с запятой) — перепиши абзац целиком');
+    }
+  }
+
   return issues;
 }
 
@@ -412,6 +425,9 @@ export function validationFeedbackLine(issues, opts = {}) {
       }
     }
     if (field === 'description') {
+      if (/висяч/i.test(reason)) {
+        return 'description: не оставляй обрывки вроде «не имеет.» / «учтите.» / «., что» и абзацы, начинающиеся с запятой; перепиши абзац целиком';
+      }
       if (/абзац/i.test(reason)) {
         return `description: ровно ${wantParas} абзаца через пустую строку (\\n\\n), без лишних`;
       }

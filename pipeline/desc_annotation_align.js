@@ -17,7 +17,8 @@ export const DESC_TOPICS = Object.freeze([
     annotationLabels: ['Защита от протечек', 'Защита от протечек воды'],
     /** В схеме 467 поля нет — любое утверждение = фабрикация. */
     schemaAbsent: true,
-    topicRe: /защит[а-яё]*\s+от\s+протеч|протечк|aquastop|aquaprotect|аквастоп/i,
+    // «протеч» ловит и «протечек» (род. мн. в перечислении), не только «протечк*».
+    topicRe: /защит[а-яё]*\s+от\s+протеч|протеч|aquastop|aquaprotect|аквастоп/i,
   },
   {
     id: 'child_lock',
@@ -194,7 +195,170 @@ function isAssertive(sentence, topic) {
   return false;
 }
 
+function isLeakFeat(feat) {
+  return /протеч|aquastop|aquaprotect|аквастоп/i.test(String(feat || ''));
+}
+
+function isChildLockFeat(feat) {
+  return /детей|child\s*lock|блокировк/i.test(String(feat || ''));
+}
+
+/**
+ * «защита от A, от B и от C» / «защита от A и B» → элементы списка без «от».
+ * Первый «защита от» общий, дальше — перечисление через запятую и «и».
+ */
+export function extractProtectionListItems(sentence) {
+  const s = String(sentence || '');
+  const out = [];
+  const leadRe = /защит[а-яё]*\s+от\s+/gi;
+  let m;
+  while ((m = leadRe.exec(s))) {
+    const after = s.slice(m.index + m[0].length);
+    const stop = after.search(/[.!?;]/);
+    const tail = (stop < 0 ? after : after.slice(0, stop)).trim();
+    if (!tail) continue;
+    const parts = tail.split(/\s*(?:,\s*|\s+и\s+)(?:от\s+)?/i)
+      .map(p => p.replace(/^от\s+/i, '').replace(/\s+/g, ' ').trim())
+      .filter(p => p.length >= 3);
+    for (const feat of parts) {
+      out.push({ feat, index: m.index, lead: m[0] });
+    }
+  }
+  return out;
+}
+
+/** Обрывки после вырезания подстроки, не целого фрагмента. */
+export const HANGING_FRAGMENT_RES = Object.freeze([
+  /<p>\s*,/i,
+  /<p>\s*(?:что|включая|глубину)(?![а-яёa-z0-9])/,
+  /\.\s*,\s*(?:что|включая|глубину)(?![а-яёa-z0-9])/i,
+  /[.!?…]\s*(?:что|включая|глубину)(?![а-яёa-z0-9])/,
+  /не имеет\s*[.!?]/i,
+  /учтите\s*[.!?]/i,
+  /^\s*,/,
+  /^\s*(?:что|включая|глубину)(?![а-яёa-z0-9])/,
+]);
+
+export function findHangingFragments(text) {
+  const s = String(text || '');
+  if (!s.trim()) return [];
+  const hits = [];
+  for (const re of HANGING_FRAGMENT_RES) {
+    const flags = re.flags.includes('g') ? re.flags : `${re.flags}g`;
+    const rx = new RegExp(re.source, flags);
+    let m;
+    while ((m = rx.exec(s))) {
+      hits.push({ pattern: re.source, match: m[0], index: m.index });
+    }
+  }
+  return hits;
+}
+
+function joinProtectionItems(items) {
+  const list = (items || []).map(it => String(it || '').trim()).filter(Boolean);
+  if (!list.length) return '';
+  if (list.length === 1) return list[0];
+  const rest = list.slice(1).map(it => (/^от\s+/i.test(it) ? it : `от ${it}`));
+  if (rest.length === 1) return `${list[0]} и ${rest[0]}`;
+  return `${list[0]}, ${rest.slice(0, -1).join(', ')} и ${rest[rest.length - 1]}`;
+}
+
+function dropFeatForTopic(topic) {
+  return (feat) => {
+    const f = String(feat || '');
+    if (topic.id === 'leak_protection' || /протеч/i.test(topic.label || '')) return isLeakFeat(f);
+    if (topic.id === 'child_lock' || /детей/i.test(topic.label || '')) return isChildLockFeat(f);
+    const lab = String(topic.label || '').replace(/^защита от\s+/i, '');
+    if (lab && (fold(f).includes(fold(lab)) || fold(lab).includes(fold(f)))) return true;
+    if (topic.topicRe) {
+      try {
+        if (topic.topicRe.test(f) || topic.topicRe.test(`защита от ${f}`)) return true;
+      } catch { /* invalid topicRe */ }
+    }
+    return false;
+  };
+}
+
+function stripFabricatedProtectionItems(sentence, dropFeat) {
+  const leadRe = /((?:частичн[а-яё]*|полн[а-яё]*|общ[а-яё]*)\s+)?(защит[а-яё]*\s+от\s+)([^.;!?]+)/gi;
+  return String(sentence || '').replace(leadRe, (full, adj, lead, tail) => {
+    const items = String(tail || '').split(/\s*(?:,\s*|\s+и\s+)(?:от\s+)?/i)
+      .map(p => p.replace(/^от\s+/i, '').replace(/\s+/g, ' ').trim())
+      .filter(Boolean);
+    if (!items.length) return full;
+    const kept = items.filter(it => !dropFeat(it));
+    if (!kept.length) return '';
+    if (kept.length === items.length) return full;
+    return `${adj || ''}${lead}${joinProtectionItems(kept)}`;
+  });
+}
+
+function splitFragments(sentence) {
+  const s = String(sentence || '');
+  const parts = [];
+  let buf = '';
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    if (ch === ',' || ch === ';') {
+      parts.push({ text: buf, sep: ch });
+      buf = '';
+    } else buf += ch;
+  }
+  parts.push({ text: buf, sep: '' });
+  return parts;
+}
+
+function joinFragments(parts) {
+  const kept = (parts || []).filter(p => String(p?.text || '').trim());
+  let out = '';
+  for (let i = 0; i < kept.length; i++) {
+    out += kept[i].text;
+    if (i < kept.length - 1) out += (kept[i].sep || ',');
+  }
+  return out;
+}
+
+function clauseContainsTopic(clause, topic) {
+  const s = String(clause || '');
+  if (!s.trim()) return false;
+  if (topic.id === 'leak_protection' || /протеч/i.test(topic.label || '')) {
+    if (extractProtectionListItems(s).some(it => isLeakFeat(it.feat))) return true;
+    return isLeakFeat(s);
+  }
+  if (topic.id === 'generic_feature' && topic.label) {
+    const lab = fold(String(topic.label).replace(/^защита от\s+/i, ''));
+    if (lab && extractProtectionListItems(s).some((it) => {
+      const f = fold(it.feat);
+      return f === lab || f.includes(lab) || lab.includes(f);
+    })) return true;
+  }
+  if (topic.topicRe) {
+    try {
+      if (topic.topicRe.test(s)) return true;
+    } catch { /* */ }
+  }
+  if (topic.label && fold(s).includes(fold(topic.label))) return true;
+  return false;
+}
+
+function featureCoveredByTopics(feat) {
+  const blob = `защита от ${feat}`;
+  return DESC_TOPICS.some((t) => {
+    if (t.id === 'leak_protection') return isLeakFeat(feat);
+    if (t.id === 'child_lock') return isChildLockFeat(feat);
+    try {
+      return t.topicRe.test(blob) || t.topicRe.test(feat);
+    } catch {
+      return false;
+    }
+  });
+}
+
 function sentenceMentionsTopic(sentence, topic) {
+  // «защита от детей, от протечек и от скачков» — каждый элемент списка отдельно.
+  if (topic.id === 'leak_protection') {
+    if (extractProtectionListItems(sentence).some(it => isLeakFeat(it.feat))) return true;
+  }
   if (!topic.topicRe.test(sentence)) return false;
   // «пар» слишком короткий — требуем функцию пара или «оснащена … паром»
   if (topic.id === 'steam') {
@@ -308,6 +472,26 @@ export function findGenericFeatureClaims(descriptionHtml, annotationHtml, { id =
         });
       }
     }
+    // Перечисление после общего «защита от»: каждый элемент — отдельная тема.
+    const seen = new Set(issues.filter(i => i.sentence === body.trim()).map(i => fold(i.topic)));
+    for (const it of extractProtectionListItems(body)) {
+      const feat = it.feat;
+      if (featureCoveredByTopics(feat)) continue;
+      const label = `защита от ${feat}`;
+      if (seen.has(fold(label)) || seen.has(fold(feat))) continue;
+      if (annotationHasFeature(dict, label) || annotationHasFeature(dict, feat)) continue;
+      seen.add(fold(label));
+      issues.push({
+        id,
+        topic: label,
+        topic_id: 'generic_feature',
+        kind: 'fabrication',
+        said: body.trim(),
+        annotation: null,
+        sentence: body.trim(),
+        match: `защита от ${feat}`,
+      });
+    }
   }
   return issues;
 }
@@ -366,17 +550,83 @@ export function findDescAnnotationIssues(descriptionHtml, annotationHtml, { id =
 
 function tidyPunct(s) {
   return String(s || '')
+    .replace(/^\s*,\s*/g, '')
     .replace(/\s+,/g, ',')
     .replace(/,\s*,+/g, ',')
     .replace(/[ \t]{2,}/g, ' ')
     .replace(/\s+\./g, '.')
     .replace(/\.{2,}/g, '.')
+    .replace(/\.\s*,/g, '.')
     .replace(/,\s*([.!?])/g, '$1')
     .replace(/(?:^|[.!?…]\s+)и\s+/gi, (m) => m.replace(/\s+и\s+/i, ' '))
     .replace(/^\s*и\s+/i, '')
     .replace(/\(\s*\)/g, '')
     .replace(/\s{2,}/g, ' ')
     .trim();
+}
+
+function dropFragmentsOrSentence(sentence, topic) {
+  const frags = splitFragments(sentence);
+  const kept = frags.filter(f => !clauseContainsTopic(f.text, topic));
+  if (!kept.length) return '';
+  let next = tidyPunct(joinFragments(kept));
+  if (findHangingFragments(next).length) return '';
+  if (next.replace(/\s+/g, '').length < 12) return '';
+  return next;
+}
+
+/**
+ * Вырезать целый фрагмент/предложение с фабрикацией, не подстроку.
+ * Смешанное «защита от A, от B» — выкинуть только сфабрикованные элементы списка.
+ */
+function stripFabricationClause(sentence, topic) {
+  let s = String(sentence || '');
+  const items = extractProtectionListItems(s);
+  if (items.length >= 2) {
+    const next = stripFabricatedProtectionItems(s, dropFeatForTopic(topic));
+    s = tidyPunct(next);
+    if (findHangingFragments(s).length) return '';
+    if (clauseContainsTopic(s, topic)) return dropFragmentsOrSentence(s, topic);
+    if (s.replace(/\s+/g, '').length < 12) return '';
+    return s;
+  }
+  return dropFragmentsOrSentence(s, topic);
+}
+
+/**
+ * Удаляет предложения/абзацы с висячими обрывками. Если абзац после правки
+ * всё ещё битый — выбрасываем его, а не сохраняем «не имеет.» / «<p>, …».
+ */
+export function sanitizeHangingProse(text) {
+  const raw = String(text || '');
+  if (!raw.trim()) return raw;
+  if (/<[a-z][\s\S]*>/i.test(raw)) {
+    const html = raw.replace(/<(p|li|h[1-6]|td|th|div)\b([^>]*)>([\s\S]*?)<\/\1>/gi, (full, tag, attrs, inner) => {
+      const next = sanitizeHangingPlain(inner);
+      if (!String(next).trim()) return '';
+      return `<${tag}${attrs}>${next}</${tag}>`;
+    });
+    return html.replace(/<p>\s*<\/p>/gi, '').replace(/<li>\s*<\/li>/gi, '');
+  }
+  return sanitizeHangingPlain(raw);
+}
+
+function sanitizeHangingPlain(text) {
+  let s = tidyPunct(String(text || '').replace(/^\s*,\s*/, ''));
+  if (!s.trim()) return '';
+  if (!findHangingFragments(s).length && !findHangingFragments(`<p>${s}</p>`).length) return s;
+  const parts = splitSentences(s);
+  let out = '';
+  for (const sent of parts) {
+    const chunk = tidyPunct(sent.body);
+    if (!chunk) continue;
+    if (findHangingFragments(chunk).length) continue;
+    if (findHangingFragments(sent.full).length) continue;
+    out += chunk + (sent.sep || ( /[.!?…]$/.test(chunk) ? '' : '. '));
+  }
+  s = tidyPunct(out);
+  if (findHangingFragments(s).length) return '';
+  return s;
 }
 
 function materialPhrase(annValue) {
@@ -433,32 +683,6 @@ function rewriteContradiction(sentence, topic, annValue) {
     }
   }
   return tidyPunct(s);
-}
-
-/** Вырезать клаузу фабрикации из предложения, не уничтожая соседние факты. */
-function stripFabricationClause(sentence, topic) {
-  let s = String(sentence || '');
-  if (topic.id === 'leak_protection' || /протеч/i.test(topic.label || '')) {
-    s = s.replace(
-      /,?\s*(?:и\s+)?(?:частичн[а-яё]*|полн[а-яё]*|общ[а-яё]*)?\s*защит[а-яё]*\s+от\s+протеч[а-яё]*(?:\s*воды)?(?:\s*[-–—:]\s*[^,;.!?]+)?(?:\s*\([^)]*\))?/gi,
-      '',
-    );
-    s = s.replace(
-      /защит[а-яё]*\s+от\s+протеч[а-яё]*(?:\s*воды)?\s*[-–—:]\s*[^,;.!?]+/gi,
-      '',
-    );
-  } else if (topic.topicRe) {
-    // Общий случай: вырезать клаузу от союза/запятой до конца упоминания темы.
-    const re = new RegExp(
-      String.raw`(^|[;,]\s*|\s+и\s+)(?:[^,;.!?]{0,40})?(?:${topic.topicRe.source})[^,;.!?]{0,60}`,
-      'gi',
-    );
-    s = s.replace(re, (full, lead) => (lead === ';' || lead.startsWith(',') ? '' : lead === full ? '' : ''));
-  }
-  s = tidyPunct(s);
-  // Если после выреза почти ничего не осталось — сигнал дропнуть предложение.
-  if (s.replace(/\s+/g, '').length < 12) return '';
-  return s;
 }
 
 /**
@@ -522,8 +746,10 @@ export function repairDescriptionPlain(text, annotationHtml) {
       if (next !== before) {
         rewritten = next;
         fixes.push({ kind: 'fabrication', topic: topic.label, sentence: body.trim(), repaired: next });
-      } else {
-        // Не смогли вырезать клаузу — дропаем предложение целиком (как раньше).
+        continue;
+      }
+      // Тема уже снята предыдущим проходом — не дропать целое предложение.
+      if (clauseContainsTopic(rewritten, topic) || (topic.topicRe && topic.topicRe.test(rewritten))) {
         drop = true;
         fixes.push({ kind: 'fabrication', topic: topic.label, sentence: body.trim() });
         break;
@@ -546,10 +772,20 @@ export function repairDescriptionPlain(text, annotationHtml) {
       }
     }
 
+    if (findHangingFragments(rewritten).length) {
+      const cleaned = sanitizeHangingPlain(rewritten);
+      if (!cleaned || findHangingFragments(cleaned).length) {
+        // Битую правку не сохраняем: абзац/предложение выкидываем, не оставляем обрывок.
+        fixes.push({ kind: 'hanging_fragment', topic: 'prose', sentence: rewritten.trim() });
+        continue;
+      }
+      rewritten = cleaned;
+    }
+
     out += rewritten + sent.sep;
   }
 
-  return { text: tidyPunct(out), fixes };
+  return { text: sanitizeHangingProse(tidyPunct(out)), fixes };
 }
 
 /**
@@ -566,7 +802,7 @@ export function repairDescriptionHtml(descriptionHtml, annotationHtml) {
 
   if (!/<[a-z][\s\S]*>/i.test(s)) {
     const { text, fixes } = repairDescriptionPlain(s, annotationHtml);
-    return { html: text, fixes };
+    return { html: sanitizeHangingProse(text), fixes };
   }
 
   const allFixes = [];
@@ -574,9 +810,11 @@ export function repairDescriptionHtml(descriptionHtml, annotationHtml) {
   let blocks = 0;
   let html = s.replace(BLOCK_RE, (full, tag, attrs, inner) => {
     blocks += 1;
-    const { text, fixes } = repairDescriptionPlain(stripHtml(inner), annotationHtml);
-    if (!fixes.length) return full;
+    const orig = stripHtml(inner);
+    const { text, fixes } = repairDescriptionPlain(orig, annotationHtml);
+    if (!fixes.length && text === orig && !findHangingFragments(inner).length) return full;
     allFixes.push(...fixes);
+    if (!String(text).trim()) return '';
     return `<${tag}${attrs}>${text}</${tag}>`;
   });
 
@@ -590,7 +828,7 @@ export function repairDescriptionHtml(descriptionHtml, annotationHtml) {
   }
 
   return {
-    html: html.replace(/<p>\s*<\/p>/gi, '').replace(/<li>\s*<\/li>/gi, ''),
+    html: sanitizeHangingProse(html.replace(/<p>\s*<\/p>/gi, '').replace(/<li>\s*<\/li>/gi, '')),
     fixes: allFixes,
   };
 }

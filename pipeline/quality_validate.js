@@ -13,7 +13,7 @@ import { annotationRows, verifyDescription, renderAnnotation } from './generate.
 import { SOURCE_RANK } from './normalize.js';
 import { alignEnumSurfaces } from './enum_align.js';
 import { alignEnrichedProse } from './prose_align.js';
-import { findDescAnnotationIssues } from './desc_annotation_align.js';
+import { findDescAnnotationIssues, sanitizeHangingProse } from './desc_annotation_align.js';
 
 const NEGATIVE_RE = /^(?:нет|отсутствует|не\s+поддерживается|не\s+предусмотрено|не\s+имеется)$/i;
 export const HALLUCINATION_RE = new RegExp(
@@ -64,7 +64,8 @@ function stripClaimsPlain(text, { trimEnd = true } = {}) {
     out += body + sep;
   }
   out = out.replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').replace(/ {2,}/g, ' ');
-  return trimEnd ? out.trim() : out;
+  out = sanitizeHangingProse(trimEnd ? out.trim() : out);
+  return trimEnd ? String(out).trim() : out;
 }
 
 export function stripHallucinationClaims(text) {
@@ -72,7 +73,7 @@ export function stripHallucinationClaims(text) {
   if (!s.trim()) return s;
   if (/<[a-z][\s\S]*>/i.test(s)) {
     const out = s.replace(/(^|>)([^<]*)/g, (_, edge, frag) => edge + stripClaimsPlain(frag, { trimEnd: false }));
-    return out.replace(/<p>\s*<\/p>/gi, '').replace(/<li>\s*<\/li>/gi, '');
+    return sanitizeHangingProse(out.replace(/<p>\s*<\/p>/gi, '').replace(/<li>\s*<\/li>/gi, ''));
   }
   return stripClaimsPlain(s);
 }

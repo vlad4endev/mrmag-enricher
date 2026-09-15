@@ -4431,6 +4431,49 @@ console.log('golden tests passed');
   );
   assert.ok(generic.some(i => i.kind === 'fabrication'), JSON.stringify(generic));
 
+  const {
+    extractProtectionListItems, findHangingFragments, sanitizeHangingProse,
+  } = await import('./pipeline/desc_annotation_align.js');
+
+  const list11391 = 'Предусмотрена защита от детей, от протечек и от скачков напряжения';
+  const listFeats = extractProtectionListItems(list11391).map(i => i.feat);
+  assert.ok(listFeats.some(f => /детей/i.test(f)), JSON.stringify(listFeats));
+  assert.ok(listFeats.some(f => /протеч/i.test(f)), JSON.stringify(listFeats));
+  assert.ok(listFeats.some(f => /скачк/i.test(f)), JSON.stringify(listFeats));
+
+  const annChildOnly = '<ul><li>Защита от детей: есть</li><li>Сушка: нет</li><li>Материал бака: пластик</li></ul>';
+  const enumLeak = findDescAnnotationIssues(`<p>${list11391}.</p>`, annChildOnly, { id: 11391 });
+  assert.ok(enumLeak.some(i => i.topic_id === 'leak_protection'), JSON.stringify(enumLeak));
+  assert.ok(enumLeak.some(i => /скачк/i.test(i.topic)), JSON.stringify(enumLeak));
+  assert.ok(!enumLeak.some(i => i.topic_id === 'child_lock'), 'дети в annotation — не фабрикация');
+
+  const enumFixed = repairDescriptionHtml(
+    `<p>${list11391}.</p><ul><li>Защита от детей и протечек</li></ul>`,
+    annChildOnly,
+  );
+  assert.ok(!/протеч/i.test(enumFixed.html), enumFixed.html);
+  assert.ok(!/скачк/i.test(enumFixed.html), enumFixed.html);
+  assert.match(enumFixed.html, /детей/i);
+
+  const hangingSrc = repairDescriptionHtml(
+    '<p>Перед покупкой учтите, что машина не имеет защиты от протечек.</p>'
+      + '<p>Компактная модель., что позволяет поставить её в нишу.</p>'
+      + '<p>, включая программу для шерсти.</p>',
+    annChildOnly,
+  );
+  assert.ok(!/протеч/i.test(hangingSrc.html), hangingSrc.html);
+  assert.ok(!/не имеет\s*[.]/i.test(hangingSrc.html), hangingSrc.html);
+  assert.ok(!/учтите\s*[.]/i.test(hangingSrc.html), hangingSrc.html);
+  assert.ok(!/<p>\s*,/i.test(hangingSrc.html), hangingSrc.html);
+  assert.ok(!/\.\s*,\s*(?:что|включая|глубину)/i.test(hangingSrc.html), hangingSrc.html);
+  assert.ok(!findHangingFragments(hangingSrc.html).length, hangingSrc.html);
+
+  const remnant = 'Машина не имеет. Учтите. Текст., что включая глубину.';
+  assert.ok(findHangingFragments(remnant).length >= 2, remnant);
+  const cleanedHang = sanitizeHangingProse('<p>, включая программу.</p><p>Надёжная модель с загрузкой 6 кг.</p>');
+  assert.ok(!/<p>\s*,/i.test(cleanedHang), cleanedHang);
+  assert.match(cleanedHang, /Надёжная модель/);
+
   console.log('ok desc↔annotation QA: фабрикация, противоречие, бак/барабан, экспорт');
 }
 

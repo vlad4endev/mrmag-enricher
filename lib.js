@@ -38,6 +38,7 @@ import {
   buildDescriptionHtml, matchLiteral,
   SHORT_MIN, SHORT_MAX, DESCR_RICH_MIN, DESCR_RICH_MAX,
 } from './pipeline/model_validate.js';
+import { findHangingFragments, sanitizeHangingProse } from './pipeline/desc_annotation_align.js';
 
 // ── КУРС ─────────────────────────────────────────────────────
 // Обновляйте вместе с датой — она печатается в отчётах и выводится в UI.
@@ -2656,6 +2657,7 @@ export async function enrichProduct(product, opts) {
   let sentUser = null;
   let lastRaw = '';
   let lastEnriched = null;
+  let lastValidEnriched = null;
   let modelCalled = false;
   let modelStatus = 'MODEL_NOT_CALLED';
 
@@ -2907,7 +2909,26 @@ export async function enrichProduct(product, opts) {
         }
         continue;
       }
-      return accept(enriched, attempt);
+      // Последняя попытка: не сохраняем висячие обрывки — чистим абзац или откатываем.
+      const salvage = (card) => {
+        if (!card || typeof card !== 'object') return card;
+        const next = { ...card };
+        if (typeof next.description === 'string' && findHangingFragments(next.description).length) {
+          const cleaned = sanitizeHangingProse(next.description);
+          next.description = cleaned;
+        }
+        if (typeof next.short_description === 'string' && findHangingFragments(next.short_description).length) {
+          next.short_description = sanitizeHangingProse(next.short_description);
+        }
+        if (Array.isArray(next.bullets)) {
+          next.bullets = next.bullets.map(b => (typeof b === 'string' ? sanitizeHangingProse(b) : b))
+            .filter(b => b && String(b).trim());
+        }
+        const stillBroken = findHangingFragments(next.description || '').length
+          || findHangingFragments(next.short_description || '').length;
+        return stillBroken && lastValidEnriched ? lastValidEnriched : next;
+      };
+      return accept(salvage(enriched), attempt);
     }
 
     if ((enriched.warnings || []).length && canRetry) {
@@ -2915,6 +2936,7 @@ export async function enrichProduct(product, opts) {
       continue;
     }
 
+    lastValidEnriched = enriched;
     return accept(enriched, attempt);
   }
 

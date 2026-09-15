@@ -13,6 +13,7 @@
 import { formatDimensions, formatAttrValue } from './types.js';
 import { dimsFromAxes } from './dimensions.js';
 import { approvedFilters, sheetToFilterKey } from './approved_filters.js';
+import { sanitizeHangingProse } from './desc_annotation_align.js';
 
 /** @typedef {{ key: string, label: string, re: RegExp }} ProseClaim */
 
@@ -290,11 +291,13 @@ export function rewriteDimTriples(text, rec, dict) {
 
 function tidyPunct(s) {
   return String(s || '')
+    .replace(/^\s*,\s*/g, '')
     .replace(/\s+,/g, ',')
     .replace(/,\s*,+/g, ',')
     .replace(/[ \t]{2,}/g, ' ')
     .replace(/\s+\./g, '.')
     .replace(/\.{2,}/g, '.')
+    .replace(/\.\s*,/g, '.')
     .replace(/,\s*([.!?])/g, '$1')
     .replace(/\(\s+/g, '(')
     .replace(/\s+\)/g, ')')
@@ -360,7 +363,7 @@ export function alignAssembledProse(text, rec, dict) {
   s = stripKnownUnknowns(s, rec);
   s = stripUnbackedBrandFeatures(s, rec);
   s = stripUnbackedWarranty(s, rec, dict);
-  return s;
+  return sanitizeHangingProse(s);
 }
 
 export function alignEnrichedProse(enriched, rec, dict) {

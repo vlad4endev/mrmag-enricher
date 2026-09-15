@@ -17,7 +17,7 @@ import { scrubProductFilterValues, validateProducts } from './validate.js';
 import { markCategoryMismatch } from './category_mismatch.js';
 import { buildFilterCoverageReport } from './filter_report.js';
 import { completeStorefrontRecs } from './storefront_fill.js';
-import { repairDescriptionHtml } from './desc_annotation_align.js';
+import { repairDescriptionHtml, repairAssemblyPunctuation, findAssemblyPunctIssues } from './desc_annotation_align.js';
 
 function esc(s) {
   return String(s)
@@ -286,6 +286,10 @@ export function serializeProduct(rec, dict, debugFacets, opts = {}) {
   const annotationHtml = renderAnnotation(rec, dict);
   // annotation — источник истины: срезать фабрикацию и выровнять противоречия.
   descHtml = repairDescriptionHtml(descHtml, annotationHtml).html;
+  // Склейка фактов (стиралки и холодильники): точка/запятая до записи в выгрузку.
+  if (findAssemblyPunctIssues(descHtml).length) {
+    descHtml = repairAssemblyPunctuation(descHtml);
+  }
   return {
     id: rec.id,
     meta_keywords: meta,

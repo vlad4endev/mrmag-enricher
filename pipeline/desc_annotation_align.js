@@ -584,11 +584,29 @@ function tidyPunct(s) {
     .trim();
 }
 
-/** Стык фактов без точки: «16 программ стирки Максимальная скорость…». */
-const FACT_LEAD_SRC = String.raw`(?:программ(?:ы|ами)?|режимов)\s+стирки|класс(?:а)?\s+отжима|скорост[а-яё]*\s+отжима|(?:макс(?:имальн[а-яё]*)?\s+)?загрузк[аеиу](?:\s+белья)?|об\.?\s*/\s*мин`;
+/** Стык фактов без точки — стиралки и холодильники. */
+const FACT_LEAD_SRC = [
+  String.raw`\d+\s+программ(?:ы|ами)?(?:\s+стирки)?`,
+  String.raw`(?:программ(?:ы|ами)?|режимов)\s+стирки`,
+  String.raw`\d+\s+(?:полок|полки|ящиков|ящика|камер[аы]?|дверей|двери|компрессоров)`,
+  String.raw`класс(?:а)?\s+(?:отжима|энергоэффективности|энергопотребления)`,
+  String.raw`скорост[а-яё]*\s+отжима`,
+  String.raw`(?:макс(?:имальн[а-яё]*)?\s+)?загрузк[аеиу](?:\s+белья)?`,
+  String.raw`объ[её]м(?:\s+(?:общий|холодильной\s+камеры|морозильной\s+камеры))?`,
+  String.raw`(?:Full|Total)\s+No\s+Frost|No\s+Frost`,
+  String.raw`\d+(?:[.,]\d+)?\s*(?:об\.?\s*/\s*мин|дБ(?:А)?|кг(?:\s+белья)?|л|см|мм|шт)`,
+  String.raw`об\.?\s*/\s*мин`,
+].join('|');
 
-/** Элементы перечисления после тире, которые модель клеит пробелом. */
-const FEATURE_ITEM_SRC = String.raw`защита от детей|контроль дисбаланса|контроль пенообразования|отсрочк[а-яё]*\s+(?:старта|запуска)`;
+/** «л.» / «см.» — настоящая аббревиатура, точку не снимаем. */
+const ABBR_WORD_RE = /^(?:л|мл|см|мм|кг|г|вт|квт|дб|шт|ч|мин|мес|об|т|др|пр|т\.е|т\.ч)$/i;
+
+/** Единица, после которой строчный факт в том же предложении → запятая. */
+const UNIT_TAIL_SRC = String.raw`об\.?\s*/\s*мин|дБ(?:А)?|кг(?:\/сут(?:ки)?)?|л|см|мм|шт`;
+const NEXT_FACT_LC_SRC = String.raw`класс|объ[её]м|уровень|система|тип |цвет |загрузк|скорост|хлад|управлен|климат`;
+
+/** Элементы перечисления, которые модель клеит пробелом. */
+const FEATURE_ITEM_SRC = String.raw`защита от детей|контроль дисбаланса|контроль пенообразования|отсрочк[а-яё]*\s+(?:старта|запуска)|зона свежести|суперзаморозк[а-яё]*|экспресс-заморозк[а-яё]*|генератор льда`;
 
 function commaSeparateFeatureItems(s) {
   const item = FEATURE_ITEM_SRC;
@@ -598,15 +616,25 @@ function commaSeparateFeatureItems(s) {
   );
 }
 
+/** «Предусмотрены. защита» — ложная точка после связки, не после «л.»/«см.». */
+function stripFalseSentencePeriods(s) {
+  return String(s || '').replace(/(\S{2,})\.\s+(?=[а-яё])/g, (full, word) => {
+    const bare = String(word).replace(/^[«"'(]+|[»"')]+$/g, '');
+    if (ABBR_WORD_RE.test(bare) || /^\d+[.)]?$/.test(bare)) return full;
+    return `${word} `;
+  });
+}
+
 function repairAssemblyPunctPlain(text, { sentences = true } = {}) {
   let out = String(text || '');
   if (!out.trim()) return out;
   out = out.replace(/[—–]\s*\.\s*/g, '— ');
   out = out.replace(/Функци[яи]\.\s+(?=[A-Za-z«"'])/g, m => m.replace('.', ''));
-  out = out.replace(/Есть\.\s+(?=[а-яё])/g, m => m.replace('.', ''));
+  out = stripFalseSentencePeriods(out);
   if (sentences !== false) {
     out = out.replace(new RegExp(String.raw`(${FACT_LEAD_SRC})\s+(?=[А-ЯЁ][а-яё]{3,})`, 'g'), '$1. ');
   }
+  out = out.replace(new RegExp(String.raw`(${UNIT_TAIL_SRC})\s+(?=${NEXT_FACT_LC_SRC})`, 'gi'), '$1, ');
   out = commaSeparateFeatureItems(out);
   return tidyPunct(out);
 }
@@ -621,9 +649,20 @@ export function findAssemblyPunctIssues(text) {
   const hits = [];
   const dash = s.match(/[—–]\s*\./);
   if (dash) hits.push({ kind: 'dash_period', match: dash[0] });
-  const factRe = new RegExp(String.raw`(?:${FACT_LEAD_SRC})\s+[А-ЯЁ][а-яё]{3,}`, 'g');
+  const connRe = /\S{2,}\.\s+[а-яё]/g;
   let m;
+  while ((m = connRe.exec(s))) {
+    const word = m[0].replace(/\.\s+[а-яё]$/, '');
+    const bare = word.replace(/^[«"'(]+|[»"')]+$/g, '');
+    if (ABBR_WORD_RE.test(bare) || /^\d+[.)]?$/.test(bare)) continue;
+    hits.push({ kind: 'connector_period', match: m[0] });
+  }
+  const factRe = new RegExp(String.raw`(?:${FACT_LEAD_SRC})\s+[А-ЯЁ][а-яё]{3,}`, 'g');
   while ((m = factRe.exec(s))) hits.push({ kind: 'missing_period', match: m[0] });
+  const commaRe = new RegExp(String.raw`(?:${UNIT_TAIL_SRC})\s+(?:${NEXT_FACT_LC_SRC})`, 'gi');
+  while ((m = commaRe.exec(s))) {
+    if (!/,/.test(m[0])) hits.push({ kind: 'missing_comma', match: m[0] });
+  }
   const listRe = new RegExp(String.raw`(?:${FEATURE_ITEM_SRC})\s+(?:${FEATURE_ITEM_SRC})`, 'gi');
   while ((m = listRe.exec(s))) {
     if (!/,/.test(m[0])) hits.push({ kind: 'list_spaces', match: m[0] });

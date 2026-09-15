@@ -4511,6 +4511,54 @@ console.log('golden tests passed');
   assert.match(estList, /стирки\.\s+Есть защита от детей, контроль дисбаланса/);
   assert.ok(!/Есть\./.test(estList), estList);
 
+  const programsBare = repairAssemblyPunctuation(
+    'Машина имеет 16 программ Скорость отжима достигает 1000 об/мин.',
+  );
+  assert.match(programsBare, /16 программ\.\s+Скорость отжима/);
+  const programsBare2 = repairAssemblyPunctuation(
+    'Машина предлагает 16 программ Скорость отжима достигает 800 об/мин.',
+  );
+  assert.match(programsBare2, /16 программ\.\s+Скорость отжима/);
+  assert.equal(findAssemblyPunctIssues(programsBare).length, 0, programsBare);
+
+  const predusmotreny = repairAssemblyPunctuation(
+    'Машина предлагает 13 программ стирки. Предусмотрены. защита от детей, контроль дисбаланса.',
+  );
+  assert.match(predusmotreny, /стирки\.\s+Предусмотрены защита от детей, контроль дисбаланса/);
+  assert.ok(!/Предусмотрены\./.test(predusmotreny), predusmotreny);
+  assert.ok(findAssemblyPunctIssues(
+    'Предусмотрены. защита от детей, контроль дисбаланса.',
+  ).some(i => i.kind === 'connector_period'));
+
+  const rpmClass = repairAssemblyPunctuation(
+    'Скорость отжима достигает 800 об/мин класс отжима D.',
+  );
+  assert.match(rpmClass, /800 об\/мин, класс отжима D/);
+  assert.equal(findAssemblyPunctIssues(rpmClass).length, 0, rpmClass);
+
+  const fridgeVol = repairAssemblyPunctuation(
+    'Общий объем составляет 344 л Класс энергоэффективности A.',
+  );
+  assert.match(fridgeVol, /344 л\.\s+Класс энергоэффективности/);
+  const fridgeFrost = repairAssemblyPunctuation(
+    'Система охлаждения Full No Frost Общий объем 310 л.',
+  );
+  assert.match(fridgeFrost, /No Frost\.\s+Общий объем/);
+  const fridgeShelves = repairAssemblyPunctuation(
+    'В камере 4 полки Система охлаждения капельная.',
+  );
+  assert.match(fridgeShelves, /4 полки\.\s+Система охлаждения/);
+  const fridgeConn = repairAssemblyPunctuation(
+    'Доступны. зона свежести, суперзаморозка.',
+  );
+  assert.match(fridgeConn, /Доступны зона свежести/);
+  assert.ok(!/Доступны\./.test(fridgeConn), fridgeConn);
+  const fridgeNoise = repairAssemblyPunctuation(
+    'Уровень шума достигает 41 дБ климатический класс ST.',
+  );
+  assert.match(fridgeNoise, /41 дБ, климатический класс ST/);
+  assert.equal(findAssemblyPunctIssues(fridgeVol).length, 0, fridgeVol);
+
   const dashAfterLeak = repairDescriptionHtml(
     '<p>Среди функций — защита от протечек, защита от детей контроль дисбаланса.</p>',
     '<ul><li>Защита от детей: есть</li><li>Сушка: нет</li></ul>',

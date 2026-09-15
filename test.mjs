@@ -17,7 +17,7 @@ import {
   AI_REPAIR_PASSES,
   validateModelResponse, buildDescriptionHtml, sourceCorrectionFeedback,
   sanitizeEnrichedResult, seoPackageEmpty, cardTextsEmpty,
-  hydrateFromDump, isSourceThin, sourceFactCount, mergeDumpIntoProduct,
+  hydrateFromDump, isSourceThin, sourceFactCount, mergeDumpIntoProduct, sourceText,
   doneStatusLabel,
   softFixCardTexts, resolveSystemPrompt,
 } from './lib.js';
@@ -223,6 +223,22 @@ t('annotation учитывается наравне с description', () => {
     assert.match(merged.annotation, /Ширина - 60 см/);
     assert.match(merged.description, /^дамп/);
     assert.match(merged.description, /магазин/);
+  });
+  t('JSON v2 annotation_html не теряется в sourceText и при склейке с дампом', () => {
+    const v2 = {
+      id: 44782,
+      annotation_html: '<ul><li>Уровень шума при стирке: 60 дБ</li><li>Уровень шума при отжиме: 76 дБ</li></ul>',
+      description_html: '<p>Стиральная машина Indesit IWSC 6105</p>',
+    };
+    assert.match(sourceText(v2), /60 дБ/);
+    assert.match(sourceText(v2), /76 дБ/);
+    const merged = mergeDumpIntoProduct(v2, {
+      annotation: '<ul><li>Тип загрузки - фронтальная</li></ul>',
+      description: 'дамп',
+    });
+    assert.match(merged.annotation, /фронтальная/);
+    assert.match(merged.annotation, /60 дБ/);
+    assert.match(sourceText(merged), /60 дБ/);
   });
   fs.rmSync(dumpRoot, { recursive: true, force: true });
 }

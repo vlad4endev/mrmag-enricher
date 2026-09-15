@@ -5,7 +5,7 @@ import {
 import { normalizeProduct, formatCounts, deriveDimsFromAxes } from './pipeline/normalize.js';
 import { bucketLabel, buildFilters, facetKind } from './pipeline/facets.js';
 import { renderCard, annotationRows, MIN_ANNOTATION_ROWS, verifyDescription } from './pipeline/generate.js';
-import { compactAnnotation, compactHtml, serializeProduct, metaKeywords, buildCustomerExport, buildGoldShapeExport, fillCardFiltersAfterEnrich } from './pipeline/export.js';
+import { compactAnnotation, compactHtml, serializeProduct, metaKeywords, buildCustomerExport, buildGoldShapeExport, fillCardFiltersAfterEnrich, toPipelineProduct } from './pipeline/export.js';
 import { validateProducts, validateDescription, expectedFilters, PRODUCT_FIELDS, scrubProductFilterValues, formatCleanlinessError } from './pipeline/validate.js';
 import { webInfoFrom, cleanReviewText, isReview } from './pipeline/reviews.js';
 import { dictForProducts } from './pipeline/schema.js';
@@ -1794,6 +1794,41 @@ console.log('golden tests passed');
     assert.ok(!/AQUAPROTECT/i.test(row.description_html + JSON.stringify(row)));
     assert.ok(!/гарант/i.test(row.description_html));
     console.log('ok 11391: глубина 550 мм, без «не указан»/AquaProtect/гарантии');
+  }
+
+  {
+    const { alignAssembledProse } = await import('./pipeline/prose_align.js');
+    const gold = {
+      id: 44782,
+      name: p467[44782].name,
+      description_html: '<ul><li>Уровень шума при стирке — 60 дБ</li></ul><p>Стиральная машина Indesit IWSC 6105.</p>',
+      annotation_html: '<ul><li>Уровень шума при стирке: 60 дБ</li><li>Уровень шума при отжиме: 76 дБ</li><li>Максимальная загрузка белья: 6 кг</li><li>Тип загрузки: фронтальная</li><li>Установка: встраиваемая</li></ul>',
+    };
+    const rec = normalizeProduct(toPipelineProduct(gold), d467, config);
+    assert.equal(rec.attrs.noise_wash, 60);
+    assert.equal(rec.attrs.noise_spin, 76);
+    const bad = 'Перед покупкой учтите, что машина не имеет сушки и защиты от детей. '
+      + 'Уровень шума при стирке и отжиме не указан производителем. '
+      + 'Габариты позволяют встроить технику в стандартный кухонный модуль шириной 60 см.';
+    const aligned = alignAssembledProse(bad, rec, d467);
+    assert.ok(!/не указан/i.test(aligned), aligned);
+    assert.match(aligned, /60\s*дБ/);
+    assert.match(aligned, /76\s*дБ/);
+    const row = serializeProduct(rec, d467, [], {
+      config,
+      enriched: {
+        short_description: 'Встраиваемая стиральная машина Indesit IWSC 6105 с фронтальной загрузкой на 6 кг.',
+        description: bad,
+        bullets: ['Уровень шума при стирке — не указан'],
+        strong: [],
+        meta_keywords: 'стиральная машина Indesit, IWSC 6105, 6 кг',
+        web_info: null,
+      },
+    });
+    assert.ok(!/не указан/i.test(row.description_html), row.description_html);
+    assert.match(row.annotation_html, /60 дБ/);
+    assert.match(row.annotation_html, /76 дБ/);
+    console.log('ok 44782 JSON v2: шум 60/76 дБ из annotation_html, без «не указан»');
   }
 
   // Annotation dedup

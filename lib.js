@@ -1471,11 +1471,13 @@ export function productFacts(product, schemaKey) {
   const plain = sourceText(product);
   const { facts: attr, bounds, sources } = attrFacts(product?.attributes, schemaKey);
   const requiredKeys = schemaFor(schemaKey)?.requiredSpecKeys || [];
-  const fromAnn = product?.annotation ? extractFacts(String(product.annotation), schemaKey) : {};
+  const annotation = productFieldText(product, ['annotation', 'annotation_html']);
+  const description = productFieldText(product, ['description', 'description_html']);
+  const fromAnn = annotation ? extractFacts(annotation, schemaKey) : {};
   // Шаг 1: attributes + annotation. Шаг 2 (парсинг description) — только
   // пустые оси, и только если шаг 1 не закрыл обязательный фильтр.
   const fromPlain = extractFacts(plain, schemaKey);
-  const fromDesc = product?.description ? extractFacts(String(product.description), schemaKey) : {};
+  const fromDesc = description ? extractFacts(description, schemaKey) : {};
   let facts = requiredKeys.length
     ? { ...fromAnn }
     : { ...fromPlain, ...fromDesc, ...fromAnn };
@@ -2163,8 +2165,19 @@ export function buildUserContent(product, facts = null, { benchmarks = null, sch
   });
 }
 
+/** JSON v2 / эталон заказчика несёт тексты в *_html, дамп — в сырых полях. */
+function productFieldText(product, keys) {
+  for (const k of keys) {
+    const s = String(product?.[k] ?? '').trim();
+    if (s) return s;
+  }
+  return '';
+}
+
 export function sourceText(product) {
-  return (stripHtml(product.description) + ' ' + stripHtml(product.annotation)).trim();
+  const desc = productFieldText(product, ['description', 'description_html']);
+  const ann = productFieldText(product, ['annotation', 'annotation_html']);
+  return (stripHtml(desc) + ' ' + stripHtml(ann)).trim();
 }
 
 const COUNTRY_IN_SOURCE = /стран[аы][\s-]*(?:производств[а-яё]*|изготовлен[а-яё]*|производитель)\s*[-–—:]\s*[A-Za-zА-Яа-яЁё]{2,}/i;
@@ -2438,19 +2451,23 @@ export function isSourceThin(product, schemaKey, opts = {}) {
 export function mergeDumpIntoProduct(product, dump) {
   if (!product || !dump) return product;
   const next = { ...product };
-  const dumpAnn = String(dump.annotation || '').trim();
-  const prodAnn = String(product.annotation || '').trim();
-  const dumpDesc = String(dump.description || '').trim();
-  const prodDesc = String(product.description || '').trim();
+  const dumpAnn = productFieldText(dump, ['annotation', 'annotation_html']);
+  const prodAnn = productFieldText(product, ['annotation', 'annotation_html']);
+  const dumpDesc = productFieldText(dump, ['description', 'description_html']);
+  const prodDesc = productFieldText(product, ['description', 'description_html']);
   if (dumpAnn) {
     next.annotation = prodAnn && prodAnn !== dumpAnn
-      ? `${dump.annotation}<br>${product.annotation}`
-      : dump.annotation;
+      ? `${dumpAnn}<br>${prodAnn}`
+      : dumpAnn;
+  } else if (prodAnn && !String(next.annotation || '').trim()) {
+    next.annotation = prodAnn;
   }
   if (dumpDesc) {
     next.description = prodDesc && prodDesc !== dumpDesc
-      ? `${dump.description} ${product.description}`
-      : dump.description;
+      ? `${dumpDesc} ${prodDesc}`
+      : dumpDesc;
+  } else if (prodDesc && !String(next.description || '').trim()) {
+    next.description = prodDesc;
   }
   if (!String(next.name || '').trim() && dump.name) next.name = dump.name;
   return next;

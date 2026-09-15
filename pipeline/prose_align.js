@@ -203,6 +203,7 @@ export function cardProseSpecIssues(card, specs) {
 const DIM_TRIPLE_RE = /(\d+(?:[.,]\d+)?)\s*[x×хX*]\s*(\d+(?:[.,]\d+)?)\s*[x×хX*]\s*(\d+(?:[.,]\d+)?)(?:\s*(мм|см))?/g;
 const AXIS_HEADING_RE = /габариты\s*\(\s*[ВШГвшг]\s*[×xхX]\s*[ВШГвшг]\s*[×xхX]\s*[ВШГвшг]\s*\)/gi;
 const UNKNOWN_MOTOR_RE = /(?:,\s*)?(?:тип(?:у)?\s+)?двигател[яиея]?\s+не\s+указан[аоы]?/gi;
+const UNKNOWN_NOISE_RE = /(?:уровень\s+)?шум[а-яё]*(?:\s+при)?(?:\s+стирк[а-яё]*)?(?:\s+и)?(?:\s+при)?(?:\s+отжим[а-яё]*)?(?:[\s,;:.—–-]+)не\s+указан[аоы]?(?:\s+производителем)?/gi;
 const BRAND_LEAK_RE = /\b(?:Aqua\s*-?\s*Protect|AQUAPROTECT|AquaStop|Аквастоп(?:ом|а|у|е)?)\b/gi;
 const WARRANTY_CLAUSE_RE = /(?:,\s*)?(?:полная\s+)?гаранти[яиею]\s+(?:составляет\s+)?(?:\d+\s*(?:год(?:а|ов)?|лет|мес(?:яц(?:а|ев)?)?)(?:\s*,\s*на\s+(?:электро)?двигатель\s*[—–-]\s*\d+\s*(?:год(?:а|ов)?|лет))?|(?:на\s+(?:электро)?двигатель\s*[—–-]\s*)?\d+\s*(?:год(?:а|ов)?|лет))/gi;
 const WARRANTY_TAIL_RE = /(?:,\s*)?на\s+(?:электро)?двигатель\s*[—–-]\s*\d+\s*(?:год(?:а|ов)?|лет)/gi;
@@ -301,11 +302,23 @@ function tidyPunct(s) {
     .trim();
 }
 
+function noiseKnownPhrase(rec) {
+  const wash = rec?.attrs?.noise_wash;
+  const spin = rec?.attrs?.noise_spin;
+  const parts = [];
+  if (wash != null && wash !== '') parts.push(`при стирке — ${wash} дБ`);
+  if (spin != null && spin !== '') parts.push(`при отжиме — ${spin} дБ`);
+  if (!parts.length) return '';
+  return `Уровень шума ${parts.join(', ')}`;
+}
+
 export function stripKnownUnknowns(text, rec) {
   let s = String(text || '');
   if (rec?.attrs?.motor_type != null && rec.attrs.motor_type !== '') {
     s = s.replace(UNKNOWN_MOTOR_RE, '');
   }
+  const noise = noiseKnownPhrase(rec);
+  if (noise) s = s.replace(UNKNOWN_NOISE_RE, noise);
   return tidyPunct(s);
 }
 

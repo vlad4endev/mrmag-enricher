@@ -683,21 +683,31 @@ function deriveLinkedAttrs(rec, dict, product, config) {
 
   harvestStorefrontFacts(rec, dict, product);
 
+  refreshDerivedFacets(rec, dict, product);
+}
+
+/**
+ * После specs/добора: разморозка из системы охлаждения и габариты из осей.
+ * Для капельной морозилку из SEO «No Frost» не берём — это часто чужая камера.
+ */
+export function refreshDerivedFacets(rec, dict, product) {
+  const blob = factBlob(rec, product);
+  const cooling = rec.attrs.cooling;
+  const drip = /капельн/i.test(String(cooling || ''));
   if (dict.byCode.has('defrost_fridge') && rec.attrs.defrost_fridge == null) {
-    const label = defrostCanonFromCooling(rec.attrs.cooling, 'fridge')
+    const label = defrostCanonFromCooling(cooling, 'fridge')
       || defrostCanonFromCooling(blob, 'fridge');
     if (label) {
       setDerived(rec, dict, 'defrost_fridge', label, 'derived_defrost_from_cooling', derivedLevel(rec, 'cooling'));
     }
   }
   if (dict.byCode.has('defrost_freezer') && rec.attrs.defrost_freezer == null) {
-    const label = defrostCanonFromCooling(rec.attrs.cooling, 'freezer')
-      || defrostCanonFromCooling(blob, 'freezer');
+    const label = defrostCanonFromCooling(cooling, 'freezer')
+      || (!drip ? defrostCanonFromCooling(blob, 'freezer') : null);
     if (label) {
       setDerived(rec, dict, 'defrost_freezer', label, 'derived_defrost_from_cooling', derivedLevel(rec, 'cooling'));
     }
   }
-
   deriveDimsFromAxes(rec, dict);
 }
 

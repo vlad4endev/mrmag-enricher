@@ -819,6 +819,9 @@ t('промпт называет категорию и её поля', () => {
   assert.match(p, /Категория: Стиральные машины/);
   assert.match(p, /"скорость_отжима_об_мин": null/);
   assert.ok(!/морозил/i.test(p), 'в промпте машины не должно быть морозильной камеры');
+  assert.match(p, /Ш×Г×В \(ширина × глубина × высота\)/);
+  assert.match(p, /даже если в исходном тексте порядок другой/);
+  assert.ok(!/Порядок осей в тройке размеров НЕ фиксирован/.test(p));
 });
 
 t('промпт универсальной схемы не подсовывает чужие поля', () => {
@@ -1409,7 +1412,7 @@ console.log('\nЗапрос к модели');
     stub([reply(answer({ объем_общий_л: '310 л', бренд: 'DON' }),
       { usage: { prompt_tokens: 1000, completion_tokens: 500, cost: 0.002 } })]);
     const r = await run({ name: 'Холодильник DON', category: 'Холодильники',
-      description: 'Общий объем, л 310 Вес (кг) - 62' });
+      description: 'Общий объем, л 310 Вес (кг) - 62 Высота (мм) - 1800 Цвет - белый' });
 
     const [{ url, body }] = record;
     assert.match(url, /openrouter\.ai/);
@@ -1580,7 +1583,7 @@ console.log('\nЗапрос к модели');
       sku: 'no-dump-sku',
       name: 'Холодильник DON',
       category: 'Холодильники',
-      description: 'Общий объем, л 310 Вес (кг) - 62',
+      description: 'Общий объем, л 310 Вес (кг) - 62 Высота (мм) - 1800 Цвет - белый',
       annotation: 'Общий объем - 310 л',
     }, { mismatchPolicy: 'flag', onNote: m => notes.push(m) });
     assert.ok(record.length >= 2, 'правка сразу, до следующего товара');

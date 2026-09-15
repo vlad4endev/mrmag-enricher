@@ -295,6 +295,10 @@ function isBareBooleanWord(val) {
 export function defrostCanonFromCooling(cooling, chamber) {
   const s = String(cooling || '').replace(/ё/g, 'е');
   if (!s.trim()) return null;
+  // «Без No Frost» = капельная, не No Frost. Иначе /no frost/ срабатывает на отрицание.
+  if (/без\s*no[\s-]?frost|без\s*ноу[\s-]?фрост/i.test(s)) {
+    return chamber === 'fridge' ? 'Капельная система' : null;
+  }
   if (/full\s*no\s*frost|total\s*no\s*frost|\bfnf\b|no[\s-]?frost|ноу[\s-]?фрост|без наледи/i.test(s)) {
     return 'Автоматическое (No Frost)';
   }
@@ -520,7 +524,7 @@ function uniqueAliasList(list) {
   return out;
 }
 
-export function aliasValue(attr, raw) {
+export function aliasValue(attr, raw, { contains = true } = {}) {
   const aliases = attr?.value_aliases;
   if (!aliases) return null;
   const folds = new Set([valueFold(raw), valueFold(displayEnum(raw))].filter(Boolean));
@@ -530,7 +534,9 @@ export function aliasValue(attr, raw) {
     const keys = [valueFold(canon), ...(list || []).map(valueFold)];
     if (keys.some(k => folds.has(k))) return canon;
   }
+  if (!contains) return null;
   // «Светодиодное LED, 2 x 2 Вт» → канон по вхождению самой длинной метки.
+  // На multi-списке («N, SN, ST, T») вхождение «SN, ST» не должно схлопывать остальные классы.
   let best = null;
   let bestLen = 0;
   for (const [canon, list] of Object.entries(aliases)) {
@@ -608,7 +614,7 @@ export function normalizeValue(attr, raw, { keyText = '' } = {}) {
   const text = String(raw).trim().replace(/[.;]\s*$/, '');
   const srcUnit = unitIn(text) || unitIn(keyText);
 
-  const one = (typ, v) => {
+  const one = (typ, v, { aliasContains = true } = {}) => {
     if (typ === 'number' || typ === 'integer') {
       const rawStr = String(v).trim();
       // Перечень режимов («отжим, полоскание… отсрочка — 24 ч») — не счётчик.
@@ -673,7 +679,7 @@ export function normalizeValue(attr, raw, { keyText = '' } = {}) {
           if (inlineCut) rawEnum = inlineCut[1].trim();
         }
       }
-      const aliased = aliasValue(attr, rawEnum);
+      const aliased = aliasValue(attr, rawEnum, { contains: aliasContains });
       if (!aliased && /^[a-z][a-z0-9]*[-_][a-z0-9_-]+$/.test(String(rawEnum).trim())) {
         return { ok: false, value: null, reason: 'slug', raw: v };
       }
@@ -727,7 +733,7 @@ export function normalizeValue(attr, raw, { keyText = '' } = {}) {
   };
 
   if (attr.cardinality === 'multi') {
-    const whole = one(attr.type, text);
+    const whole = one(attr.type, text, { aliasContains: false });
     if (whole.ok && !whole.pending_canon) {
       return { ok: true, value: Array.isArray(whole.value) ? whole.value : [whole.value] };
     }

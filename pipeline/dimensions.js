@@ -16,18 +16,48 @@ const BARE_DIM_KEYS = /^(габариты|размеры|размер)$/i;
 
 export function axisOrderFromKey(key) {
   const s = String(key || '');
-  const letters = s.match(RE_LETTERS);
-  if (letters) return [letters[1], letters[2], letters[3]].map(c => AXIS_LETTER[c.toLowerCase()]);
+  // Ближайшая к числам подпись — последняя в окне, не первая в абзаце.
+  const letterRe = new RegExp(RE_LETTERS.source, 'gi');
+  let letters = null;
+  let m;
+  while ((m = letterRe.exec(s))) {
+    letters = [m[1], m[2], m[3]].map(c => AXIS_LETTER[c.toLowerCase()]);
+  }
+  if (letters?.length === 3 && letters.every(Boolean)) return letters;
   const words = [];
   const re = /ширин[аыеу]?|высот[аыеу]?|глубин[аыеу]?/gi;
-  let m;
-  const text = s;
-  while ((m = re.exec(text))) {
+  while ((m = re.exec(s))) {
     const w = AXIS_WORD.find(([p]) => p.test(m[0]));
     if (w) words.push(w[1]);
   }
   if (words.length === 3) return words;
   return null;
+}
+
+const AXIS_LETTER_RU = { width: 'Ш', height: 'В', depth: 'Г' };
+const AXIS_WORD_RU = { width: 'ширина', height: 'высота', depth: 'глубина' };
+
+/** Каталог 467 — Ш×Г×В, 523 — Ш×В×Г: порядок из имени атрибута dims. */
+export function catalogAxisOrder(dict) {
+  const attr = dict?.byCode?.get?.('dims')
+    || (dict?.attrs || []).find(a => a?.code === 'dims');
+  return axisOrderFromKey(attr?.facet?.label || attr?.name || 'ШхГхВ')
+    || ['width', 'depth', 'height'];
+}
+
+export function catalogDimsPrompt(dict) {
+  const order = catalogAxisOrder(dict);
+  return `${order.map(a => AXIS_LETTER_RU[a]).join('×')} (${order.map(a => AXIS_WORD_RU[a]).join(' × ')})`;
+}
+
+/** Подпись осей рядом с тройкой: скобки слева, иногда справа. */
+export function axisOrderNearTriple(src, start, end) {
+  const left = String(src || '').slice(Math.max(0, start - 140), start);
+  const low = left.toLowerCase();
+  const cut = Math.max(low.lastIndexOf('габарит'), low.lastIndexOf('размер'), low.lastIndexOf('('));
+  const before = cut >= 0 ? left.slice(cut) : left.slice(-90);
+  const after = String(src || '').slice(end, end + 36);
+  return axisOrderFromKey(before) || axisOrderFromKey(after);
 }
 
 export function parseTriple(raw) {

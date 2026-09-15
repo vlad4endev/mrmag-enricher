@@ -27,11 +27,12 @@ import { tryLoadDictSchema, extractFactsFromDictionary, loadConfigSafe, CRAWL_SL
 import { alignCardTextsToSpecs } from './pipeline/prose_align.js';
 import { alignEnumSurfaces } from './pipeline/enum_align.js';
 import { matchKey } from './pipeline/match.js';
-import { normalizeValue, aliasValue, enumValuesEqual, isGluedFactDump, displayEnum, valueFold, hasStrictEnum } from './pipeline/types.js';
+import { normalizeValue, aliasValue, enumValuesEqual, isGluedFactDump, displayEnum, valueFold, hasStrictEnum, defrostCanonFromCooling } from './pipeline/types.js';
 import { optionalFilterAttrs, requiredFilterAttrs } from './pipeline/required_filters.js';
 import { loadBenchmarks, dictDebugInfo, formatDictDebug, resolveDictRoot } from './pipeline/dict.js';
 import { findDumpProduct } from './pipeline/dumps.js';
 import { inferProductKind } from './pipeline/category_mismatch.js';
+import { catalogDimsPrompt } from './pipeline/dimensions.js';
 import {
   validateModelResponse, validationFeedbackLine, sourceCorrectionFeedback, softFixCardTexts, MODEL_KEYS,
   buildDescriptionHtml, matchLiteral,
@@ -924,8 +925,10 @@ export const PROMPT_PLACEHOLDERS = [
   { key: '{{subject}}', note: 'предмет категории' },
   { key: '{{hints}}', note: 'строки «Что сюда входит…»' },
   { key: '{{axis_rule}}', note: 'правило осей без подписи Ш×В×Г' },
+  { key: '{{dims_order}}', note: 'канон строки Габариты: Ш×Г×В или Ш×В×Г из справочника' },
   { key: '{{unit_notes}}', note: 'заметки по единицам раздела' },
   { key: '{{enums}}', note: 'каноны фасетов + синонимы → канон' },
+  { key: '{{compressor_default}}', note: 'дефолт типа компрессора для холодильников' },
   { key: '{{color_facets}}', note: 'палитра цвета' },
   { key: '{{spec_keys}}', note: 'скелет specs в JSON-ответе' },
   { key: '{{highlight_keys}}', note: 'атрибуты с highlight: true' },
@@ -984,7 +987,11 @@ export function formatEnumPromptLines(schema) {
         ? `"${shown}" ← ${uniq.map(s => `"${s}"`).join(', ')}`
         : `"${shown}"`);
     }
-    lines.push(`- ${k}:\n  ${parts.join('\n  ')}`);
+    let block = `- ${k}:\n  ${parts.join('\n  ')}`;
+    if (k === 'тип_компрессора') {
+      block += '\n  Если тип компрессора не указан как инверторный или линейный, обязательно ставь значение "Стандартный".';
+    }
+    lines.push(block);
   }
   return lines;
 }
@@ -1024,6 +1031,11 @@ export function defaultSystemPromptTemplate() {
 - Не подменяй точное значение диапазоном фильтра: "50 см" остаётся 50, а не
   "50-55". Бакеты фильтров собирает система отдельно.
 - Не путай похожие модели и модификации (Integra-50 ≠ Integra-60 ≠ Integra Glass).
+- Не пиши «не указан» / «не указано», если поле уже есть в specs или attributes.
+- Габариты в текстах — только оси из facts/attributes этой карточки. Не подменяй
+  «глубину с люком» на «глубину по корпусу» с другой страницы той же модели.
+- Не называй фирменные функции (AquaProtect, AquaStop, AQUAPROTECT), если их нет
+  в specs. Общая «защита от протечек» допустима только когда она есть в источнике.
 - Не пиши в тексты цену, скидку, наличие, сроки доставки и гарантию, если её нет
   в данных: это меняется чаще, чем карточка.
 - Не используй превосходные степени и оценки без подтверждения фактом: "лучший",
@@ -1038,8 +1050,12 @@ export function defaultSystemPromptTemplate() {
 - Числовые поля — только число, без единицы внутри значения.
 - Поля _мм — миллиметры. В описаниях размеры часто в сантиметрах:
   "57.4x61x171 см" → умножь каждое число на 10.
-- Порядок осей в тройке размеров НЕ фиксирован. Есть подпись — "(Ш×В×Г)",
-  "(В×Ш×Г)" — следуй ей.
+- При формировании строки «Габариты» всегда приводи числа к единому стандарту
+  справочника: {{dims_order}}, даже если в исходном тексте порядок другой
+  ((Ш×В×Г), (В×Ш×Г) и т.п.). Переставь цифры, не копируй порядок источника.
+  Подпись в скобках должна совпадать с порядком чисел в этой строке.
+- В specs оси ширина_мм / высота_мм / глубина_мм пиши по смыслу подписи
+  источника, не по позиции в тройке.
 {{axis_rule}}
 - Габариты "в упаковке", "брутто", "с учётом упаковки" не подходят: нужны
   размеры самого товара.
@@ -1095,6 +1111,7 @@ missing_required_filters: это дыры именно этой карточки
 filter_checklist — сверка по каждой оси фильтра: filled / missing. Для missing
 не подставляй типичное значение категории и не угадывай по названию модели:
 если в attributes/facts/annotation/description нет подтверждения — null.
+{{compressor_default}}
 
 5. НОРМАЛИЗАЦИЯ И ТЕРМИНОЛОГИЯ
 Ты не копируешь формулировку источника дословно — ты ПРИВОДИШЬ её к канону
@@ -1172,8 +1189,12 @@ export function promptVarsForSchema(schemaKey) {
     axis_rule: s.tallest
       ? '  Подписи нет — самое большое число это высота.'
       : '  Подписи нет — у этой категории самая большая сторона обычно не высота:\n  определи оси по смыслу товара, а не по величине числа.',
+    dims_order: catalogDimsPrompt(s.dict),
     unit_notes: (s.unitNotes || []).map(x => `- ${x}`).join('\n'),
     enums: enumLines.length ? enumLines.join('\n') : '- (в этой категории таких полей нет)',
+    compressor_default: s.enums?.тип_компрессора
+      ? 'Исключение — тип_компрессора: если не указан как инверторный или линейный, обязательно ставь значение "Стандартный".'
+      : '',
     color_facets: COLOR_FACETS,
     highlight_keys: highlightKeys.length
       ? highlightKeys.join(', ')
@@ -1264,6 +1285,25 @@ export function resolveSystemPrompt(schemaKey, prompts, legacyPrompt = '') {
  * Извлекает из текста то, что берётся однозначно. Используется и как проверка
  * ответа модели, и как подсказка модели в промпте, и для добора пустых полей.
  */
+/**
+ * «Система охлаждения — No Frost» в фиде — тот же факт, что авторазморозка камер.
+ * Без этой связки stripUnsupportedFilterSpecs обнуляет размораживание: ось
+ * витринная, а в тексте подписана только охлаждение.
+ */
+function deriveDefrostFromCooling(facts) {
+  const cool = facts?.система_охлаждения;
+  if (cool == null || cool === '') return facts;
+  const fridge = defrostCanonFromCooling(cool, 'fridge');
+  const freezer = defrostCanonFromCooling(cool, 'freezer');
+  if (fridge && (facts.размораживание_холодильной_камеры == null || facts.размораживание_холодильной_камеры === '')) {
+    facts.размораживание_холодильной_камеры = fridge;
+  }
+  if (freezer && (facts.размораживание_морозильной_камеры == null || facts.размораживание_морозильной_камеры === '')) {
+    facts.размораживание_морозильной_камеры = freezer;
+  }
+  return facts;
+}
+
 export function extractFacts(text, schemaKey) {
   const t = String(text || '');
   if (!t) return {};
@@ -1485,6 +1525,7 @@ export function productFacts(product, schemaKey) {
     if (wt) facts.вид_стиральной_машины = wt;
   }
 
+  deriveDefrostFromCooling(facts);
   return { facts, bounds, conflicts };
 }
 

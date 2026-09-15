@@ -203,7 +203,12 @@
       "name": "Тип компрессора",
       "status": "filter",
       "type": "enum",
-      "required": true
+      "required": true,
+      "values": [
+        "Инверторный",
+        "Линейный",
+        "Стандартный"
+      ]
     },
     {
       "code": "noise",
@@ -347,14 +352,14 @@
       "name": "Дисплей",
       "status": "filter",
       "type": "boolean",
-      "required": true
+      "required": false
     },
     {
       "code": "door_reversible",
       "name": "Перенавешиваемые двери",
       "status": "filter",
       "type": "boolean",
-      "required": true
+      "required": false
     }
   ]
 }

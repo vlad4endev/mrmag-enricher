@@ -157,6 +157,9 @@ export function findEnumClaimsInText(text, attr) {
     while ((m = re.exec(lower))) {
       const start = m.index;
       const end = start + m[0].length;
+      // «Без No Frost» / «не инверторный» — отрицание, не канон.
+      const prefix = lower.slice(Math.max(0, start - 8), start);
+      if (/(?:^|[^а-яёa-z0-9])(?:без|не)\s+$/i.test(prefix)) continue;
       if (occupied.some(r => start < r.end && end > r.start)) continue;
       occupied.push({ start, end });
       if (seenCanon.has(valueFold(row.canon))) continue;

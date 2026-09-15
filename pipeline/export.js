@@ -4,8 +4,9 @@ import { splitHtmlChunks } from './text.js';
 import { assignFilterValues, buildFilters } from './facets.js';
 import { renderCard, renderAnnotation, renderDescription, productTypeFor, annotationRows, MIN_ANNOTATION_ROWS } from './generate.js';
 import { annotationText, annotationCase, isBrandFilterKey } from './types.js';
+import { alignAssembledProse, catalogFilterKeys } from './prose_align.js';
 import { webInfoFrom } from './reviews.js';
-import { normalizeProduct, ingestPairs, deriveDimsFromAxes } from './normalize.js';
+import { normalizeProduct, ingestPairs, refreshDerivedFacets } from './normalize.js';
 import { specDest } from './schema.js';
 import { buildDescriptionHtml } from './model_validate.js';
 import { finalizeRecord, checkFilterConsistency, stripHallucinationClaims, checkDescriptionClaims } from './quality_validate.js';
@@ -178,9 +179,10 @@ export function metaKeywords(rec, dict, { root = '.' } = {}) {
 
 /* ---------------- Запись товара ---------------- */
 
-function asFilterArrays(assigned) {
+function asFilterArrays(assigned, rec = null, dict = null) {
+  const src = rec && dict ? catalogFilterKeys(assigned, rec, dict) : assigned;
   const out = {};
-  for (const [name, v] of Object.entries(assigned || {})) {
+  for (const [name, v] of Object.entries(src || {})) {
     if (isBrandFilterKey(name)) continue;
     if (v == null || v === '') continue;
     const list = Array.isArray(v) ? v : [v];
@@ -241,6 +243,9 @@ export function serializeProduct(rec, dict, debugFacets, opts = {}) {
   const enr = opts.enriched || null;
   // Сначала снять неподтверждённые «нет» и согласовать enum (description↔attrs),
   // затем считать filters; при смене provenance/attrs — пересчитать ещё раз.
+  // Витринные дефолты (мотор / компрессор «Стандартный») — только в
+  // fillCardFiltersAfterEnrich и buildCustomerExport: serialize не мапит
+  // «количество компрессоров» в тип.
   if (!opts.skipFinalize) {
     finalizeRecord(rec, dict, { enriched: enr, assigned: null });
   }
@@ -262,13 +267,15 @@ export function serializeProduct(rec, dict, debugFacets, opts = {}) {
     delete enr._meta_keywords_stale;
   }
   const descSrc = enr?.description != null
-    ? stripHallucinationClaims(enr.description)
+    ? stripHallucinationClaims(alignAssembledProse(enr.description, rec, dict))
     : null;
   const descHtml = stripHallucinationClaims(descSrc
     ? compactHtml(buildDescriptionHtml({
       description: descSrc,
       bullets: Array.isArray(enr.bullets)
-        ? enr.bullets.map(b => (typeof b === 'string' ? stripHallucinationClaims(b) : b))
+        ? enr.bullets.map(b => (typeof b === 'string'
+          ? stripHallucinationClaims(alignAssembledProse(b, rec, dict))
+          : b))
         : enr?.bullets,
       strong: enr.strong,
     }))
@@ -278,7 +285,7 @@ export function serializeProduct(rec, dict, debugFacets, opts = {}) {
     meta_keywords: meta,
     description_html: descHtml,
     annotation_html: renderAnnotation(rec, dict),
-    filters: asFilterArrays(assigned),
+    filters: asFilterArrays(assigned, rec, dict),
     web_info: catalogWebInfo(enr, rec),
   };
 }
@@ -362,7 +369,7 @@ export function applyEnrichedSpecs(rec, specs, dict, config) {
     });
   }
   if (pairs.length) ingestPairs(rec, pairs, dict, config);
-  deriveDimsFromAxes(rec, dict);
+  refreshDerivedFacets(rec, dict, rec);
 }
 
 /**
@@ -381,11 +388,12 @@ export function fillCardFiltersAfterEnrich(product, enriched, dict, config) {
   rec._enriched = enriched;
   applyEnrichedSpecs(rec, enriched.specs, dict, config);
   markCategoryMismatch(rec, dict.catId);
-  finalizeRecord(rec, dict, { enriched, assigned: null });
   if (config.storefront_complete !== false) completeStorefrontRecs([rec], dict);
+  refreshDerivedFacets(rec, dict, rec);
+  finalizeRecord(rec, dict, { enriched, assigned: null });
   const built = buildFilters([rec], dict, config);
   const assigned = assignFilterValues(rec, dict, built.debug || [], config);
-  return asFilterArrays(assigned);
+  return asFilterArrays(assigned, rec, dict);
 }
 
 /**
@@ -430,12 +438,13 @@ export async function buildCustomerExport(products, {
   const held = recs.filter(r => annotationRows(r, dict).length < MIN_ANNOTATION_ROWS);
   // Состав выгрузки = состав исходника. held — отчёт, не отсев.
   const exported = recs;
-  // Сначала очистить неподтверждённые «нет», потом агент фасетов, потом buildFilters.
-  for (const rec of exported) {
-    finalizeRecord(rec, dict, { enriched: rec._enriched, assigned: null });
-  }
+  // Сначала добрать витрину (тип двигателя и т.п.), затем править прозу
+  // под уже заполненные attrs — иначе «не указан» остаётся в тексте.
   if (config.storefront_complete !== false) {
     completeStorefrontRecs(exported, dict);
+  }
+  for (const rec of exported) {
+    finalizeRecord(rec, dict, { enriched: rec._enriched, assigned: null });
   }
 
   const agentOpts = filtersAgent && typeof filtersAgent === 'object' ? filtersAgent : {};

@@ -1221,6 +1221,37 @@ t('панель 11391: лист «да», вид как тип, сверка г�
   api.closeFilterTests();
   st.pickCat = null;
 });
+t('сверка габаритов не путает Ш×В×Г с Ш×Г×В', () => {
+  st.pickCat = '467';
+  st.items = [{
+    id: 11391,
+    name: 'Стиральная машина ATLANT 60С1010',
+    annotation: '<ul><li>Глубина - 55 см</li><li>Высота - 84.6 см</li><li>Ширина - 59.6 см</li><li>Габариты (ШхГхВ): 59.6×55×84.6 см</li></ul>',
+  }];
+  st.results = [{
+    ...ok(),
+    original: {
+      id: 11391,
+      annotation: '<ul><li>Глубина - 55 см</li><li>Высота - 84.6 см</li><li>Ширина - 59.6 см</li><li>Габариты (ШхГхВ): 59.6×55×84.6 см</li></ul>',
+    },
+    filters: {
+      'Глубина, см': ['55-60'],
+      'Высота, см': ['80-85'],
+      'Ширина, см': ['55-60'],
+    },
+    enriched: {
+      specs: {},
+      warnings: [],
+      description: 'Габариты (Ш×В×Г) без выступающих деталей составляют 59.6×84.6×55 см',
+    },
+  }];
+  const one = api.filterTestOf(st.results[0], 0);
+  assert.ok(
+    !one.mismatches.some(m => /глубин|высот|ширин/i.test(`${m.name} ${m.detail}`)),
+    `ложной сверки осей быть не должно: ${JSON.stringify(one.mismatches)}`,
+  );
+  st.pickCat = null;
+});
 t('сушилка не в знаменателе покрытия прогона', () => {
   st.pickCat = '467';
   st.items = [
@@ -1258,6 +1289,35 @@ t('сушилка не в знаменателе покрытия прогона
   assert.strictEqual(color.coverage, 100);
   api.openFilterTests();
   assert.match(G('filterTestsBody').innerHTML, /1 своих · 1 не категория/);
+  api.closeFilterTests();
+  st.pickCat = null;
+});
+t('холодильник: пустой дисплей не ломает 100% обязательных осей', () => {
+  st.pickCat = '523';
+  st.items = [{ id: 11488, name: 'Холодильник ATLANT ХМ 6023-031' }];
+  st.results = [{
+    ...ok(),
+    original: { name: 'Холодильник ATLANT ХМ 6023-031' },
+    filters: { 'Тип холодильника': ['Двухкамерный'] },
+    filter_coverage: {
+      category_id: '523',
+      total: 2, filled: 1, empty: 1, coverage: 50,
+      rows: [
+        { name: 'Тип холодильника', value: 'Двухкамерный', ok: true },
+        { name: 'Дисплей', value: '', ok: false },
+      ],
+      optional_names: ['Дисплей'],
+    },
+  }];
+  const one = api.filterTestOf(st.results[0], 0);
+  assert.strictEqual(one.coverage, 100);
+  const table = api.runFilterCoverageTable();
+  assert.deepEqual(table.optional, ['Дисплей', 'Перенавешиваемые двери']);
+  const typeRow = table.filters.find(f => f.name === 'Тип холодильника');
+  assert.strictEqual(typeRow.coverage, 100);
+  api.openFilterTests();
+  assert.match(G('filterTestsBody').innerHTML, /1\/1 по 100%/);
+  assert.match(G('filterTestsBody').innerHTML, /необяз/);
   api.closeFilterTests();
   st.pickCat = null;
 });

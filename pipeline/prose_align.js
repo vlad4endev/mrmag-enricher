@@ -5,7 +5,12 @@
  *
  * Автоправка только по размеченным паттернам (подпись + число), без голой
  * замены любого «24» в абзаце — иначе ломается «отсрочка 24 ч».
+ *
+ * Отдельно: сборка карточки (attrs дампа). ATLANT 60С1010 — 482 мм корпус
+ * vs 550 мм с люком; в data_467 глубина 55 см, текст держит 55.
  */
+
+import { formatDimensions, formatAttrValue } from './types.js';
 
 /** @typedef {{ key: string, label: string, re: RegExp }} ProseClaim */
 
@@ -191,4 +196,200 @@ export function cardProseSpecIssues(card, specs) {
     });
   }
   return issues;
+}
+
+const DIM_TRIPLE_RE = /(\d+(?:[.,]\d+)?)\s*[x×хX*]\s*(\d+(?:[.,]\d+)?)\s*[x×хX*]\s*(\d+(?:[.,]\d+)?)(?:\s*(мм|см))?/g;
+const AXIS_HEADING_RE = /габариты\s*\(\s*[ВШГвшг]\s*[×xхX]\s*[ВШГвшг]\s*[×xхX]\s*[ВШГвшг]\s*\)/gi;
+const UNKNOWN_MOTOR_RE = /(?:,\s*)?(?:тип(?:у)?\s+)?двигател[яиея]?\s+не\s+указан[аоы]?/gi;
+const BRAND_LEAK_RE = /\b(?:Aqua\s*-?\s*Protect|AQUAPROTECT|AquaStop|Аквастоп(?:ом|а|у|е)?)\b/gi;
+const WARRANTY_CLAUSE_RE = /(?:,\s*)?(?:полная\s+)?гаранти[яиею]\s+(?:составляет\s+)?(?:\d+\s*(?:год(?:а|ов)?|лет|мес(?:яц(?:а|ев)?)?)(?:\s*,\s*на\s+(?:электро)?двигатель\s*[—–-]\s*\d+\s*(?:год(?:а|ов)?|лет))?|(?:на\s+(?:электро)?двигатель\s*[—–-]\s*)?\d+\s*(?:год(?:а|ов)?|лет))/gi;
+const WARRANTY_TAIL_RE = /(?:,\s*)?на\s+(?:электро)?двигатель\s*[—–-]\s*\d+\s*(?:год(?:а|ов)?|лет)/gi;
+
+function axesCm(rec) {
+  const width = rec?.attrs?.width;
+  const depth = rec?.attrs?.depth;
+  const height = rec?.attrs?.height;
+  if (![width, depth, height].every(n => typeof n === 'number')) return null;
+  return { width, depth, height };
+}
+
+function toCm(n, unit) {
+  if (unit === 'мм' || (!unit && n >= 100)) return n / 10;
+  return n;
+}
+
+function closeTo(a, b, eps = 1.6) {
+  return Math.abs(Number(a) - Number(b)) <= eps;
+}
+
+function looksLikeFurniture(cm) {
+  return cm.every(n => n >= 20 && n <= 250);
+}
+
+/** Два из трёх чисел тройки совпадают с осями карточки — это те же габариты. */
+function sameProductTriple(cm, axes) {
+  const target = [axes.width, axes.depth, axes.height];
+  let hits = 0;
+  for (const n of cm) {
+    if (target.some(t => closeTo(n, t))) hits += 1;
+  }
+  return hits >= 2;
+}
+
+function catalogTriple(axes, dict, unit) {
+  const attr = dict?.byCode?.get('dims');
+  const obj = { width: axes.width, height: axes.height, depth: axes.depth };
+  if (unit === 'мм') {
+    const order = String(attr?.name || 'ШхГхВ');
+    const map = { ш: 'width', в: 'height', г: 'depth' };
+    const letters = (order.match(/\(([шхвгд]+)\)/i)?.[1] || 'шгв').toLowerCase();
+    const keys = [...letters].map(ch => map[ch]).filter(Boolean);
+    const seq = keys.length === 3 ? keys : ['width', 'depth', 'height'];
+    return seq.map(k => String(Math.round(axes[k] * 10))).join('×');
+  }
+  if (attr) return formatDimensions(attr, obj, { withUnit: false });
+  return `${axes.width}×${axes.depth}×${axes.height}`;
+}
+
+export function rewriteDimTriples(text, rec, dict) {
+  const axes = axesCm(rec);
+  if (!axes) return String(text || '');
+  let s = String(text || '');
+  let replaced = false;
+  s = s.replace(DIM_TRIPLE_RE, (full, a, b, c, unit) => {
+    const nums = [a, b, c].map(x => parseFloat(String(x).replace(',', '.')));
+    if (nums.some(n => !Number.isFinite(n))) return full;
+    const u = unit || (nums.every(n => n >= 100) ? 'мм' : 'см');
+    const cm = nums.map(n => toCm(n, u));
+    if (!looksLikeFurniture(cm) || !sameProductTriple(cm, axes)) return full;
+    replaced = true;
+    const body = catalogTriple(axes, dict, u === 'мм' ? 'мм' : 'см');
+    return unit ? `${body} ${unit}` : body;
+  });
+  if (replaced) {
+    const attr = dict?.byCode?.get('dims');
+    const heading = attr?.name || 'Габариты (ШхГхВ)';
+    s = s.replace(AXIS_HEADING_RE, heading);
+  }
+  const depth = axes.depth;
+  s = s.replace(
+    /(глубин[аыеуюё]*\s*(?:по\s+корпусу)?\s*[-–—:]?\s*)(\d+(?:[.,]\d+)?)(\s*)(мм|см)/gi,
+    (full, lead, num, sp, unit) => {
+      const n = parseFloat(String(num).replace(',', '.'));
+      const got = toCm(n, unit);
+      if (closeTo(got, depth)) return full;
+      const out = unit === 'мм' ? String(Math.round(depth * 10)) : String(depth);
+      return `${lead}${out}${sp}${unit}`;
+    },
+  );
+  return s;
+}
+
+function tidyPunct(s) {
+  return String(s || '')
+    .replace(/\s+,/g, ',')
+    .replace(/,\s*,+/g, ',')
+    .replace(/[ \t]{2,}/g, ' ')
+    .replace(/\s+\./g, '.')
+    .replace(/\.{2,}/g, '.')
+    .replace(/,\s*([.!?])/g, '$1')
+    .replace(/\(\s+/g, '(')
+    .replace(/\s+\)/g, ')')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+export function stripKnownUnknowns(text, rec) {
+  let s = String(text || '');
+  if (rec?.attrs?.motor_type != null && rec.attrs.motor_type !== '') {
+    s = s.replace(UNKNOWN_MOTOR_RE, '');
+  }
+  return tidyPunct(s);
+}
+
+function recMentionsLeakBrand(rec) {
+  const blob = [
+    rec?.annotation,
+    rec?.description,
+    ...Object.values(rec?.attrs || {}),
+  ].map(v => (v && typeof v === 'object' && !Array.isArray(v) ? JSON.stringify(v) : String(v ?? ''))).join(' ');
+  return /aquaprotect|aqua\s*protect|aquastop|аквастоп/i.test(blob);
+}
+
+export function stripUnbackedBrandFeatures(text, rec) {
+  if (recMentionsLeakBrand(rec)) return String(text || '');
+  return tidyPunct(String(text || '').replace(BRAND_LEAK_RE, ''));
+}
+
+function hasWarrantyAttr(rec, dict) {
+  for (const code of ['warranty', 'гарантия_мес', 'warranty_months']) {
+    if (dict?.byCode?.has(code) && rec?.attrs?.[code] != null && rec.attrs[code] !== '') {
+      return true;
+    }
+  }
+  return false;
+}
+
+export function stripUnbackedWarranty(text, rec, dict) {
+  if (hasWarrantyAttr(rec, dict)) return String(text || '');
+  let s = String(text || '');
+  s = s.replace(WARRANTY_CLAUSE_RE, '');
+  s = s.replace(WARRANTY_TAIL_RE, '');
+  return tidyPunct(s);
+}
+
+export function alignAssembledProse(text, rec, dict) {
+  let s = String(text || '');
+  if (!s.trim()) return s;
+  s = rewriteDimTriples(s, rec, dict);
+  s = stripKnownUnknowns(s, rec);
+  s = stripUnbackedBrandFeatures(s, rec);
+  s = stripUnbackedWarranty(s, rec, dict);
+  return s;
+}
+
+export function alignEnrichedProse(enriched, rec, dict) {
+  if (!enriched || typeof enriched !== 'object') return enriched;
+  if (typeof enriched.description === 'string') {
+    enriched.description = alignAssembledProse(enriched.description, rec, dict);
+  }
+  if (typeof enriched.short_description === 'string') {
+    enriched.short_description = alignAssembledProse(enriched.short_description, rec, dict);
+  }
+  if (Array.isArray(enriched.bullets)) {
+    enriched.bullets = enriched.bullets
+      .map(b => (typeof b === 'string' ? alignAssembledProse(b, rec, dict) : b))
+      .filter(b => b && String(b).trim());
+  }
+  return enriched;
+}
+
+/** Ключи filters — facet.label из согласованного листа, не attr.name. */
+export function catalogFilterKeys(assigned, rec, dict) {
+  const out = { ...(assigned || {}) };
+  for (const attr of dict?.attrs || []) {
+    if (!attr?.facet?.enabled || attr.facet.status === 'not_a_filter') continue;
+    const right = attr.facet.label || attr.name;
+    if (attr.name && attr.name !== right && out[attr.name]) {
+      if (!out[right]) out[right] = out[attr.name];
+      delete out[attr.name];
+    }
+  }
+  const dims = dict?.byCode?.get?.('dims');
+  const dimsName = dims ? (dims.facet?.label || dims.name) : null;
+  if (dims?.facet?.enabled && dims.facet.status !== 'not_a_filter' && rec?.attrs?.dims && dimsName && !out[dimsName]) {
+    const lab = formatAttrValue(dims, rec.attrs.dims, { withUnit: false });
+    if (lab) out[dimsName] = [lab];
+  }
+  for (const code of ['defrost_fridge', 'defrost_freezer']) {
+    const attr = dict?.byCode?.get?.(code);
+    if (!attr?.facet?.enabled || attr.facet.status === 'not_a_filter') continue;
+    const name = attr.facet.label || attr.name;
+    if (out[name]?.length) continue;
+    const v = rec?.attrs?.[code];
+    if (v == null || v === '') continue;
+    const lab = formatAttrValue(attr, v, { withUnit: false });
+    if (lab) out[name] = [lab];
+  }
+  return out;
 }

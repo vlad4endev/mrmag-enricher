@@ -12,6 +12,7 @@ import { annotationText, formatAttrValue, aliasValue, valueFold } from './types.
 import { annotationRows, verifyDescription } from './generate.js';
 import { SOURCE_RANK } from './normalize.js';
 import { alignEnumSurfaces } from './enum_align.js';
+import { alignEnrichedProse } from './prose_align.js';
 
 const NEGATIVE_RE = /^(?:нет|отсутствует|не\s+поддерживается|не\s+предусмотрено|не\s+имеется)$/i;
 export const HALLUCINATION_RE = new RegExp(
@@ -468,6 +469,7 @@ export function finalizeRecord(rec, dict, { enriched = null, assigned = null } =
   buildConfirmedAttributes(rec, dict, assigned);
 
   if (enriched && typeof enriched === 'object') {
+    alignEnrichedProse(enriched, rec, dict);
     if (typeof enriched.description === 'string') {
       enriched.description = stripHallucinationClaims(enriched.description);
     }

@@ -80,6 +80,21 @@ export const APPROVED_NO = Object.freeze({
   ]),
 });
 
+/**
+ * Лист «да», но пусто честнее выдуманного «нет»: не входят в гейт 100%.
+ */
+export const OPTIONAL_YES = Object.freeze({
+  523: Object.freeze(['Дисплей', 'Перенавешиваемые двери']),
+});
+
+export function optionalApproved(catId) {
+  return OPTIONAL_YES[catKey(catId)] || [];
+}
+
+export function isOptionalApproved(name, catId) {
+  return optionalApproved(catId).includes(String(name || ''));
+}
+
 /** Имя строки листа → ключ product.filters (facet.label). */
 export const APPROVED_MAP = Object.freeze({
   467: Object.freeze({

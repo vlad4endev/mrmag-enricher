@@ -64,6 +64,9 @@ export function applyOneFilterSpec(attr, item) {
     facet.kind = 'boolean';
   } else if (item.type === 'enum') {
     facet.kind = 'enum';
+    if (Array.isArray(item.values) && item.values.length) {
+      facet.enum_values = item.values.map(v => String(v).trim()).filter(Boolean);
+    }
   }
   if (item.name) facet.label = item.name;
   if (item.bound_rule) facet.bound_rule = item.bound_rule;

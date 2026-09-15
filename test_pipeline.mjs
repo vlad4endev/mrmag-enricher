@@ -2112,6 +2112,8 @@ console.log('golden tests passed');
     assert.equal(isRequiredFilter(d467.byCode.get('brand')), false);
     assert.ok(requiredFilterAttrs(d467).some(a => a.code === 'energy_class'));
     assert.ok(optionalFilterAttrs(d467).some(a => a.code === 'dims'));
+    assert.equal(isRequiredFilter(d523.byCode.get('display')), false, 'дисплей 523 необязателен');
+    assert.equal(isRequiredFilter(d523.byCode.get('door_reversible')), false, 'перенавешивание 523 необязательно');
     const { heuristicSuggest, buildImportSuggestPrompt } = await import('./pipeline/schema_import.js');
     assert.match(buildImportSuggestPrompt(d467.attrs, { catId: '467' }), /ОБЯЗАТЕЛЬНЫЕ ФИЛЬТРЫ КАТЕГОРИИ/);
     const hsReq = heuristicSuggest([{ id: 'i1', raw: 'Производительность — 650', label: 'Производительность', value: '650' }], []);
@@ -2226,6 +2228,14 @@ console.log('golden tests passed');
     annotation: '<ul><li>Тип компрессора - Стандартный</li><li>Цвет - Белый</li><li>Тип - Двухкамерный</li></ul>',
   }], { dict: d523, config, root: '.', filtersAgent: { mode: 'heuristic' } });
   assert.deepEqual(std.products[0].filters['Тип компрессора'], ['Стандартный']);
+  const silentComp = await buildCustomerExport([{
+    id: 98,
+    name: 'Холодильник Test Silent',
+    annotation: '<ul><li>Цвет - Белый</li><li>Тип - Двухкамерный</li></ul>',
+  }], { dict: d523, config, root: '.', filtersAgent: { mode: 'heuristic' } });
+  assert.deepEqual(silentComp.products[0].filters['Тип компрессора'], ['Стандартный']);
+  const catalogComp = silentComp.filters.find(f => f.name === 'Тип компрессора');
+  assert.deepEqual(catalogComp?.value, ['Инверторный', 'Линейный', 'Стандартный']);
   console.log('ok export keeps every source SKU (460989 / 263214 / 461138)');
 }
 
@@ -2579,6 +2589,36 @@ console.log('golden tests passed');
     { w: parsed.dims.width, d: parsed.dims.depth, h: parsed.dims.height },
     { w: 59.5, d: 42, h: 85 },
   );
+
+  {
+    const { parseDimTriples, auditFilterValues } = await import('./pipeline/filter_value_audit.js');
+    const wxhxd = parseDimTriples('Габариты (Ш×В×Г): 59.6×84.6×55 см')[0];
+    assert.equal(wxhxd.width, 59.6);
+    assert.equal(wxhxd.height, 84.6);
+    assert.equal(wxhxd.depth, 55);
+    const far = parseDimTriples(
+      'Габариты (Ш×В×Г) без выступающих деталей, патрубков и люка составляют 59.6×84.6×55 см',
+    )[0];
+    assert.equal(far.depth, 55, 'буквы ШВГ читаются даже если далеко от чисел');
+    const swappedLabel = auditFilterValues({
+      filters: { 'Глубина, см': ['55-60'], 'Высота, см': ['80-85'], 'Ширина, см': ['55-60'] },
+      category: '467',
+      description: 'Габариты (ШхГхВ) — 59.6×84.6×55 см',
+      annotation: '<ul><li>Габариты (ШхГхВ): 59.6×55×84.6 см</li><li>Глубина: 55 см</li><li>Высота: 84.6 см</li><li>Ширина: 59.6 см</li></ul>',
+    });
+    assert.equal(
+      swappedLabel.filter(i => /глубин|высот|ширин/i.test(i.name)).length,
+      0,
+      `Ш×В×Г vs Ш×Г×В — не ошибка: ${JSON.stringify(swappedLabel)}`,
+    );
+    const real = auditFilterValues({
+      filters: { 'Глубина, см': ['55-60'] },
+      category: '467',
+      description: 'Габариты (В×Ш×Г) — 846×596×482 мм',
+      annotation: '<ul><li>Глубина: 55 см</li></ul>',
+    });
+    assert.ok(real.some(i => /глубин/i.test(i.name)), `482≠550 должно остаться: ${JSON.stringify(real)}`);
+  }
 
   const r = normalizeProduct(p467[44772], d467, config);
   assert.equal(typeof r.attrs.dims, 'object');
@@ -3183,6 +3223,20 @@ console.log('golden tests passed');
   assert.equal(aliasValue(d523.byCode.get('compressor_type'), 'коллекторный'), 'Стандартный');
   assert.ok(Object.keys(d523.byCode.get('compressor_type').value_aliases).includes('Стандартный'));
   assert.ok(!Object.keys(d523.byCode.get('compressor_type').value_aliases).includes('Коллекторный'));
+  assert.deepEqual(
+    d523.byCode.get('compressor_type').facet.enum_values,
+    ['Инверторный', 'Линейный', 'Стандартный'],
+  );
+  {
+    const { promptVarsForSchema } = await import('./lib.js');
+    const vars = promptVarsForSchema(523);
+    assert.match(
+      vars.enums,
+      /Если тип компрессора не указан как инверторный или линейный, обязательно ставь значение "Стандартный"/,
+    );
+    assert.match(vars.compressor_default, /Стандартный/);
+    assert.equal(promptVarsForSchema(467).compressor_default, '');
+  }
   assert.equal(aliasValue(d467.byCode.get('color'), 'антрацит'), 'Серый');
   assert.equal(aliasValue(d467.byCode.get('color'), 'инокс'), 'Серебристый');
   assert.ok(!Object.keys(d467.byCode.get('color').value_aliases).includes('Антрацит'));
@@ -3271,15 +3325,39 @@ console.log('golden tests passed');
       !drip['Размораживание морозильной камеры']?.length,
       'капельная морозилка: не выдумываем разморозку',
     );
-    assert.ok(
-      !drip['Тип компрессора']?.length,
-      'тип компрессора не выдумываем, если источник молчит',
+    assert.deepEqual(
+      drip['Тип компрессора'],
+      ['Стандартный'],
+      'если тип компрессора не инверторный и не линейный — Стандартный',
     );
+    assert.ok(!drip['Дисплей']?.length, 'дисплей 523 не выдумываем «нет»');
+    assert.ok(!drip['Перенавешиваемые двери']?.length, 'перенавешивание 523 не выдумываем');
+    const doorSilent = fillCardFiltersAfterEnrich({
+      id: 9,
+      name: 'Холодильник TEST SILENT',
+      annotation: '<p>Перенавешиваемые двери.</p>',
+      description: '',
+    }, { specs: {}, description: '' }, d523, config);
+    assert.ok(!doorSilent['Перенавешиваемые двери']?.length, 'одно имя оси без да/нет — не «Да»');
+    const doorYes = fillCardFiltersAfterEnrich({
+      id: 10,
+      name: 'Холодильник TEST DOOR',
+      annotation: '<li>Перенавешиваемые двери - Да</li>',
+      description: '',
+    }, { specs: {}, description: '' }, d523, config);
+    assert.deepEqual(doorYes['Перенавешиваемые двери'], ['Есть']);
     const pozisFill = fillCardFiltersAfterEnrich(p523[260], { specs: {}, description: p523[260].description || '' }, d523, config);
     assert.deepEqual(pozisFill['Размораживание холодильной камеры'], ['Автоматическое (No Frost)']);
     assert.deepEqual(pozisFill['Размораживание морозильной камеры'], ['Автоматическое (No Frost)']);
     assert.ok(!pozisFill['Габариты (ШхВхГ)']?.length, 'габариты 523 не в filters');
-    assert.ok(!pozisFill['Тип компрессора']?.length);
+    assert.deepEqual(pozisFill['Тип компрессора'], ['Стандартный']);
+    const invFill = fillCardFiltersAfterEnrich({
+      id: 11,
+      name: 'Холодильник TEST INVERTER',
+      annotation: '<li>Тип компрессора - Инверторный</li>',
+      description: '',
+    }, { specs: {}, description: '' }, d523, config);
+    assert.deepEqual(invFill['Тип компрессора'], ['Инверторный']);
   }
 
   const { cardFilterCoverage } = await import('./pipeline/filter_report.js');
@@ -3917,7 +3995,8 @@ console.log('golden tests passed');
     const catalogNames = new Set(expectedFilters(dict).map(f => f.name));
     const honestGap = new Set([
       'Размораживание морозильной камеры',
-      'Тип компрессора',
+      'Дисплей',
+      'Перенавешиваемые двери',
     ]);
     assert.ok(catalogNames.size, `cat ${catId}: filters.json не пустой`);
     if (catId === '467') {

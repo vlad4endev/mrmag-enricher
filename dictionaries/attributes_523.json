@@ -1641,7 +1641,7 @@
       "enabled": true,
       "label": "Дисплей",
       "kind": "boolean",
-      "required": true
+      "required": false
     },
     "value_aliases": {
       "Есть": [

@@ -2023,7 +2023,7 @@ async function apiEnrich(req, res) {
 }
 
 /** Пересчёт filters после смены сборки — без повторного вызова модели. */
-const FILTER_FILL_REV = 3;
+const FILTER_FILL_REV = 4;
 
 function refreshJobCardFilters(product, result, category) {
   if (!product || !result || result.error || result.skipped) return null;

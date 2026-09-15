@@ -6647,6 +6647,10 @@ const APPROVED_YES_UI={
   523:['Тип холодильника','Количество камер','Количество дверей','Расположение морозильной камеры','Общий объём','Объём холодильной камеры','Объём морозильной камеры','Система охлаждения','Размораживание холодильной камеры','Размораживание морозильной камеры','Класс энергоэффективности','Тип компрессора','Уровень шума','Мощность замораживания','Высота','Ширина','Глубина','Габариты (ШхВхГ)','Цвет корпуса','Тип управления','Дисплей','Перенавешиваемые двери'],
 };
 const APPROVED_NO_UI={467:['Бренд'],523:['Бренд']};
+const OPTIONAL_YES_UI={523:['Дисплей','Перенавешиваемые двери']};
+function optionalYesUi(cat){
+  return OPTIONAL_YES_UI[cat]||[];
+}
 const APPROVED_MAP_UI={
   467:{'Тип':'Тип','Вид стиральной машины':'Тип','Тип загрузки':'Тип загрузки','Максимальная загрузка белья':'Загрузка белья, кг','Загрузка белья, кг':'Загрузка белья, кг','Максимальная скорость отжима':'Скорость отжима, об/мин','Скорость отжима, об/мин':'Скорость отжима, об/мин','Класс энергоэффективности':'Класс энергоэффективности','Класс стирки':'Класс стирки','Класс эффективности отжима':'Класс эффективности отжима','Уровень шума при стирке':'Уровень шума, дБ','Уровень шума, дБ':'Уровень шума, дБ','Цвет корпуса':'Цвет корпуса','Цвет':'Цвет корпуса','Тип управления':'Тип управления','Количество программ':'Количество программ','Дисплей':'Дисплей','Высота':'Высота, см','Высота, см':'Высота, см','Ширина':'Ширина, см','Ширина, см':'Ширина, см','Глубина':'Глубина, см','Глубина, см':'Глубина, см','Габариты':'Габариты (ШхГхВ)','Габариты (ШхГхВ)':'Габариты (ШхГхВ)','Вес':'Вес, кг','Вес, кг':'Вес, кг','Установка':'Установка','Тип двигателя':'Тип двигателя','Сушка':'Сушка'},
   523:{'Тип холодильника':'Тип холодильника','Количество камер':'Количество камер','Количество дверей':'Количество дверей','Расположение морозильной камеры':'Расположение морозильной камеры','Общий объём':'Общий объём, л','Общий объём, л':'Общий объём, л','Объём холодильной камеры':'Объём холодильной камеры, л','Объём холодильной камеры, л':'Объём холодильной камеры, л','Объём морозильной камеры':'Объём морозильной камеры, л','Объём морозильной камеры, л':'Объём морозильной камеры, л','Система охлаждения':'Система охлаждения','Размораживание холодильной камеры':'Размораживание холодильной камеры','Размораживание морозильной камеры':'Размораживание морозильной камеры','Класс энергоэффективности':'Класс энергоэффективности','Тип компрессора':'Тип компрессора','Уровень шума':'Уровень шума, дБ','Уровень шума, дБ':'Уровень шума, дБ','Мощность замораживания':'Мощность замораживания, кг/сут','Мощность замораживания, кг/сут':'Мощность замораживания, кг/сут','Высота':'Высота, см','Высота, см':'Высота, см','Ширина':'Ширина, см','Ширина, см':'Ширина, см','Глубина':'Глубина, см','Глубина, см':'Глубина, см','Габариты':'Габариты (ШхВхГ)','Габариты (ШхВхГ)':'Габариты (ШхВхГ)','Цвет корпуса':'Цвет корпуса','Цвет':'Цвет корпуса','Тип управления':'Тип управления','Дисплей':'Дисплей','Перенавешиваемые двери':'Перенавешиваемые двери'},
@@ -6725,22 +6729,42 @@ function inBucketUi(n, label){
   if(r.max===Infinity) return n>=r.min;
   return n>=r.min && n<=r.max;
 }
+function axisOrderUi(s){
+  const str=String(s||'');
+  let last=null;
+  const re=/([швгдwhd])\s*[x×хx*]\s*([швгдwhd])\s*[x×хx*]\s*([швгдwhd])/gi;
+  const map={ш:'width',в:'height',г:'depth',д:'depth',w:'width',h:'height',d:'depth'};
+  let m;
+  while((m=re.exec(str))) last=[m[1],m[2],m[3]].map(c=>map[c.toLowerCase()]);
+  if(last&&last.every(Boolean)) return last;
+  const words=[];
+  const wr=/ширин[аыеу]?|высот[аыеу]?|глубин[аыеу]?/gi;
+  const wmap=[[/ширин/i,'width'],[/высот/i,'height'],[/глубин/i,'depth']];
+  while((m=wr.exec(str))){
+    const hit=wmap.find(([p])=>p.test(m[0]));
+    if(hit) words.push(hit[1]);
+  }
+  return words.length===3?words:null;
+}
 function dimTriplesUi(text){
   const src=String(text||'');
   const out=[];
-  const re=/(\d+(?:[.,]\d+)?)\s*[×xх]\s*(\d+(?:[.,]\d+)?)\s*[×xх]\s*(\d+(?:[.,]\d+)?)\s*(мм|см|mm|cm)?/gi;
+  const re=/(\d+(?:[.,]\d+)?)\s*[×xхX*]\s*(\d+(?:[.,]\d+)?)\s*[×xхX*]\s*(\d+(?:[.,]\d+)?)\s*(мм|см|mm|cm)?/gi;
   let m;
   while((m=re.exec(src))){
-    const prefix=src.slice(Math.max(0,m.index-56), m.index).toLowerCase();
     const a=parseFloat(m[1].replace(',','.'));
     const b=parseFloat(m[2].replace(',','.'));
     const c=parseFloat(m[3].replace(',','.'));
     const unit=m[4]||(Math.max(a,b,c)>100?'мм':'см');
-    let width, depth, height;
-    if(/в\s*[×xх]\s*ш\s*[×xх]\s*г/.test(prefix)){ height=a; width=b; depth=c; }
-    else if(/ш\s*[×xх]\s*в\s*[×xх]\s*г/.test(prefix)){ width=a; height=b; depth=c; }
-    else { width=a; depth=b; height=c; }
-    out.push({width:toCmUi(width,unit), depth:toCmUi(depth,unit), height:toCmUi(height,unit)});
+    const left=src.slice(Math.max(0,m.index-140), m.index);
+    const low=left.toLowerCase();
+    const cut=Math.max(low.lastIndexOf('габарит'), low.lastIndexOf('размер'), low.lastIndexOf('('));
+    const before=cut>=0?left.slice(cut):left.slice(-90);
+    const after=src.slice(m.index+m[0].length, m.index+m[0].length+36);
+    const order=axisOrderUi(before)||axisOrderUi(after)||['width','depth','height'];
+    const nums=[a,b,c];
+    const pick=axis=>{ const i=order.indexOf(axis); return i>=0?nums[i]:null; };
+    out.push({width:toCmUi(pick('width'),unit), depth:toCmUi(pick('depth'),unit), height:toCmUi(pick('height'),unit)});
   }
   return out;
 }
@@ -6799,14 +6823,23 @@ function mismatchesUi(filters, cat, description, annotation){
   const triplesD=dimTriplesUi(desc);
   const triplesA=dimTriplesUi(ann);
   const annDepth=labeledCmUi(ann,['глубина','глубина, см']) ?? triplesA[0]?.depth;
-  const descDepth=labeledCmUi(desc,['глубина','глубина, см']) ?? triplesD[0]?.depth;
-  if(depthLabel && descDepth!=null && inBucketUi(descDepth, depthLabel.split(',')[0].trim())===false){
+  const descDepthLabeled=labeledCmUi(desc,['глубина','глубина, см']);
+  const descDepth=descDepthLabeled ?? triplesD[0]?.depth;
+  const known={
+    width: labeledCmUi(ann,['ширина','ширина, см']) ?? triplesA[0]?.width,
+    depth: labeledCmUi(ann,['глубина','глубина, см']) ?? triplesA[0]?.depth,
+    height: labeledCmUi(ann,['высота','высота, см']) ?? triplesA[0]?.height,
+  };
+  const t=triplesD[0];
+  const permute=descDepthLabeled==null && t && [known.width,known.depth,known.height].every(Number.isFinite)
+    && [t.width,t.depth,t.height].sort((a,b)=>a-b).every((n,i)=>Math.abs(n-[known.width,known.depth,known.height].sort((a,b)=>a-b)[i])<=0.6);
+  if(!permute && depthLabel && descDepth!=null && inBucketUi(descDepth, depthLabel.split(',')[0].trim())===false){
     issues.push({
       name:'Глубина', kind:'cross_field',
       detail:`Глубина: в description ${descDepth} см, бакет filters «${depthLabel}»`,
       description:descDepth, filter:depthLabel, annotation:annDepth,
     });
-  }else if(depthLabel && descDepth!=null && annDepth!=null && Math.abs(descDepth-annDepth)>0.6){
+  }else if(!permute && depthLabel && descDepth!=null && annDepth!=null && Math.abs(descDepth-annDepth)>0.6){
     issues.push({
       name:'Глубина', kind:'cross_field',
       detail:`Глубина: description ${descDepth} ≠ annotation ${annDepth} (фильтр «${depthLabel}»)`,
@@ -6847,13 +6880,17 @@ function clientFilterTest(r, idx){
   const ann=r?.annotation_html||r?.original?.annotation||r?.enriched?.annotation||it?.annotation||'';
   const unapproved=unapprovedUi(f, cat);
   const mismatches=mismatchesUi(f, cat, desc, ann);
+  const optional=new Set(optionalYesUi(cat));
+  const req=rows.filter(x=>!optional.has(x.name));
+  const reqFilled=req.filter(x=>x.ok).length;
   return {
     category_id:cat,
     approved_names:names,
     total:rows.length, filled, empty:rows.length-filled,
-    coverage:rows.length?Math.round(filled/rows.length*100):0,
+    coverage:req.length?Math.round(reqFilled/req.length*100):(rows.length?Math.round(filled/rows.length*100):0),
     rows, unapproved, mismatches,
     category_mismatch:isCategoryMismatchUi(r, idx),
+    optional_names:[...optional],
   };
 }
 
@@ -6877,17 +6914,25 @@ function filterTestOf(r, idx){
     const total=typeof cov.total==='number'?cov.total:rows.length;
     let unapproved=Array.isArray(cov.unapproved)?cov.unapproved.slice():[];
     if(allowed) unapproved=unapproved.filter(u=>!allowed.has(u.name));
+    const optional=new Set(
+      Array.isArray(cov.optional_names)&&cov.optional_names.length
+        ? cov.optional_names
+        : optionalYesUi(cat)
+    );
+    const req=rows.filter(x=>!optional.has(x.name));
+    const reqFilled=req.filter(x=>x.ok).length;
     return {
       category_id:cov.category_id||cat,
       approved_names:Array.isArray(cov.approved_names)&&cov.approved_names.length?cov.approved_names:rows.map(x=>x.name),
       total,
       filled,
       empty:Math.max(0,total-filled),
-      coverage:total?Math.round(filled/total*100):0,
+      coverage:req.length?Math.round(reqFilled/req.length*100):(total?Math.round(filled/total*100):0),
       rows,
       unapproved,
       mismatches:Array.isArray(cov.mismatches)?cov.mismatches:[],
       category_mismatch:!!cov.category_mismatch||isCategoryMismatchUi(r, idx),
+      optional_names:[...optional],
     };
   }
   return clientFilterTest(r, idx);
@@ -6906,9 +6951,9 @@ function runFilterCoverageTable(){
   const skipped=packed.filter(p=>p.mismatch);
   const used=packed.filter(p=>!p.mismatch);
   const source=used.length?used:packed;
+  const cat=runFilterCatId(source[0].t, source[0].i);
   let names=source.find(p=>p.t.approved_names?.length)?.t.approved_names;
   if(!names?.length){
-    const cat=runFilterCatId(source[0].t, source[0].i);
     names=APPROVED_YES_UI[cat]?APPROVED_YES_UI[cat].slice():[];
   }
   if(!names?.length){
@@ -6941,7 +6986,7 @@ function runFilterCoverageTable(){
     }
   }
   const unapproved=[...extraMap.values()].map(u=>({...u, empty:total-u.filled, coverage:total?Math.round(u.filled/total*100):0}));
-  return {total, skipped:skipped.length, batch:packed.length, filters, unapproved, mismatches};
+  return {total, skipped:skipped.length, batch:packed.length, category_id:cat, optional:optionalYesUi(cat), filters, unapproved, mismatches};
 }
 
 function renderFilterTests(test, {live=false}={}){
@@ -6953,17 +6998,22 @@ function renderFilterTests(test, {live=false}={}){
   }
   const extras=test.unapproved||[];
   const bad=test.mismatches||[];
-  const tone=(!test.rows.some(r=>!r.ok)&&!extras.length&&!bad.length)?'ok':(test.coverage>=70&&!extras.length?'warn':'err');
-  let html=`<div class="cov-note">Тест одной карточки — присутствие по листу «да», не % покрытия прогона.</div>`
+  const optional=new Set(test.optional_names||optionalYesUi(test.category_id));
+  const reqMiss=test.rows.some(r=>!r.ok&&!optional.has(r.name));
+  const tone=(!reqMiss&&!extras.length&&!bad.length)?'ok':(test.coverage>=70&&!extras.length?'warn':'err');
+  let html=`<div class="cov-note">Тест одной карточки — присутствие по обязательным осям листа «да». Дисплей и перенавешивание холодильника не выдумываем.</div>`
     +`<div class="cov-head ${tone}">${test.filled} / ${test.total} согласованных</div>`
     +`<div class="cov-row cov-cols"><span>Фильтр</span><span>значение</span><span></span></div>`
-    +`<div class="cov-table">${test.rows.map(row=>
-      `<div class="cov-row ${row.ok?'ok':'miss'}">`
-      +`<span class="cv-k">${esc(row.name)}</span>`
-      +`<span class="cv-v">${esc(row.value||'—')}</span>`
-      +`<span class="cv-st">${row.ok?'есть':'нет'}</span>`
-      +`</div>`
-    ).join('')}</div>`;
+    +`<div class="cov-table">${test.rows.map(row=>{
+      const opt=optional.has(row.name);
+      const cls=row.ok?'ok':(opt?'warn':'miss');
+      const st=row.ok?'есть':(opt?'необяз.':'нет');
+      return `<div class="cov-row ${cls}">`
+        +`<span class="cv-k">${esc(row.name)}</span>`
+        +`<span class="cv-v">${esc(row.value||'—')}</span>`
+        +`<span class="cv-st">${st}</span>`
+        +`</div>`;
+    }).join('')}</div>`;
   if(test.category_mismatch){
     html=`<div class="cov-note">Товар другой категории — оси этого раздела не требуются.</div>`+html;
   }
@@ -6990,28 +7040,40 @@ function renderFilterTests(test, {live=false}={}){
   return html;
 }
 
+function requiredCoverageFilters(table){
+  const optional=new Set(table?.optional||[]);
+  return (table?.filters||[]).filter(f=>!optional.has(f.name));
+}
+
 function filterTestsSummaryHtml(table){
   if(!table||!table.filters.length){
     return `<div class="eboard-empty">Нет тестов фильтров — обогатите товары выбранной категории.</div>`;
   }
-  const all=table.filters.filter(f=>f.coverage>=100).length;
   const extras=table.unapproved||[];
   const bad=table.mismatches||[];
-  const tone=(all===table.filters.length&&!extras.length&&!bad.length)?'ok':(all>0?'warn':'err');
+  const optional=new Set(table.optional||[]);
+  const required=table.filters.filter(f=>!optional.has(f.name));
+  const all=required.filter(f=>f.coverage>=100).length;
+  const tone=(all===required.length&&!extras.length&&!bad.length)?'ok':(all>0?'warn':'err');
   const skipTxt=table.skipped
     ? `${table.total} своих · ${table.skipped} не категория`
     : `${table.total} карт.`;
+  const optNote=optional.size
+    ? ' Дисплей и перенавешивание холодильника — необязательные оси: пусто честнее выдуманного «нет».'
+    : '';
   let html=`<div class="filter-tests ${tone}">`
-    +`<div class="spec-title">Покрытие прогона <i>${all}/${table.filters.length} по 100% · ${skipTxt}</i></div>`
-    +`<div class="cov-note">Знаменатель — согласованный лист («есть в фильтре = да») по товарам своей категории. % = заполнено / своих карточек.</div>`
+    +`<div class="spec-title">Покрытие прогона <i>${all}/${required.length} по 100% · ${skipTxt}</i></div>`
+    +`<div class="cov-note">Знаменатель — обязательные строки листа «да» по товарам своей категории.${optNote}</div>`
     +`<div class="cov-row cov-cols"><span>Фильтр</span><span>есть / нет</span><span>%</span></div>`
-    +`<div class="cov-table cov-table-run">${table.filters.map(f=>
-      `<div class="cov-row ${f.coverage>=100?'ok':'miss'}">`
-      +`<span class="cv-k">${esc(f.name)}</span>`
-      +`<span class="cv-v">${f.filled} / ${f.empty}</span>`
-      +`<span class="cv-st">${f.coverage}%</span>`
-      +`</div>`
-    ).join('')}</div>`;
+    +`<div class="cov-table cov-table-run">${table.filters.map(f=>{
+      const opt=optional.has(f.name);
+      const cls=f.coverage>=100?'ok':(opt?'warn':'miss');
+      return `<div class="cov-row ${cls}">`
+        +`<span class="cv-k">${esc(f.name)}</span>`
+        +`<span class="cv-v">${f.filled} / ${f.empty}</span>`
+        +`<span class="cv-st">${f.coverage}%</span>`
+        +`</div>`;
+    }).join('')}</div>`;
   if(extras.length){
     html+=`<div class="spec-title mt">Несогласованные фильтры</div>`
       +`<div class="cov-row cov-cols"><span>Ключ в выдаче</span><span>карточек</span><span></span></div>`
@@ -7055,9 +7117,10 @@ function syncFilterTestsButton(){
     if(!table||!table.filters.length){
       btn.style.display='none';
     }else{
-      const all=table.filters.filter(f=>f.coverage>=100).length;
+      const required=requiredCoverageFilters(table);
+      const all=required.filter(f=>f.coverage>=100).length;
       btn.style.display='inline-block';
-      btn.textContent=`Тесты ${all}/${table.filters.length}`;
+      btn.textContent=`Тесты ${all}/${required.length}`;
     }
   }
   if(body) body.innerHTML=filterTestsModalHtml();
@@ -7563,9 +7626,10 @@ function renderFoot(s,note){
   if(s.skip) parts.push(`<span>Пропущено <b>${s.skip}</b></span>`);
   const cov=runFilterCoverageTable();
   if(cov&&cov.filters.length){
-    const all=cov.filters.filter(f=>f.coverage>=100).length;
-    const tone=all===cov.filters.length?'var(--green)':'var(--amber)';
-    parts.push(`<span style="color:${tone}"><button type="button" class="filter-tests-open" style="padding:0;border:none;background:none;color:inherit" onclick="openFilterTests(event)">Фильтры <b>${all}/${cov.filters.length}</b> по 100%</button></span>`);
+    const required=requiredCoverageFilters(cov);
+    const all=required.filter(f=>f.coverage>=100).length;
+    const tone=all===required.length?'var(--green)':'var(--amber)';
+    parts.push(`<span style="color:${tone}"><button type="button" class="filter-tests-open" style="padding:0;border:none;background:none;color:inherit" onclick="openFilterTests(event)">Фильтры <b>${all}/${required.length}</b> по 100%</button></span>`);
   }
   if(note)   parts.push(`<span>${esc(note)}</span>`);
   el.innerHTML=parts.join('<span class="fsep">│</span>');
@@ -8289,8 +8353,9 @@ function finishRun(d){
     // рядом, и общий s.ok показал бы больше, чем было в этой очереди.
     const okN=d?.usage?.ok??s.ok;
     const cov=runFilterCoverageTable();
+    const required=requiredCoverageFilters(cov);
     const covTxt=cov&&cov.filters.length
-      ? ` · фильтры ${cov.filters.filter(f=>f.coverage>=100).length}/${cov.filters.length} по 100%`
+      ? ` · фильтры ${required.filter(f=>f.coverage>=100).length}/${required.length} по 100%`
       : '';
     setSt(d?.status==='stopped'?'wa':'ok',
       d?.status==='stopped'?`Остановлен: обработано ${d?.done??s.ok} из ${total}`

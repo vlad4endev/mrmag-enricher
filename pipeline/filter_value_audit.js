@@ -7,6 +7,7 @@ import { matchBucket, coerceFacetNumber, facetKind } from './facets.js';
 import {
   catKey, sheetToFilterKey, hasFilterValue, displayFilterValue, APPROVED_MAP,
 } from './approved_filters.js';
+import { axisOrderNearTriple } from './dimensions.js';
 
 const SIZE_LABELS = {
   depth: ['глубина', 'глубина, см'],
@@ -93,38 +94,62 @@ function labeledNumber(text, labels) {
   return null;
 }
 
+const DEFAULT_DIM_ORDER = ['width', 'depth', 'height'];
+
 /**
- * Тройка габаритов. Префикс задаёт порядок осей.
+ * Тройка габаритов. Порядок осей — из букв Ш/В/Г в скобках рядом,
+ * не «три числа подряд всегда ШхГхВ».
  * @returns {{ width: number, depth: number, height: number, unit: string, raw: string }[]}
  */
 export function parseDimTriples(text) {
   const src = String(text || '');
   const out = [];
-  const re = /(\d+(?:[.,]\d+)?)\s*[×xх]\s*(\d+(?:[.,]\d+)?)\s*[×xх]\s*(\d+(?:[.,]\d+)?)\s*(мм|см|mm|cm)?/gi;
+  const re = /(\d+(?:[.,]\d+)?)\s*[×xхX*]\s*(\d+(?:[.,]\d+)?)\s*[×xхX*]\s*(\d+(?:[.,]\d+)?)\s*(мм|см|mm|cm)?/gi;
   let m;
   while ((m = re.exec(src))) {
-    const prefix = src.slice(Math.max(0, m.index - 56), m.index).toLowerCase();
     const a = num(m[1]);
     const b = num(m[2]);
     const c = num(m[3]);
     const unit = m[4] || (Math.max(a, b, c) > 100 ? 'мм' : 'см');
-    let width;
-    let depth;
-    let height;
-    if (/в\s*[×xх]\s*ш\s*[×xх]\s*г/.test(prefix)) {
-      height = a; width = b; depth = c;
-    } else if (/ш\s*[×xх]\s*в\s*[×xх]\s*г/.test(prefix)) {
-      width = a; height = b; depth = c;
-    } else {
-      width = a; depth = b; height = c;
-    }
+    const order = axisOrderNearTriple(src, m.index, m.index + m[0].length) || DEFAULT_DIM_ORDER;
+    const nums = [a, b, c];
+    const pick = (axis) => {
+      const i = order.indexOf(axis);
+      return i >= 0 ? nums[i] : null;
+    };
     out.push({
-      width: toCm(width, unit, true),
-      depth: toCm(depth, unit, true),
-      height: toCm(height, unit, true),
+      width: toCm(pick('width'), unit, true),
+      depth: toCm(pick('depth'), unit, true),
+      height: toCm(pick('height'), unit, true),
       unit,
       raw: m[0].replace(/\s+/g, ' ').trim(),
     });
+  }
+  return out;
+}
+
+function finiteTriple(t) {
+  if (!t) return null;
+  const v = [t.width, t.depth, t.height];
+  return v.every(n => Number.isFinite(n)) ? v : null;
+}
+
+/** Одна и та же коробка: те же три числа, другой порядок осей. */
+export function sameDimBox(a, b, eps = 0.6) {
+  const va = finiteTriple(a);
+  const vb = finiteTriple(b);
+  if (!va || !vb) return false;
+  const sa = [...va].sort((x, y) => x - y);
+  const sb = [...vb].sort((x, y) => x - y);
+  return sa.every((n, i) => Math.abs(n - sb[i]) <= eps);
+}
+
+function axesFromLabeled(text, fallbackTriple) {
+  const out = { ...(fallbackTriple || {}) };
+  for (const [sheet, size] of Object.entries(SHEET_TO_SIZE)) {
+    if (!SIZE_LABELS[size]) continue;
+    const n = labeledNumber(text, SIZE_LABELS[size]);
+    if (n != null) out[size] = n;
   }
   return out;
 }
@@ -168,6 +193,11 @@ export function auditFilterValues({
   const desc = plainText(description);
   const triplesDesc = parseDimTriples(desc);
   const triplesAnn = parseDimTriples(ann);
+  const knownAnn = axesFromLabeled(ann, triplesAnn[0]);
+  const permuteOnly = !labeledNumber(desc, SIZE_LABELS.depth)
+    && !labeledNumber(desc, SIZE_LABELS.height)
+    && !labeledNumber(desc, SIZE_LABELS.width)
+    && sameDimBox(triplesDesc[0], knownAnn);
 
   const seenSize = new Set();
   for (const [sheet, size] of Object.entries(SHEET_TO_SIZE)) {
@@ -184,6 +214,7 @@ export function auditFilterValues({
     const fromTripleAnn = triplesAnn[0]?.[size];
     const exact = fromAnn ?? fromTripleAnn;
     const claimed = fromDesc ?? fromTripleDesc;
+    const skipPermute = permuteOnly && fromDesc == null && ['depth', 'height', 'width'].includes(size);
 
     if (exact != null) {
       const attr = attrForFilterKey(dict, key);
@@ -198,6 +229,8 @@ export function auditFilterValues({
         });
       }
     }
+
+    if (skipPermute) continue;
 
     if (claimed != null && exact != null && Math.abs(claimed - exact) > 0.6) {
       issues.push({

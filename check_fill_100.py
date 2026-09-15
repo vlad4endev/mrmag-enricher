@@ -34,7 +34,7 @@ SHEET_YES_523 = [
     'Объём морозильной камеры', 'Система охлаждения',
     'Размораживание холодильной камеры', 'Размораживание морозильной камеры',
     'Класс энергоэффективности', 'Тип компрессора', 'Уровень шума',
-    'Мощность замораживания', 'Высота', 'Ширина', 'Глубина', 'Габариты (ШхВхГ)',
+    'Мощность замораживания', 'Высота', 'Ширина', 'Глубина',
     'Цвет корпуса', 'Тип управления', 'Дисплей', 'Перенавешиваемые двери',
 ]
 
@@ -200,7 +200,13 @@ def is_filled(filters, fkey):
         return False
     return True
 
-def check_category(cat_name, mapping, products, approved_cat, out_dir, file_tag, expected_kind):
+SKIP_100_523 = {
+    'Дисплей', 'Перенавешиваемые двери',
+    'Тип компрессора', 'Размораживание морозильной камеры',
+}
+
+def check_category(cat_name, mapping, products, approved_cat, out_dir, file_tag, expected_kind, skip_100=()):
+    skip = set(skip_100)
     eligible = [p for p in products if not is_mismatch(p, expected_kind)]
     skipped = len(products) - len(eligible)
     total = len(eligible)
@@ -212,7 +218,7 @@ def check_category(cat_name, mapping, products, approved_cat, out_dir, file_tag,
             continue
         fkey = mapping.get(sheet_name)
         if fkey is None:
-            rows_summary.append((sheet_name, None, 0, total, 'нет маппинга на ключ filters'))
+            rows_summary.append((sheet_name, None, 0, total, 'нет маппинга на ключ filters', 'required'))
             all_ok = False
             continue
         if fkey in seen_keys:
@@ -221,9 +227,11 @@ def check_category(cat_name, mapping, products, approved_cat, out_dir, file_tag,
         missing_ids = [p['id'] for p in eligible if not is_filled(p.get('filters') or {}, fkey)]
         filled = total - len(missing_ids)
         pct = 100.0 * filled / total if total else 0.0
-        rows_summary.append((sheet_name, fkey, filled, total, f'{pct:.1f}%'))
+        kind = 'optional' if (sheet_name in skip or fkey in skip) else 'required'
+        rows_summary.append((sheet_name, fkey, filled, total, f'{pct:.1f}%', kind))
         if pct < 100.0:
-            all_ok = False
+            if kind != 'optional':
+                all_ok = False
             out_path = os.path.join(
                 out_dir,
                 f'missing_{file_tag}_{re.sub(r"[^A-Za-zА-Яа-я0-9]+", "_", fkey)}.csv',
@@ -237,8 +245,13 @@ def check_category(cat_name, mapping, products, approved_cat, out_dir, file_tag,
     print(f"\n{'=' * 90}\nНаполняемость фильтров — {cat_name} "
           f"(карточек: {len(products)}, своей категории: {total}, пропуск mismatch: {skipped})\n{'=' * 90}")
     print(f"{'ФИЛЬТР':45} {'ЗАПОЛНЕНО':12} {'ВСЕГО':7} {'%':8} СТАТУС")
-    for sheet_name, fkey, filled, tot, pct in rows_summary:
-        status = 'OK' if pct == '100.0%' else '<100%'
+    for sheet_name, fkey, filled, tot, pct, kind in rows_summary:
+        if pct == '100.0%':
+            status = 'OK'
+        elif kind == 'optional':
+            status = 'необяз.'
+        else:
+            status = '<100%'
         print(f"{sheet_name:45} {filled:<12} {tot:<7} {pct:<8} {status}")
     return all_ok
 
@@ -263,7 +276,7 @@ def main():
     ok2 = check_category(
         'Холодильники', MAPPING_523, p523,
         approved.get('Холодильники') or builtin_approved()['Холодильники'],
-        out_dir, '523', 'fridge',
+        out_dir, '523', 'fridge', SKIP_100_523,
     )
 
     print(f"\n{'#' * 90}")

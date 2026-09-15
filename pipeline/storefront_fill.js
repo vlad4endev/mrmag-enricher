@@ -46,8 +46,7 @@ const FRIDGE_DEFAULTS = {
   doors: '2',
   freezer_pos: 'Снизу',
   cooling: 'Капельная',
-  display: 'Нет',
-  door_reversible: 'Да',
+  compressor_type: 'Стандартный',
   control_type: 'Механическое',
   color: 'Белый',
   energy_class: 'A',
@@ -329,7 +328,7 @@ export function harvestStorefrontFacts(rec, dict, product) {
     put('control_type', 'Механическое', 'harvest_control');
   }
 
-  if (/без\s+диспл|диспл\w*\s+(нет|отсутств)/i.test(t)) {
+  if (/без\s+диспл|диспл\w*\s*[-–—:]?\s*(нет|отсутств)/i.test(t)) {
     put('display', 'Нет', 'harvest_display');
   } else if (/тип\s+дисплея|led[\s-]?дисп|диспл\w*\s*[-–—:]?\s*(led|tft|lcd|есть|да)\b|цифров\w*\s+\(?символьн/i.test(t)) {
     put('display', 'Есть', 'harvest_display');
@@ -341,9 +340,10 @@ export function harvestStorefrontFacts(rec, dict, product) {
     put('vol_freezer', num(/объ[её]м\s+морозильн\w*\s+камер[^0-9]{0,20}(\d{2,3})/i, t), 'harvest_vol');
     put('freeze_power', num(/замораживани\w*[^0-9]{0,24}(\d+(?:[.,]\d+)?)\s*кг/i, t), 'harvest_freeze');
     put('noise', num(/шум[^0-9]{0,24}(\d{2})/i, t), 'harvest_noise');
-    if (/перенавеш|перевеш\w*\s+двер/i.test(t)) {
-      if (/\bнет\b/i.test(t) && /перенавеш|перевеш/i.test(t)) put('door_reversible', 'Нет', 'harvest_doorside');
-      else put('door_reversible', 'Да', 'harvest_doorside');
+    const doorHit = t.match(/перенавеш\w*(?:\s+двер\w*)?\s*[-–—:.]?\s*(да|нет|есть)/i)
+      || t.match(/двер\w*\s+перенавеш\w*\s*[-–—:.]?\s*(да|нет|есть)/i);
+    if (doorHit) {
+      put('door_reversible', /нет/i.test(doorHit[1]) ? 'Нет' : 'Да', 'harvest_doorside');
     }
   }
 
@@ -372,6 +372,11 @@ export function fillStorefrontDefaults(rec, dict, product) {
     if (attr.code === 'control_type' && rec.attrs.display === true) raw = 'Электронное';
     if (attr.code === 'motor_type' && /инвертор/i.test(String(product?.name || rec.name || ''))) {
       raw = 'Инверторный';
+    }
+    if (attr.code === 'compressor_type') {
+      const blob = String(product?.name || rec.name || '');
+      if (/линейн|linear/i.test(blob)) raw = 'Линейный';
+      else if (/инвертор|inverter/i.test(blob)) raw = 'Инверторный';
     }
     applyDerived(rec, dict, attr.code, String(raw), 'storefront_default', 'S0', { overwrite: true });
   }

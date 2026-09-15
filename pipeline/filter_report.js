@@ -11,6 +11,7 @@ import {
   displayFilterValue,
   hasFilterValue,
   catKey,
+  optionalApproved,
 } from './approved_filters.js';
 import { auditFilterValues } from './filter_value_audit.js';
 
@@ -60,6 +61,9 @@ export function cardFilterCoverage(filters, dict, opts = {}) {
     description: opts.description || opts.description_html || '',
     annotation: opts.annotation || opts.annotation_html || '',
   });
+  const optional = new Set(optionalApproved(catId));
+  const requiredRows = rows.filter(r => !optional.has(r.name));
+  const requiredOk = requiredRows.length === 0 || requiredRows.every(r => r.ok);
   return {
     category_id: catId || null,
     approved_names: names,
@@ -71,11 +75,12 @@ export function cardFilterCoverage(filters, dict, opts = {}) {
     unapproved,
     mismatches,
     category_mismatch: Boolean(opts.category_mismatch),
+    optional_names: [...optional],
     ok: Boolean(opts.category_mismatch)
-      || (total > 0
-        && filled === total
+      || (requiredOk
         && unapproved.length === 0
-        && mismatches.length === 0),
+        && mismatches.length === 0
+        && (requiredRows.length > 0 || total > 0)),
   };
 }
 

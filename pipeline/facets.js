@@ -274,8 +274,35 @@ function coerceBooleanAttr(attr, v) {
   return parsed.ok ? parsed.value : null;
 }
 
+/** Явный список канонов из filters_spec.values — порядок как в справочнике. */
+function catalogEnumValues(attr) {
+  const listed = attr.facet?.enum_values;
+  if (!Array.isArray(listed) || !listed.length) return [];
+  return listed.map(v => displayValue(attr, v) || String(v).trim()).filter(Boolean);
+}
+
+function mergeCatalogValues(occupied, catalog) {
+  const seen = new Set();
+  const out = [];
+  for (const v of catalog || []) {
+    const s = String(v || '').trim();
+    if (!s || seen.has(s)) continue;
+    seen.add(s);
+    out.push(s);
+  }
+  for (const v of occupied || []) {
+    const s = String(v || '').trim();
+    if (!s || seen.has(s)) continue;
+    seen.add(s);
+    out.push(s);
+  }
+  return out;
+}
+
 /** Каноны оси, если в текущей выборке ещё нет ни одного значения. */
 function fallbackFacetValues(attr, kind) {
+  const seeded = catalogEnumValues(attr);
+  if (seeded.length) return seeded;
   if (kind === 'boolean') return ['Есть', 'Нет'];
   if (kind === 'int_enum') {
     const vals = attr.facet?.int_values;
@@ -457,7 +484,10 @@ export function buildFilters(recs, dict, config) {
       })
       .map(([value]) => value);
 
-    if (!values.length) {
+    const seeded = catalogEnumValues(attr);
+    if (seeded.length) {
+      values = mergeCatalogValues(values, seeded);
+    } else if (!values.length) {
       values = fallbackFacetValues(attr, kind);
       if (!values.length) continue;
     }
@@ -517,6 +547,11 @@ export function assignFilterValues(rec, dict, debugFacets, config = {}, unmapped
     const facet = attr.facet || {};
     if (facet.status === 'not_a_filter') continue;
     const kind = facetKind(attr);
+    if (attr.type === 'dimensions' || (v && typeof v === 'object' && !Array.isArray(v) && ('width' in v || 'height' in v))) {
+      const lab = displayValue(attr, v);
+      if (lab) out[f.name] = [lab];
+      continue;
+    }
     if (kind === 'range') {
       const raw = numericOf(v);
       if (raw == null) continue;

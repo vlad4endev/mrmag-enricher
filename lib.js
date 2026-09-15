@@ -1129,7 +1129,8 @@ filter_checklist — сверка по каждой оси фильтра: fille
 - Значения без служебного мусора: без "шт.", "прибл.", "*", сносок и HTML.
 - Технические ярлыки → канон словаря из §4, термин можно пояснить в скобках:
   «Ноу Фрост» / «nofrost» → «No Frost»; «Total No Frost» → «Full No Frost»;
-  для камер → «Автоматическое (No Frost)»; «LED» → «Светодиодное».
+  для камер разморозки тоже «No Frost» (не «Автоматическое (No Frost)»);
+  «капельная система» → «Капельная»; «LED» → «Светодиодное».
   В description и bullets не оставляй голое «No Frost» без пояснения, что
   камеры не нужно размораживать вручную.
 
@@ -1643,18 +1644,19 @@ export function sanitizeEnrichedResult(data) {
     specs.тип_управления = parts[0] ?? null;
   }
   // Канон охлаждения — из словаря («No Frost» / «Full No Frost»).
-  // Размораживание камер: голое No Frost → «Автоматическое (No Frost)».
-  const plainDefrost = (v) => {
+  // Размораживание камер: те же каноны, что в filters_spec («No Frost» / «Капельная»).
+  const snapDefrost = (v, key) => {
     const s = String(v ?? '').trim();
     if (!s) return null;
-    if (/^no\s*frost$/i.test(s) || /^(total|full)\s*no\s*frost$/i.test(s)) {
-      return displayEnum('автоматическое (No Frost)');
+    if (/^no\s*frost$/i.test(s) || /^(total|full)\s*no\s*frost$/i.test(s) || /^автоматическ/i.test(s)) {
+      return 'No Frost';
     }
+    if (key === 'размораживание_холодильной_камеры' && /капельн/i.test(s)) return 'Капельная';
     return null;
   };
   if (specs) {
     for (const k of ['размораживание_холодильной_камеры', 'размораживание_морозильной_камеры']) {
-      const d = plainDefrost(specs[k]);
+      const d = snapDefrost(specs[k], k);
       if (d) specs[k] = d;
     }
     // Обрезок от «Тип конструкции»: «Конструкции -» / «конструкции - C …»
@@ -1671,7 +1673,7 @@ export function sanitizeEnrichedResult(data) {
   }
   if (facts) {
     for (const k of ['размораживание_холодильной_камеры', 'размораживание_морозильной_камеры']) {
-      const d = plainDefrost(facts[k]);
+      const d = snapDefrost(facts[k], k);
       if (d) facts[k] = d;
     }
     if (typeof facts.тип_холодильника === 'string' && /^конструкци/i.test(facts.тип_холодильника.trim())) {

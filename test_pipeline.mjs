@@ -2842,12 +2842,13 @@ console.log('golden tests passed');
   assert.equal(fridge.facet?.enabled, true, 'defrost_fridge — фасет витрины');
   assert.equal(freezer.facet?.enabled, true, 'defrost_freezer — фасет витрины');
   for (const v of ['No Frost', 'NoFrost', 'Автоматическое', 'Автоматическое (No Frost)']) {
-    assert.equal(aliasValue(fridge, v), 'Автоматическое (No Frost)', v);
+    assert.equal(aliasValue(fridge, v), 'No Frost', v);
   }
   for (const v of ['Ручное', 'Ручная разморозка', 'ручная']) {
     assert.equal(aliasValue(fridge, v), 'Ручное', v);
   }
-  assert.equal(aliasValue(freezer, 'Low Frost'), 'Автоматическое (No Frost)');
+  assert.equal(aliasValue(fridge, 'Капельная система'), 'Капельная');
+  assert.equal(aliasValue(freezer, 'Low Frost'), 'No Frost');
 
   const recs = [
     { id: 1, name: 't', attrs: { defrost_fridge: 'No Frost', defrost_freezer: 'NoFrost', cooling: 'NO FROST' } },
@@ -2867,11 +2868,11 @@ console.log('golden tests passed');
   const dz = built.filters.find(f => f.name === 'Размораживание морозильной камеры');
   assert.ok(df, 'defrost_fridge facet present');
   assert.ok(dz, 'defrost_freezer facet present');
-  assert.ok(df.value.includes('Автоматическое (No Frost)'));
+  assert.deepEqual(df.value, ['No Frost', 'Капельная', 'Ручное']);
   assert.equal(df.value.filter(v => /no\s*frost|автоматическ/i.test(v)).length, 1);
-  assert.ok(df.value.includes('Капельная система'));
-  assert.ok(df.value.includes('Ручное'));
-  assert.ok(!df.value.includes('No Frost'));
+  assert.ok(!df.value.includes('Автоматическое (No Frost)'));
+  assert.ok(!df.value.includes('Капельная система'));
+  assert.deepEqual(dz.value, ['No Frost', 'Ручное']);
   const cool = built.filters.find(f => f.name === 'Система охлаждения');
   assert.ok(cool, 'cooling facet present');
   assert.ok(cool.value.includes('No Frost'));
@@ -2889,8 +2890,8 @@ console.log('golden tests passed');
   const freezer = d523.byCode.get('defrost_freezer');
   const prevFridge = fridge.facet;
   const prevFreezer = freezer.facet;
-  fridge.facet = { enabled: true, label: fridge.name, kind: 'enum' };
-  freezer.facet = { enabled: true, label: freezer.name, kind: 'enum' };
+  fridge.facet = { ...prevFridge, enabled: true, label: fridge.name, kind: 'enum' };
+  freezer.facet = { ...prevFreezer, enabled: true, label: freezer.name, kind: 'enum' };
   try {
     const dirty = [
       {
@@ -2927,7 +2928,7 @@ console.log('golden tests passed');
     assert.ok(cool.value.includes('Full No Frost'));
     assert.ok(!cool.value.includes('Total No Frost'));
     const defrost = cleaned.filters.find(f => f.name === 'Размораживание холодильной камеры');
-    assert.deepEqual(defrost.value, ['Автоматическое (No Frost)', 'Капельная система', 'Ручное']);
+    assert.deepEqual(defrost.value, ['No Frost', 'Капельная', 'Ручное']);
     const comp = cleaned.filters.find(f => f.name === 'Тип компрессора');
     assert.deepEqual(comp.value, ['Инверторный', 'Стандартный']);
     assert.ok(!comp.value.includes('Коллекторный'));
@@ -3227,6 +3228,14 @@ console.log('golden tests passed');
     d523.byCode.get('compressor_type').facet.enum_values,
     ['Инверторный', 'Линейный', 'Стандартный'],
   );
+  assert.deepEqual(
+    d523.byCode.get('defrost_fridge').facet.enum_values,
+    ['No Frost', 'Капельная', 'Ручное'],
+  );
+  assert.deepEqual(
+    d523.byCode.get('defrost_freezer').facet.enum_values,
+    ['No Frost', 'Ручное'],
+  );
   {
     const { promptVarsForSchema } = await import('./lib.js');
     const vars = promptVarsForSchema(523);
@@ -3319,7 +3328,7 @@ console.log('golden tests passed');
   {
     const drip = fillCardFiltersAfterEnrich(p523[11488], { specs: {}, description: p523[11488].description || '' }, d523, config);
     assert.ok(!drip['Габариты (ШхВхГ)']?.length, 'габариты 523 — характеристика, не фильтр');
-    assert.deepEqual(drip['Размораживание холодильной камеры'], ['Капельная система']);
+    assert.deepEqual(drip['Размораживание холодильной камеры'], ['Капельная']);
     assert.ok(drip['Цвет корпуса']?.[0], 'цвет — строка листа «да»');
     assert.ok(
       !drip['Размораживание морозильной камеры']?.length,
@@ -3347,8 +3356,8 @@ console.log('golden tests passed');
     }, { specs: {}, description: '' }, d523, config);
     assert.deepEqual(doorYes['Перенавешиваемые двери'], ['Есть']);
     const pozisFill = fillCardFiltersAfterEnrich(p523[260], { specs: {}, description: p523[260].description || '' }, d523, config);
-    assert.deepEqual(pozisFill['Размораживание холодильной камеры'], ['Автоматическое (No Frost)']);
-    assert.deepEqual(pozisFill['Размораживание морозильной камеры'], ['Автоматическое (No Frost)']);
+    assert.deepEqual(pozisFill['Размораживание холодильной камеры'], ['No Frost']);
+    assert.deepEqual(pozisFill['Размораживание морозильной камеры'], ['No Frost']);
     assert.ok(!pozisFill['Габариты (ШхВхГ)']?.length, 'габариты 523 не в filters');
     assert.deepEqual(pozisFill['Тип компрессора'], ['Стандартный']);
     const invFill = fillCardFiltersAfterEnrich({
@@ -3977,13 +3986,13 @@ console.log('golden tests passed');
 
   const pozis = normalizeProduct(p523[260], d523, config);
   assert.equal(pozis.attrs.compressor_type, null, 'количество компрессоров ≠ тип компрессора');
-  assert.equal(pozis.attrs.defrost_fridge, 'Автоматическое (No Frost)');
-  assert.equal(pozis.attrs.defrost_freezer, 'Автоматическое (No Frost)');
+  assert.equal(pozis.attrs.defrost_fridge, 'No Frost');
+  assert.equal(pozis.attrs.defrost_freezer, 'No Frost');
   {
     const builtPozis = buildFilters([pozis], d523, config);
     const rowPozis = serializeProduct(pozis, d523, builtPozis.debug);
-    assert.deepEqual(rowPozis.filters['Размораживание холодильной камеры'], ['Автоматическое (No Frost)']);
-    assert.deepEqual(rowPozis.filters['Размораживание морозильной камеры'], ['Автоматическое (No Frost)']);
+    assert.deepEqual(rowPozis.filters['Размораживание холодильной камеры'], ['No Frost']);
+    assert.deepEqual(rowPozis.filters['Размораживание морозильной камеры'], ['No Frost']);
     assert.ok(
       !rowPozis.filters['Тип компрессора']?.length,
       'тип компрессора не выдумываем из «Количество компрессоров: 1»',

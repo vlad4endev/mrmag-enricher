@@ -56,10 +56,10 @@ const EXTRA_COLLAPSE = [
   [new RegExp(`^(коричнев${CY}|т[её]мно[-\\s]?коричнев${CY})$`, 'i'), 'Коричневый'],
 ];
 
-/** Для «Размораживание …» No Frost = Автоматическое (No Frost), не отдельный пункт. */
+/** Для «Размораживание …» No Frost и капельная — те же ярлыки, что на витрине. */
 const DEFROST_COLLAPSE = [
-  [new RegExp(`^(no\\s*frost|nofrost|total no frost|full no frost|ноу\\s*фрост|автоматическ${CY}(?:\\s*\\(no frost\\))?|low\\s*frost)$`, 'i'), 'Автоматическое (No Frost)'],
-  [new RegExp(`^(капельн${CY}(?:\\s+систем${CY})?)$`, 'i'), 'Капельная система'],
+  [new RegExp(`^(no\\s*frost|nofrost|total no frost|full no frost|ноу\\s*фрост|автоматическ${CY}(?:\\s*\\(no frost\\))?|low\\s*frost)$`, 'i'), 'No Frost'],
+  [new RegExp(`^(капельн${CY}(?:\\s+систем${CY})?)$`, 'i'), 'Капельная'],
   [new RegExp(`^(ручн${CY}(?:\\s+разморозк${CY})?)$`, 'i'), 'Ручное'],
 ];
 
@@ -220,13 +220,35 @@ export function sanitizeFilterCatalog(filters, dict) {
       continue;
     }
 
-    // Сортировка: числа/бакеты по ведущему числу, иначе locale RU.
-    next.sort((a, b) => {
-      const na = parseFloat(a);
-      const nb = parseFloat(b);
-      if (Number.isFinite(na) && Number.isFinite(nb) && na !== nb) return na - nb;
-      return String(a).localeCompare(String(b), 'ru');
-    });
+    const catalog = Array.isArray(attr?.facet?.enum_values)
+      ? attr.facet.enum_values.map(v => String(v).trim()).filter(Boolean)
+      : [];
+    if (catalog.length) {
+      const have = new Map(next.map(v => [valueFold(v), v]));
+      const ordered = [];
+      const seen = new Set();
+      for (const c of catalog) {
+        const hit = have.get(valueFold(c));
+        if (!hit || seen.has(valueFold(hit))) continue;
+        seen.add(valueFold(hit));
+        ordered.push(hit);
+      }
+      for (const v of next) {
+        const k = valueFold(v);
+        if (seen.has(k)) continue;
+        seen.add(k);
+        ordered.push(v);
+      }
+      next.length = 0;
+      next.push(...ordered);
+    } else {
+      next.sort((a, b) => {
+        const na = parseFloat(a);
+        const nb = parseFloat(b);
+        if (Number.isFinite(na) && Number.isFinite(nb) && na !== nb) return na - nb;
+        return String(a).localeCompare(String(b), 'ru');
+      });
+    }
 
     out.push({ name, value: next });
   }

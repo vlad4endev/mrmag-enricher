@@ -499,7 +499,7 @@ t('No Frost в specs — канон словаря', () => {
     bullets: ['a', 'b', 'c'], strong: [], meta_keywords: 'а, б, в, г, д, е, ж', web_info: null,
   }, 'Система охлаждения - No Frost', 'kholodilniki', [], 'prefer_source');
   assert.strictEqual(r.specs.система_охлаждения, 'No Frost');
-  assert.match(String(r.specs.размораживание_холодильной_камеры), /автоматическ.*No Frost/i);
+  assert.strictEqual(r.specs.размораживание_холодильной_камеры, 'No Frost');
 });
 t('кириллическая «А+» приводится к латинской', () => {
   assert.strictEqual(extractFacts('Класс энергоэффективности - А+').класс_энергоэффективности, 'A+');
@@ -515,7 +515,7 @@ t('dump-проза не склеивает размораживание с по�
     + 'Морозильное отделение: Размораживание морозильной камеры: ручное. '
     + 'Количество отделений в морозильной камере: 3 ящика';
   const f = extractFacts(dump, 'kholodilniki');
-  assert.strictEqual(f.размораживание_холодильной_камеры, 'Автоматическое (No Frost)');
+  assert.strictEqual(f.размораживание_холодильной_камеры, 'No Frost');
   assert.strictEqual(f.размораживание_морозильной_камеры, 'Ручное');
   assert.ok(!/полк|контейнер|температур/i.test(String(f.размораживание_холодильной_камеры || '')),
     'в факте размораживания не должно быть чужих характеристик');
@@ -525,7 +525,7 @@ t('Pozis RK-149 (44582): размораживание из dump-description — 
   const p = (Array.isArray(data) ? data : []).find(x => String(x.id) === '44582');
   assert.ok(p, 'товар 44582 в data_523.json');
   const { facts } = productFacts(p, 'kholodilniki');
-  assert.strictEqual(facts.размораживание_холодильной_камеры, 'Автоматическое (No Frost)');
+  assert.strictEqual(facts.размораживание_холодильной_камеры, 'No Frost');
   assert.strictEqual(facts.размораживание_морозильной_камеры, 'Ручное');
   assert.ok(String(facts.размораживание_холодильной_камеры || '').length < 40);
 });

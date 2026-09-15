@@ -288,8 +288,8 @@ function isBareBooleanWord(val) {
 
 /**
  * Канон «Размораживание …» из системы охлаждения.
- * Full/No Frost → обе камеры «Автоматическое (No Frost)».
- * Капельная → только холодильная камера («Капельная система»);
+ * Full/No Frost → обе камеры «No Frost».
+ * Капельная → только холодильная камера («Капельная»);
  * морозильную не выдумываем: у капельных она часто ручная, но dump это не сказал.
  */
 export function defrostCanonFromCooling(cooling, chamber) {
@@ -297,12 +297,12 @@ export function defrostCanonFromCooling(cooling, chamber) {
   if (!s.trim()) return null;
   // «Без No Frost» = капельная, не No Frost. Иначе /no frost/ срабатывает на отрицание.
   if (/без\s*no[\s-]?frost|без\s*ноу[\s-]?фрост/i.test(s)) {
-    return chamber === 'fridge' ? 'Капельная система' : null;
+    return chamber === 'fridge' ? 'Капельная' : null;
   }
   if (/full\s*no\s*frost|total\s*no\s*frost|\bfnf\b|no[\s-]?frost|ноу[\s-]?фрост|без наледи/i.test(s)) {
-    return 'Автоматическое (No Frost)';
+    return 'No Frost';
   }
-  if (chamber === 'fridge' && /капельн/i.test(s)) return 'Капельная система';
+  if (chamber === 'fridge' && /капельн/i.test(s)) return 'Капельная';
   if (/статическ|ручн/i.test(s)) return 'Ручное';
   return null;
 }

@@ -183,13 +183,22 @@
       "code": "defrost_fridge",
       "name": "Размораживание холодильной камеры",
       "status": "filter",
-      "type": "enum"
+      "type": "enum",
+      "values": [
+        "No Frost",
+        "Капельная",
+        "Ручное"
+      ]
     },
     {
       "code": "defrost_freezer",
       "name": "Размораживание морозильной камеры",
       "status": "filter",
-      "type": "enum"
+      "type": "enum",
+      "values": [
+        "No Frost",
+        "Ручное"
+      ]
     },
     {
       "code": "energy_class",

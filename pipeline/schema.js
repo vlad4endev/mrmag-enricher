@@ -59,6 +59,8 @@ const CODE_TO_SPEC = {
   depth: { key: 'глубина_мм', mul: 10 },
   install_depth: { key: 'глубина_встраивания_мм', mul: 10 },
   fridge_type: 'тип_холодильника',
+  defrost_fridge: 'размораживание_холодильной_камеры',
+  defrost_freezer: 'размораживание_морозильной_камеры',
   compressor_type: 'тип_компрессора',
   motor_type: 'тип_двигателя',
   country: 'страна_производства',

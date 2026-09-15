@@ -10,7 +10,7 @@
 import { facetKind, bucketLabel, matchBucket, toIntEnum, coerceFacetNumber } from './facets.js';
 import { annotationText, formatAttrValue, aliasValue, valueFold } from './types.js';
 import { annotationRows, verifyDescription, renderAnnotation } from './generate.js';
-import { SOURCE_RANK } from './normalize.js';
+import { SOURCE_RANK, refreshDerivedFacets } from './normalize.js';
 import { alignEnumSurfaces } from './enum_align.js';
 import { alignEnrichedProse } from './prose_align.js';
 import { findDescAnnotationIssues, sanitizeHangingProse } from './desc_annotation_align.js';
@@ -546,6 +546,12 @@ export function finalizeRecord(rec, dict, { enriched = null, assigned = null } =
         (typeof b === 'string' ? stripHallucinationClaims(b) : b)).filter(b => b && String(b).trim());
     }
   }
+
+  refreshDerivedFacets(rec, dict, {
+    ...rec,
+    description: enr?.description ?? rec.description,
+    _enriched: enr || rec._enriched,
+  });
 
   const quality = qualityScore(rec, dict, issues);
   rec.quality = quality;

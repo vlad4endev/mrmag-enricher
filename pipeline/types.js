@@ -303,6 +303,15 @@ export function isDripCooling(cooling) {
  * Капельная / «без No Frost» → холодильная «Капельная», морозильная «Ручное».
  * Бюджетные капельные модели не имеют No Frost в морозилке (DON R-290 G, ATLANT XM 6023-031).
  */
+/** Явное «ручное» размораживание морозилки в тексте карточки (DON R-290 G и аналоги). */
+export function manualFreezerDefrostInBlob(blob) {
+  const s = String(blob || '').replace(/ё/g, 'е');
+  return /морозил[а-яё]{0,32}[^.;\n]{0,96}ручн[а-яё]*(?:\s*размор|размор)/i.test(s)
+    || /ручн[а-яё]*(?:\s+)?размораживан[а-яё]*[^.;\n]{0,96}морозил/i.test(s)
+    || (/морозил/i.test(s) && /требует[^.;\n]{0,24}ручн[а-яё]*\s+разморажив/i.test(s))
+    || /размораживан[а-яё]*[^.;\n]{0,72}морозил[а-яё]{0,32}[^.;\n]{0,48}ручн/i.test(s);
+}
+
 export function defrostCanonFromCooling(cooling, chamber) {
   const s = String(cooling || '').replace(/ё/g, 'е');
   if (!s.trim()) return null;

@@ -2,7 +2,14 @@
 
 import { parseProductFields } from './parse.js';
 import { matchKey } from './match.js';
-import { normalizeValue, countUnitsInValues, defrostCanonFromCooling, isDripCooling } from './types.js';
+import {
+  normalizeValue,
+  countUnitsInValues,
+  defrostCanonFromCooling,
+  isDripCooling,
+  manualFreezerDefrostInBlob,
+  valueFold,
+} from './types.js';
 import { parseDimensions, reconcileDimensions, isCompleteDims } from './dimensions.js';
 import { parseIdentity } from './identity.js';
 import { isPackingKey, normKey } from './text.js';
@@ -426,6 +433,7 @@ function factBlob(rec, product) {
     product?.name || rec.name,
     strip(rec.annotation || product?.annotation),
     strip(rec.description || product?.description),
+    strip(rec._enriched?.description || product?._enriched?.description),
     rec.attrs.fridge_type,
     rec.provenance?.fridge_type?.raw,
   ].filter(Boolean).join(' ').toLowerCase().replace(/ё/g, 'е');
@@ -709,19 +717,23 @@ export function refreshDerivedFacets(rec, dict, product) {
     }
   }
   if (dict.byCode.has('defrost_freezer')) {
-    const label = defrostCanonFromCooling(cooling, 'freezer')
-      || (!drip ? defrostCanonFromCooling(blob, 'freezer') : 'Ручное');
+    const manualFreezer = manualFreezerDefrostInBlob(blob);
+    const label = manualFreezer
+      ? 'Ручное'
+      : (defrostCanonFromCooling(cooling, 'freezer')
+        || (!drip ? defrostCanonFromCooling(blob, 'freezer') : 'Ручное'));
     const cur = rec.attrs.defrost_freezer;
+    const forceManual = manualFreezer || (drip && isNoFrostLabel(cur) && label === 'Ручное');
     if (cur == null) {
       if (label) {
         setDerived(rec, dict, 'defrost_freezer', label, 'derived_defrost_from_cooling', derivedLevel(rec, 'cooling'));
       }
-    } else if (drip && isNoFrostLabel(cur) && label) {
+    } else if (forceManual && label && valueFold(cur) !== valueFold(label)) {
       rec.attrs.defrost_freezer = label;
       rec.provenance = rec.provenance || {};
       rec.provenance.defrost_freezer = {
         level: derivedLevel(rec, 'cooling'),
-        raw: String(cooling || label),
+        raw: manualFreezer ? 'manual_freezer_defrost_in_blob' : String(cooling || label),
         model: null,
         prompt: null,
         how: 'derived_defrost_from_cooling',

@@ -11,7 +11,7 @@
  * 4) текущий attrs / filter.
  */
 
-import { aliasValue, hasStrictEnum, valueFold, annotationCase } from './types.js';
+import { aliasValue, hasStrictEnum, valueFold, annotationCase, isDripCooling, defrostCanonFromCooling, manualFreezerDefrostInBlob } from './types.js';
 
 /** Коды, где полярные значения часто путают (обязательная сверка). */
 export const PRIORITY_ENUM_CODES = new Set([
@@ -432,6 +432,29 @@ export function alignEnumSurfaces(rec, dict, {
       rec.attrs?.[attr.code],
       rec.provenance?.[attr.code],
     );
+
+    if (resolved.truth && (attr.code === 'defrost_freezer' || attr.code === 'defrost_fridge')) {
+      const cool = rec.attrs?.cooling;
+      const coolSrc = rec.provenance?.cooling?.raw || cool;
+      const chamber = attr.code === 'defrost_fridge' ? 'fridge' : 'freezer';
+      const textBlob = `${description}\n${annotation}`;
+      let derived = null;
+      if (attr.code === 'defrost_freezer' && manualFreezerDefrostInBlob(textBlob)) {
+        derived = 'Ручное';
+      } else {
+        derived = defrostCanonFromCooling(cool, chamber)
+          || defrostCanonFromCooling(coolSrc, chamber);
+      }
+      if (!derived && attr.code === 'defrost_freezer'
+        && (isDripCooling(cool) || isDripCooling(coolSrc))) {
+        derived = 'Ручное';
+      }
+      if (derived && /no[\s-]?frost/i.test(String(resolved.truth))) {
+        resolved.truth = derived;
+        resolved.action = 'derived_defrost_from_cooling';
+        resolved.sources.attr = derived;
+      }
+    }
 
     if (!resolved.truth) continue;
 

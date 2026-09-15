@@ -4572,8 +4572,10 @@ console.log('golden tests passed');
     alignEnergyClassInText,
     findEnergyClassMismatches,
     findStrongGlueIssues,
+    stripEnergyClassOpinions,
   } = await import('./pipeline/desc_annotation_align.js');
   const { renderAnnotation } = await import('./pipeline/generate.js');
+  const { applyEnrichedSpecs } = await import('./pipeline/export.js');
 
   const rec805 = normalizeProduct(p523[805], d523, config);
   const ann805 = renderAnnotation(rec805, d523);
@@ -4624,6 +4626,34 @@ console.log('golden tests passed');
   assert.ok(!findEnergyClassMismatches(export805.description_html, rec805.attrs.energy_class).length,
     export805.description_html);
   assert.equal(findStrongGlueIssues(export805.description_html).length, 0, export805.description_html);
+
+  const opinion805 = stripEnergyClassOpinions(
+    'Класс энергоэффективности A означает повышенное энергопотребление по сравнению с более высокими классами. Объем 340 л.',
+  );
+  assert.ok(!/означает/i.test(opinion805), opinion805);
+  assert.match(opinion805, /Объем 340 л/, opinion805);
+
+  const comp9560 = repairAssemblyPunctuation(
+    'Объем морозильной камеры 124 л на морозильное одним компрессором и автоматической системой оттаивания обеих камер.',
+  );
+  assert.match(comp9560, /Модель оснащена одним компрессором/i, comp9560);
+  assert.ok(!/^Одним компрессором/i.test(comp9560.split(/\.\s+/)[1] || ''), comp9560);
+
+  const comp11494 = repairAssemblyPunctuation(
+    'Холодильник подходит для семьи из нескольких человек двумя компрессорами и хладагентом R600a.',
+  );
+  assert.match(comp11494, /Модель оснащена двумя компрессорами/i, comp11494);
+
+  const rec8738 = normalizeProduct(p523[8738], d523, config);
+  rec8738.attrs.defrost_freezer = 'Ручное';
+  const enr8738 = {
+    description: 'Система No Frost в холодильной камере. Морозильная камера требует ручного размораживания.',
+    specs: { размораживание_морозильной_камеры: 'No Frost' },
+  };
+  applyEnrichedSpecs(rec8738, enr8738.specs, d523, config);
+  finalizeRecord(rec8738, d523, { enriched: enr8738 });
+  assert.equal(rec8738.attrs.defrost_freezer, 'Ручное');
+  assert.match(renderAnnotation(rec8738, d523), /Размораживание морозильной камеры:\s*ручное/i);
 
   console.log('ok desc↔annotation QA: фабрикация, противоречие, бак/барабан, экспорт, 523');
 }

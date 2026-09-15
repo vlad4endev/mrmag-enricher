@@ -127,12 +127,13 @@ export function alignEnergyClassInText(text, expected) {
   const raw = String(text || '');
   if (!want || !raw.trim()) return raw;
   const re = new RegExp(ENERGY_CLASS_MENTION_RE.source, 'gi');
-  return raw.replace(re, (full, g1, g2) => {
+  const aligned = raw.replace(re, (full, g1, g2) => {
     const token = g1 || g2;
     const got = canonEnergyClass(token);
     if (!got || got === want) return full;
     return full.replace(token, want);
   });
+  return stripEnergyClassOpinions(aligned);
 }
 
 export function findEnergyClassMismatches(text, expected) {
@@ -148,6 +149,29 @@ export function findEnergyClassMismatches(text, expected) {
     }
   }
   return hits;
+}
+
+/** Оценочные фразы про «класс X означает … потребление» — ломаются при подстановке буквы. */
+const ENERGY_CLASS_OPINION_RE = /класс(?:а)?\s+энерго(?:эффективности|потребления|сбережения)[^.!?]{0,200}?(?:означа[а-яё]+|говорит\s+о|свидетельств[а-яё]+)/i;
+
+export function stripEnergyClassOpinions(text) {
+  const parts = splitSentences(text);
+  let out = '';
+  for (const sent of parts) {
+    const body = sent.body;
+    if (!body.trim()) {
+      out += body + sent.sep;
+      continue;
+    }
+    if (ENERGY_CLASS_OPINION_RE.test(body)) continue;
+    if (/класс(?:а)?\s+энерго/i.test(body)
+      && /(?:повышенн|пониженн|высок[а-яё]*|низк[а-яё]*)\s+энергопотреблен/i.test(body)
+      && /более\s+высок[а-яё]*\s+класс/i.test(body)) {
+      continue;
+    }
+    out += body + sent.sep;
+  }
+  return tidyPunct(out);
 }
 
 /** Слипшиеся слова вокруг программного <strong>: «камерой</strong>предназначенная». */
@@ -708,6 +732,22 @@ const NEXT_FACT_LC_SRC = String.raw`класс|объ[её]м|уровень|с�
 /** Элементы перечисления, которые модель клеит пробелом. */
 const FEATURE_ITEM_SRC = String.raw`защита от детей|контроль дисбаланса|контроль пенообразования|отсрочк[а-яё]*\s+(?:старта|запуска)|зона свежести|суперзаморозк[а-яё]*|экспресс-заморозк[а-яё]*|генератор льда`;
 
+const FINITE_VERB_IN_PHRASE = /(?:оснащен|оснащён|оснащена|оснащено|имеет|работает|снабж|предусмотрен|оборудован|использует|позволяет|охлажда|отлича|предназнач|рассчитан|комплекту|обеспеч|сохран|поддерж|управля|замораж|явля|выполнен|снабжен|снабжена|снабжено)[а-яё]*/i;
+
+function repairCompressorSplit(full, lead, rest) {
+  if (/(?:компрессор|работа|оснащен|оснащён|имеет|снабж|установлен|с)$/i.test(lead)) return full;
+  const tail = String(rest || '').trim();
+  if (!tail) return full;
+  if (FINITE_VERB_IN_PHRASE.test(lead) && FINITE_VERB_IN_PHRASE.test(tail)) {
+    return `${lead}. ${tail.charAt(0).toUpperCase()}${tail.slice(1)}`;
+  }
+  if (/^(?:одним|двумя|тремя)\s+компрессор/i.test(tail)) {
+    const bridge = `Модель оснащена ${tail.charAt(0).toLowerCase()}${tail.slice(1)}`;
+    return `${lead}. ${bridge.charAt(0).toUpperCase()}${bridge.slice(1)}`;
+  }
+  return `${lead}, ${tail.charAt(0).toLowerCase()}${tail.slice(1)}`;
+}
+
 function commaSeparateFeatureItems(s) {
   const item = FEATURE_ITEM_SRC;
   return String(s || '').replace(
@@ -754,11 +794,8 @@ function repairAssemblyPunctPlain(text, { sentences = true } = {}) {
   );
   // «на морозильное одним компрессором» / «человек двумя компрессорами».
   out = out.replace(
-    /([а-яё]{5,})\s+((?:одним|двумя|тремя)\s+компрессор(?:ом|ами))/gi,
-    (full, lead, rest) => {
-      if (/(?:компрессор|работа|оснащен|имеет|снабж|установлен|с)$/i.test(lead)) return full;
-      return `${lead}. ${rest.charAt(0).toUpperCase()}${rest.slice(1)}`;
-    },
+    /([а-яё]{5,})\s+((?:одним|двумя|тремя)\s+компрессор(?:ом|ами)[^.!?]{0,120})/gi,
+    (full, lead, rest) => repairCompressorSplit(full, lead, rest),
   );
   out = commaSeparateFeatureItems(out);
   return tidyPunct(out);
@@ -812,10 +849,17 @@ export function findAssemblyPunctIssues(text) {
     'gi',
   );
   while ((m = ecFactRe.exec(s))) hits.push({ kind: 'missing_period', match: m[0] });
-  const compRe = /([а-яё]{5,})\s+(?:одним|двумя|тремя)\s+компрессор(?:ом|ами)/gi;
+  const compRe = /([а-яё]{5,})\s+((?:одним|двумя|тремя)\s+компрессор(?:ом|ами)[^.!?]{0,120})/gi;
   while ((m = compRe.exec(s))) {
-    if (/(?:компрессор|работа|оснащен|имеет|снабж|установлен|с)$/i.test(m[1])) continue;
-    hits.push({ kind: 'missing_period', match: m[0] });
+    if (/(?:компрессор|работа|оснащен|оснащён|имеет|снабж|установлен|с)$/i.test(m[1])) continue;
+    if (FINITE_VERB_IN_PHRASE.test(m[1]) && FINITE_VERB_IN_PHRASE.test(m[2])) {
+      hits.push({ kind: 'missing_period', match: m[0] });
+      continue;
+    }
+    if (/^(?:одним|двумя|тремя)\s+компрессор/i.test(String(m[2] || '').trim())
+      && !FINITE_VERB_IN_PHRASE.test(String(m[2] || ''))) {
+      hits.push({ kind: 'missing_period', match: m[0] });
+    }
   }
   return hits;
 }

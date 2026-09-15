@@ -10,7 +10,7 @@ import { aliasValue, defrostCanonFromCooling, hasStrictEnum, normalizeValue, uni
 
 const COLOR_WORD = [
   [/бел(?:ый|ая|ое|ого)/i, 'Белый'],
-  [/серебрист|серебро|инокс|нержав|stainless/i, 'Серебристый'],
+  [/серебрист|серебро|металлик/i, 'Серебристый'],
   [/сер(?:ый|ая|ое|ого)|графит|антрацит/i, 'Серый'],
   [/черн(?:ый|ая|ое|ого)|чёрн/i, 'Чёрный'],
   [/бежев|слонов/i, 'Бежевый'],
@@ -56,7 +56,6 @@ const FRIDGE_DEFAULTS = {
   vol_fridge: '200',
   vol_freezer: '100',
   freeze_power: '5',
-  compressor_type: 'Стандартный',
   height: '180',
   width: '60',
   depth: '60',
@@ -118,6 +117,125 @@ function cls(re, text) {
 }
 
 /**
+ * Цвет из имени и фразы «цвет: …». Материал барабана/полок не берём:
+ * «нержавеющая сталь» у стиралки — бак, у холодильника — отдельный канон листа.
+ */
+function harvestColor(rec, dict, t, put) {
+  const attr = dict.byCode.get('color');
+  if (!attr) return;
+  const name = String(rec.name || '').replace(/ё/g, 'е');
+  const colorLine = (String(t || '').match(/цвет(?:\s+корпуса)?[^.;\n]{0,48}/i) || [])[0] || '';
+  const zone = [colorLine, name].filter(Boolean).join(' ');
+  const scan = zone || t;
+  const stainlessCanon = aliasValue(attr, 'нержавеющая сталь')
+    || aliasValue(attr, 'stainless')
+    || aliasValue(attr, 'inox');
+  if (
+    stainlessCanon
+    && /нержав|inox|\bstainless\b/i.test(scan)
+    && !/черн[а-яё]*\s+нержав|нержав[а-яё]*\s+черн/i.test(scan)
+  ) {
+    put('color', stainlessCanon, 'harvest_color');
+    return;
+  }
+  for (const [re, label] of COLOR_WORD) {
+    if (re.test(scan)) {
+      put('color', label, 'harvest_color');
+      return;
+    }
+  }
+}
+
+function harvestWasherType(rec, dict, t, put) {
+  if (!dict.byCode.has('washer_type')) return;
+  if (/полуавтомат/i.test(t)) {
+    put('washer_type', 'Полуавтоматическая', 'harvest_washer_type');
+    return;
+  }
+  if (
+    /вид\s+стиральн[а-яё]*\s+машин[а-яё]*[^.]{0,32}автомат/i.test(t)
+    || /автоматическ(?:ая|ое|ий)\s+стиральн/i.test(t)
+  ) {
+    put('washer_type', 'Автоматическая', 'harvest_washer_type');
+  }
+}
+
+/**
+ * Строки листа «нет»: в фильтры не едут, но в карточке быть должны.
+ * Берём только явные пары из текста — типичные значения категории не подставляем.
+ */
+function harvestSheetOnlyFacts(rec, dict, t, put) {
+  const has = (code) => dict.byCode.has(code);
+
+  if (has('child_lock')) {
+    if (/защит[а-яё]*\s+от\s+детей[^.]{0,40}(?:нет|отсутств)/i.test(t)
+      || /без\s+защиты\s+от\s+детей/i.test(t)) {
+      put('child_lock', 'Нет', 'harvest_child_lock');
+    } else if (/защит[а-яё]*\s+от\s+детей[^.]{0,40}(?:есть|да|имеется)/i.test(t)
+      || /блокировк[а-яё]*\s+(?:панели|кнопок).{0,24}дет/i.test(t)) {
+      put('child_lock', 'Есть', 'harvest_child_lock');
+    }
+  }
+
+  if (has('water_use')) {
+    const m = t.match(/расход\s+воды(?![^.]{0,24}год)[^0-9]{0,28}(\d+(?:[.,]\d+)?)\s*л/i);
+    if (m) {
+      const n = Number(String(m[1]).replace(',', '.'));
+      if (n >= 5 && n <= 250) put('water_use', m[1], 'harvest_water');
+    }
+  }
+
+  if (has('energy_year')) {
+    const m = t.match(/(?:энергопотреблен[а-яё]*|потреблен[а-яё]*\s+энерг[а-яё]*)[^0-9]{0,28}(\d{2,3}(?:[.,]\d+)?)\s*кВт/i)
+      || t.match(/(\d{2,3}(?:[.,]\d+)?)\s*кВт[·.]?\s*ч\s*(?:\/\s*)?(?:год|г)/i);
+    if (m) {
+      const n = Number(String(m[1]).replace(',', '.'));
+      if (n >= 20 && n <= 900) put('energy_year', m[1], 'harvest_energy_year');
+    }
+  }
+
+  if (has('climate_class')) {
+    const m = t.match(/климатическ[а-яё]*\s+класс[^A-Z]{0,16}((?:SN|ST|T|N)(?:\s*[-–—,\/+]\s*(?:SN|ST|T|N))*)/i);
+    if (m) put('climate_class', m[1].replace(/\s+/g, ''), 'harvest_climate');
+  }
+
+  if (has('refrigerant')) {
+    const m = t.match(/\b(R[\s-]?600a|R[\s-]?134a)\b/i);
+    if (m) put('refrigerant', m[1].replace(/[\s-]/g, ''), 'harvest_refrigerant');
+  }
+
+  if (has('compressors')) {
+    const m = t.match(/количеств[а-яё]*\s+компрессор[а-яё]*[^0-9]{0,12}(\d)/i)
+      || t.match(/(\d)\s*компрессор/i);
+    if (m && Number(m[1]) >= 1 && Number(m[1]) <= 3) put('compressors', m[1], 'harvest_compressors');
+  }
+
+  if (has('tank_material')) {
+    const m = t.match(/материал\s+бак[аеу]\s*[-–—:]?\s*([^.;,\n]{3,40})/i);
+    if (m) put('tank_material', m[1], 'harvest_tank');
+  }
+
+  if (has('drum_material')) {
+    const m = t.match(/материал\s+барабан[аеу]\s*[-–—:]?\s*([^.;,\n]{3,40})/i);
+    if (m) put('drum_material', m[1], 'harvest_drum');
+  }
+
+  if (has('shelf_material')) {
+    const m = t.match(/материал\s+полок\s*[-–—:]?\s*([^.;,\n]{3,40})/i);
+    if (m) put('shelf_material', m[1], 'harvest_shelf');
+  }
+
+  if (has('lighting')) {
+    if (/люминесцент/i.test(t)) put('lighting', 'Люминесцентное', 'harvest_lighting');
+    else if (/светодиод|\bled\b/i.test(t) && /освещ/i.test(t)) {
+      put('lighting', 'Светодиодное', 'harvest_lighting');
+    } else if (/накаливани/i.test(t) && /освещ|ламп/i.test(t)) {
+      put('lighting', 'Лампа накаливания', 'harvest_lighting');
+    }
+  }
+}
+
+/**
  * Цифры и флаги из имени / аннотации / описания, если пары ключ–значение не сработали.
  */
 export function harvestStorefrontFacts(rec, dict, product) {
@@ -157,6 +275,12 @@ export function harvestStorefrontFacts(rec, dict, product) {
       || t.match(/шум[^0-9]{0,40}стирк[^0-9]{0,12}(\d{2,3})/i)
       || t.match(/при\s+стирке[^0-9]{0,8}(\d{2,3})/i);
     if (m && Number(m[1]) >= 30 && Number(m[1]) <= 90) put('noise_wash', m[1], 'harvest_noise');
+    if (dual && Number(dual[2]) >= 40 && Number(dual[2]) <= 90) put('noise_spin', dual[2], 'harvest_noise_spin');
+  }
+  {
+    const m = t.match(/шум[^0-9]{0,40}отжим[^0-9]{0,12}(\d{2,3})/i)
+      || t.match(/при\s+отжиме[^0-9]{0,8}(\d{2,3})/i);
+    if (m && Number(m[1]) >= 40 && Number(m[1]) <= 90) put('noise_spin', m[1], 'harvest_noise_spin');
   }
   {
     const m = t.match(/вес(?:\s+нетто)?[^0-9]{0,16}(\d+(?:[.,]\d+)?)\s*кг/i);
@@ -176,12 +300,7 @@ export function harvestStorefrontFacts(rec, dict, product) {
     }
   }
 
-  for (const [re, label] of COLOR_WORD) {
-    if (re.test(t)) {
-      put('color', label, 'harvest_color');
-      break;
-    }
-  }
+  harvestColor(rec, dict, t, put);
 
   if (/инвертор/i.test(t)) put('motor_type', 'Инверторный', 'harvest_motor');
   else if (/коллектор|щеточн/i.test(t)) put('motor_type', 'Коллекторный', 'harvest_motor');
@@ -227,6 +346,9 @@ export function harvestStorefrontFacts(rec, dict, product) {
       else put('door_reversible', 'Да', 'harvest_doorside');
     }
   }
+
+  harvestWasherType(rec, dict, t, put);
+  harvestSheetOnlyFacts(rec, dict, t, put);
 }
 
 /**

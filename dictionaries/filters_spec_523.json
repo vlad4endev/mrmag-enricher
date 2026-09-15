@@ -325,8 +325,8 @@
     {
       "code": "dims",
       "name": "Габариты (ШхВхГ)",
-      "status": "filter",
-      "type": "enum"
+      "status": "not_a_filter",
+      "reason": "В листе заказчика «Есть ли в фильтре? = нет» — только характеристика"
     },
     {
       "code": "color",

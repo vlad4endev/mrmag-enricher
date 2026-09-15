@@ -41,3 +41,13 @@ export function requiredFilterAttrs(dict) {
 export function optionalFilterAttrs(dict) {
   return sortedFilterAttrs(dict, a => isStorefrontFilter(a) && !isRequiredFilter(a));
 }
+
+/** Строка листа заказчика: в характеристиках карточки, фильтр — только при facet.enabled. */
+export function isSheetCharacteristic(attr) {
+  if (!attr || attr.tier === 'X' || isBrandAttr(attr)) return false;
+  return attr.show_in_annotation === true;
+}
+
+export function sheetCharacteristicAttrs(dict) {
+  return sortedFilterAttrs(dict, isSheetCharacteristic);
+}

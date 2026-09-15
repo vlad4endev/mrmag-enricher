@@ -44,7 +44,6 @@ export const APPROVED_YES = Object.freeze({
     'Высота',
     'Ширина',
     'Глубина',
-    'Габариты (ШхВхГ)',
     'Цвет корпуса',
     'Тип управления',
     'Дисплей',
@@ -52,16 +51,40 @@ export const APPROVED_YES = Object.freeze({
   ]),
 });
 
-/** Явно «нет» в листе — в выдаче быть не должно. */
+/**
+ * «Есть ли в фильтре? = нет»: в карточке (характеристики) быть должны,
+ * в filters_* — нет. Бренд отдельно: сопоставление по id.
+ */
 export const APPROVED_NO = Object.freeze({
-  467: Object.freeze(['Бренд']),
-  523: Object.freeze(['Бренд']),
+  467: Object.freeze([
+    'Бренд',
+    'Уровень шума при отжиме',
+    'Материал бака',
+    'Материал барабана',
+    'Защита от детей',
+    'Расход воды за цикл',
+    'Энергопотребление за год',
+    'Страна производства',
+  ]),
+  523: Object.freeze([
+    'Бренд',
+    'Климатический класс',
+    'Хладагент',
+    'Количество компрессоров',
+    'Габариты (ШхВхГ)',
+    'Вес',
+    'Материал полок',
+    'Освещение',
+    'Энергопотребление за год',
+    'Страна производства',
+  ]),
 });
 
 /** Имя строки листа → ключ product.filters (facet.label). */
 export const APPROVED_MAP = Object.freeze({
   467: Object.freeze({
     'Тип': 'Тип',
+    // Согласован позже: attr.name = витринный «Тип».
     'Вид стиральной машины': 'Тип',
     'Тип загрузки': 'Тип загрузки',
     'Максимальная загрузка белья': 'Загрузка белья, кг',
@@ -91,6 +114,13 @@ export const APPROVED_MAP = Object.freeze({
     'Установка': 'Установка',
     'Тип двигателя': 'Тип двигателя',
     'Сушка': 'Сушка',
+    'Уровень шума при отжиме': 'Уровень шума при отжиме',
+    'Материал бака': 'Материал бака',
+    'Материал барабана': 'Материал барабана',
+    'Защита от детей': 'Защита от детей',
+    'Расход воды за цикл': 'Расход воды за цикл',
+    'Энергопотребление за год': 'Энергопотребление за год',
+    'Страна производства': 'Страна производства',
   }),
   523: Object.freeze({
     'Тип холодильника': 'Тип холодильника',
@@ -118,13 +148,22 @@ export const APPROVED_MAP = Object.freeze({
     'Ширина, см': 'Ширина, см',
     'Глубина': 'Глубина, см',
     'Глубина, см': 'Глубина, см',
-    'Габариты': 'Габариты (ШхВхГ)',
-    'Габариты (ШхВхГ)': 'Габариты (ШхВхГ)',
-    'Цвет корпуса': 'Цвет корпуса',
-    'Цвет': 'Цвет корпуса',
     'Тип управления': 'Тип управления',
     'Дисплей': 'Дисплей',
     'Перенавешиваемые двери': 'Перенавешиваемые двери',
+    'Климатический класс': 'Климатический класс',
+    'Хладагент': 'Хладагент',
+    'Количество компрессоров': 'Количество компрессоров',
+    'Габариты': 'Габариты (ШхВхГ)',
+    'Габариты (ШхВхГ)': 'Габариты (ШхВхГ)',
+    'Вес': 'Вес, кг',
+    'Вес, кг': 'Вес, кг',
+    'Цвет корпуса': 'Цвет корпуса',
+    'Цвет': 'Цвет корпуса',
+    'Материал полок': 'Материал полок',
+    'Освещение': 'Освещение',
+    'Энергопотребление за год': 'Энергопотребление за год',
+    'Страна производства': 'Страна производства',
   }),
 });
 
@@ -145,6 +184,11 @@ export function forbiddenFilters(category) {
   return [...(APPROVED_NO[id] || [])];
 }
 
+/** Строки листа «нет» без бренда — только характеристики карточки. */
+export function approvedSpecOnly(category) {
+  return forbiddenFilters(category).filter(name => !/^бренд$/i.test(name));
+}
+
 export function sheetToFilterKey(sheetName, category) {
   const id = catKey(category);
   const map = APPROVED_MAP[id] || {};
@@ -152,15 +196,36 @@ export function sheetToFilterKey(sheetName, category) {
   return map[name] || name;
 }
 
-/** Ключи filters, которые закрывают строку листа «да». */
+/** Канонический ключ и поздние алиасы одной строки листа. */
+export function aliasKeysFor(sheetName, category) {
+  const id = catKey(category);
+  const map = APPROVED_MAP[id] || {};
+  const canonical = sheetToFilterKey(sheetName, id);
+  const keys = new Set([String(sheetName || '').trim(), canonical].filter(Boolean));
+  for (const [from, to] of Object.entries(map)) {
+    if (to === canonical || to === sheetName || from === sheetName || from === canonical) {
+      keys.add(from);
+      keys.add(to);
+    }
+  }
+  return keys;
+}
+
+/** Ключи filters, которые закрывают строку листа «да» — включая поздние алиасы. */
 export function allowedFilterKeys(category) {
   const id = catKey(category);
   const yes = APPROVED_YES[id] || [];
   const map = APPROVED_MAP[id] || {};
   const out = new Set();
   for (const name of yes) {
-    out.add(name);
-    out.add(map[name] || name);
+    for (const key of aliasKeysFor(name, id)) out.add(key);
+  }
+  const dest = new Set(out);
+  for (const [from, to] of Object.entries(map)) {
+    if (dest.has(to) || dest.has(from)) {
+      out.add(from);
+      out.add(to);
+    }
   }
   return out;
 }
@@ -177,22 +242,30 @@ export function displayFilterValue(v) {
 }
 
 export function lookupApprovedValue(filters, sheetName, category) {
-  const key = sheetToFilterKey(sheetName, category);
-  if (hasFilterValue(filters, key)) {
-    return { key, value: filters[key], ok: true };
+  for (const key of aliasKeysFor(sheetName, category)) {
+    if (hasFilterValue(filters, key)) {
+      return { key, value: filters[key], ok: true };
+    }
   }
-  if (key !== sheetName && hasFilterValue(filters, sheetName)) {
-    return { key: sheetName, value: filters[sheetName], ok: true };
+  return { key: sheetToFilterKey(sheetName, category), value: null, ok: false };
+}
+
+export function forbiddenFilterKeys(category) {
+  const id = catKey(category);
+  const out = new Set();
+  for (const name of APPROVED_NO[id] || []) {
+    for (const key of aliasKeysFor(name, id)) out.add(key);
   }
-  return { key, value: null, ok: false };
+  return out;
 }
 
 export function classifyOutputKey(key, category) {
   const name = String(key || '').trim();
   if (!name) return { kind: 'skip', reason: '' };
   const id = catKey(category);
-  const no = new Set(APPROVED_NO[id] || []);
-  if (no.has(name)) return { kind: 'forbidden', reason: 'явно запрещён в согласованном листе' };
+  if (forbiddenFilterKeys(id).has(name)) {
+    return { kind: 'forbidden', reason: 'в листе «нет» — только характеристика, не фильтр' };
+  }
   const allowed = allowedFilterKeys(id);
   if (allowed.has(name)) return { kind: 'approved', reason: '' };
   return { kind: 'unlisted', reason: 'нет в согласованном листе категории' };

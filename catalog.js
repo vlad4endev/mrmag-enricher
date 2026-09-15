@@ -28,7 +28,7 @@ import { netError, isEnrichable, modelToken, MIN_SOURCE_CHARS, extractFacts, has
 import { specFacets, enrichedRows } from './export_v2.js';
 import { loadConfig, loadCategories, hasDictionary } from './pipeline/dict.js';
 import { normalizeProduct } from './pipeline/normalize.js';
-import { lookupMissing, needsMissingLookup, parseMissingFromPage, missingStorefrontCodes } from './pipeline/external.js';
+import { lookupMissing, needsMissingLookup, parseMissingFromPage, missingSheetCodes } from './pipeline/external.js';
 import { CRAWL_SLUGS } from './pipeline/schema.js';
 import { containsTokenSequence, identityMatches, nameKeyTokens, parseIdentity } from './pipeline/identity.js';
 import { extractPairsFromPage, visibleText, collectPageHits, formatParseNotes, trimLegalTail } from './pipeline/parse.js';
@@ -770,9 +770,8 @@ async function fillCountryFromWeb(product, schema, { onNote = () => {} } = {}) {
 }
 
 /**
- * Витринный фильтр (отжим, цвет, энергокласс, дисплей…) пуст при живой
- * карточке — тот же поиск по модели, что и для страны. Совпавшая страница
- * дописывает только пустые поля, типичные значения категории не подставляем.
+ * Строка листа пуста при живой карточке — фильтр «да» или характеристика «нет».
+ * Совпавшая страница дописывает только пустые поля, типичные значения категории не подставляем.
  */
 async function fillMissingFiltersFromWeb(product, schema, { onNote = () => {} } = {}) {
   const dict = dictOf(schema);
@@ -782,7 +781,7 @@ async function fillMissingFiltersFromWeb(product, schema, { onNote = () => {} } 
   catch { return { ok: false, product }; }
   if (!needsMissingLookup(rec, dict)) return { ok: false, product };
   const origin = searchEngineLabel();
-  const codes = missingStorefrontCodes(rec, dict);
+  const codes = missingSheetCodes(rec, dict);
   const query = missingQuery(rec, dict, codes);
   if (isWebSearchDisabled()) {
     const why = webSearchSkippedReason();

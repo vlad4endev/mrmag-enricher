@@ -7,10 +7,10 @@
  *    слова имени) не совпадут.
  * 3. Таблицу характеристик разбираем тем же парсером, что и свой фид,
  *    и дописываем пустые поля. Уже заполненное из annotation не трогаем.
- * 4. Если своих данных достаточно, но витринный фильтр (отжим, цвет,
- *    энергокласс, дисплей…) в исходнике пуст — отдельный поиск по модели,
- *    как для страны. Не восстанавливаем число из артикула (F12, 5109)
- *    и не подставляем типичное значение категории.
+ * 4. Если своих данных достаточно, но строка листа (отжим, цвет,
+ *    энергокласс, дисплей, страна, материал…) в исходнике пуста — отдельный
+ *    поиск по модели, как для страны. Не восстанавливаем число из артикула
+ *    (F12, 5109) и не подставляем типичное значение категории.
  * 5. Если страны производства в исходнике нет — поиск «бренд модель
  *    страна производства».
  *
@@ -22,7 +22,7 @@ import { extractPairsFromPage, visibleText } from './parse.js';
 import { identityMatches, nameKeyTokens } from './identity.js';
 import { ingestPairs } from './normalize.js';
 import { matchKey } from './match.js';
-import { requiredFilterAttrs, storefrontFilterAttrs } from './required_filters.js';
+import { requiredFilterAttrs, storefrontFilterAttrs, sheetCharacteristicAttrs } from './required_filters.js';
 import { searchWeb, fetchPage, searchQuery, countryQuery, missingQuery, resolveSearchSettings, firstMatchingPage } from './search.js';
 
 const MIN_PAIRS = 2;
@@ -86,9 +86,32 @@ export function missingStorefrontCodes(rec, dict) {
   return emptyFilterCodes(rec, dict, storefrontFilterAttrs(dict));
 }
 
-/** Карточка живая, но покупательский фильтр (отжим, цвет, шум…) пуст. */
+function uniqueAttrs(list) {
+  const seen = new Set();
+  const out = [];
+  for (const attr of list || []) {
+    if (!attr?.code || seen.has(attr.code)) continue;
+    seen.add(attr.code);
+    out.push(attr);
+  }
+  return out;
+}
+
+/**
+ * Строки согласованного листа без значения: и «да» (фильтр+карточка), и «нет»
+ * (только характеристика). Пустое поле закрываем парсингом своей карточки
+ * и страницей модели в сети.
+ */
+export function missingSheetCodes(rec, dict) {
+  return emptyFilterCodes(rec, dict, uniqueAttrs([
+    ...storefrontFilterAttrs(dict),
+    ...sheetCharacteristicAttrs(dict),
+  ]));
+}
+
+/** Карточка живая, но строка листа (отжим, цвет, шум, страна, материал…) пуста. */
 export function needsMissingLookup(rec, dict) {
-  if (!missingStorefrontCodes(rec, dict).length) return false;
+  if (!missingSheetCodes(rec, dict).length) return false;
   return identifiable(rec);
 }
 
@@ -247,7 +270,7 @@ export async function lookupCountry(rec, dict, config, io = {}) {
 }
 
 /**
- * Витринный фильтр пуст в исходнике → поиск по модели, как для страны.
+ * Строка листа пуста в исходнике → поиск по модели, как для страны.
  * Артикул (F12, 5109) в об/мин не переводим: берём только пару со страницы.
  */
 export async function lookupMissing(rec, dict, config, io = {}) {
@@ -255,9 +278,9 @@ export async function lookupMissing(rec, dict, config, io = {}) {
   if (!settings.enabled) {
     return { rec, ok: false, reason: 'поиск выключен' };
   }
-  const codes = missingStorefrontCodes(rec, dict);
+  const codes = missingSheetCodes(rec, dict);
   if (!codes.length || !identifiable(rec)) {
-    return { rec, ok: false, reason: 'витринные фильтры уже заполнены или искать не по чему' };
+    return { rec, ok: false, reason: 'характеристики листа уже заполнены или искать не по чему' };
   }
   const query = io.query || missingQuery(rec, dict, codes);
   if (!query) return { rec, ok: false, reason: 'пустой поисковый запрос' };

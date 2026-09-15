@@ -3,7 +3,8 @@
  * Источник истины — annotation (уже собранный HTML / словарь полей).
  * Ловит: (а) фабрикацию фактов без поля в annotation,
  *        (б) противоречие значениям annotation.
- * Промпт обогащения не трогаем — только механический ремонт.
+ * Плюс общий сканер «защита от X» / «функция X» вне whitelist схемы.
+ * Промпт: см. defaultSystemPromptTemplate (запрет выдумывать отсутствующие темы).
  */
 
 import { valueFold } from './types.js';
@@ -49,7 +50,8 @@ export const DESC_TOPICS = Object.freeze([
     id: 'tank_material',
     label: 'материал бака',
     annotationLabels: ['Материал бака'],
-    topicRe: /(?:материал\s+)?бак[аеу](?![а-яё])|бак[аеу]?\s*[-–—:]\s*(?:из\s+)?/i,
+    // Именительный «бак» / «Бак из …» — гласная после «бак» опциональна.
+    topicRe: /(?:материал\s+)?бак(?:а|е|у)?(?![а-яё])|бак(?:а|е|у)?\s*[-–—:]?\s*(?:из\s+)?/i,
     material: true,
   },
   {
@@ -132,15 +134,41 @@ function hasTopicField(topic, dict) {
   return annotationValueFor(topic, dict) != null;
 }
 
-function extractMaterialClaim(sentence) {
-  const m = sentence.match(MATERIAL_VALUE_RE);
-  if (!m) return null;
-  const raw = m[1].toLowerCase().replace(/ё/g, 'е');
-  if (/нержав|stainless/.test(raw)) return 'нержавеющая сталь';
-  if (/эмалир/.test(raw)) return 'эмалированная сталь';
-  if (/комбинир/.test(raw)) return 'комбинированный';
-  if (/пластик|полипропилен|pom/.test(raw)) return 'пластик';
-  return fold(m[1]);
+function canonMaterial(raw) {
+  const v = String(raw || '').toLowerCase().replace(/ё/g, 'е');
+  if (/нержав|stainless/.test(v)) return 'нержавеющая сталь';
+  if (/эмалир/.test(v)) return 'эмалированная сталь';
+  if (/комбинир/.test(v)) return 'комбинированный';
+  if (/пластик|полипропилен|pom/.test(v)) return 'пластик';
+  return fold(raw);
+}
+
+/** Материал рядом с «бак» или «барабан» — независимо, даже в одном предложении. */
+function extractMaterialClaim(sentence, topicId = null) {
+  const s = String(sentence || '');
+  const mat = String.raw`нержавеющ(?:ей|ая)\s+стал[иь]|нержавейк[аи]|пластик[аеу]?|полипропилен[аеу]?|эмалированн(?:ой|ая)\s+стал[иь]|комбинированн(?:ый|ого)`;
+  if (topicId === 'tank_material') {
+    const near = s.match(new RegExp(
+      String.raw`бак(?:а|е|у)?(?![а-яё])\s*(?:[-–—:]\s*)?(?:из\s+)?(${mat})`,
+      'i',
+    )) || s.match(new RegExp(
+      String.raw`(?:из\s+)?(${mat})\s+бак(?:а|е|у)?(?![а-яё])`,
+      'i',
+    ));
+    return near ? canonMaterial(near[1]) : null;
+  }
+  if (topicId === 'drum_material') {
+    const near = s.match(new RegExp(
+      String.raw`барабан(?:а|е|у)?(?![а-яё])\s*(?:[-–—:]\s*)?(?:из\s+)?(${mat})`,
+      'i',
+    )) || s.match(new RegExp(
+      String.raw`(?:из\s+)?(${mat})\s+барабан(?:а|е|у)?(?![а-яё])`,
+      'i',
+    ));
+    return near ? canonMaterial(near[1]) : null;
+  }
+  const m = s.match(MATERIAL_VALUE_RE);
+  return m ? canonMaterial(m[1]) : null;
 }
 
 function extractBoolClaim(sentence) {
@@ -150,6 +178,9 @@ function extractBoolClaim(sentence) {
 }
 
 function isAssertive(sentence, topic) {
+  // Поля нет в схеме категории: любое упоминание в прозе — утверждение, не фон.
+  // Иначе «частичная защита от протечек (корпус)» без «имеет/нет» проходит.
+  if (topic.schemaAbsent) return true;
   if (ASSERT_RE.test(sentence)) return true;
   if (topic.material && MATERIAL_VALUE_RE.test(sentence) && topic.topicRe.test(sentence)) {
     return true;
@@ -158,6 +189,8 @@ function isAssertive(sentence, topic) {
   if (topic.material && /барабан|бак[аеу]/.test(sentence) && MATERIAL_VALUE_RE.test(sentence)) {
     return true;
   }
+  // Каталожная строка, вклеенная в прозу: «Защита от детей — есть».
+  if (/\s[-–—:]\s/.test(sentence) && topic.topicRe.test(sentence)) return true;
   return false;
 }
 
@@ -182,14 +215,7 @@ function valuesAgree(topic, claimed, annValue) {
   const ann = fold(annValue);
   if (topic.material) {
     const claim = fold(claimed);
-    const canon = (v) => {
-      if (/нержав|stainless/.test(v)) return 'нержавеющая сталь';
-      if (/эмалир/.test(v)) return 'эмалированная сталь';
-      if (/комбинир/.test(v)) return 'комбинированный';
-      if (/пластик|полипропилен|pom/.test(v)) return 'пластик';
-      return v;
-    };
-    return canon(claim) === canon(ann);
+    return canonMaterial(claim) === canonMaterial(ann);
   }
   // boolean-ish
   const annBool = /^(?:есть|да|true|имеется)$/i.test(annValue.trim())
@@ -213,6 +239,77 @@ function splitSentences(text) {
     out.push({ body, sep, full: body + sep });
   }
   return out;
+}
+
+function annotationHasFeature(dict, featureName) {
+  const want = fold(featureName);
+  if (!want || want.length < 3) return false;
+  for (const [lab, val] of Object.entries(dict || {})) {
+    const lf = fold(lab);
+    if (lf.includes(want) || want.includes(lf)) return true;
+    // Значение само по себе — не подпись характеристики.
+    void val;
+  }
+  return false;
+}
+
+/**
+ * Общий сканер: «защита от X» / «функция X» / «оснащена X» / «не имеет X»
+ * без привязки к whitelist схемы. Если в annotation нет такой подписи — фабрикация.
+ */
+export function findGenericFeatureClaims(descriptionHtml, annotationHtml, { id = null } = {}) {
+  const dict = parseAnnotationDict(annotationHtml);
+  const plain = stripHtml(descriptionHtml);
+  const issues = [];
+  const patterns = [
+    {
+      re: /защит[а-яё]*\s+от\s+([а-яёa-z0-9][а-яёa-z0-9\s\-–—]{1,40}?)(?=\s*[,;.!?)(]|$)/gi,
+      labelOf: (x) => `защита от ${x}`,
+    },
+    {
+      re: /функци[а-яё]*\s+([а-яёa-z0-9][а-яёa-z0-9\s\-–—]{1,40}?)(?=\s*[,;.!?)(]|$)/gi,
+      labelOf: (x) => `функция ${x}`,
+    },
+    {
+      re: /(?:не\s+)?оснащен[аоы]?\s+([а-яёa-z0-9][а-яёa-z0-9\s\-–—]{2,40}?)(?=\s*[,;.!?)(]|$)/gi,
+      labelOf: (x) => x,
+    },
+    {
+      re: /(?:не\s+)?имеет\s+([а-яёa-z0-9][а-яёa-z0-9\s\-–—]{2,40}?)(?=\s*[,;.!?)(]|$)/gi,
+      labelOf: (x) => x,
+    },
+  ];
+
+  for (const sent of splitSentences(plain)) {
+    const body = sent.body;
+    if (!body.trim()) continue;
+    for (const { re, labelOf } of patterns) {
+      const rx = new RegExp(re.source, re.flags);
+      let m;
+      while ((m = rx.exec(body))) {
+        const rawFeat = String(m[1] || '').trim().replace(/\s+/g, ' ');
+        // Обрезать хвост союза: «пара и беспроводным» → отдельные темы ловит DESC_TOPICS.
+        const feat = rawFeat.replace(/\s+и\s+.*$/i, '').trim();
+        if (feat.length < 3) continue;
+        // Известные темы из DESC_TOPICS уже обработаны там — здесь только «дыры» схемы.
+        const covered = DESC_TOPICS.some(t => t.topicRe.test(m[0]));
+        if (covered) continue;
+        const label = labelOf(feat);
+        if (annotationHasFeature(dict, label) || annotationHasFeature(dict, feat)) continue;
+        issues.push({
+          id,
+          topic: label,
+          topic_id: 'generic_feature',
+          kind: 'fabrication',
+          said: body.trim(),
+          annotation: null,
+          sentence: body.trim(),
+          match: m[0],
+        });
+      }
+    }
+  }
+  return issues;
 }
 
 /**
@@ -247,7 +344,7 @@ export function findDescAnnotationIssues(descriptionHtml, annotationHtml, { id =
       }
 
       let claimed = null;
-      if (topic.material) claimed = extractMaterialClaim(body);
+      if (topic.material) claimed = extractMaterialClaim(body, topic.id);
       else claimed = extractBoolClaim(body);
 
       if (claimed != null && !valuesAgree(topic, claimed, annVal)) {
@@ -263,6 +360,7 @@ export function findDescAnnotationIssues(descriptionHtml, annotationHtml, { id =
       }
     }
   }
+  issues.push(...findGenericFeatureClaims(descriptionHtml, annotationHtml, { id }));
   return issues;
 }
 
@@ -303,26 +401,33 @@ function boolPhrase(annValue, topicLabel) {
 
 /**
  * Переписывает клаузу противоречия под значение annotation.
+ * Бак и барабан в одном предложении правятся независимо.
  */
 function rewriteContradiction(sentence, topic, annValue) {
   let s = sentence;
   if (topic.material) {
     const phrase = materialPhrase(annValue);
-    // «барабан — из нержавеющей стали» / «материал барабана — пластик»
-    s = s.replace(
-      /((?:материал\s+)?(?:барабан[аеу]?|бак[аеу]?)\s*[-–—:]?\s*(?:из\s+)?)([^,;.!?]+)/i,
-      (_, lead) => `${lead.replace(/\s+$/, ' ').replace(/из\s+$/i, '')}${phrase.startsWith('из ') ? phrase : phrase}`,
-    );
-    // fallback: заменить материал целиком
-    if (MATERIAL_VALUE_RE.test(s) && fold(extractMaterialClaim(s) || '') !== fold(annValue)) {
-      s = s.replace(MATERIAL_VALUE_RE, phrase.replace(/^из\s+/, ''));
+    const mat = String.raw`нержавеющ(?:ей|ая)\s+стал[иь]|нержавейк[аи]|пластик[аеу]?|полипропилен[аеу]?|эмалированн(?:ой|ая)\s+стал[иь]|комбинированн(?:ый|ого)`;
+    if (topic.id === 'tank_material') {
+      s = s.replace(
+        new RegExp(String.raw`(бак(?:а|е|у)?(?![а-яё])\s*(?:[-–—:]\s*)?(?:из\s+)?)(${mat})`, 'i'),
+        (_, lead) => `${lead.replace(/\s+$/, ' ').replace(/из\s+$/i, '')}${phrase}`,
+      );
+    } else if (topic.id === 'drum_material') {
+      s = s.replace(
+        new RegExp(String.raw`(барабан(?:а|е|у)?(?![а-яё])\s*(?:[-–—:]\s*)?(?:из\s+)?)(${mat})`, 'i'),
+        (_, lead) => `${lead.replace(/\s+$/, ' ').replace(/из\s+$/i, '')}${phrase}`,
+      );
+    } else {
+      s = s.replace(
+        /((?:материал\s+)?(?:барабан[аеу]?|бак[аеу]?)\s*[-–—:]?\s*(?:из\s+)?)([^,;.!?]+)/i,
+        (_, lead) => `${lead.replace(/\s+$/, ' ').replace(/из\s+$/i, '')}${phrase}`,
+      );
     }
     return tidyPunct(s);
   }
-  // boolean: вырезать негатив/позитив и поставить канон
   const phrase = boolPhrase(annValue, topic.label);
   if (BOOL_NEG.test(s) || BOOL_POS.test(s)) {
-    // Упрощённо: если предложение в основном про эту тему — заменить целиком на короткую фразу.
     if (s.replace(topic.topicRe, '').trim().length < 40) {
       return phrase.charAt(0).toUpperCase() + phrase.slice(1);
     }
@@ -330,8 +435,34 @@ function rewriteContradiction(sentence, topic, annValue) {
   return tidyPunct(s);
 }
 
+/** Вырезать клаузу фабрикации из предложения, не уничтожая соседние факты. */
+function stripFabricationClause(sentence, topic) {
+  let s = String(sentence || '');
+  if (topic.id === 'leak_protection' || /протеч/i.test(topic.label || '')) {
+    s = s.replace(
+      /,?\s*(?:и\s+)?(?:частичн[а-яё]*|полн[а-яё]*|общ[а-яё]*)?\s*защит[а-яё]*\s+от\s+протеч[а-яё]*(?:\s*воды)?(?:\s*[-–—:]\s*[^,;.!?]+)?(?:\s*\([^)]*\))?/gi,
+      '',
+    );
+    s = s.replace(
+      /защит[а-яё]*\s+от\s+протеч[а-яё]*(?:\s*воды)?\s*[-–—:]\s*[^,;.!?]+/gi,
+      '',
+    );
+  } else if (topic.topicRe) {
+    // Общий случай: вырезать клаузу от союза/запятой до конца упоминания темы.
+    const re = new RegExp(
+      String.raw`(^|[;,]\s*|\s+и\s+)(?:[^,;.!?]{0,40})?(?:${topic.topicRe.source})[^,;.!?]{0,60}`,
+      'gi',
+    );
+    s = s.replace(re, (full, lead) => (lead === ';' || lead.startsWith(',') ? '' : lead === full ? '' : ''));
+  }
+  s = tidyPunct(s);
+  // Если после выреза почти ничего не осталось — сигнал дропнуть предложение.
+  if (s.replace(/\s+/g, '').length < 12) return '';
+  return s;
+}
+
 /**
- * Ремонт plain-текста: удалить fabrication-предложения, поправить contradictions.
+ * Ремонт plain-текста: удалить fabrication-предложения/клаузы, поправить contradictions.
  */
 export function repairDescriptionPlain(text, annotationHtml) {
   const dict = parseAnnotationDict(annotationHtml);
@@ -349,23 +480,53 @@ export function repairDescriptionPlain(text, annotationHtml) {
     let drop = false;
     let rewritten = body;
     const hitTopics = [];
+    const fabTopics = [];
 
     for (const topic of DESC_TOPICS) {
-      if (!sentenceMentionsTopic(body, topic)) continue;
-      if (!isAssertive(body, topic)) continue;
+      if (!sentenceMentionsTopic(rewritten, topic)) continue;
+      if (!isAssertive(rewritten, topic)) continue;
 
       const hasField = hasTopicField(topic, dict);
       const annVal = annotationValueFor(topic, dict);
 
       if (!hasField) {
+        fabTopics.push(topic);
+        continue;
+      }
+
+      const claimed = topic.material
+        ? extractMaterialClaim(rewritten, topic.id)
+        : extractBoolClaim(rewritten);
+      if (claimed != null && !valuesAgree(topic, claimed, annVal)) {
+        hitTopics.push({ topic, annVal });
+      }
+    }
+
+    // Общие «защита от X» / «функция X» без поля в annotation.
+    for (const g of findGenericFeatureClaims(rewritten, annotationHtml)) {
+      fabTopics.push({
+        id: g.topic_id,
+        label: g.topic,
+        topicRe: new RegExp(String(g.match || g.topic).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'),
+      });
+    }
+
+    for (const topic of fabTopics) {
+      const before = rewritten;
+      const next = stripFabricationClause(rewritten, topic);
+      if (next === '') {
         drop = true;
         fixes.push({ kind: 'fabrication', topic: topic.label, sentence: body.trim() });
         break;
       }
-
-      let claimed = topic.material ? extractMaterialClaim(body) : extractBoolClaim(body);
-      if (claimed != null && !valuesAgree(topic, claimed, annVal)) {
-        hitTopics.push({ topic, annVal });
+      if (next !== before) {
+        rewritten = next;
+        fixes.push({ kind: 'fabrication', topic: topic.label, sentence: body.trim(), repaired: next });
+      } else {
+        // Не смогли вырезать клаузу — дропаем предложение целиком (как раньше).
+        drop = true;
+        fixes.push({ kind: 'fabrication', topic: topic.label, sentence: body.trim() });
+        break;
       }
     }
 
@@ -392,29 +553,46 @@ export function repairDescriptionPlain(text, annotationHtml) {
 }
 
 /**
- * Ремонт HTML: правки только в текстовых узлах.
+ * Ремонт HTML.
+ * Блок (p/li/…) чинится целиком по stripHtml: иначе «барабан — из
+ * <strong>нержавеющей стали</strong>» режется по узлам, topic и значение
+ * оказываются в разных фрагментах, и contradiction не срабатывает.
+ * Блоки без темы не трогаем — внутренние <strong> остаются.
  * @returns {{ html: string, fixes: object[] }}
  */
 export function repairDescriptionHtml(descriptionHtml, annotationHtml) {
   const s = String(descriptionHtml || '');
   if (!s.trim()) return { html: s, fixes: [] };
 
+  if (!/<[a-z][\s\S]*>/i.test(s)) {
+    const { text, fixes } = repairDescriptionPlain(s, annotationHtml);
+    return { html: text, fixes };
+  }
+
   const allFixes = [];
-  if (/<[a-z][\s\S]*>/i.test(s)) {
-    const html = s.replace(/(^|>)([^<]*)/g, (_, edge, frag) => {
+  const BLOCK_RE = /<(p|li|h[1-6]|td|th|div)\b([^>]*)>([\s\S]*?)<\/\1>/gi;
+  let blocks = 0;
+  let html = s.replace(BLOCK_RE, (full, tag, attrs, inner) => {
+    blocks += 1;
+    const { text, fixes } = repairDescriptionPlain(stripHtml(inner), annotationHtml);
+    if (!fixes.length) return full;
+    allFixes.push(...fixes);
+    return `<${tag}${attrs}>${text}</${tag}>`;
+  });
+
+  if (!blocks) {
+    html = s.replace(/(^|>)([^<]*)/g, (_, edge, frag) => {
       if (!frag.trim()) return edge + frag;
       const { text, fixes } = repairDescriptionPlain(frag, annotationHtml);
       allFixes.push(...fixes);
       return edge + text;
     });
-    return {
-      html: html.replace(/<p>\s*<\/p>/gi, '').replace(/<li>\s*<\/li>/gi, ''),
-      fixes: allFixes,
-    };
   }
 
-  const { text, fixes } = repairDescriptionPlain(s, annotationHtml);
-  return { html: text, fixes };
+  return {
+    html: html.replace(/<p>\s*<\/p>/gi, '').replace(/<li>\s*<\/li>/gi, ''),
+    fixes: allFixes,
+  };
 }
 
 /**

@@ -4227,13 +4227,28 @@ console.log('golden tests passed');
   } = await import('./pipeline/desc_annotation_align.js');
   const { stripUnsupportedSheetSpecs } = await import('./lib.js');
   const { resolveEnumTruth } = await import('./pipeline/enum_align.js');
-  const { stripCopiedDrumMaterial, finalizeRecord } = await import('./pipeline/quality_validate.js');
+  const { stripCopiedDrumMaterial, finalizeRecord, checkDescriptionClaims } = await import('./pipeline/quality_validate.js');
 
   const annNoLeak = '<ul><li>Тип загрузки: фронтальная</li><li>Сушка: нет</li><li>Материал бака: пластик</li></ul>';
   const descLeak = '<p>Машина не имеет защиты от протечек воды и частичной защиты корпуса.</p>';
   const leakIssues = findDescAnnotationIssues(descLeak, annNoLeak, { id: 1 });
   assert.ok(leakIssues.some(i => i.kind === 'fabrication' && /протеч/i.test(i.topic)),
     'защита от протечек без поля = фабрикация');
+
+  const nounLeak = findDescAnnotationIssues(
+    '<p>частичная защита от протечек (корпус)</p>',
+    annNoLeak,
+    { id: 11 },
+  );
+  assert.ok(nounLeak.some(i => i.kind === 'fabrication' && i.topic_id === 'leak_protection'),
+    'номинатив без «имеет/нет» тоже фабрикация: ' + JSON.stringify(nounLeak));
+  const catalogLeak = findDescAnnotationIssues(
+    '<p>Защита от протечек воды - частичная (корпус)</p>',
+    annNoLeak,
+    { id: 12 },
+  );
+  assert.ok(catalogLeak.some(i => i.topic_id === 'leak_protection'),
+    'каталожная строка в прозе: ' + JSON.stringify(catalogLeak));
 
   const descSteamWifi = '<p>Модель не оснащена функцией пара и беспроводным подключением.</p>';
   const steamIssues = findDescAnnotationIssues(descSteamWifi, annNoLeak, { id: 2 });
@@ -4263,6 +4278,28 @@ console.log('golden tests passed');
   assert.ok(/пластик/i.test(repaired.html) || !/нержавеющ/i.test(repaired.html), repaired.html);
   assert.ok(repaired.fixes.some(f => f.kind === 'fabrication'));
   assert.ok(repaired.fixes.some(f => f.kind === 'contradiction'));
+
+  const splitDrum = repairDescriptionHtml(
+    '<p>Барабан — из <strong>нержавеющей стали</strong>.</p>',
+    annDrum,
+  );
+  assert.ok(!/нержавеющ/i.test(splitDrum.html), splitDrum.html);
+  assert.ok(/пластик/i.test(splitDrum.html), splitDrum.html);
+
+  const recDrum = {
+    id: 4,
+    annotation: annDrum,
+    attrs: { drum_material: 'Пластик', tank_material: 'Пластик' },
+  };
+  const claimIssues = checkDescriptionClaims(
+    { description: 'Барабан — из нержавеющей стали.', bullets: ['частичная защита от протечек (корпус)'] },
+    recDrum,
+    d467,
+  );
+  assert.ok(claimIssues.some(i => i.kind === 'desc_contradiction' && i.code === 'drum_material'),
+    JSON.stringify(claimIssues));
+  assert.ok(claimIssues.some(i => i.kind === 'desc_fabrication' && i.code === 'leak_protection'),
+    JSON.stringify(claimIssues));
 
   const dict = parseAnnotationDict(annDrum);
   assert.equal(dict['Материал барабана'], 'пластик');
@@ -4357,5 +4394,43 @@ console.log('golden tests passed');
   assert.ok(!/нержавеющ/i.test(row.description_html) || /пластик/i.test(row.description_html),
     row.description_html);
 
+
+  // Баги партии 467: 44772/44792 протечки-клауза; 44783 бак≠барабан в одном предложении.
+  const leakClause = repairDescriptionHtml(
+    '<p>Есть контроль дисбаланса и пенообразования, частичная защита от протечек.</p>',
+    '<ul><li>Сушка: нет</li><li>Защита от детей: есть</li><li>Материал бака: пластик</li></ul>',
+  );
+  assert.ok(!/протеч/i.test(leakClause.html), leakClause.html);
+  assert.match(leakClause.html, /контроль дисбаланса/i);
+  const leakCatalog = repairDescriptionHtml(
+    '<p>Защита от протечек — частичная (корпус).</p>',
+    '<ul><li>Сушка: нет</li><li>Материал бака: пластик</li></ul>',
+  );
+  assert.ok(!/протеч/i.test(leakCatalog.html), leakCatalog.html);
+
+  const tankVsDrum = findDescAnnotationIssues(
+    '<p>Бак из нержавеющей стали, барабан — из нержавеющей стали.</p>',
+    '<ul><li>Материал бака: пластик</li><li>Материал барабана: нержавеющая сталь</li></ul>',
+    { id: 44783 },
+  );
+  assert.ok(tankVsDrum.some(i => i.kind === 'contradiction' && i.topic_id === 'tank_material'),
+    JSON.stringify(tankVsDrum));
+  assert.ok(!tankVsDrum.some(i => i.topic_id === 'drum_material' && i.kind === 'contradiction'),
+    'барабан верный — не должен быть contradiction');
+  const tankFixed = repairDescriptionHtml(
+    '<p>Бак из нержавеющей стали, барабан — из нержавеющей стали.</p>',
+    '<ul><li>Материал бака: пластик</li><li>Материал барабана: нержавеющая сталь</li></ul>',
+  );
+  assert.match(tankFixed.html, /бак из пластика/i);
+  assert.match(tankFixed.html, /барабан[^<]*нержавеющ/i);
+
+  const { findGenericFeatureClaims } = await import('./pipeline/desc_annotation_align.js');
+  const generic = findGenericFeatureClaims(
+    '<p>Оснащена функцией ионизации воздуха.</p>',
+    '<ul><li>Сушка: нет</li></ul>',
+  );
+  assert.ok(generic.some(i => i.kind === 'fabrication'), JSON.stringify(generic));
+
   console.log('ok desc↔annotation QA: фабрикация, противоречие, бак/барабан, экспорт');
 }
+

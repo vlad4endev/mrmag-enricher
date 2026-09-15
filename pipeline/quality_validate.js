@@ -9,10 +9,11 @@
 
 import { facetKind, bucketLabel, matchBucket, toIntEnum, coerceFacetNumber } from './facets.js';
 import { annotationText, formatAttrValue, aliasValue, valueFold } from './types.js';
-import { annotationRows, verifyDescription } from './generate.js';
+import { annotationRows, verifyDescription, renderAnnotation } from './generate.js';
 import { SOURCE_RANK } from './normalize.js';
 import { alignEnumSurfaces } from './enum_align.js';
 import { alignEnrichedProse } from './prose_align.js';
+import { findDescAnnotationIssues } from './desc_annotation_align.js';
 
 const NEGATIVE_RE = /^(?:нет|отсутствует|не\s+поддерживается|не\s+предусмотрено|не\s+имеется)$/i;
 export const HALLUCINATION_RE = new RegExp(
@@ -289,7 +290,12 @@ export function checkAnnotationFacts(rec, dict) {
 }
 
 /**
- * Description: маркеры галлюцинаций + числа должны быть в confirmed attrs.
+ * Description: маркеры галлюцинаций + числа + сверка prose↔annotation
+ * (DESC_TOPICS и общий сканер «защита от X» / «функция X» без whitelist схемы).
+ *
+ * stripHallucinationClaims маркетинг не сверяет с attrs — только HALLUCINATION_RE.
+ * Фабрикацию/противоречия ловит findDescAnnotationIssues; HTML чинит
+ * repairDescriptionHtml на serialize.
  */
 export function checkDescriptionClaims(enriched, rec = null, dict = null) {
   const issues = [];
@@ -323,6 +329,25 @@ export function checkDescriptionClaims(enriched, rec = null, dict = null) {
         number: e.number,
         unit: e.unit,
       });
+    }
+  }
+  if (rec && dict) {
+    const ann = renderAnnotation(rec, dict) || rec.annotation || '';
+    const descBlob = [
+      enriched.description,
+      ...(Array.isArray(enriched.bullets) ? enriched.bullets : []),
+    ].filter(Boolean).join('\n');
+    if (descBlob) {
+      for (const e of findDescAnnotationIssues(descBlob, ann, { id: rec.id })) {
+        issues.push({
+          code: e.topic_id,
+          kind: e.kind === 'fabrication' ? 'desc_fabrication' : 'desc_contradiction',
+          action: 'needs_review',
+          topic: e.topic,
+          detail: e.said,
+          annotation: e.annotation,
+        });
+      }
     }
   }
   return issues;
@@ -403,7 +428,9 @@ export function qualityScore(rec, dict, issues = []) {
   const hallucinations = issues.filter(i =>
     i.kind === 'hallucination_marker'
     || i.kind === 'negative_without_source'
-    || i.kind === 'number_not_in_attrs').length;
+    || i.kind === 'number_not_in_attrs'
+    || i.kind === 'desc_fabrication'
+    || i.kind === 'desc_contradiction').length;
   const invalid = issues.filter(i =>
     i.kind === 'filter_mismatch'
     || i.kind === 'discrete_as_range'
@@ -529,6 +556,8 @@ export function finalizeRecord(rec, dict, { enriched = null, assigned = null } =
     || issues.some(i => i.action === 'needs_review'
       && (i.kind === 'hallucination_marker'
         || i.kind === 'number_not_in_attrs'
+        || i.kind === 'desc_fabrication'
+        || i.kind === 'desc_contradiction'
         || i.kind === 'discrete_as_range'
         || i.kind === 'width_install_mixed'
         || i.kind === 'enum_surface_ambiguous'

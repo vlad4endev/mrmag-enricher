@@ -1486,6 +1486,31 @@ const catchFiles = async fn => {
   return files;
 };
 
+/** STORE-zip из saveZip: имена и тела без сжатия. */
+function unzipStore(body) {
+  const buf = Buffer.isBuffer(body) ? body : Buffer.from(body);
+  const out = [];
+  let p = 0;
+  while (p + 30 <= buf.length && buf.readUInt32LE(p) === 0x04034b50) {
+    const size = buf.readUInt32LE(p + 18);
+    const nameLen = buf.readUInt16LE(p + 26);
+    const extra = buf.readUInt16LE(p + 28);
+    const name = buf.slice(p + 30, p + 30 + nameLen).toString('utf8');
+    const dataStart = p + 30 + nameLen + extra;
+    out.push({ name, body: buf.slice(dataStart, dataStart + size).toString('utf8') });
+    p = dataStart + size;
+  }
+  return out;
+}
+
+function v2Inner(files) {
+  assert.strictEqual(files.length, 1, `ожидали один zip, получили ${files.map(f => f.name)}`);
+  assert.match(files[0].name, /^v2_.+\.zip$/);
+  const inner = unzipStore(files[0].body);
+  assert.ok(inner.length >= 3, `в архиве мало файлов: ${inner.map(f => f.name)}`);
+  return Object.fromEntries(inner.map(f => [f.name, f.body]));
+}
+
 t('после прогона видны JSON, TXT, JSON v2 и 2 файла', () => {
   ['dlBtn', 'dlTxtBtn', 'dlV2Btn', 'dlCatBtn'].forEach(id => { G(id).style.display = 'none'; });
   setWindow(
@@ -1670,12 +1695,12 @@ await tAsync('три файла: категории, фасеты диапазо
 
   assert.ok(String(sent.url).startsWith('/api/export'), `export url: ${sent.url}`);
   assert.strictEqual(sent.body.products.length, 2, 'необработанные товары в выгрузку не идут — им нечем быть');
-  assert.deepStrictEqual(files.map(f => f.name),
-    ['categories_v2.json', 'filters_523.json', 'products_523.json']);
-  assert.deepStrictEqual(JSON.parse(files[0].body), { categories: [{ id: 523, name: 'Холодильники' }] });
-  assert.deepStrictEqual(JSON.parse(files[1].body).filters[0].name, 'Цвет');
-  assert.ok(!('generated_at' in JSON.parse(files[1].body)));
-  const row = JSON.parse(files[2].body)[0];
+  assert.strictEqual(files[0].name, 'v2_523.zip');
+  const inner = v2Inner(files);
+  assert.deepStrictEqual(JSON.parse(inner['categories_v2.json']), { categories: [{ id: 523, name: 'Холодильники' }] });
+  assert.deepStrictEqual(JSON.parse(inner['filters_523.json']).filters[0].name, 'Цвет');
+  assert.ok(!('generated_at' in JSON.parse(inner['filters_523.json'])));
+  const row = JSON.parse(inner['products_523.json'])[0];
   assert.strictEqual(row.name, 'Холодильник A');
   assert.ok(row.annotation_html);
   assert.ok('web_info' in row);
@@ -1714,7 +1739,8 @@ await tAsync('окно — весь дамп, обработали 10 — в JSO
 
   assert.strictEqual(sent.products.length, 10, 'необработанный остаток дампа в JSON v2 не идёт');
   assert.ok(sent.products.every(p => p.enriched && p.enriched.specs), 'на сервер без сырого дампа');
-  assert.strictEqual(JSON.parse(files[2].body).length, 10);
+  const inner = v2Inner(files);
+  assert.strictEqual(JSON.parse(inner['products_467.json']).length, 10);
   api.setSource([]);
   api.setCnt(CNT('10'));
 });

@@ -478,7 +478,7 @@ textarea{
   font-size:18px;line-height:1.25;color:var(--t1);
   font-weight:600;letter-spacing:-.035em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
 }
-.ph-actions{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin:0;grid-area:acts;justify-content:flex-end;max-width:min(52%,420px)}
+.ph-actions{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin:0;grid-area:acts;justify-content:flex-end;max-width:none;position:relative;z-index:2}
 .pt-meta{font-family:var(--mono);font-size:10.5px;color:var(--t3);font-variant-numeric:tabular-nums;display:flex;gap:var(--gap);flex-wrap:wrap}
 .pt-meta b{color:var(--t2);font-weight:600}
 .pb{flex:1;overflow-y:auto;padding:16px 18px;min-height:0}
@@ -496,6 +496,7 @@ textarea{
   font-weight:500;border:1px solid var(--b1);transition:all .15s;
   display:inline-flex;align-items:center;gap:5px;height:29px;background:var(--bg3);color:var(--t1);
 }
+button.bdg{font:inherit;cursor:pointer;font-size:12px;font-weight:500;font-family:var(--sans)}
 .bdg-g{background:var(--gbg);color:var(--green);border-color:var(--gbd)}
 .bdg-b{background:var(--blue-bg);color:var(--ac);border-color:var(--ac-b)}
 .bdg-a{background:var(--abg);color:var(--amber);border-color:var(--abd)}
@@ -801,8 +802,8 @@ textarea{
 .foot .fsep{color:transparent;width:0;padding:0;margin:0;border:none;overflow:hidden}
 
 .spin{
-  display:inline-block;width:13px;height:13px;border:2px solid rgba(255,255,255,.3);
-  border-top-color:#fff;border-radius:50%;animation:rot .55s linear infinite;
+  display:inline-block;width:13px;height:13px;border:2px solid color-mix(in srgb,currentColor 28%,transparent);
+  border-top-color:currentColor;border-radius:50%;animation:rot .55s linear infinite;
 }
 @keyframes rot{to{transform:rotate(360deg)}}
 
@@ -2182,13 +2183,13 @@ input[type=range]::-moz-range-thumb{
       </div>
       <div class="ph-actions">
         <span class="bdg bdg-g" id="confBdg" style="display:none"></span>
-        <span class="bdg bdg-b" id="cpyBtn" style="display:none;cursor:pointer" onclick="copyJSON()" title="Скопировать JSON товара"><i class="ti ti-copy" aria-hidden="true"></i> Копировать</span>
-        <span class="bdg bdg-b" id="dlBtn" style="display:none;cursor:pointer" onclick="downloadAll('json')" title="Выгрузить все результаты в JSON"><i class="ti ti-download" aria-hidden="true"></i> JSON</span>
-        <span class="bdg bdg-g" id="dlTxtBtn" style="display:none;cursor:pointer" onclick="downloadAll('txt')" title="Выгрузить все результаты в TXT"><i class="ti ti-file-text" aria-hidden="true"></i> TXT</span>
-        <span class="bdg bdg-b" id="dlV2Btn" style="display:none;cursor:pointer" onclick="downloadV2()" title="Только обработанные карточки плюс categories: products_(id).json, filters_(id).json. Остаток дампа не входит."><i class="ti ti-braces" aria-hidden="true"></i> JSON v2</span>
-        <span class="bdg bdg-b" id="dlCatBtn" style="display:none;cursor:pointer" onclick="downloadCategoryFiles()" title="Два файла заказчика: products_(id).json и filters_(id).json. Фильтры нормализуются отдельным проходом по категории."><i class="ti ti-files" aria-hidden="true"></i> 2 файла</span>
-        <span class="bdg bdg-g" id="filterTestsBtn" style="display:none;cursor:pointer" onclick="openFilterTests(event)" title="Покрытие витринных фильтров после обогащения">Тесты фильтров</span>
-        <span class="bdg bdg-a" id="clrBtn" style="display:none;cursor:pointer" onclick="clearResults()" title="Удалить сохранённый прогон">✕ Сброс</span>
+        <button type="button" class="bdg bdg-b" id="cpyBtn" style="display:none" onclick="copyJSON()" title="Скопировать JSON товара"><i class="ti ti-copy" aria-hidden="true"></i> Копировать</button>
+        <button type="button" class="bdg bdg-b" id="dlBtn" style="display:none" onclick="downloadAll('json')" title="Выгрузить все результаты в JSON"><i class="ti ti-download" aria-hidden="true"></i> JSON</button>
+        <button type="button" class="bdg bdg-g" id="dlTxtBtn" style="display:none" onclick="downloadAll('txt')" title="Выгрузить все результаты в TXT"><i class="ti ti-file-text" aria-hidden="true"></i> TXT</button>
+        <button type="button" class="bdg bdg-b" id="dlV2Btn" style="display:none" onclick="downloadV2()" title="Архив: categories_v2.json, products_(id).json, filters_(id).json. Только обработанные карточки."><i class="ti ti-braces" aria-hidden="true"></i> JSON v2</button>
+        <button type="button" class="bdg bdg-b" id="dlCatBtn" style="display:none" onclick="downloadCategoryFiles()" title="Два файла заказчика: products_(id).json и filters_(id).json. Фильтры нормализуются отдельным проходом по категории."><i class="ti ti-files" aria-hidden="true"></i> 2 файла</button>
+        <button type="button" class="bdg bdg-g" id="filterTestsBtn" style="display:none" onclick="openFilterTests(event)" title="Покрытие витринных фильтров после обогащения">Тесты фильтров</button>
+        <button type="button" class="bdg bdg-a" id="clrBtn" style="display:none" onclick="clearResults()" title="Удалить сохранённый прогон">✕ Сброс</button>
       </div>
     </div>
     <div class="pb" id="detail">
@@ -8673,14 +8674,75 @@ function downloadAll(fmt='json'){
   saveFile(content,filename,type);
 }
 
+/** STORE-zip без сжатия: три JSON после fetch иначе браузер глотает 2-й и 3-й файл. */
+const ZIP_CRC=(()=>{ const t=new Uint32Array(256); for(let i=0;i<256;i++){ let c=i; for(let k=0;k<8;k++) c=c&1?0xEDB88320^(c>>>1):c>>>1; t[i]=c>>>0; } return t; })();
+function zipCrc(u8){ let c=0xFFFFFFFF; for(let i=0;i<u8.length;i++) c=ZIP_CRC[(c^u8[i])&255]^(c>>>8); return (c^0xFFFFFFFF)>>>0; }
+function zipFiles(files){
+  const enc=new TextEncoder();
+  const locals=[], centrals=[];
+  let offset=0;
+  for(const [name,body] of files){
+    const nameU=enc.encode(name);
+    const data=typeof body==='string'?enc.encode(body):body;
+    const crc=zipCrc(data);
+    const local=new Uint8Array(30+nameU.length+data.length);
+    const lv=new DataView(local.buffer);
+    lv.setUint32(0,0x04034b50,true);
+    lv.setUint16(4,20,true);
+    lv.setUint16(6,0x0800,true);
+    lv.setUint32(14,crc,true);
+    lv.setUint32(18,data.length,true);
+    lv.setUint32(22,data.length,true);
+    lv.setUint16(26,nameU.length,true);
+    local.set(nameU,30);
+    local.set(data,30+nameU.length);
+    locals.push(local);
+    const central=new Uint8Array(46+nameU.length);
+    const cv=new DataView(central.buffer);
+    cv.setUint32(0,0x02014b50,true);
+    cv.setUint16(4,20,true);
+    cv.setUint16(6,20,true);
+    cv.setUint16(8,0x0800,true);
+    cv.setUint32(16,crc,true);
+    cv.setUint32(20,data.length,true);
+    cv.setUint32(24,data.length,true);
+    cv.setUint16(28,nameU.length,true);
+    cv.setUint32(42,offset,true);
+    central.set(nameU,46);
+    centrals.push(central);
+    offset+=local.length;
+  }
+  const csize=centrals.reduce((s,x)=>s+x.length,0);
+  const eocd=new Uint8Array(22);
+  const ev=new DataView(eocd.buffer);
+  ev.setUint32(0,0x06054b50,true);
+  ev.setUint16(8,files.length,true);
+  ev.setUint16(10,files.length,true);
+  ev.setUint32(12,csize,true);
+  ev.setUint32(16,offset,true);
+  const out=new Uint8Array(offset+csize+22);
+  let p=0;
+  for(const x of locals){ out.set(x,p); p+=x.length; }
+  for(const x of centrals){ out.set(x,p); p+=x.length; }
+  out.set(eocd,p);
+  return out;
+}
+
 /** Один путь сохранения на все выгрузки: их теперь три, и расходиться им незачем. */
 function saveFile(content,filename,type='application/json'){
   const url=URL.createObjectURL(new Blob([content],{type}));
-  const a=document.createElement('a');a.href=url;a.download=filename;a.click();
-  // Отзыв с задержкой: при выгрузке пары файлов подряд немедленный revoke
-  // успевает отменить ещё не начавшуюся загрузку. ponytail: 1 с хватает,
-  // на очень больших файлах поднять.
-  setTimeout(()=>URL.revokeObjectURL(url),1000);
+  const a=document.createElement('a');
+  a.href=url; a.download=filename; a.rel='noopener'; a.style.display='none';
+  const host=document.body||document.documentElement;
+  if(host&&host.appendChild){ host.appendChild(a); a.click(); a.remove(); }
+  else a.click();
+  // Отзыв с задержкой: иначе браузер не успевает начать загрузку.
+  setTimeout(()=>URL.revokeObjectURL(url),4000);
+}
+
+function saveZip(files, filename){
+  const packed=files.map(([name,data])=>[name, typeof data==='string'?data:JSON.stringify(data,null,2)]);
+  saveFile(zipFiles(packed), filename, 'application/zip');
 }
 
 // ── ВЫГРУЗКА ВИТРИНЫ ─────────────────────────────────────────
@@ -8847,12 +8909,20 @@ function exportStatusLine(d){
   return `товаров: ${n} · фасетов: ${fc} · agent=${mode}`+(fixes?` · sanitize=${fixes}`:'')+hint+covHint;
 }
 
+function flashExportBtn(b, was, html, ms=2200){
+  if(!b) return;
+  b.innerHTML=html;
+  setTimeout(()=>{ if(b.innerHTML===html) b.innerHTML=was; }, ms);
+}
+
 async function downloadCategoryFiles(){
-  const b=document.getElementById('dlCatBtn'), was=b.innerHTML;
+  const b=document.getElementById('dlCatBtn');
+  if(!b) return;
+  const was=b.innerHTML;
   b.innerHTML='<span class="spin"></span> готовим';
   try{
     const payload=await loadCustomerExport();
-    if(!payload){ setSt('er','Нет обработанных товаров'); return; }
+    if(!payload){ setSt('er','Нет обработанных товаров'); flashExportBtn(b,was,'нет данных'); return; }
     const {key,d,g}=payload;
     if(!Array.isArray(d.filters)) throw new Error('сервер не вернул filters — перезапустите node server.js');
     const files=[
@@ -8861,23 +8931,27 @@ async function downloadCategoryFiles(){
     ];
     files.forEach(([name,data])=>saveFile(JSON.stringify(data,null,2),name));
     setSt('ok',`Файлов: ${files.length} · ${exportStatusLine(d)}`);
+    flashExportBtn(b,was,'<i class="ti ti-check"></i> скачано');
   }catch(e){
     setSt('er',`Выгрузка: ${e.message}`);
-  }finally{
-    b.innerHTML=was;
+    flashExportBtn(b,was,'ошибка');
+    b.title=e.message;
   }
 }
 
 /**
  * JSON v2 — та же клиентская выгрузка плюс categories_v2.json.
  * Карточка и фильтры считаются из атрибутов, не из текста модели.
+ * Три файла уходят одним zip: после await fetch браузер глотает 2-й и 3-й <a download>.
  */
 async function downloadV2(){
-  const b=document.getElementById('dlV2Btn'), was=b.innerHTML;
+  const b=document.getElementById('dlV2Btn');
+  if(!b) return;
+  const was=b.innerHTML;
   b.innerHTML='<span class="spin"></span> готовим';
   try{
     const payload=await loadCustomerExport();
-    if(!payload){ setSt('er','Нет обработанных товаров'); return; }
+    if(!payload){ setSt('er','Нет обработанных товаров'); flashExportBtn(b,was,'нет данных'); return; }
     const {key,d,groups}=payload;
     if(!Array.isArray(d.filters)) throw new Error('сервер не вернул filters — перезапустите node server.js');
     const files=[
@@ -8885,12 +8959,13 @@ async function downloadV2(){
       [`filters_${key}.json`,filtersDownloadPayload(d, 'v2')],
       [`products_${key}.json`,productsDownloadPayload(d, [...groups.values()].flatMap(x=>x.rows), 'v2')],
     ];
-    files.forEach(([name,data])=>saveFile(JSON.stringify(data,null,2),name));
+    saveZip(files, `v2_${key}.zip`);
     setSt('ok',`Файлов: ${files.length} · ${exportStatusLine(d)}`);
+    flashExportBtn(b,was,'<i class="ti ti-check"></i> архив');
   }catch(e){
     setSt('er',`Выгрузка: ${e.message}`);
-  }finally{
-    b.innerHTML=was;
+    flashExportBtn(b,was,'ошибка');
+    b.title=e.message;
   }
 }
 

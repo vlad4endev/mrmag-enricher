@@ -743,6 +743,20 @@ button.bdg{font:inherit;cursor:pointer;font-size:12px;font-weight:500;font-famil
 .cov-row.miss .cv-v{color:var(--t3)}
 .cov-note{font-size:12px;color:var(--t2);line-height:1.45;margin:0 0 10px}
 .cov-cols{font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--t2)}
+.filter-tests-head-acts{display:flex;align-items:center;gap:8px}
+.filter-tests-tabs{
+  display:flex;gap:6px;padding:10px 16px 0;flex-shrink:0;
+}
+.filter-tests-tabs button{
+  font:inherit;cursor:pointer;border:1px solid var(--b1);background:var(--bg3);color:var(--t2);
+  border-radius:var(--r2);padding:6px 10px;font-size:12px;font-weight:650;
+}
+.filter-tests-tabs button.on{border-color:var(--ac-b);background:var(--ac-w);color:var(--ac)}
+.cov-page{
+  display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;
+  margin:8px 0 0;font-size:12px;color:var(--t2);
+}
+.cov-page-btns{display:flex;gap:6px;flex-wrap:wrap}
 @media(max-width:900px){
   .eboard-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}
   .eboard-pair{grid-template-columns:minmax(0,1fr) auto;gap:4px 10px}
@@ -1303,7 +1317,14 @@ input[type=range]::-moz-range-thumb{
 }
 .photo-sec .body.muted{color:var(--t3);font-size:13px}
 .photo-sec.caption .body{font-size:15.5px;font-weight:650;letter-spacing:-.02em;line-height:1.45}
+.photo-sec.on-image .body{font-size:14px;line-height:1.55;color:var(--t1)}
+.photo-sec.on-image .body .oi-prefix{color:var(--t3);font-weight:600;margin-right:.35em}
 .photo-sec.alt .body{font-size:13px;color:var(--t2)}
+.photo-jv{
+  margin:0;max-height:none;box-shadow:none;
+  border-radius:14px;padding:14px 16px;
+  font-size:12.5px;line-height:1.7;
+}
 .photo-tags{display:flex;flex-wrap:wrap;gap:6px;margin:0}
 .photo-tags span{
   font-size:11.5px;padding:5px 10px;border-radius:999px;background:var(--bg3);
@@ -2216,7 +2237,14 @@ input[type=range]::-moz-range-thumb{
   <div class="ae-modal filter-tests-modal" role="dialog" aria-modal="true" aria-labelledby="filterTestsTitle">
     <div class="ae-modal-head">
       <h3 id="filterTestsTitle">Тесты фильтров после обогащения</h3>
-      <button type="button" class="sbtn ghost" onclick="closeFilterTests()" aria-label="Закрыть">✕</button>
+      <div class="filter-tests-head-acts">
+        <button type="button" class="sbtn ghost" onclick="refreshFilterTests(event)">Обновить</button>
+        <button type="button" class="sbtn ghost" onclick="closeFilterTests()" aria-label="Закрыть">✕</button>
+      </div>
+    </div>
+    <div class="filter-tests-tabs" role="tablist" aria-label="Режим тестов фильтров">
+      <button type="button" class="on" data-ft="batch" onclick="setFilterTestsView('batch',event)">Покрытие категории</button>
+      <button type="button" data-ft="card" onclick="setFilterTestsView('card',event)">Тест одной карточки</button>
     </div>
     <div class="ae-modal-body" id="filterTestsBody"></div>
   </div>
@@ -2298,7 +2326,7 @@ input[type=range]::-moz-range-thumb{
           <button type="button" class="sbtn ghost" onclick="photoExportMl('json')">JSON</button>
           <button type="button" class="sbtn ghost wide" onclick="photoExportMl('jsonl',true)">+ base64</button>
         </div>
-        <div class="photo-schema">ogran.photo_ml.v1</div>
+        <div class="photo-schema">image · caption · objects · description · alt · tags</div>
       </section>
 
       <section class="photo-dock" aria-label="Прогон">
@@ -2361,7 +2389,7 @@ input[type=range]::-moz-range-thumb{
         <div class="guide">
           <div class="guide-k">Описание фото</div>
           <h3>Список → лог → полный текст</h3>
-          Как в обогащении: слева настройка, в центре фото и ход прогона, справа полный caption и description.
+          Как в обогащении: слева настройка, в центре фото и ход прогона, справа подпись, «на картинке» и описание.
           <ol>
             <li>Создайте <b>альбом</b> и загрузите фото.</li>
             <li>Выберите <b>модель AITUNNEL</b> и нажмите «Описать».</li>
@@ -2979,7 +3007,7 @@ input[type=range]::-moz-range-thumb{
         </div>
 
         <div class="set-h" style="font-size:15px">Изображения (Фото · AITUNNEL)</div>
-        <p class="set-lead" style="margin-top:0">System-промпт для vision-описаний в разделе «Фото». Модель должна вернуть JSON с caption / description / alt / tags. Плейсхолдеры подставляются перед запросом к AITUNNEL.</p>
+        <p class="set-lead" style="margin-top:0">System-промпт для vision-описаний в разделе «Фото». Модель должна вернуть JSON с caption / on_image / description / alt / tags. Плейсхолдеры подставляются перед запросом к AITUNNEL.</p>
         <div class="set-card" style="margin-bottom:12px">
           <div class="set-scope-row" style="margin-bottom:8px">
             <span class="flbl" style="margin:0">Шаблон vision</span>
@@ -6232,8 +6260,8 @@ function normalizeCatalogProduct(p, catName){
     out.description=String(out.description_html);
   if(out.description==null) out.description='';
   if(out.annotation==null) out.annotation='';
-  // Старые filters на карточке не едут в повторную сборку — сервер пересоберёт.
-  delete out.filters;
+  // filters с выгрузки оставляем: покрытие категории считает presence по всему файлу.
+  // В повторную сборку они не едут — fileRow их снимает.
   return out;
 }
 
@@ -7196,55 +7224,108 @@ function filterTestOf(r, idx){
   return clientFilterTest(r, idx);
 }
 
-/** Сводка по батчу: знаменатель — согласованный лист, не ключи выдачи. */
+let filterTestsView='batch';
+let mismatchPage=0;
+const MISMATCH_PAGE=20;
+
+function productFiltersOf(p, r){
+  if(r?.filters&&typeof r.filters==='object'&&!Array.isArray(r.filters)) return r.filters;
+  if(p?.filters&&typeof p.filters==='object'&&!Array.isArray(p.filters)) return p.filters;
+  return {};
+}
+
+function coverageInputFromProduct(p, i){
+  const stored=runStore.get(rowKey(p,i));
+  const fromWindow=items[i]===p?results[i]:null;
+  const r=stored||fromWindow||null;
+  const filters=productFiltersOf(p, r);
+  if(r) return r.filters?r:{...r, filters};
+  return {
+    filters,
+    original:p,
+    annotation_html:p.annotation||p.annotation_html||'',
+    description_html:p.description||p.description_html||'',
+    enriched:{description:p.description||p.description_html||''},
+  };
+}
+
+/** Весь выбранный файл категории (srcItems), не окно selCnt и не одна карточка. */
+function coveragePool(){
+  const fromFile=srcItems.length&&items.length&&items.every(p=>srcItems.includes(p));
+  return fromFile
+    ?(pickCat==null?srcItems.slice():srcItems.filter(p=>catKey(p)===pickCat))
+    :items.slice();
+}
+
+function coverageIndexOf(p, fallback){
+  const at=items.indexOf(p);
+  return at>=0?at:fallback;
+}
+
+/** Сводка по батчу: знаменатель — products.length файла категории. */
 function runFilterCoverageTable(){
+  const pool=coveragePool();
   const packed=[];
-  results.forEach((r,i)=>{
-    if(!r) return;
-    const t=filterTestOf(r,i);
+  pool.forEach((p,pi)=>{
+    const i=coverageIndexOf(p, pi);
+    const r=coverageInputFromProduct(p, i);
+    const t=filterTestOf(r, i);
     if(!t) return;
-    packed.push({t,i,mismatch:!!t.category_mismatch||isCategoryMismatchUi(r,i)});
+    packed.push({
+      t, i, p, r,
+      filters:productFiltersOf(p, r),
+      mismatch:!!t.category_mismatch||isCategoryMismatchUi(r, i),
+    });
   });
   if(!packed.length) return null;
-  const skipped=packed.filter(p=>p.mismatch);
-  const used=packed.filter(p=>!p.mismatch);
+  const skipped=packed.filter(row=>row.mismatch);
+  const used=packed.filter(row=>!row.mismatch);
   const source=used.length?used:packed;
   const cat=runFilterCatId(source[0].t, source[0].i);
-  let names=source.find(p=>p.t.approved_names?.length)?.t.approved_names;
-  if(!names?.length){
-    names=APPROVED_YES_UI[cat]?APPROVED_YES_UI[cat].slice():[];
+  let names=APPROVED_YES_UI[cat]?APPROVED_YES_UI[cat].slice():[];
+  if(!names.length){
+    names=source.find(row=>row.t.approved_names?.length)?.t.approved_names||[];
   }
-  if(!names?.length){
+  if(!names.length){
     const seen=new Set();
     names=[];
-    for(const {t} of source){
+    for(const {t,filters} of source){
       for(const row of t.rows||[]){
         if(!row.name||seen.has(row.name)) continue;
         seen.add(row.name);
         names.push(row.name);
       }
+      for(const key of Object.keys(filters||{})){
+        if(!key||seen.has(key)) continue;
+        seen.add(key);
+        names.push(key);
+      }
     }
   }
   const total=source.length;
   const filters=names.map(name=>{
-    const filled=source.filter(p=>p.t.rows.some(row=>row.name===name&&row.ok)).length;
+    const filled=source.filter(row=>{
+      const hit=row.t.rows?.find(x=>x.name===name);
+      if(hit) return !!hit.ok;
+      return lookupApprovedUi(row.filters, name, cat).ok;
+    }).length;
     return {name, filled, empty:total-filled, coverage:total?Math.round(filled/total*100):0, total};
   });
   const extraMap=new Map();
   const mismatches=[];
-  for(const {t,i} of source){
-    for(const u of t.unapproved||[]){
+  for(const row of source){
+    for(const u of row.t.unapproved||[]){
       const prev=extraMap.get(u.name)||{name:u.name, filled:0, empty:0, coverage:0, total, reason:u.reason||'несогласованный фильтр'};
       prev.filled+=1;
       extraMap.set(u.name, prev);
     }
-    const id=items[i]?.id??results[i]?.original?.id??null;
-    for(const m of t.mismatches||[]){
+    const id=row.p?.id??row.p?.sku??items[row.i]?.id??row.r?.original?.id??null;
+    for(const m of row.t.mismatches||[]){
       mismatches.push({...m, id});
     }
   }
   const unapproved=[...extraMap.values()].map(u=>({...u, empty:total-u.filled, coverage:total?Math.round(u.filled/total*100):0}));
-  return {total, skipped:skipped.length, batch:packed.length, category_id:cat, optional:optionalYesUi(cat), filters, unapproved, mismatches};
+  return {total, skipped:skipped.length, batch:packed.length, file_total:pool.length, category_id:cat, optional:optionalYesUi(cat), filters, unapproved, mismatches};
 }
 
 function renderFilterTests(test, {live=false}={}){
@@ -7303,9 +7384,54 @@ function requiredCoverageFilters(table){
   return (table?.filters||[]).filter(f=>!optional.has(f.name));
 }
 
+function csvCell(v){
+  const s=v==null?'':String(v);
+  return /[",\n]/.test(s)?`"${s.replace(/"/g,'""')}"`:s;
+}
+
+function mismatchesCsv(rows){
+  const header=['id','filter','detail'].join(',');
+  const lines=(rows||[]).map(row=>[csvCell(row.id),csvCell(row.name||row.kind||''),csvCell(row.detail||'')].join(','));
+  return [header,...lines].join('\n');
+}
+
+function downloadMismatchesCsv(){
+  const table=runFilterCoverageTable();
+  const rows=table?.mismatches||[];
+  const cat=table?.category_id||'all';
+  saveFile(mismatchesCsv(rows),`filter_mismatches_${cat}.csv`,'text/csv');
+}
+
+function mismatchPageHtml(bad){
+  if(!bad.length) return '';
+  const pages=Math.max(1, Math.ceil(bad.length/MISMATCH_PAGE));
+  if(mismatchPage>=pages) mismatchPage=pages-1;
+  if(mismatchPage<0) mismatchPage=0;
+  const from=mismatchPage*MISMATCH_PAGE;
+  const slice=bad.slice(from, from+MISMATCH_PAGE);
+  let html=`<div class="spec-title mt">Расхождение значений <i>${bad.length}</i></div>`
+    +`<div class="cov-table">${slice.map(row=>
+      `<div class="cov-row mismatch">`
+      +`<span class="cv-k">${esc(row.id!=null?`id ${row.id}`:(row.name||''))}</span>`
+      +`<span class="cv-v">${esc(row.detail||row.name||'')}</span>`
+      +`<span class="cv-st">сверка</span>`
+      +`</div>`
+    ).join('')}</div>`
+    +`<div class="cov-page">`
+    +`<span>${from+1}–${from+slice.length} из ${bad.length}</span>`
+    +`<div class="cov-page-btns">`;
+  if(pages>1){
+    html+=`<button type="button" class="sbtn ghost" ${mismatchPage<=0?'disabled':''} onclick="setMismatchPage(${mismatchPage-1},event)">Назад</button>`
+      +`<button type="button" class="sbtn ghost" ${mismatchPage>=pages-1?'disabled':''} onclick="setMismatchPage(${mismatchPage+1},event)">Дальше</button>`;
+  }
+  html+=`<button type="button" class="sbtn ghost" onclick="downloadMismatchesCsv()">CSV</button>`
+    +`</div></div>`;
+  return html;
+}
+
 function filterTestsSummaryHtml(table){
   if(!table||!table.filters.length){
-    return `<div class="eboard-empty">Нет тестов фильтров — обогатите товары выбранной категории.</div>`;
+    return `<div class="eboard-empty">Нет тестов фильтров — загрузите products_*.json категории или обогатите товары.</div>`;
   }
   const extras=table.unapproved||[];
   const bad=table.mismatches||[];
@@ -7320,15 +7446,16 @@ function filterTestsSummaryHtml(table){
     ? ' Дисплей и перенавешивание холодильника — необязательные оси: пусто честнее выдуманного «нет».'
     : '';
   let html=`<div class="filter-tests ${tone}">`
-    +`<div class="spec-title">Покрытие прогона <i>${all}/${required.length} по 100% · ${skipTxt}</i></div>`
-    +`<div class="cov-note">Знаменатель — обязательные строки листа «да» по товарам своей категории.${optNote}</div>`
+    +`<div class="spec-title">Покрытие категории <i>${all}/${required.length} по 100% · ${skipTxt}</i></div>`
+    +`<div class="cov-note">Знаменатель — все карточки выбранного файла (products.length), не окно прогона. % = заполнено / всего.${optNote}</div>`
     +`<div class="cov-row cov-cols"><span>Фильтр</span><span>есть / нет</span><span>%</span></div>`
     +`<div class="cov-table cov-table-run">${table.filters.map(f=>{
       const opt=optional.has(f.name);
       const cls=f.coverage>=100?'ok':(opt?'warn':'miss');
+      const denom=f.total??table.total;
       return `<div class="cov-row ${cls}">`
         +`<span class="cv-k">${esc(f.name)}</span>`
-        +`<span class="cv-v">${f.filled} / ${f.empty}</span>`
+        +`<span class="cv-v">${f.filled} / ${denom}</span>`
         +`<span class="cv-st">${f.coverage}%</span>`
         +`</div>`;
     }).join('')}</div>`;
@@ -7343,28 +7470,52 @@ function filterTestsSummaryHtml(table){
         +`</div>`
       ).join('')}</div>`;
   }
-  if(bad.length){
-    html+=`<div class="spec-title mt">Расхождение значений</div>`
-      +`<div class="cov-table">${bad.map(row=>
-        `<div class="cov-row mismatch">`
-        +`<span class="cv-k">${esc(row.id!=null?`id ${row.id}`:(row.name||''))}</span>`
-        +`<span class="cv-v">${esc(row.detail||row.name||'')}</span>`
-        +`<span class="cv-st">сверка</span>`
-        +`</div>`
-      ).join('')}</div>`;
-  }
+  html+=mismatchPageHtml(bad);
   return html+`</div>`;
 }
 
+function syncFilterTestsTabs(){
+  document.querySelectorAll('.filter-tests-tabs [data-ft]').forEach(btn=>{
+    btn.classList.toggle('on', btn.dataset.ft===filterTestsView);
+  });
+}
+
 function filterTestsModalHtml(){
-  const table=runFilterCoverageTable();
-  const card=results[curIdx]?filterTestOf(results[curIdx], curIdx):null;
-  let html=filterTestsSummaryHtml(table);
-  if(card){
-    html+=`<div class="spec-title mt">Тест одной карточки</div>`
-      +renderFilterTests(card);
+  if(filterTestsView==='card'){
+    const card=results[curIdx]?filterTestOf(results[curIdx], curIdx):null;
+    if(card) return renderFilterTests(card);
+    const pool=coveragePool();
+    const p=items[curIdx]||pool[0];
+    if(!p) return `<div class="eboard-empty">Нет выбранной карточки — откройте товар в списке.</div>`;
+    const i=coverageIndexOf(p, curIdx);
+    return renderFilterTests(filterTestOf(coverageInputFromProduct(p, i), i));
   }
-  return html;
+  return filterTestsSummaryHtml(runFilterCoverageTable());
+}
+
+function setFilterTestsView(view, ev){
+  ev?.stopPropagation?.();
+  ev?.preventDefault?.();
+  filterTestsView=view==='card'?'card':'batch';
+  mismatchPage=0;
+  syncFilterTestsTabs();
+  const body=document.getElementById('filterTestsBody');
+  if(body) body.innerHTML=filterTestsModalHtml();
+}
+
+function setMismatchPage(page, ev){
+  ev?.stopPropagation?.();
+  ev?.preventDefault?.();
+  mismatchPage=Math.max(0, page|0);
+  const body=document.getElementById('filterTestsBody');
+  if(body) body.innerHTML=filterTestsModalHtml();
+}
+
+function refreshFilterTests(ev){
+  ev?.stopPropagation?.();
+  ev?.preventDefault?.();
+  mismatchPage=0;
+  syncFilterTestsButton();
 }
 
 function syncFilterTestsButton(){
@@ -7381,6 +7532,7 @@ function syncFilterTestsButton(){
       btn.textContent=`Тесты ${all}/${required.length}`;
     }
   }
+  syncFilterTestsTabs();
   if(body) body.innerHTML=filterTestsModalHtml();
 }
 
@@ -7397,6 +7549,7 @@ function isFilterTestsOpen(){
 function openFilterTests(ev){
   ev?.stopPropagation?.();
   ev?.preventDefault?.();
+  mismatchPage=0;
   syncFilterTestsButton();
   const el=document.getElementById('filterTestsModal');
   if(el) el.hidden=false;
@@ -9920,7 +10073,7 @@ function photoRenderList(){
   }
   box.innerHTML=items.map(it=>{
     const st=photoStClass(it);
-    const preview=it.caption||it.description||it.error||'';
+    const preview=it.caption||it.on_image||it.description||it.error||'';
     const metaParts=[photoStLabel(it)];
     if(photoIsDumpBound(it)) metaParts.push('дамп '+it.dump_category+'/'+it.product_id);
     const cost=usageCostRub(it.usage);
@@ -10052,18 +10205,48 @@ function photoToggleDumpBind(){
   else photoBindDump(it.id);
 }
 
+/** Компактный JSON как в выгрузке — стабильный порядок, без служебных полей. */
+function photoSlimJson(it){
+  if(!it) return {};
+  const row={};
+  if(it.filename) row.image=String(it.filename);
+  if(it.caption) row.caption=String(it.caption);
+  if(it.on_image) row.objects=String(it.on_image);
+  if(it.description) row.description=String(it.description);
+  if(it.alt) row.alt=String(it.alt);
+  if(Array.isArray(it.tags)&&it.tags.length) row.tags=it.tags.filter(Boolean);
+  if(it.attributes&&typeof it.attributes==='object'){
+    const order=['view','color','product_type','brand_visible','text_on_image'];
+    const a={};
+    for(const k of order){
+      const v=it.attributes[k];
+      if(v==null||v===false||String(v).trim()==='') continue;
+      a[k]=typeof v==='boolean'?v:String(v).trim();
+    }
+    for(const [k,v] of Object.entries(it.attributes)){
+      if(k in a||order.includes(k)) continue;
+      if(v==null||v===false||String(v).trim()==='') continue;
+      a[k]=typeof v==='boolean'?v:String(v).trim();
+    }
+    if(Object.keys(a).length) row.attributes=a;
+  }
+  if(it.product_id) row.product_id=String(it.product_id);
+  return row;
+}
+
 function photoCopyDetail(){
   const it=photoItemById(photoCurId);
   if(!it) return;
   const text=photoTab==='json'
-    ? JSON.stringify(it,null,2)
+    ? JSON.stringify(photoSlimJson(it),null,2)
     : [
-        it.caption&&('Caption: '+it.caption),
-        it.description&&('Description:\n'+it.description),
+        it.caption&&('Подпись: '+it.caption),
+        it.on_image&&('На картинке: '+it.on_image),
+        it.description&&('Описание:\n'+it.description),
         it.alt&&('Alt: '+it.alt),
-        (it.tags||[]).length&&('Tags: '+it.tags.join(', ')),
-        it.attributes&&Object.keys(it.attributes).length&&('Attributes:\n'+Object.entries(it.attributes).map(([k,v])=>k+': '+v).join('\n')),
-        it.error&&('Error: '+it.error),
+        (it.tags||[]).length&&('Теги: '+it.tags.join(', ')),
+        it.attributes&&Object.keys(it.attributes).length&&('Атрибуты:\n'+Object.entries(it.attributes).map(([k,v])=>k+': '+v).join('\n')),
+        it.error&&('Ошибка: '+it.error),
       ].filter(Boolean).join('\n\n');
   navigator.clipboard?.writeText(text).then(()=>photoStatus('Скопировано', true)).catch(()=>{});
 }
@@ -10127,7 +10310,7 @@ function photoRenderDetail(){
   }
 
   if(photoTab==='json'){
-    box.innerHTML=`<pre class="codeblock" style="white-space:pre-wrap;word-break:break-word;font-size:12px;line-height:1.45;margin:0">${esc(JSON.stringify(it,null,2))}</pre>`;
+    box.innerHTML=`<div class="jv photo-jv">${hl(photoSlimJson(it))}</div>`;
     return;
   }
 
@@ -10173,11 +10356,13 @@ function photoRenderDetail(){
   }
 
   const cap=String(it.caption||'').trim();
+  const onImg=String(it.on_image||'').trim();
   const desc=String(it.description||'').trim();
   const alt=String(it.alt||'').trim();
 
-  html+=`<div class="photo-sec caption"><div class="st">Caption <i>${cap.length||0}</i></div><div class="body${cap?'':' muted'}">${esc(cap||'Пока нет caption — запустите «Описать»')}</div></div>`;
-  html+=`<div class="photo-sec"><div class="st">Description <i>${desc.length||0}</i></div><div class="body${desc?'':' muted'}">${esc(desc||'Полное описание появится здесь после прогона')}</div></div>`;
+  html+=`<div class="photo-sec caption"><div class="st">Подпись <i>${cap.length||0}</i></div><div class="body${cap?'':' muted'}">${esc(cap||'Пока нет подписи — запустите «Описать»')}</div></div>`;
+  html+=`<div class="photo-sec on-image"><div class="st">На картинке <i>${onImg.length||0}</i></div><div class="body${onImg?'':' muted'}">${onImg?`<span class="oi-prefix">На картинке:</span>${esc(onImg)}`:esc('После прогона здесь будет перечень: объекты, фон, детали')}</div></div>`;
+  html+=`<div class="photo-sec"><div class="st">Описание <i>${desc.length||0}</i></div><div class="body${desc?'':' muted'}">${esc(desc||'Развёрнутое описание сцены появится здесь после прогона')}</div></div>`;
   html+=`<div class="photo-sec alt"><div class="st">Alt <i>${alt.length||0}</i></div><div class="body${alt?'':' muted'}">${esc(alt||'—')}</div></div>`;
 
   if(tags.length){
@@ -10423,7 +10608,7 @@ async function photoExportMl(format, includeImages){
     const m=cd.match(/filename="([^"]+)"/);
     const a=document.createElement('a');
     a.href=URL.createObjectURL(blob);
-    a.download=m?m[1]:`photos_ml_${photoAlbum.id}.${format==='json'?'json':'jsonl'}`;
+    a.download=m?m[1]:`photos_${photoAlbum.id}.${format==='json'?'json':'jsonl'}`;
     a.click();
     URL.revokeObjectURL(a.href);
     photoStatus('Выгрузка скачана', true);

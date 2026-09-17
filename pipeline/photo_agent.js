@@ -20,10 +20,11 @@ export function defaultPhotoSystemPrompt() {
   return `Ты — агент описания товарных фото для интернет-магазина бытовой техники и электроники (RU).
 По изображению верни ТОЛЬКО JSON-объект:
 {
-  "caption": "короткая подпись 8–18 слов для ML/поиска",
-  "description": "2–4 предложения: что на фото, ракурс, цвет, комплектация, заметные детали. Без выдуманных характеристик, которых не видно.",
+  "caption": "короткая подпись 8–18 слов для ML/поиска (сцена целиком, без списка объектов)",
+  "on_image": "перечень того, что видно на фото, через запятую: объекты, фон, детали. Пример: «встраиваемая вытяжка, чёрный корпус, панель управления, вытяжной зонт, кухонный фартук». 5–14 элементов, без глаголов и без полного предложения",
+  "description": "2–4 предложения: ракурс, цвет, комплектация, расположение объектов, заметные детали. Не повторяй on_image дословно — это развёрнутое описание сцены. Без выдуманных характеристик, которых не видно.",
   "alt": "alt-текст для a11y, до 120 символов",
-  "tags": ["тег1","тег2", "... до 12 штук"],
+  "tags": ["тег1","тег2", "... до 12 штук — поисковые ярлыки, короче чем on_image"],
   "attributes": {
     "view": "front|side|angle|detail|packshot|lifestyle|other",
     "color": "если видно",
@@ -34,6 +35,7 @@ export function defaultPhotoSystemPrompt() {
   "warnings": ["если качество плохое / водяной знак / коллаж / не товар"]
 }
 Правила: только факты с фото; не выдумывай объём/мощность/габариты; язык русский; JSON без markdown.
+on_image — инвентарь видимого (существительные/короткие словосочетания через запятую). description — связный текст.
 Если в запросе передан dump — не противоречь известным полям, но не копируй текст дампа слепо и не выдумывай то, чего нет на фото.
 Без dump опирайся только на изображение.`;
 }
@@ -112,6 +114,7 @@ function unwrapVisionRoot(parsed) {
   const hasCore = (o) => o && (
     firstNonEmpty(o, [
       'caption', 'Caption', 'подпись', 'title', 'description', 'Description', 'описание', 'text', 'alt',
+      'on_image', 'onImage', 'objects', 'scene', 'на_картинке',
     ])
   );
   if (hasCore(parsed)) return parsed;
@@ -120,6 +123,33 @@ function unwrapVisionRoot(parsed) {
     if (inner && typeof inner === 'object' && !Array.isArray(inner) && hasCore(inner)) return inner;
   }
   return parsed;
+}
+
+function normalizeOnImage(root) {
+  const fromStr = firstNonEmpty(root, [
+    'on_image', 'onImage', 'OnImage', 'ON_IMAGE',
+    'scene', 'Scene', 'contents', 'content_list',
+    'на_картинке', 'на картинке', 'что_на_фото', 'objects_text',
+  ]);
+  if (fromStr) {
+    return fromStr
+      .replace(/^на\s+картинке\s*[:—–-]?\s*/i, '')
+      .replace(/\s*,\s*/g, ', ')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 2000);
+  }
+  const arr = Array.isArray(root.objects) ? root.objects
+    : (Array.isArray(root.items_on_image) ? root.items_on_image
+      : (Array.isArray(root.scene_objects) ? root.scene_objects
+        : (Array.isArray(root.visible) ? root.visible : null)));
+  if (arr?.length) {
+    return [...new Set(arr.map(t => String(t).trim()).filter(Boolean))]
+      .slice(0, 24)
+      .join(', ')
+      .slice(0, 2000);
+  }
+  return '';
 }
 
 function normalizeVision(parsed) {
@@ -137,16 +167,23 @@ function normalizeVision(parsed) {
       : (Array.isArray(root.keywords) ? root.keywords : []));
   const warningsSrc = Array.isArray(root.warnings) ? root.warnings
     : (Array.isArray(root.notes) ? root.notes : []);
+  const tags = [...new Set(tagsSrc.map(t => String(t).trim()).filter(Boolean))].slice(0, 40);
+  let on_image = normalizeOnImage(root);
+  // Fallback: если модель не дала on_image — собрать из тегов (лучше, чем пусто)
+  if (!on_image && tags.length) {
+    on_image = tags.slice(0, 14).join(', ');
+  }
   return {
     caption: firstNonEmpty(root, [
       'caption', 'Caption', 'CAPTION', 'title', 'Title', 'подпись', 'заголовок', 'summary', 'short_description',
     ]).slice(0, 1000),
+    on_image: on_image.slice(0, 2000),
     description: firstNonEmpty(root, [
       'description', 'Description', 'DESCRIPTION', 'text', 'Text', 'описание',
       'full_description', 'long_description', 'body', 'details',
     ]).slice(0, 8000),
     alt: firstNonEmpty(root, ['alt', 'Alt', 'alt_text', 'altText', 'альт']).slice(0, 500),
-    tags: [...new Set(tagsSrc.map(t => String(t).trim()).filter(Boolean))].slice(0, 40),
+    tags,
     attributes,
     warnings: warningsSrc.map(w => String(w).trim()).filter(Boolean).slice(0, 20),
   };
@@ -159,10 +196,14 @@ export const PHOTO_RESPONSE_SCHEMA = {
   schema: {
     type: 'object',
     additionalProperties: false,
-    required: ['caption', 'description', 'alt', 'tags', 'attributes', 'warnings'],
+    required: ['caption', 'on_image', 'description', 'alt', 'tags', 'attributes', 'warnings'],
     properties: {
       caption: { type: 'string', description: 'Короткая подпись 8–18 слов' },
-      description: { type: 'string', description: '2–4 предложения про фото' },
+      on_image: {
+        type: 'string',
+        description: 'Перечень видимого через запятую: объекты, фон, детали (5–14 элементов)',
+      },
+      description: { type: 'string', description: '2–4 предложения: развёрнутое описание сцены' },
       alt: { type: 'string', description: 'alt до 120 символов' },
       tags: { type: 'array', items: { type: 'string' } },
       attributes: {
@@ -209,7 +250,7 @@ function consistencyLite(vision, dump) {
   const warnings = [...(vision.warnings || [])];
   if (!dump) return warnings;
   const name = String(dump.name || '').toLowerCase();
-  const blob = `${vision.caption} ${vision.description} ${vision.tags.join(' ')}`.toLowerCase();
+  const blob = `${vision.caption} ${vision.on_image || ''} ${vision.description} ${vision.tags.join(' ')}`.toLowerCase();
   if (name) {
     const tokens = name.split(/[\s,/|−–—-]+/).filter(t => t.length >= 4).slice(0, 6);
     const hit = tokens.some(t => blob.includes(t));
@@ -420,6 +461,9 @@ export async function describePhoto(itemFile, opts = {}) {
     vision.description = vision.caption;
   }
   if (!vision.alt) vision.alt = vision.caption.slice(0, 120);
+  if (!vision.on_image && vision.tags?.length) {
+    vision.on_image = vision.tags.slice(0, 14).join(', ');
+  }
 
   vision.warnings = consistencyLite(vision, dump);
 

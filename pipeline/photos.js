@@ -219,6 +219,7 @@ function publicItem(item) {
     status: item.status || 'uploaded',
     description: item.description || null,
     caption: item.caption || null,
+    on_image: item.on_image || null,
     alt: item.alt || null,
     tags: item.tags || [],
     attributes: item.attributes || {},
@@ -336,6 +337,7 @@ export function uploadPhotos(albumId, files, root) {
       status: 'uploaded',
       description: null,
       caption: null,
+      on_image: null,
       alt: null,
       tags: [],
       attributes: {},
@@ -382,6 +384,7 @@ export function patchPhotoItem(albumId, itemId, patch, root) {
       if (item.status === 'uploaded') item.status = 'described';
     }
     if ('caption' in patch && patch.caption != null) item.caption = String(patch.caption).slice(0, 1000);
+    if ('on_image' in patch && patch.on_image != null) item.on_image = String(patch.on_image).slice(0, 2000);
     if ('alt' in patch && patch.alt != null) item.alt = String(patch.alt).slice(0, 500);
     if ('tags' in patch && Array.isArray(patch.tags)) {
       item.tags = patch.tags.map(t => String(t).trim()).filter(Boolean).slice(0, 40);
@@ -439,6 +442,7 @@ export function applyDescribeResult(albumId, itemId, result, root) {
   item.error = null;
   item.description = String(result.description || '').slice(0, 8000);
   item.caption = String(result.caption || '').slice(0, 1000);
+  item.on_image = String(result.on_image || '').slice(0, 2000) || null;
   item.alt = String(result.alt || '').slice(0, 500);
   item.tags = Array.isArray(result.tags)
     ? result.tags.map(t => String(t).trim()).filter(Boolean).slice(0, 40)
@@ -455,9 +459,76 @@ export function applyDescribeResult(albumId, itemId, result, root) {
   return publicItem(item);
 }
 
+const ATTR_ORDER = ['view', 'color', 'product_type', 'brand_visible', 'text_on_image'];
+
+function orderedAttributes(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const cleaned = {};
+  const put = (k, v) => {
+    if (v == null) return;
+    if (typeof v === 'boolean') {
+      if (v === true) cleaned[k] = true;
+      return;
+    }
+    const s = String(v).trim();
+    if (s) cleaned[k] = s;
+  };
+  for (const k of ATTR_ORDER) {
+    if (k in raw) put(k, raw[k]);
+  }
+  for (const [k, v] of Object.entries(raw)) {
+    if (k in cleaned || ATTR_ORDER.includes(k)) continue;
+    put(String(k).slice(0, 40), v);
+  }
+  return Object.keys(cleaned).length ? cleaned : null;
+}
+
 /**
- * ML-датасет: JSONL / JSON для обучения / разметки.
- * include_images=false — только мета + относительные пути (лёгкий).
+ * Компактная запись для ML/витрины — стабильный порядок ключей, без пустых полей.
+ */
+export function photoExportRow(item, {
+  include_images = false,
+  album_id = null,
+  root,
+} = {}) {
+  const row = {};
+
+  const image = String(item.filename || '').trim();
+  if (image) row.image = image;
+
+  const caption = String(item.caption || '').trim();
+  const objects = String(item.on_image || '').trim();
+  const description = String(item.description || '').trim();
+  const alt = String(item.alt || '').trim();
+  if (caption) row.caption = caption;
+  if (objects) row.objects = objects;
+  if (description) row.description = description;
+  if (alt) row.alt = alt;
+
+  const tags = Array.isArray(item.tags)
+    ? [...new Set(item.tags.map(t => String(t).trim()).filter(Boolean))]
+    : [];
+  if (tags.length) row.tags = tags;
+
+  const attributes = orderedAttributes(item.attributes);
+  if (attributes) row.attributes = attributes;
+
+  const productId = item.product_id != null ? String(item.product_id).trim() : '';
+  if (productId) row.product_id = productId;
+
+  if (include_images && album_id && item.stored && root) {
+    try {
+      const fp = path.join(filesDir(album_id, root), item.stored);
+      row.image_base64 = fs.readFileSync(fp).toString('base64');
+    } catch { /* skip broken file */ }
+  }
+
+  return row;
+}
+
+/**
+ * ML-датасет: JSONL / JSON — компактные тексты без служебного шума.
+ * include_images=false — без base64 (лёгкий).
  */
 export function buildMlExport(albumId, {
   format = 'jsonl',
@@ -471,53 +542,28 @@ export function buildMlExport(albumId, {
   }
   if (!items.length) throw httpError(400, 'Нет описанных фото для выгрузки');
 
-  const rows = items.map((item) => {
-    const row = {
-      album_id: meta.id,
-      album_name: meta.name,
-      category: meta.category || null,
-      id: item.id,
-      filename: item.filename,
-      path: `files/${item.stored}`,
-      mime: item.mime,
-      product_id: item.product_id || null,
-      sku: item.sku || null,
-      dump_category: item.dump_category || null,
-      dump_bound: Boolean(item.product_id && item.dump_category),
-      caption: item.caption || '',
-      description: item.description || '',
-      alt: item.alt || '',
-      tags: item.tags || [],
-      attributes: item.attributes || {},
-      warnings: item.warnings || [],
-      status: item.status,
-    };
-    if (include_images) {
-      const file = path.join(filesDir(meta.id, root), item.stored);
-      row.image_base64 = fs.readFileSync(file).toString('base64');
-    }
-    return row;
-  });
-
-  const pack = {
-    schema: 'ogran.photo_ml.v1',
-    exported_at: new Date().toISOString(),
-    album: { id: meta.id, name: meta.name, category: meta.category || null },
-    count: rows.length,
-    items: rows,
-  };
+  const photos = items.map((item) => photoExportRow(item, {
+    include_images,
+    album_id: meta.id,
+    root,
+  }));
 
   if (format === 'json') {
+    const pack = {
+      version: '1.0',
+      total: photos.length,
+      photos,
+    };
     return {
-      filename: `photos_ml_${meta.id}.json`,
+      filename: `photos_${meta.id}.json`,
       mime: 'application/json; charset=utf-8',
       body: `${JSON.stringify(pack, null, 2)}\n`,
     };
   }
 
-  const lines = rows.map(r => JSON.stringify(r)).join('\n') + '\n';
+  const lines = photos.map(r => JSON.stringify(r)).join('\n') + '\n';
   return {
-    filename: `photos_ml_${meta.id}.jsonl`,
+    filename: `photos_${meta.id}.jsonl`,
     mime: 'application/x-ndjson; charset=utf-8',
     body: lines,
   };

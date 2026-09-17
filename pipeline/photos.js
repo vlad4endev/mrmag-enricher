@@ -549,15 +549,11 @@ export function buildMlExport(albumId, {
   }));
 
   if (format === 'json') {
-    const pack = {
-      version: '1.0',
-      total: photos.length,
-      photos,
-    };
+    // Массив объектов как во вкладке JSON / пример выгрузки — без version/total/photos.
     return {
       filename: `photos_${meta.id}.json`,
       mime: 'application/json; charset=utf-8',
-      body: `${JSON.stringify(pack, null, 2)}\n`,
+      body: `${JSON.stringify(photos, null, 2)}\n`,
     };
   }
 

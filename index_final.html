@@ -10361,7 +10361,7 @@ function photoRenderDetail(){
   const alt=String(it.alt||'').trim();
 
   html+=`<div class="photo-sec caption"><div class="st">Подпись <i>${cap.length||0}</i></div><div class="body${cap?'':' muted'}">${esc(cap||'Пока нет подписи — запустите «Описать»')}</div></div>`;
-  html+=`<div class="photo-sec on-image"><div class="st">На картинке <i>${onImg.length||0}</i></div><div class="body${onImg?'':' muted'}">${onImg?`<span class="oi-prefix">На картинке:</span>${esc(onImg)}`:esc('После прогона здесь будет перечень: объекты, фон, детали')}</div></div>`;
+  html+=`<div class="photo-sec on-image"><div class="st">На картинке <i>${onImg.length||0}</i></div><div class="body${onImg?'':' muted'}">${onImg?`<span class="oi-prefix">На картинке:</span>${esc(onImg)}`:esc('После прогона — товар и каждый элемент принта отдельно, без обобщений')}</div></div>`;
   html+=`<div class="photo-sec"><div class="st">Описание <i>${desc.length||0}</i></div><div class="body${desc?'':' muted'}">${esc(desc||'Развёрнутое описание сцены появится здесь после прогона')}</div></div>`;
   html+=`<div class="photo-sec alt"><div class="st">Alt <i>${alt.length||0}</i></div><div class="body${alt?'':' muted'}">${esc(alt||'—')}</div></div>`;
 

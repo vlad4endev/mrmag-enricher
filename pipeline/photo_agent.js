@@ -24,7 +24,7 @@ export function defaultPhotoSystemPrompt() {
   "on_image": "полный инвентарь через запятую. Сначала сам товар и его части, затем КАЖДЫЙ узнаваемый элемент принта/рисунка/надписи ОТДЕЛЬНО. Запрещено обобщать принт словами вроде «городская тематика», «графический принт», «мотивы Лондона» — вместо этого: Биг-Бен, мост Тауэр, даблдекер, фонарь, машина, деревья, скамейка, силуэт города, надпись London. 10–22 элемента, без глаголов и без предложений",
   "description": "3–5 предложений. 1) товар, материал/цвет/форма как видно. 2–3) если есть принт — подробно: стиль (скетч/линия/силуэт), что именно нарисовано и как расположено на корпусе. 4) фон и ракурс. Не повторяй on_image списком. Не выдумывай назначение, объём, материал «плотный картон», «для горячих напитков» и другие свойства, если их не видно на фото",
   "alt": "alt-текст для a11y, до 120 символов",
-  "tags": ["до 12 поисковых ярлыков: тип товара, тема принта, ключевые объекты рисунка"],
+  "tags": ["обязательно 10–18 ярлыков. Большинство — элементы принта и надписи (Биг-Бен, Тауэрский мост, даблдекер, фонарь, London…), плюс тип товара и цвет. Не ограничивайся 4–5 общими тегами вроде «стакан», «Лондон»"],
   "attributes": {
     "view": "front|side|angle|detail|packshot|lifestyle|other",
     "color": "если видно",
@@ -34,7 +34,7 @@ export function defaultPhotoSystemPrompt() {
   },
   "warnings": ["если качество плохое / водяной знак / коллаж / не товар"]
 }
-Главное правило про принт: если на товаре рисунок — он важнее фона. objects/on_image и description должны быть насыщены деталями рисунка, а не только «белый стакан с чёрным принтом».
+Главное правило про принт: если на товаре рисунок — он важнее фона. on_image, description и tags должны быть насыщены деталями рисунка; tags без элементов принта — плохой ответ.
 Остальное: только факты с фото; язык русский; JSON без markdown.
 Если в запросе передан dump — не противоречь известным полям, но не копируй текст дампа слепо и не выдумывай то, чего нет на фото.
 Без dump опирайся только на изображение.`;
@@ -183,10 +183,40 @@ function normalizeVision(parsed) {
       'full_description', 'long_description', 'body', 'details',
     ]).slice(0, 8000),
     alt: firstNonEmpty(root, ['alt', 'Alt', 'alt_text', 'altText', 'альт']).slice(0, 500),
-    tags,
+    tags: enrichTagsFromOnImage(tags, on_image),
     attributes,
     warnings: warningsSrc.map(w => String(w).trim()).filter(Boolean).slice(0, 20),
   };
+}
+
+/** Если тегов мало — добрать уникальные элементы из on_image (принт). */
+function enrichTagsFromOnImage(tags, onImage, { min = 10, max = 18 } = {}) {
+  const out = [...tags];
+  const seen = new Set(out.map(t => t.toLowerCase()));
+  const parts = String(onImage || '')
+    .split(/[,;|·•]+/)
+    .map(s => s.replace(/\s+/g, ' ').trim())
+    .filter(s => s.length >= 2 && s.length <= 48);
+  for (const part of parts) {
+    if (out.length >= max) break;
+    const key = part.toLowerCase();
+    if (seen.has(key)) continue;
+    // Пропускаем слишком общие куски, если уже есть теги
+    if (/^(белый фон|фон|принт|рисунок|графика|тематика)$/i.test(part)) continue;
+    seen.add(key);
+    out.push(part);
+  }
+  // Если модель дала мало тегов, а on_image богатый — добиваем до min
+  if (out.length < min && parts.length) {
+    for (const part of parts) {
+      if (out.length >= min) break;
+      const key = part.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(part);
+    }
+  }
+  return out.slice(0, 40);
 }
 
 /** Строгая схема для AITUNNEL json_schema — меньше пустых/чужих ключей у Gemini. */
@@ -208,7 +238,11 @@ export const PHOTO_RESPONSE_SCHEMA = {
         description: '3–5 предложений; при наличии принта — подробно что нарисовано и в каком стиле, без выдуманных свойств товара',
       },
       alt: { type: 'string', description: 'alt до 120 символов' },
-      tags: { type: 'array', items: { type: 'string' } },
+      tags: {
+        type: 'array',
+        items: { type: 'string' },
+        description: '10–18 тегов: элементы принта + тип товара + цвет; не только общие ярлыки',
+      },
       attributes: {
         type: 'object',
         additionalProperties: false,
@@ -274,7 +308,7 @@ function buildUserParts({ mime, base64, filename, productId, sku, dump }) {
       ? 'Опиши товар на фото. Если есть принт/рисунок — детально перечисли элементы рисунка в on_image и опиши композицию в description. Dump не копируй слепо.'
       : (productId
         ? 'Привязка к дампу задана, но товар в дампе не найден — опиши только фото. Принт разбери по элементам, не обобщай.'
-        : 'Опиши только фото. Если на товаре принт — on_image: каждый объект рисунка отдельно; description: 1–2 предложения про композицию принта. Без выдуманных свойств.'),
+        : 'Опиши только фото. Если на товаре принт — on_image и tags: каждый объект рисунка отдельно (10–18 тегов); description: композиция принта. Без выдуманных свойств.'),
   };
   return [
     { type: 'text', text: JSON.stringify(meta) },

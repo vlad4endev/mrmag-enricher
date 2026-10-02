@@ -2232,7 +2232,17 @@ async function apiPhotoImportYml(req, res, id) {
     let chunks;
     if (body.url) {
       if (!/^https?:\/\//i.test(body.url)) return json(res, 400, { error: 'Нужна ссылка http(s)' });
-      const r = await fetch(body.url, { signal: AbortSignal.timeout(300_000) });
+      let r;
+      try {
+        r = await fetch(body.url, { signal: AbortSignal.timeout(300_000) });
+      } catch (direct) {
+        // Сеть сервера режет часть сайтов (DNS/DPI) — пробуем через прокси приложения. ponytail: ответ через прокси буферизуется целиком.
+        try {
+          r = await providerFetch(body.url, { signal: AbortSignal.timeout(300_000) }, { useProxy: true });
+        } catch (viaProxy) {
+          return json(res, 502, { error: `Сервер не достаёт до фида (напрямую: ${direct.cause?.code || direct.message}; через прокси: ${viaProxy.message}). Загрузите файл фида кнопкой «Файл фида».` });
+        }
+      }
       if (!r.ok) return json(res, 502, { error: `Фид: HTTP ${r.status}` });
       chunks = r.body;
     } else if (body.xml) {

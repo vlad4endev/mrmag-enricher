@@ -2307,7 +2307,9 @@ input[type=range]::-moz-range-thumb{
           <div class="hint">JPEG · PNG · WebP · GIF</div>
         </div>
         <input type="file" id="photoFile" accept="image/jpeg,image/png,image/webp,image/gif,.jpg,.jpeg,.png,.webp,.gif" multiple hidden>
-        <button type="button" class="sbtn ghost wide" style="margin-top:8px" onclick="photoImportYml()" title="Товары из YML-фида: название и характеристики пойдут в описание"><i class="ti ti-file-code"></i> Импорт из YML-фида</button>
+        <button type="button" class="sbtn ghost wide" style="margin-top:8px" onclick="photoImportYml()" title="Товары из YML-фида: название и характеристики пойдут в описание"><i class="ti ti-file-code"></i> Импорт из YML-фида (ссылка)</button>
+        <button type="button" class="sbtn ghost wide" style="margin-top:6px" onclick="document.getElementById('photoYmlFile').click()" title="XML-файл фида с вашего компьютера"><i class="ti ti-file-upload"></i> Файл фида…</button>
+        <input type="file" id="photoYmlFile" accept=".xml,text/xml,application/xml" hidden onchange="photoImportYmlFile(this)">
       </section>
 
       <section class="photo-card">
@@ -10021,10 +10023,23 @@ function fileToDataUrl(file){
 async function photoImportYml(){
   const url=prompt('Ссылка на YML-фид (http/https):', localStorage.getItem('photoYmlUrl')||'');
   if(!url) return;
+  localStorage.setItem('photoYmlUrl',url);
+  await photoRunYmlImport({ url });
+}
+
+async function photoImportYmlFile(input){
+  const f=input.files&&input.files[0];
+  input.value='';
+  if(!f) return;
+  if(f.size>60e6){ photoStatus('Файл больше 60 МБ', false); return; }
+  photoStatus('Читаю файл…');
+  await photoRunYmlImport({ xml:await f.text() });
+}
+
+async function photoRunYmlImport(src){
   const limit=prompt('Сколько товаров взять (каждый — отдельный платный запрос к модели):','50');
   if(!limit) return;
   const category=prompt('Только раздел, в названии пути которого есть… (пусто — любой):','')||'';
-  localStorage.setItem('photoYmlUrl',url);
   if(!photoAlbum){
     await photoCreateAlbum('Фид '+new Date().toLocaleString('ru-RU'));
     if(!photoAlbum) return;
@@ -10033,7 +10048,7 @@ async function photoImportYml(){
   try{
     const out=await apiJson('/api/photos/'+encodeURIComponent(photoAlbum.id)+'/import-yml',{
       method:'POST', headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({ url, limit:Number(limit), category }),
+      body:JSON.stringify({ ...src, limit:Number(limit), category }),
     });
     await photoOpenAlbum(photoAlbum.id, true);
     await photoLoadAlbums();

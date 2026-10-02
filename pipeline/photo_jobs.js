@@ -238,7 +238,7 @@ export function createPhotoJobStore({
 export async function describeAlbumItem({
   albumId, itemId, model, provider, onNote, describeImpl,
 }) {
-  const file = readPhotoFile(albumId, itemId);
+  const file = await readPhotoFile(albumId, itemId);
   const result = await (describeImpl || describePhoto)(file, {
     model,
     provider,

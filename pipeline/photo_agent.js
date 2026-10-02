@@ -40,6 +40,19 @@ export function defaultPhotoSystemPrompt() {
 Без dump опирайся только на изображение.`;
 }
 
+/** Добавка к промпту для товаров из фида: факты магазина — истина, фото — только внешний вид. */
+export const FEED_PROMPT_ADDENDUM = `
+
+РЕЖИМ «ТОВАР ИЗ ФИДА МАГАЗИНА». В запросе поле dump — проверенные данные магазина: name, category (путь разделов), brand, article, specs (характеристики), synonyms.
+Правила:
+1. Название, тип товара, размеры, объём, количество в упаковке, материал, бренд — ТОЛЬКО из dump. Числа и единицы переноси дословно (например «Объем, мл: 250» → «250 мл»), не округляй и не пересчитывай.
+2. Фото добавляет только то, что в dump не указано: цвет, форму, принт/рисунок, надписи, внешний вид упаковки.
+3. description: 3–5 предложений, начни с точного типа товара из name/category, затем ключевые характеристики из specs (3–6 самых значимых), затем внешний вид с фото. Без рекламных клише («идеально подойдёт», «высокое качество»), без выдуманных свойств и назначения, которых нет ни в dump, ни на фото.
+4. caption: тип товара + главная характеристика + заметная визуальная черта.
+5. tags: тип товара, бренд, материал, цвет, ключевые значения specs, элементы принта; используй synonyms как поисковые варианты названия.
+6. Если фото явно противоречит dump (другой товар, другой цвет/форма) — не подгоняй, добавь в warnings «фото расходится с данными фида: …» и опиши по dump.
+7. attributes: product_type и color заполни по dump/фото; brand_visible — виден ли бренд на фото.`;
+
 /** Пустой шаблон → встроенный. */
 export function resolvePhotoSystemPrompt(template, vars = {}) {
   const raw = String(template || '').trim();
@@ -283,6 +296,19 @@ function dumpContext(productId, sku, category, root) {
   }
 }
 
+function feedContext(feed) {
+  return {
+    name: feed.name || '',
+    category: feed.category || null,
+    brand: feed.brand || null,
+    article: feed.article || null,
+    specs: Object.fromEntries((feed.specs || []).map(p => [p.name, p.value])),
+    synonyms: feed.synonyms?.length ? feed.synonyms : undefined,
+    shop_description: feed.shop_description ? stripHtml(feed.shop_description).slice(0, 1200) : undefined,
+    annotation: (feed.specs || []).map(p => `${p.name}: ${p.value}`).join('; ').slice(0, 1500),
+  };
+}
+
 function consistencyLite(vision, dump) {
   const warnings = [...(vision.warnings || [])];
   if (!dump) return warnings;
@@ -298,13 +324,15 @@ function consistencyLite(vision, dump) {
   return warnings;
 }
 
-function buildUserParts({ mime, base64, filename, productId, sku, dump }) {
+function buildUserParts({ mime, base64, filename, productId, sku, dump, feed = false }) {
   const meta = {
     filename: filename || null,
     product_id: productId || null,
     sku: sku || null,
     dump: dump || null,
-    task: dump
+    task: feed
+      ? 'Составь точное описание товара: факты берёшь из dump (название, specs), с фото — только цвет, форма, принт, надписи. Следуй правилам режима «товар из фида».'
+      : dump
       ? 'Опиши товар на фото. Если есть принт/рисунок — детально перечисли элементы рисунка в on_image и опиши композицию в description. Dump не копируй слепо.'
       : (productId
         ? 'Привязка к дампу задана, но товар в дампе не найден — опиши только фото. Принт разбери по элементам, не обобщай.'
@@ -346,10 +374,13 @@ export async function describePhoto(itemFile, opts = {}) {
 
   const doFetch = typeof fetchImpl === 'function' ? fetchImpl : fetch;
   const rate = limiter || new RateLimiter(30);
-  const dump = useDump
-    ? dumpContext(itemFile.item?.product_id, itemFile.item?.sku, category, root)
-    : null;
-  if (useDump && !dump) {
+  const feed = itemFile.item?.feed || null;
+  const dump = feed
+    ? feedContext(feed)
+    : (useDump ? dumpContext(itemFile.item?.product_id, itemFile.item?.sku, category, root) : null);
+  if (feed) {
+    onNote(`фид · ${feed.name}`);
+  } else if (useDump && !dump) {
     onNote('привязка к дампу: товар не найден — описываем только фото');
   } else if (dump) {
     onNote(`дамп ${category} · id ${dump.id || itemFile.item?.product_id}`);
@@ -357,11 +388,11 @@ export async function describePhoto(itemFile, opts = {}) {
   const base64 = itemFile.buf.toString('base64');
   const system = resolvePhotoSystemPrompt(systemPrompt, {
     filename: itemFile.item?.filename || '',
-    product_id: useDump ? (itemFile.item?.product_id || '') : '',
+    product_id: (feed || useDump) ? (itemFile.item?.product_id || '') : '',
     dump_category: useDump ? (category || '') : '',
     dump_name: dump?.name || '',
     dump_annotation: dump?.annotation || '',
-  });
+  }) + (feed ? FEED_PROMPT_ADDENDUM : '');
 
   await rate.wait(ms => onNote(`rate limit ${ms}ms`));
   onNote('запрос к vision-модели…');
@@ -374,9 +405,10 @@ export async function describePhoto(itemFile, opts = {}) {
         mime: itemFile.mime,
         base64,
         filename: itemFile.item?.filename,
-        productId: useDump ? itemFile.item?.product_id : null,
-        sku: useDump ? itemFile.item?.sku : null,
+        productId: (feed || useDump) ? itemFile.item?.product_id : null,
+        sku: (feed || useDump) ? itemFile.item?.sku : null,
         dump,
+        feed: Boolean(feed),
       }),
     },
   ];

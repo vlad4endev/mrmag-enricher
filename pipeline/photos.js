@@ -216,6 +216,8 @@ function publicItem(item) {
     sku: item.sku || null,
     dump_category,
     dump_bound: Boolean(product_id && dump_category),
+    feed: item.feed || null,
+    image_url: item.image_url || null,
     status: item.status || 'uploaded',
     description: item.description || null,
     caption: item.caption || null,
@@ -283,6 +285,69 @@ function decodeDataUrlOrBase64(raw) {
   const m = s.match(/^data:([^;]+);base64,(.+)$/i);
   if (m) return { mimeHint: m[1].toLowerCase(), buf: Buffer.from(m[2], 'base64') };
   return { mimeHint: null, buf: Buffer.from(s.replace(/\s+/g, ''), 'base64') };
+}
+
+/** Картинка фидового товара скачивается при первом обращении и кэшируется в альбоме. */
+async function fetchFeedImage(meta, item, root, fetchImpl = fetch) {
+  let res;
+  try {
+    res = await fetchImpl(item.image_url, { signal: AbortSignal.timeout(30_000) });
+  } catch (e) {
+    throw httpError(502, `не удалось скачать фото ${item.image_url}: ${e.message}`);
+  }
+  if (!res.ok) throw httpError(502, `фото ${item.image_url}: HTTP ${res.status}`);
+  const buf = Buffer.from(await res.arrayBuffer());
+  if (!buf.length || buf.length > MAX_FILE_BYTES) throw httpError(502, 'фото пустое или слишком большое');
+  const mime = sniffMime(buf, item.image_url);
+  if (!mime || !MIME_EXT[mime]) throw httpError(502, 'по ссылке не JPEG/PNG/WebP/GIF');
+  const stored = `${item.id}.${MIME_EXT[mime]}`;
+  fs.mkdirSync(filesDir(meta.id, root), { recursive: true });
+  fs.writeFileSync(path.join(filesDir(meta.id, root), stored), buf);
+  Object.assign(item, { stored, mime, bytes: buf.length });
+  writeMeta(meta, root);
+}
+
+/**
+ * Импорт товаров из YML (см. yml_feed.js): фото не качаем сразу, храним ссылку и факты фида.
+ * Повторный импорт того же фида пропускает уже добавленные offer id.
+ */
+export function importFeedOffers(albumId, offers, root) {
+  const meta = readMeta(assertAlbumId(albumId), root);
+  const have = new Set(meta.items.map(i => i.product_id).filter(Boolean));
+  const fresh = offers.filter(o => o.image_url && !have.has(o.id));
+  if (meta.items.length + fresh.length > MAX_ITEMS) {
+    throw httpError(400, `Лимит фото в альбоме: ${MAX_ITEMS} — уменьшите выборку`);
+  }
+  for (const o of fresh) {
+    const id = newId();
+    meta.items.push({
+      id,
+      filename: (o.image_url.split(/[?#]/)[0].split('/').pop() || o.id).replace(/[^\w.\-а-яА-ЯёЁ]+/g, '_').slice(0, 120),
+      stored: null,
+      mime: null,
+      bytes: 0,
+      image_url: o.image_url,
+      product_id: o.id,
+      sku: o.vendor_code || null,
+      dump_category: null,
+      feed: {
+        name: o.name,
+        category: o.category || null,
+        brand: o.vendor || null,
+        article: o.vendor_code || null,
+        url: o.url || null,
+        specs: o.params,
+        synonyms: o.synonyms,
+        shop_description: o.description || null,
+      },
+      status: 'uploaded',
+      description: null, caption: null, on_image: null, alt: null,
+      tags: [], attributes: {}, warnings: [], error: null, usage: null, described_at: null,
+      created_at: Date.now(),
+    });
+  }
+  writeMeta(meta, root);
+  return { album: publicAlbum(meta), added: fresh.length, skipped: offers.length - fresh.length };
 }
 
 /**
@@ -400,17 +465,18 @@ export function deletePhotoItem(albumId, itemId, root) {
   const idx = meta.items.findIndex(i => i.id === id);
   if (idx < 0) throw httpError(404, 'Фото не найдено');
   const [item] = meta.items.splice(idx, 1);
-  const file = path.join(filesDir(meta.id, root), item.stored);
-  try { if (fs.existsSync(file)) fs.unlinkSync(file); } catch { /* */ }
+  const file = item.stored ? path.join(filesDir(meta.id, root), item.stored) : null;
+  try { if (file && fs.existsSync(file)) fs.unlinkSync(file); } catch { /* */ }
   writeMeta(meta, root);
   return { ok: true, id };
 }
 
-export function readPhotoFile(albumId, itemId, root) {
+export async function readPhotoFile(albumId, itemId, root) {
   const meta = readMeta(assertAlbumId(albumId), root);
   const id = assertItemId(itemId);
   const item = meta.items.find(i => i.id === id);
   if (!item) throw httpError(404, 'Фото не найдено');
+  if (!item.stored && item.image_url) await fetchFeedImage(meta, item, root);
   const file = path.join(filesDir(meta.id, root), item.stored);
   if (!fs.existsSync(file)) throw httpError(404, 'Файл на диске не найден');
   return {
@@ -493,6 +559,14 @@ export function photoExportRow(item, {
 } = {}) {
   const row = {};
 
+  // Идентификаторы первыми: id товара и id изображения (у фида — имя файла картинки магазина без расширения).
+  const productId = item.product_id != null ? String(item.product_id).trim() : '';
+  if (productId) row.product_id = productId;
+  const imageId = item.image_url
+    ? item.filename.replace(/\.[^.]+$/, '')
+    : item.id;
+  if (imageId) row.image_id = imageId;
+
   const image = String(item.filename || '').trim();
   if (image) row.image = image;
 
@@ -513,8 +587,14 @@ export function photoExportRow(item, {
   const attributes = orderedAttributes(item.attributes);
   if (attributes) row.attributes = attributes;
 
-  const productId = item.product_id != null ? String(item.product_id).trim() : '';
-  if (productId) row.product_id = productId;
+  if (item.feed) {
+    row.name = item.feed.name;
+    if (item.feed.category) row.category = item.feed.category;
+    if (item.feed.url) row.url = item.feed.url;
+    if (item.image_url) row.image_url = item.image_url;
+    if (item.feed.article) row.sku = item.feed.article;
+  }
+
 
   if (include_images && album_id && item.stored && root) {
     try {

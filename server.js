@@ -69,6 +69,7 @@
  *   PATCH /api/photos/:id/items/:itemId  правка текста
  *   DELETE /api/photos/:id/items/:itemId
  *   GET  /api/photos/:id/file/:itemId    отдать бинарник изображения
+ *   POST /api/photos/:id/import-yml      импорт YML-фида { url | xml, limit?, offset?, category? }
  *   POST /api/photos/:id/describe        фоновый vision-прогон { model, item_ids? }
  *   GET  /api/photo-jobs                 список vision-прогонов
  *   GET  /api/photo-jobs/:id             прогресс
@@ -143,10 +144,11 @@ import {
 import { exportTemplatesView } from './pipeline/export_template.js';
 import {
   bootstrapPhotosDir, listAlbums, createAlbum, getAlbum, deleteAlbum,
-  uploadPhotos, patchPhotoItem, deletePhotoItem, readPhotoFile, buildMlExport,
+  uploadPhotos, importFeedOffers, patchPhotoItem, deletePhotoItem, readPhotoFile, buildMlExport,
   applyDescribeResult, patchAlbum, photosDir, PHOTO_LIMITS, sumPhotoSpend,
 } from './pipeline/photos.js';
 import { describePhoto, defaultPhotoSystemPrompt, PHOTO_PROMPT_PLACEHOLDERS, resolvePhotoSystemPrompt } from './pipeline/photo_agent.js';
+import { parseYml } from './pipeline/yml_feed.js';
 import { createPhotoJobStore } from './pipeline/photo_jobs.js';
 import { analyzeFiles, createRefineJobStore } from './refine/index.js';
 import {
@@ -2135,7 +2137,7 @@ async function describePhotoOne({ albumId, itemId, model, provider, onNote = () 
     );
   }
   const resolvedModel = resolveProviderModel(prov, model, settings) || model;
-  const file = readPhotoFile(albumId, itemId, ROOT);
+  const file = await readPhotoFile(albumId, itemId, ROOT);
   let albumCat = null;
   try { albumCat = getAlbum(albumId, ROOT)?.category || null; } catch { /* */ }
   const dumpCat = file.item?.dump_category || albumCat || null;
@@ -2218,6 +2220,34 @@ async function apiPhotoUpload(req, res, id) {
   }
 }
 
+async function apiPhotoImportYml(req, res, id) {
+  const raw = await readBody(req, BULK_BODY_LIMIT);
+  let body;
+  try { body = JSON.parse(raw || '{}'); } catch { return json(res, 400, { error: 'Тело не JSON' }); }
+  const limit = Math.min(Math.max(Number(body.limit) || 100, 1), PHOTO_LIMITS.MAX_ITEMS);
+  const offset = Math.max(Number(body.offset) || 0, 0);
+  const cat = String(body.category || '').trim().toLowerCase();
+  const filter = cat ? o => o.category.toLowerCase().includes(cat) : null;
+  try {
+    let chunks;
+    if (body.url) {
+      if (!/^https?:\/\//i.test(body.url)) return json(res, 400, { error: 'Нужна ссылка http(s)' });
+      const r = await fetch(body.url, { signal: AbortSignal.timeout(300_000) });
+      if (!r.ok) return json(res, 502, { error: `Фид: HTTP ${r.status}` });
+      chunks = r.body;
+    } else if (body.xml) {
+      chunks = [String(body.xml)];
+    } else {
+      return json(res, 400, { error: 'Передайте url или xml' });
+    }
+    const { offers } = await parseYml(chunks, { limit, offset, filter });
+    if (!offers.length) return json(res, 400, { error: 'В фиде нет подходящих товаров' });
+    return json(res, 200, importFeedOffers(id, offers, ROOT));
+  } catch (e) {
+    return json(res, e.status || 400, { error: e.message });
+  }
+}
+
 async function apiPhotoItemPatch(req, res, albumId, itemId) {
   const raw = await readBody(req, 1_000_000);
   let body;
@@ -2234,9 +2264,9 @@ function apiPhotoItemDelete(res, albumId, itemId) {
   catch (e) { return json(res, e.status || 500, { error: e.message }); }
 }
 
-function apiPhotoFile(res, albumId, itemId) {
+async function apiPhotoFile(res, albumId, itemId) {
   try {
-    const { mime, buf } = readPhotoFile(albumId, itemId, ROOT);
+    const { mime, buf } = await readPhotoFile(albumId, itemId, ROOT);
     res.writeHead(200, {
       'Content-Type': mime,
       'Content-Length': buf.length,
@@ -2695,9 +2725,11 @@ const server = http.createServer(async (req, res) => {
       }
     }
     const photoFile = u.pathname.match(/^\/api\/photos\/([^/]+)\/file\/([^/]+)$/);
-    if (photoFile && req.method === 'GET') return apiPhotoFile(res, photoFile[1], photoFile[2]);
+    if (photoFile && req.method === 'GET') return await apiPhotoFile(res, photoFile[1], photoFile[2]);
     const photoUpload = u.pathname.match(/^\/api\/photos\/([^/]+)\/upload$/);
     if (photoUpload && req.method === 'POST') return await apiPhotoUpload(req, res, photoUpload[1]);
+    const photoYml = u.pathname.match(/^\/api\/photos\/([^/]+)\/import-yml$/);
+    if (photoYml && req.method === 'POST') return await apiPhotoImportYml(req, res, photoYml[1]);
     const photoDescribe = u.pathname.match(/^\/api\/photos\/([^/]+)\/describe$/);
     if (photoDescribe && req.method === 'POST') return await apiPhotoDescribe(req, res, photoDescribe[1]);
     const photoExport = u.pathname.match(/^\/api\/photos\/([^/]+)\/export-ml$/);

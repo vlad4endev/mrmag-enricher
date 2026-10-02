@@ -10,7 +10,7 @@
     "enrich": "node enricher_mrmag.js",
     "enrich:kholodilniki": "CATEGORY=kholodilniki node enricher_mrmag.js",
     "enrich:stiralnye": "CATEGORY=stiralnye_mashiny node enricher_mrmag.js",
-    "test": "node test.mjs && node test_ui.mjs && node test_api.mjs && node test_pipeline.mjs && node test_refine.mjs",
+    "test": "node test_yml.mjs && node test.mjs && node test_ui.mjs && node test_api.mjs && node test_pipeline.mjs && node test_refine.mjs",
     "test:pipeline": "node test_pipeline.mjs",
     "refine": "node refine/cli.mjs",
     "validate": "node cli.mjs validate out/products_467.json",

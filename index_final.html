@@ -2307,6 +2307,7 @@ input[type=range]::-moz-range-thumb{
           <div class="hint">JPEG · PNG · WebP · GIF</div>
         </div>
         <input type="file" id="photoFile" accept="image/jpeg,image/png,image/webp,image/gif,.jpg,.jpeg,.png,.webp,.gif" multiple hidden>
+        <button type="button" class="sbtn ghost wide" style="margin-top:8px" onclick="photoImportYml()" title="Товары из YML-фида: название и характеристики пойдут в описание"><i class="ti ti-file-code"></i> Импорт из YML-фида</button>
       </section>
 
       <section class="photo-card">
@@ -10015,6 +10016,29 @@ function fileToDataUrl(file){
     r.onerror=()=>reject(new Error('не удалось прочитать '+file.name));
     r.readAsDataURL(file);
   });
+}
+
+async function photoImportYml(){
+  const url=prompt('Ссылка на YML-фид (http/https):', localStorage.getItem('photoYmlUrl')||'');
+  if(!url) return;
+  const limit=prompt('Сколько товаров взять (каждый — отдельный платный запрос к модели):','50');
+  if(!limit) return;
+  const category=prompt('Только раздел, в названии пути которого есть… (пусто — любой):','')||'';
+  localStorage.setItem('photoYmlUrl',url);
+  if(!photoAlbum){
+    await photoCreateAlbum('Фид '+new Date().toLocaleString('ru-RU'));
+    if(!photoAlbum) return;
+  }
+  photoStatus('Читаю фид… крупный фид может занять минуты');
+  try{
+    const out=await apiJson('/api/photos/'+encodeURIComponent(photoAlbum.id)+'/import-yml',{
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({ url, limit:Number(limit), category }),
+    });
+    await photoOpenAlbum(photoAlbum.id, true);
+    await photoLoadAlbums();
+    photoStatus(`Из фида добавлено ${out.added}, пропущено дублей ${out.skipped}`, true);
+  }catch(e){ photoStatus(e.message||'ошибка импорта', false); }
 }
 
 async function photoIngestFiles(files){

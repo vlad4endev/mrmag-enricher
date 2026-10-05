@@ -290,26 +290,36 @@ function decodeDataUrlOrBase64(raw) {
 
 /** Картинка фидового товара скачивается при первом обращении и кэшируется в альбоме. */
 async function fetchFeedImage(meta, item, root, fetchImpl = fetch) {
-  let res;
-  try {
-    res = await fetchImpl(item.image_url, { signal: AbortSignal.timeout(30_000) });
-  } catch (direct) {
-    // Сеть сервера может резать сайт магазина (DNS/DPI) — вторая попытка через прокси приложения.
-    try {
-      res = await providerFetch(item.image_url, { signal: AbortSignal.timeout(60_000) }, { useProxy: true });
-    } catch (viaProxy) {
-      throw httpError(502, `не удалось скачать фото ${item.image_url} (напрямую: ${direct.cause?.code || direct.message}; через прокси: ${viaProxy.message})`);
-    }
+  const MIN_IMAGE_BYTES = 1024; // заглушки/пиксели трекеров — не фото товара
+  // Источник годится, только если по ссылке реально лежит картинка (проверяем содержимое, а не расширение в URL).
+  async function attempt(get) {
+    const res = await get();
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const type = String(res.headers?.get?.('content-type') || '').toLowerCase();
+    if (/^(text|application\/(xml|json))/.test(type)) throw new Error(`по ссылке не картинка (${type.split(';')[0]})`);
+    const buf = Buffer.from(await res.arrayBuffer());
+    if (buf.length < MIN_IMAGE_BYTES) throw new Error('файл слишком мал для фото');
+    if (buf.length > MAX_FILE_BYTES) throw new Error('файл слишком большой');
+    const mime = sniffMime(buf); // без имени файла: только сигнатура JPEG/PNG/WebP/GIF
+    if (!mime) throw new Error('содержимое не JPEG/PNG/WebP/GIF');
+    return { buf, mime };
   }
-  if (!res.ok) throw httpError(502, `фото ${item.image_url}: HTTP ${res.status}`);
-  const buf = Buffer.from(await res.arrayBuffer());
-  if (!buf.length || buf.length > MAX_FILE_BYTES) throw httpError(502, 'фото пустое или слишком большое');
-  const mime = sniffMime(buf, item.image_url);
-  if (!mime || !MIME_EXT[mime]) throw httpError(502, 'по ссылке не JPEG/PNG/WebP/GIF');
-  const stored = `${item.id}.${MIME_EXT[mime]}`;
+
+  const errors = [];
+  let got = null;
+  // Сеть сервера может резать сайт магазина (DNS/DPI): прямое соединение, затем прокси приложения.
+  for (const [label, get] of [
+    ['напрямую', () => fetchImpl(item.image_url, { signal: AbortSignal.timeout(30_000) })],
+    ['через прокси', () => providerFetch(item.image_url, { signal: AbortSignal.timeout(60_000) }, { useProxy: true })],
+  ]) {
+    try { got = await attempt(get); break; } catch (e) { errors.push(`${label}: ${e.cause?.code || e.message}`); }
+  }
+  if (!got) throw httpError(502, `изображение недоступно ${item.image_url} (${errors.join('; ')}) — товар пропущен`);
+
+  const stored = `${item.id}.${MIME_EXT[got.mime]}`;
   fs.mkdirSync(filesDir(meta.id, root), { recursive: true });
-  fs.writeFileSync(path.join(filesDir(meta.id, root), stored), buf);
-  Object.assign(item, { stored, mime, bytes: buf.length });
+  fs.writeFileSync(path.join(filesDir(meta.id, root), stored), got.buf);
+  Object.assign(item, { stored, mime: got.mime, bytes: got.buf.length });
   writeMeta(meta, root);
 }
 

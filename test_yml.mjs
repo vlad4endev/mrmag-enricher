@@ -48,3 +48,32 @@ console.log('yml ok');
   srv.close();
   console.log('binary ok');
 }
+
+// Скачивание фото из фида: берём только настоящую картинку, иначе товар пропускается без вызова модели
+{
+  const http = await import('node:http');
+  const { readPhotoFile } = await import('./pipeline/photos.js');
+  const png = Buffer.concat([Buffer.from('89504e470d0a1a0a', 'hex'), Buffer.alloc(2000, 1)]);
+  const srv = http.createServer((q, r) => {
+    if (q.url === '/ok.png') return r.end(png);
+    if (q.url === '/stub.png') { r.setHeader('content-type', 'text/html'); return r.end('<html>' + 'x'.repeat(3000)); }
+    if (q.url === '/fake.png') return r.end(Buffer.alloc(3000, 65));       // «.png» без сигнатуры картинки
+    if (q.url === '/tiny.png') return r.end(png.subarray(0, 100));
+    r.statusCode = 404; r.end('no');
+  }).listen(0);
+  const base = `http://127.0.0.1:${srv.address().port}`;
+  const mk = (name) => ({ ...xmlOffer, id: 'p-' + name, image_url: `${base}/${name}.png` });
+  const xmlOffer = offers[0];
+  const root2 = fs.mkdtempSync(path.join(os.tmpdir(), 'img-'));
+  process.env.PHOTOS_DIR = path.join(root2, 'photos');
+  const al = createAlbum('i', {}, root2);
+  importFeedOffers(al.id, ['ok', 'stub', 'fake', 'tiny', 'missing'].map(mk), root2);
+  const items = getAlbum(al.id, root2).items;
+  const byName = n => items.find(i => i.product_id === 'p-' + n).id;
+  assert.equal((await readPhotoFile(al.id, byName('ok'), root2)).mime, 'image/png');
+  for (const n of ['stub', 'fake', 'tiny', 'missing']) {
+    await assert.rejects(readPhotoFile(al.id, byName(n), root2), /изображение недоступно/, n);
+  }
+  srv.close();
+  console.log('image validation ok');
+}

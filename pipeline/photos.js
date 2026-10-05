@@ -8,6 +8,7 @@ import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 import { resolveDictRoot } from './dict.js';
+import { providerFetch } from '../socks.js';
 import { recordProviderSpend, usageCostRub, roundMoney } from './provider_billing.js';
 
 const ALBUM_RE = /^[a-zA-Z0-9_-]{1,64}$/;
@@ -292,8 +293,13 @@ async function fetchFeedImage(meta, item, root, fetchImpl = fetch) {
   let res;
   try {
     res = await fetchImpl(item.image_url, { signal: AbortSignal.timeout(30_000) });
-  } catch (e) {
-    throw httpError(502, `не удалось скачать фото ${item.image_url}: ${e.message}`);
+  } catch (direct) {
+    // Сеть сервера может резать сайт магазина (DNS/DPI) — вторая попытка через прокси приложения.
+    try {
+      res = await providerFetch(item.image_url, { signal: AbortSignal.timeout(60_000) }, { useProxy: true });
+    } catch (viaProxy) {
+      throw httpError(502, `не удалось скачать фото ${item.image_url} (напрямую: ${direct.cause?.code || direct.message}; через прокси: ${viaProxy.message})`);
+    }
   }
   if (!res.ok) throw httpError(502, `фото ${item.image_url}: HTTP ${res.status}`);
   const buf = Buffer.from(await res.arrayBuffer());

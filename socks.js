@@ -201,16 +201,20 @@ const directAgents = {
 
 const MAX_DIRECT_BODY = 8 * 1024 * 1024;
 
-async function decodeHttpBody(buf, encoding) {
+async function decodeHttpBuffer(buf, encoding) {
   const enc = String(encoding || '').toLowerCase();
   try {
-    if (enc.includes('br')) return (await brotli(buf)).toString('utf8');
-    if (enc.includes('gzip')) return (await gunzip(buf)).toString('utf8');
-    if (enc.includes('deflate')) return (await inflate(buf)).toString('utf8');
+    if (enc.includes('br')) return await brotli(buf);
+    if (enc.includes('gzip')) return await gunzip(buf);
+    if (enc.includes('deflate')) return await inflate(buf);
   } catch {
-    return buf.toString('utf8');
+    return buf;
   }
-  return buf.toString('utf8');
+  return buf;
+}
+
+async function decodeHttpBody(buf, encoding) {
+  return (await decodeHttpBuffer(buf, encoding)).toString('utf8');
 }
 
 /**
@@ -640,6 +644,14 @@ function fetchResponse(status, headers, buf, url) {
     },
     async json() {
       return JSON.parse(await this.text());
+    },
+    // Бинарный доступ (картинки, большие XML): как у fetch, но тело уже целиком в памяти.
+    async arrayBuffer() {
+      const b = await decodeHttpBuffer(buf, headers['content-encoding']);
+      return b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength);
+    },
+    get body() {
+      return (async function* gen() { yield await decodeHttpBuffer(buf, headers['content-encoding']); })();
     },
   };
 }

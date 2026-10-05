@@ -33,3 +33,18 @@ const item = getAlbum(album.id, root).items[0];
 assert.equal(item.feed.specs[0].value, '250');
 assert.equal(item.image_url, 'https://s/1.png');
 console.log('yml ok');
+
+// providerFetch отдаёт бинарное тело (картинки идут через него, если сайт магазина недоступен напрямую)
+{
+  const { providerFetch } = await import('./socks.js');
+  const http = await import('node:http');
+  const bin = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0, 255, 128, 7]);
+  const srv = http.createServer((q, r) => r.end(bin)).listen(0);
+  const res = await providerFetch(`http://127.0.0.1:${srv.address().port}/x.png`, {}, { useProxy: false });
+  assert.deepEqual(Buffer.from(await res.arrayBuffer()), bin);
+  let got = Buffer.alloc(0);
+  for await (const c of res.body) got = Buffer.concat([got, c]);
+  assert.deepEqual(got, bin);
+  srv.close();
+  console.log('binary ok');
+}

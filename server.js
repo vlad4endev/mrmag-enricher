@@ -2137,9 +2137,22 @@ async function describePhotoOne({ albumId, itemId, model, provider, onNote = () 
     );
   }
   const resolvedModel = resolveProviderModel(prov, model, settings) || model;
+  const albumBefore = (() => { try { return getAlbum(albumId, ROOT); } catch { return null; } })();
+  const itemBefore = albumBefore?.items?.find(i => i.id === itemId) || null;
+  if (itemBefore?.image_url && !itemBefore?.stored) {
+    onNote('скачиваю фото по ссылке фида…');
+  }
   const file = await readPhotoFile(albumId, itemId, ROOT);
-  let albumCat = null;
-  try { albumCat = getAlbum(albumId, ROOT)?.category || null; } catch { /* */ }
+  if (!file?.buf?.length || !file?.mime) {
+    throw Object.assign(
+      new Error(itemBefore?.image_url
+        ? `не удалось прогрузить изображение ${itemBefore.image_url}`
+        : 'нет файла изображения для описания'),
+      { status: 502 },
+    );
+  }
+  onNote(`фото прогружено · ${file.mime} · ${Math.round(file.buf.length / 1024)} КБ`);
+  let albumCat = albumBefore?.category || null;
   const dumpCat = file.item?.dump_category || albumCat || null;
   const useDump = Boolean(file.item?.product_id && dumpCat);
   const result = await describePhoto(file, {

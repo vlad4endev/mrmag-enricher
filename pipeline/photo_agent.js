@@ -324,7 +324,14 @@ function consistencyLite(vision, dump) {
   return warnings;
 }
 
-function buildUserParts({ mime, base64, filename, productId, sku, dump, feed = false }) {
+/** Собирает multimodal user-content: JSON с фактами фида/дампа + data-URL картинки. */
+export function buildUserParts({ mime, base64, filename, productId, sku, dump, feed = false }) {
+  if (!mime || !/^image\/(jpeg|png|webp|gif)$/i.test(mime)) {
+    throw Object.assign(new Error(`для описания нужна картинка JPEG/PNG/WebP/GIF, получено «${mime || 'пусто'}»`), { status: 502 });
+  }
+  if (!base64 || String(base64).length < 64) {
+    throw Object.assign(new Error('пустой буфер изображения — фото не прогрузилось'), { status: 502 });
+  }
   const meta = {
     filename: filename || null,
     product_id: productId || null,
@@ -371,6 +378,12 @@ export async function describePhoto(itemFile, opts = {}) {
   } = opts;
 
   if (!model) throw Object.assign(new Error('Не передана модель'), { status: 400 });
+  if (!itemFile?.buf?.length) {
+    throw Object.assign(new Error('нет байтов изображения — сначала прогрузите фото по ссылке'), { status: 502 });
+  }
+  if (!itemFile?.mime || !/^image\/(jpeg|png|webp|gif)$/i.test(itemFile.mime)) {
+    throw Object.assign(new Error(`некорректный тип изображения: ${itemFile?.mime || 'пусто'}`), { status: 502 });
+  }
 
   const doFetch = typeof fetchImpl === 'function' ? fetchImpl : fetch;
   const rate = limiter || new RateLimiter(30);
@@ -385,6 +398,8 @@ export async function describePhoto(itemFile, opts = {}) {
   } else if (dump) {
     onNote(`дамп ${category} · id ${dump.id || itemFile.item?.product_id}`);
   }
+  onNote(`фото в запросе · ${itemFile.mime} · ${Math.round(itemFile.buf.length / 1024)} КБ`
+    + (itemFile.item?.image_url ? ' · по ссылке фида' : ''));
   const base64 = itemFile.buf.toString('base64');
   const system = resolvePhotoSystemPrompt(systemPrompt, {
     filename: itemFile.item?.filename || '',
@@ -397,20 +412,24 @@ export async function describePhoto(itemFile, opts = {}) {
   await rate.wait(ms => onNote(`rate limit ${ms}ms`));
   onNote('запрос к vision-модели…');
 
+  const userParts = buildUserParts({
+    mime: itemFile.mime,
+    base64,
+    filename: itemFile.item?.filename,
+    productId: (feed || useDump) ? itemFile.item?.product_id : null,
+    sku: (feed || useDump) ? itemFile.item?.sku : null,
+    dump,
+    feed: Boolean(feed),
+  });
+  // Страховка: в multimodal-запросе обязательно есть data-URL картинки.
+  const imagePart = userParts.find(p => p?.type === 'image_url');
+  if (!imagePart?.image_url?.url?.startsWith(`data:${itemFile.mime};base64,`)) {
+    throw Object.assign(new Error('внутренний сбой: картинка не попала в запрос к модели'), { status: 500 });
+  }
+
   const messages = [
     { role: 'system', content: system },
-    {
-      role: 'user',
-      content: buildUserParts({
-        mime: itemFile.mime,
-        base64,
-        filename: itemFile.item?.filename,
-        productId: (feed || useDump) ? itemFile.item?.product_id : null,
-        sku: (feed || useDump) ? itemFile.item?.sku : null,
-        dump,
-        feed: Boolean(feed),
-      }),
-    },
+    { role: 'user', content: userParts },
   ];
 
   const baseBody = {

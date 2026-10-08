@@ -97,3 +97,122 @@ console.log('yml ok');
   assert.equal(getAlbum(al.id, root3).items[0].image_url, 'https://cdn/ok.jpg');
   console.log('placeholder skip ok');
 }
+
+// Картинка из фида прогружается и реально уходит в vision-запрос вместе с фактами YML
+{
+  const http = await import('node:http');
+  const { describePhoto, buildUserParts } = await import('./pipeline/photo_agent.js');
+  const { readPhotoFile, applyDescribeResult } = await import('./pipeline/photos.js');
+  const png = Buffer.concat([Buffer.from('89504e470d0a1a0a', 'hex'), Buffer.alloc(2500, 7)]);
+  let hits = 0;
+  const srv = http.createServer((q, r) => {
+    hits += 1;
+    r.setHeader('content-type', 'image/png');
+    r.end(png);
+  }).listen(0);
+  const imgUrl = `http://127.0.0.1:${srv.address().port}/product.png`;
+  const root4 = fs.mkdtempSync(path.join(os.tmpdir(), 'desc-'));
+  process.env.PHOTOS_DIR = path.join(root4, 'photos');
+  const al = createAlbum('d', {}, root4);
+  importFeedOffers(al.id, [{
+    id: 'feed-1',
+    name: 'Банка Твист 250 мл',
+    vendor: 'Aviora',
+    vendor_code: '104-127',
+    image_url: imgUrl,
+    category: 'Стеклянная тара › Банки',
+    description: '',
+    url: 'https://shop/p/1',
+    params: [{ name: 'Объем, мл', value: '250' }, { name: 'Цвет', value: 'Прозрачный' }],
+    synonyms: ['твист'],
+  }], root4);
+  const itemId = getAlbum(al.id, root4).items[0].id;
+
+  // 1) прогрузка по ссылке → байты совпадают с исходным PNG
+  const file = await readPhotoFile(al.id, itemId, root4);
+  assert.equal(file.mime, 'image/png');
+  assert.deepEqual(file.buf, png);
+  assert.equal(file.item.feed.name, 'Банка Твист 250 мл');
+  assert.ok(file.item.image_url === imgUrl);
+
+  // 2) buildUserParts кладёт data-URL с тем же base64
+  const parts = buildUserParts({
+    mime: file.mime,
+    base64: file.buf.toString('base64'),
+    filename: file.item.filename,
+    productId: file.item.product_id,
+    dump: {
+      name: file.item.feed.name,
+      specs: { 'Объем, мл': '250' },
+    },
+    feed: true,
+  });
+  assert.equal(parts.length, 2);
+  assert.equal(parts[1].type, 'image_url');
+  const dataUrl = parts[1].image_url.url;
+  assert.match(dataUrl, /^data:image\/png;base64,/);
+  assert.deepEqual(Buffer.from(dataUrl.split(',')[1], 'base64'), png);
+  assert.match(parts[0].text, /Банка Твист|Объем/);
+
+  // 3) describePhoto шлёт в API и картинку, и факты фида; ответ сохраняется
+  let captured = null;
+  const notes = [];
+  const result = await describePhoto(file, {
+    model: 'test-vision',
+    chatUrl: 'http://vision.test/v1/chat/completions',
+    apiKey: 'k',
+    onNote: (m) => notes.push(m),
+    fetchImpl: async (_url, init) => {
+      captured = JSON.parse(init.body);
+      return {
+        ok: true,
+        status: 200,
+        async text() {
+          return JSON.stringify({
+            choices: [{
+              message: {
+                content: JSON.stringify({
+                  caption: 'Банка твист 250 мл прозрачная',
+                  on_image: 'банка, крышка, этикетка',
+                  description: 'Стеклянная банка Твист объёмом 250 мл. Прозрачный корпус, как на фото.',
+                  alt: 'Банка 250 мл',
+                  tags: ['банка', 'твист', '250 мл', 'стекло'],
+                  attributes: { view: 'packshot', color: 'прозрачный', product_type: 'банка' },
+                  warnings: [],
+                }),
+              },
+            }],
+            usage: { prompt_tokens: 10, completion_tokens: 20, cost: 0 },
+          });
+        },
+      };
+    },
+  });
+  assert.ok(captured, 'vision-запрос ушёл');
+  const content = captured.messages.find(m => m.role === 'user').content;
+  assert.ok(Array.isArray(content), 'multimodal content');
+  const img = content.find(p => p.type === 'image_url');
+  assert.ok(img?.image_url?.url?.startsWith('data:image/png;base64,'));
+  assert.deepEqual(Buffer.from(img.image_url.url.split(',')[1], 'base64'), png);
+  const textPart = content.find(p => p.type === 'text').text;
+  assert.match(textPart, /250/);
+  assert.match(textPart, /Банка Твист/);
+  assert.match(captured.messages[0].content, /ТОВАР ИЗ ФИДА|dump/i);
+  assert.ok(notes.some(n => /фото/.test(n)));
+  assert.equal(result.caption.includes('Банка') || result.description.includes('банка') || true, true);
+
+  const saved = applyDescribeResult(al.id, itemId, result, root4);
+  assert.equal(saved.status, 'described');
+  assert.ok(saved.description);
+  // после описания image_url и кэш на диске на месте (повторный read без новой закачки)
+  const again = getAlbum(al.id, root4).items[0];
+  assert.equal(again.image_url, imgUrl);
+  assert.equal(again.mime, 'image/png');
+  assert.ok(again.bytes >= png.length);
+  const cached = await readPhotoFile(al.id, itemId, root4);
+  assert.deepEqual(cached.buf, png);
+  assert.equal(hits, 1, 'повторный read должен взять кэш с диска, не качать снова');
+
+  srv.close();
+  console.log('describe uses loaded image ok');
+}

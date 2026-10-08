@@ -291,6 +291,7 @@ function decodeDataUrlOrBase64(raw) {
 /**
  * Картинка фидового товара скачивается при первом обращении (для vision) и кэшируется.
  * Важно: только напрямую, без прокси — иначе магазинные CDN/static часто отдают мусор.
+ * Возвращает буфер: вызывающий сразу отдаёт его в vision, не полагаясь только на meta.
  */
 async function fetchFeedImage(meta, item, root, fetchImpl = fetch) {
   const MIN_IMAGE_BYTES = 1024; // заглушки/пиксели трекеров — не фото товара
@@ -329,10 +330,33 @@ async function fetchFeedImage(meta, item, root, fetchImpl = fetch) {
   }
 
   const stored = `${item.id}.${MIME_EXT[mime]}`;
-  fs.mkdirSync(filesDir(meta.id, root), { recursive: true });
-  fs.writeFileSync(path.join(filesDir(meta.id, root), stored), buf);
+  const dir = filesDir(meta.id, root);
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, stored), buf);
+
+  // Параллельные воркеры описания не должны затирать чужой stored в meta.json.
+  const fresh = readMeta(meta.id, root);
+  const freshItem = fresh.items.find(i => i.id === item.id);
+  if (!freshItem) throw httpError(404, 'Фото не найдено');
+  if (freshItem.stored && freshItem.stored !== stored) {
+    const other = path.join(dir, freshItem.stored);
+    if (fs.existsSync(other)) {
+      try { fs.unlinkSync(path.join(dir, stored)); } catch { /* */ }
+      Object.assign(item, {
+        stored: freshItem.stored,
+        mime: freshItem.mime,
+        bytes: freshItem.bytes,
+      });
+      return {
+        buf: fs.readFileSync(other),
+        mime: freshItem.mime,
+      };
+    }
+  }
+  Object.assign(freshItem, { stored, mime, bytes: buf.length });
   Object.assign(item, { stored, mime, bytes: buf.length });
-  writeMeta(meta, root);
+  writeMeta(fresh, root);
+  return { buf, mime };
 }
 
 /**
@@ -514,20 +538,45 @@ export async function readPhotoFile(albumId, itemId, root) {
   const id = assertItemId(itemId);
   const item = meta.items.find(i => i.id === id);
   if (!item) throw httpError(404, 'Фото не найдено');
-  if (!item.stored && item.image_url) await fetchFeedImage(meta, item, root);
-  const file = path.join(filesDir(meta.id, root), item.stored);
-  if (!fs.existsSync(file)) throw httpError(404, 'Файл на диске не найден');
+
+  let buf = null;
+  let mime = item.mime || null;
+  const diskPath = item.stored ? path.join(filesDir(meta.id, root), item.stored) : null;
+  if (diskPath && fs.existsSync(diskPath)) {
+    buf = fs.readFileSync(diskPath);
+    mime = mime || sniffMime(buf);
+  } else if (item.image_url) {
+    // Нет файла на диске (первый прогон или гонка затёрла stored) — качаем по ссылке фида.
+    if (item.stored) Object.assign(item, { stored: null, mime: null, bytes: 0 });
+    const got = await fetchFeedImage(meta, item, root);
+    buf = got.buf;
+    mime = got.mime;
+  }
+
+  if (!buf?.length || !mime || !MIME_EXT[mime]) {
+    throw httpError(502, item.image_url
+      ? `изображение недоступно ${item.image_url} — не удалось прогрузить для описания`
+      : 'Файл на диске не найден');
+  }
+  // Сигнатура должна совпасть с mime — иначе vision получит мусор под видом картинки.
+  const sniffed = sniffMime(buf);
+  if (!sniffed || sniffed !== mime) {
+    throw httpError(502, `файл повреждён или это не картинка (${mime}${sniffed ? `≠${sniffed}` : ''})`);
+  }
+
   return {
     item: publicItem(item),
-    mime: item.mime,
-    buf: fs.readFileSync(file),
-    path: file,
+    mime,
+    buf,
+    path: item.stored ? path.join(filesDir(meta.id, root), item.stored) : null,
+    from_url: Boolean(item.image_url),
   };
 }
 
 export function applyDescribeResult(albumId, itemId, result, root) {
-  const meta = readMeta(assertAlbumId(albumId), root);
   const id = assertItemId(itemId);
+  // Пишем в свежий meta: параллельная скачка фото могла уже проставить stored/mime.
+  const meta = readMeta(assertAlbumId(albumId), root);
   const item = meta.items.find(i => i.id === id);
   if (!item) throw httpError(404, 'Фото не найдено');
 

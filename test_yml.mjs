@@ -287,3 +287,32 @@ console.log('yml ok');
   assert.equal(arr[0].image_id, row.image_id);
   console.log('ml export schema ok');
 }
+
+// Vision-промпт: контракт полей сохранён, объём урезан (токены system)
+{
+  const {
+    defaultPhotoSystemPrompt, FEED_PROMPT_ADDENDUM, PHOTO_RESPONSE_SCHEMA, buildUserParts,
+  } = await import('./pipeline/photo_agent.js');
+  const sys = defaultPhotoSystemPrompt();
+  const feed = FEED_PROMPT_ADDENDUM;
+  for (const key of ['caption', 'on_image', 'description', 'alt', 'tags', 'attributes', 'warnings', 'product_type', 'brand_visible', 'text_on_image']) {
+    assert.ok(sys.includes(key), `system missing ${key}`);
+  }
+  assert.ok(feed.includes('РЕЖИМ ФИДА'));
+  assert.ok(feed.includes('dump'));
+  assert.ok(sys.length < 1400, `system too long: ${sys.length}`);
+  assert.ok(feed.length < 700, `feed addendum too long: ${feed.length}`);
+  assert.ok((sys.length + feed.length) < 2000, `system+feed too long: ${sys.length + feed.length}`);
+  const req = PHOTO_RESPONSE_SCHEMA.schema.required;
+  assert.deepEqual(req, ['caption', 'on_image', 'description', 'alt', 'tags', 'attributes', 'warnings']);
+  const parts = buildUserParts({
+    imageUrl: 'https://cdn.example/a.png',
+    filename: 'x',
+    feed: true,
+    dump: { name: 'Банка' },
+  });
+  const meta = JSON.parse(parts[0].text);
+  assert.ok(meta.task.length < 80);
+  assert.equal(meta.dump.name, 'Банка');
+  console.log('photo prompt compact ok', sys.length + feed.length);
+}

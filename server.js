@@ -150,6 +150,7 @@ import {
 } from './pipeline/photos.js';
 import { describePhoto, defaultPhotoSystemPrompt, PHOTO_PROMPT_PLACEHOLDERS, resolvePhotoSystemPrompt } from './pipeline/photo_agent.js';
 import { parseYml } from './pipeline/yml_feed.js';
+import { acceptYmlChunk, discardYmlUpload, YML_CHUNK_LIMITS } from './pipeline/yml_chunks.js';
 import { createPhotoJobStore } from './pipeline/photo_jobs.js';
 import { analyzeFiles, createRefineJobStore } from './refine/index.js';
 import {
@@ -2233,24 +2234,83 @@ async function apiPhotoUpload(req, res, id) {
   }
 }
 
-async function apiPhotoImportYml(req, res, id) {
-  const raw = await readBody(req, BULK_BODY_LIMIT);
-  let body;
-  try { body = JSON.parse(raw || '{}'); } catch { return json(res, 400, { error: 'Тело не JSON' }); }
-  // По умолчанию — весь фид (до потолка альбома). Явный limit > 0 — урезать выборку.
+function ymlImportOpts(body = {}) {
   const rawLimit = body.limit;
   const limit = (rawLimit == null || rawLimit === '' || Number(rawLimit) <= 0)
     ? PHOTO_LIMITS.MAX_ITEMS
     : Math.min(Math.max(Number(rawLimit) || 1, 1), PHOTO_LIMITS.MAX_ITEMS);
   const offset = Math.max(Number(body.offset) || 0, 0);
   const cat = String(body.category || '').trim().toLowerCase();
-  // Раздел: путь категорий, название товара или бренд (не латиница-slug вроде pet-tara).
   const filter = cat
     ? (o) => {
       const blob = `${o.category || ''} ${o.name || ''} ${o.vendor || ''}`.toLowerCase();
       return blob.includes(cat);
     }
     : null;
+  return { limit, offset, cat, filter };
+}
+
+async function importYmlChunksToAlbum(albumId, chunks, { limit, offset, cat, filter }) {
+  const { offers, stats } = await parseYml(chunks, { limit, offset, filter });
+  if (!offers.length) {
+    const st = stats || {};
+    if (cat && (st.skipped_filter || 0) > 0) {
+      throw Object.assign(new Error(
+        `По фильтру «${cat}» ничего не осталось: с фото отсеяно ${st.skipped_filter}, `
+        + `без фото/noimage ${st.skipped_no_image || 0} (просмотрено ${st.scanned || 0}). `
+        + 'Оставьте поле раздела пустым или укажите часть русского названия («салфет», «банка»).',
+      ), { status: 400 });
+    }
+    throw Object.assign(new Error(
+      `В фиде нет товаров с реальной картинкой`
+      + (st.scanned ? ` (просмотрено ${st.scanned}, noimage/без фото: ${st.skipped_no_image || 0})` : '')
+      + '. Для Groster: скачайте XML и «Файл фида», раздел оставьте пустым.',
+    ), { status: 400 });
+  }
+  const out = importFeedOffers(albumId, offers, ROOT);
+  return { ...out, stats };
+}
+
+async function apiPhotoImportYml(req, res, id) {
+  // Куски фида ~400 КБ; целый XML через прокси не шлём (nginx 413 на 1m).
+  const raw = await readBody(req, Math.max(BULK_BODY_LIMIT, YML_CHUNK_LIMITS.MAX_PART_CHARS + 200_000));
+  let body;
+  try { body = JSON.parse(raw || '{}'); } catch { return json(res, 400, { error: 'Тело не JSON' }); }
+
+  // Кусковая загрузка: { upload_id, part, parts, data, category?, limit? }
+  if (body.upload_id != null && body.data != null) {
+    let staged = null;
+    try {
+      staged = acceptYmlChunk(ROOT, {
+        upload_id: body.upload_id,
+        part: body.part,
+        parts: body.parts,
+        data: body.data,
+        album_id: id,
+      });
+      if (!staged.done) {
+        return json(res, 200, { ok: true, received: staged.received, parts: staged.parts, bytes: staged.bytes });
+      }
+      const opts = ymlImportOpts(body);
+      const fileChunks = fs.createReadStream(staged.filePath);
+      try {
+        const out = await importYmlChunksToAlbum(id, fileChunks, opts);
+        return json(res, 200, out);
+      } finally {
+        discardYmlUpload(ROOT, staged.uploadDir);
+      }
+    } catch (e) {
+      if (staged?.uploadDir) discardYmlUpload(ROOT, staged.uploadDir);
+      else if (body.upload_id) discardYmlUpload(ROOT, String(body.upload_id));
+      const msg = String(e.message || e);
+      if (/too large|слишком велико|entity too large|413/i.test(msg)) {
+        return json(res, 413, { error: msg });
+      }
+      return json(res, e.status || 400, { error: e.message });
+    }
+  }
+
+  const opts = ymlImportOpts(body);
   try {
     let chunks;
     if (body.url) {
@@ -2271,7 +2331,7 @@ async function apiPhotoImportYml(req, res, id) {
         return json(res, 502, {
           error: `Сервер не достаёт до фида (${direct.cause?.code || direct.message}). `
             + 'Скачайте https://groster.me/anyquery на компьютер и загрузите кнопкой «Файл фида» '
-            + '(в NPM/nginx: client_max_body_size 64m). Прокси для фида не используем — файл ~30 МБ.',
+            + '(файл уходит кусками, nginx 1m не мешает). Прокси для фида не используем.',
         });
       }
       if (!r.ok) return json(res, 502, { error: `Фид: HTTP ${r.status}` });
@@ -2281,33 +2341,23 @@ async function apiPhotoImportYml(req, res, id) {
       if (xml.length < 64 || !/<offer[\s>]/i.test(xml)) {
         return json(res, 400, { error: 'В файле нет YML-офферов — нужен XML с <offer> (например groster.me/anyquery)' });
       }
-      chunks = [xml];
-    } else {
-      return json(res, 400, { error: 'Передайте url или xml' });
-    }
-    const { offers, stats } = await parseYml(chunks, { limit, offset, filter });
-    if (!offers.length) {
-      const st = stats || {};
-      if (cat && (st.skipped_filter || 0) > 0) {
-        return json(res, 400, {
-          error: `По фильтру «${cat}» ничего не осталось: с фото отсеяно ${st.skipped_filter}, `
-            + `без фото/noimage ${st.skipped_no_image || 0} (просмотрено ${st.scanned || 0}). `
-            + 'Оставьте поле раздела пустым или укажите часть русского названия («салфет», «банка»).',
+      // Крупный XML одним POST режет nginx (413). Клиент должен слать кусками.
+      if (xml.length > YML_CHUNK_LIMITS.MAX_PART_CHARS) {
+        return json(res, 413, {
+          error: 'Фид слишком большой для одного запроса. Обновите страницу — «Файл фида» грузится кусками.',
         });
       }
-      return json(res, 400, {
-        error: `В фиде нет товаров с реальной картинкой`
-          + (st.scanned ? ` (просмотрено ${st.scanned}, noimage/без фото: ${st.skipped_no_image || 0})` : '')
-          + '. Для Groster: скачайте XML и «Файл фида», раздел оставьте пустым.',
-      });
+      chunks = [xml];
+    } else {
+      return json(res, 400, { error: 'Передайте url, xml или куски upload_id' });
     }
-    const out = importFeedOffers(id, offers, ROOT);
-    return json(res, 200, { ...out, stats });
+    const out = await importYmlChunksToAlbum(id, chunks, opts);
+    return json(res, 200, out);
   } catch (e) {
     const msg = String(e.message || e);
     if (/too large|слишком велико|entity too large|413/i.test(msg)) {
       return json(res, 413, {
-        error: 'Файл фида слишком большой для прокси. В nginx/NPM: client_max_body_size 64m; затем снова «Файл фида».',
+        error: 'Файл фида слишком большой для прокси. Используйте «Файл фида» (загрузка кусками) или в NPM: client_max_body_size 64m.',
       });
     }
     return json(res, e.status || 400, { error: e.message });

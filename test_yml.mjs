@@ -221,3 +221,22 @@ console.log('yml ok');
   assert.deepEqual(Buffer.from(img.image_url.url.split(',')[1], 'base64'), png);
   console.log('describe uses local bytes ok');
 }
+
+// Куски фида склеиваются и парсятся как целый XML (обход nginx 413)
+{
+  const { acceptYmlChunk, discardYmlUpload } = await import('./pipeline/yml_chunks.js');
+  const rootC = fs.mkdtempSync(path.join(os.tmpdir(), 'ych-'));
+  process.env.PHOTOS_DIR = path.join(rootC, 'photos');
+  const mid = Math.floor(xml.length / 2);
+  const a = acceptYmlChunk(rootC, { upload_id: 'uploadtest01', part: 0, parts: 2, data: xml.slice(0, mid) });
+  assert.equal(a.done, false);
+  const b = acceptYmlChunk(rootC, { upload_id: 'uploadtest01', part: 1, parts: 2, data: xml.slice(mid) });
+  assert.equal(b.done, true);
+  const joined = fs.readFileSync(b.filePath, 'utf8');
+  assert.equal(joined, xml);
+  const parsed = await parseYml(fs.createReadStream(b.filePath));
+  assert.equal(parsed.offers.length, 3);
+  discardYmlUpload(rootC, b.uploadDir);
+  assert.ok(!fs.existsSync(b.uploadDir));
+  console.log('yml chunk upload ok');
+}

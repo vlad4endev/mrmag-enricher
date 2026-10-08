@@ -3176,6 +3176,7 @@ async function apiJson(url,opts){
     // Не-JSON на 502/504 отдаёт шлюз перед сервером, а не сервер. Обогащение
     // одного товара занимает до трёх минут, nginx по умолчанию ждёт минуту.
     if(r.status===502||r.status===504) throw new Error(`шлюз не дождался ответа (HTTP ${r.status}) — поднимите proxy_read_timeout, обогащение товара идёт до 3 минут`);
+    if(r.status===413) throw new Error('Слишком большой запрос (HTTP 413). Для YML нажмите «Файл фида» ещё раз — файл уходит кусками. Либо в NPM/nginx: client_max_body_size 64m.');
     throw new Error(`HTTP ${r.status}: ${brief(text)}`);
   }
   if(d===null) throw new Error(`сервер вернул не JSON: ${brief(text)||'пустой ответ'}`);
@@ -10047,6 +10048,26 @@ async function photoImportYmlFile(input){
   await photoRunYmlImport({ xml:await f.text() });
 }
 
+/** Крупный XML одним POST режет nginx (413). Шлём кусками < ~400 КБ. */
+async function photoImportYmlChunked(xml, category){
+  const CHUNK=400000;
+  const parts=Math.max(1, Math.ceil(xml.length/CHUNK));
+  const upload_id='u'+Date.now().toString(36)+Math.random().toString(36).slice(2,10);
+  let out=null;
+  for(let part=0; part<parts; part++){
+    photoStatus(`Загрузка фида ${part+1}/${parts}… ${(xml.length/1e6).toFixed(1)} МБ`);
+    out=await apiJson('/api/photos/'+encodeURIComponent(photoAlbum.id)+'/import-yml',{
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({
+        upload_id, part, parts,
+        data:xml.slice(part*CHUNK, (part+1)*CHUNK),
+        limit:0, category,
+      }),
+    });
+  }
+  return out;
+}
+
 async function photoRunYmlImport(src){
   // Весь фид с реальными фото (limit:0). Сколько описывать — чекбоксы после импорта.
   // Пусто = все разделы. Не латиница-slug (pet-tara) — фрагмент русского названия.
@@ -10059,11 +10080,16 @@ async function photoRunYmlImport(src){
   }
   photoStatus(src.xml?'Читаю файл фида… весь каталог':'Качаю весь фид… у Groster ~30 МБ, может занять минуты');
   try{
-    const out=await apiJson('/api/photos/'+encodeURIComponent(photoAlbum.id)+'/import-yml',{
-      method:'POST', headers:{'Content-Type':'application/json'},
-      // limit: 0 → сервер берёт все офферы с фото (до потолка альбома)
-      body:JSON.stringify({ ...src, limit:0, category }),
-    });
+    let out;
+    if(src.xml && src.xml.length>400000){
+      out=await photoImportYmlChunked(src.xml, category);
+    }else{
+      out=await apiJson('/api/photos/'+encodeURIComponent(photoAlbum.id)+'/import-yml',{
+        method:'POST', headers:{'Content-Type':'application/json'},
+        // limit: 0 → сервер берёт все офферы с фото (до потолка альбома)
+        body:JSON.stringify({ ...src, limit:0, category }),
+      });
+    }
     await photoOpenAlbum(photoAlbum.id, true);
     await photoLoadAlbums();
     const st=out.stats;
@@ -10589,7 +10615,10 @@ async function photoStartDescribe(){
     return;
   }
   if(!photoModel){ photoStatus('Выберите модель AITUNNEL', false); return; }
-  const item_ids=photoSel.size?[...photoSel]:null;
+  // Пусто или «Все» — не тащим тысячи id в POST (иначе nginx 413).
+  const allIds=photoAlbum.items.map(i=>i.id);
+  const selectedAll=!photoSel.size||(photoSel.size===allIds.length&&allIds.every(id=>photoSel.has(id)));
+  const item_ids=selectedAll?null:[...photoSel];
   try{
     const job=await apiJson('/api/photos/'+encodeURIComponent(photoAlbum.id)+'/describe',{
       method:'POST', headers:{'Content-Type':'application/json'},

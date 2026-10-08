@@ -146,9 +146,11 @@ import {
   bootstrapPhotosDir, listAlbums, createAlbum, getAlbum, deleteAlbum,
   uploadPhotos, importFeedOffers, patchPhotoItem, deletePhotoItem, readPhotoFile, buildMlExport,
   applyDescribeResult, patchAlbum, photosDir, PHOTO_LIMITS, sumPhotoSpend,
+  loadPhotoForDescribe,
 } from './pipeline/photos.js';
 import { describePhoto, defaultPhotoSystemPrompt, PHOTO_PROMPT_PLACEHOLDERS, resolvePhotoSystemPrompt } from './pipeline/photo_agent.js';
 import { parseYml } from './pipeline/yml_feed.js';
+import { acceptYmlChunk, discardYmlUpload, YML_CHUNK_LIMITS } from './pipeline/yml_chunks.js';
 import { createPhotoJobStore } from './pipeline/photo_jobs.js';
 import { analyzeFiles, createRefineJobStore } from './refine/index.js';
 import {
@@ -2137,9 +2139,21 @@ async function describePhotoOne({ albumId, itemId, model, provider, onNote = () 
     );
   }
   const resolvedModel = resolveProviderModel(prov, model, settings) || model;
-  const file = await readPhotoFile(albumId, itemId, ROOT);
-  let albumCat = null;
-  try { albumCat = getAlbum(albumId, ROOT)?.category || null; } catch { /* */ }
+  const albumBefore = (() => { try { return getAlbum(albumId, ROOT); } catch { return null; } })();
+  // Фид: ссылка уходит в AITUNNEL как есть — без скачивания на сервер и без прокси.
+  // Иначе на VPS static.groster.me часто даёт ECONNREFUSED / обрыв TLS через прокси.
+  const file = await loadPhotoForDescribe(albumId, itemId, ROOT);
+  if (!file?.remote_url && !file?.buf?.length) {
+    throw Object.assign(
+      new Error(file?.item?.image_url
+        ? `нет изображения для описания: ${file.item.image_url}`
+        : 'нет файла изображения для описания'),
+      { status: 502 },
+    );
+  }
+  if (file.remote_url) onNote('фото: ссылка фида → vision (без скачивания на сервер)');
+  else onNote(`фото с диска · ${file.mime} · ${Math.round(file.buf.length / 1024)} КБ`);
+  let albumCat = albumBefore?.category || null;
   const dumpCat = file.item?.dump_category || albumCat || null;
   const useDump = Boolean(file.item?.product_id && dumpCat);
   const result = await describePhoto(file, {
@@ -2220,40 +2234,133 @@ async function apiPhotoUpload(req, res, id) {
   }
 }
 
-async function apiPhotoImportYml(req, res, id) {
-  const raw = await readBody(req, BULK_BODY_LIMIT);
-  let body;
-  try { body = JSON.parse(raw || '{}'); } catch { return json(res, 400, { error: 'Тело не JSON' }); }
-  const limit = Math.min(Math.max(Number(body.limit) || 100, 1), PHOTO_LIMITS.MAX_ITEMS);
+function ymlImportOpts(body = {}) {
+  const rawLimit = body.limit;
+  const limit = (rawLimit == null || rawLimit === '' || Number(rawLimit) <= 0)
+    ? PHOTO_LIMITS.MAX_ITEMS
+    : Math.min(Math.max(Number(rawLimit) || 1, 1), PHOTO_LIMITS.MAX_ITEMS);
   const offset = Math.max(Number(body.offset) || 0, 0);
   const cat = String(body.category || '').trim().toLowerCase();
-  const filter = cat ? o => o.category.toLowerCase().includes(cat) : null;
+  const filter = cat
+    ? (o) => {
+      const blob = `${o.category || ''} ${o.name || ''} ${o.vendor || ''}`.toLowerCase();
+      return blob.includes(cat);
+    }
+    : null;
+  return { limit, offset, cat, filter };
+}
+
+async function importYmlChunksToAlbum(albumId, chunks, { limit, offset, cat, filter }) {
+  const { offers, stats } = await parseYml(chunks, { limit, offset, filter });
+  if (!offers.length) {
+    const st = stats || {};
+    if (cat && (st.skipped_filter || 0) > 0) {
+      throw Object.assign(new Error(
+        `По фильтру «${cat}» ничего не осталось: с фото отсеяно ${st.skipped_filter}, `
+        + `без фото/noimage ${st.skipped_no_image || 0} (просмотрено ${st.scanned || 0}). `
+        + 'Оставьте поле раздела пустым или укажите часть русского названия («салфет», «банка»).',
+      ), { status: 400 });
+    }
+    throw Object.assign(new Error(
+      `В фиде нет товаров с реальной картинкой`
+      + (st.scanned ? ` (просмотрено ${st.scanned}, noimage/без фото: ${st.skipped_no_image || 0})` : '')
+      + '. Для Groster: скачайте XML и «Файл фида», раздел оставьте пустым.',
+    ), { status: 400 });
+  }
+  const out = importFeedOffers(albumId, offers, ROOT);
+  return { ...out, stats };
+}
+
+async function apiPhotoImportYml(req, res, id) {
+  // Куски фида ~400 КБ; целый XML через прокси не шлём (nginx 413 на 1m).
+  const raw = await readBody(req, Math.max(BULK_BODY_LIMIT, YML_CHUNK_LIMITS.MAX_PART_CHARS + 200_000));
+  let body;
+  try { body = JSON.parse(raw || '{}'); } catch { return json(res, 400, { error: 'Тело не JSON' }); }
+
+  // Кусковая загрузка: { upload_id, part, parts, data, category?, limit? }
+  if (body.upload_id != null && body.data != null) {
+    let staged = null;
+    try {
+      staged = acceptYmlChunk(ROOT, {
+        upload_id: body.upload_id,
+        part: body.part,
+        parts: body.parts,
+        data: body.data,
+        album_id: id,
+      });
+      if (!staged.done) {
+        return json(res, 200, { ok: true, received: staged.received, parts: staged.parts, bytes: staged.bytes });
+      }
+      const opts = ymlImportOpts(body);
+      const fileChunks = fs.createReadStream(staged.filePath);
+      try {
+        const out = await importYmlChunksToAlbum(id, fileChunks, opts);
+        return json(res, 200, out);
+      } finally {
+        fileChunks.destroy();
+        discardYmlUpload(ROOT, staged.uploadDir);
+      }
+    } catch (e) {
+      if (staged?.uploadDir) discardYmlUpload(ROOT, staged.uploadDir);
+      else if (body.upload_id) discardYmlUpload(ROOT, String(body.upload_id));
+      const msg = String(e.message || e);
+      if (/too large|слишком велико|entity too large|413/i.test(msg)) {
+        return json(res, 413, { error: msg });
+      }
+      return json(res, e.status || 400, { error: e.message });
+    }
+  }
+
+  const opts = ymlImportOpts(body);
   try {
     let chunks;
     if (body.url) {
       if (!/^https?:\/\//i.test(body.url)) return json(res, 400, { error: 'Нужна ссылка http(s)' });
+      // Только прямой поток. Фид Groster ~30+ МБ — через прокси приложения (лимит 8 МБ
+      // и полная буферизация) он не проходит. При ECONNREFUSED — «Файл фида».
       let r;
       try {
-        r = await fetch(body.url, { signal: AbortSignal.timeout(300_000) });
+        r = await fetch(body.url, {
+          signal: AbortSignal.timeout(300_000),
+          headers: {
+            Accept: 'application/xml,text/xml,*/*',
+            'User-Agent': 'Mozilla/5.0 (compatible; OgranPhotos/1.0)',
+          },
+          redirect: 'follow',
+        });
       } catch (direct) {
-        // Сеть сервера режет часть сайтов (DNS/DPI) — пробуем через прокси приложения. ponytail: ответ через прокси буферизуется целиком.
-        try {
-          r = await providerFetch(body.url, { signal: AbortSignal.timeout(300_000) }, { useProxy: true });
-        } catch (viaProxy) {
-          return json(res, 502, { error: `Сервер не достаёт до фида (напрямую: ${direct.cause?.code || direct.message}; через прокси: ${viaProxy.message}). Загрузите файл фида кнопкой «Файл фида».` });
-        }
+        return json(res, 502, {
+          error: `Сервер не достаёт до фида (${direct.cause?.code || direct.message}). `
+            + 'Скачайте https://groster.me/anyquery на компьютер и загрузите кнопкой «Файл фида» '
+            + '(файл уходит кусками, nginx 1m не мешает). Прокси для фида не используем.',
+        });
       }
       if (!r.ok) return json(res, 502, { error: `Фид: HTTP ${r.status}` });
-      chunks = r.body;
+      chunks = r.body || [await r.text()];
     } else if (body.xml) {
-      chunks = [String(body.xml)];
+      const xml = String(body.xml);
+      if (xml.length < 64 || !/<offer[\s>]/i.test(xml)) {
+        return json(res, 400, { error: 'В файле нет YML-офферов — нужен XML с <offer> (например groster.me/anyquery)' });
+      }
+      // Крупный XML одним POST режет nginx (413). Клиент должен слать кусками.
+      if (xml.length > YML_CHUNK_LIMITS.MAX_PART_CHARS) {
+        return json(res, 413, {
+          error: 'Фид слишком большой для одного запроса. Обновите страницу — «Файл фида» грузится кусками.',
+        });
+      }
+      chunks = [xml];
     } else {
-      return json(res, 400, { error: 'Передайте url или xml' });
+      return json(res, 400, { error: 'Передайте url, xml или куски upload_id' });
     }
-    const { offers } = await parseYml(chunks, { limit, offset, filter });
-    if (!offers.length) return json(res, 400, { error: 'В фиде нет подходящих товаров' });
-    return json(res, 200, importFeedOffers(id, offers, ROOT));
+    const out = await importYmlChunksToAlbum(id, chunks, opts);
+    return json(res, 200, out);
   } catch (e) {
+    const msg = String(e.message || e);
+    if (/too large|слишком велико|entity too large|413/i.test(msg)) {
+      return json(res, 413, {
+        error: 'Файл фида слишком большой для прокси. Используйте «Файл фида» (загрузка кусками) или в NPM: client_max_body_size 64m.',
+      });
+    }
     return json(res, e.status || 400, { error: e.message });
   }
 }

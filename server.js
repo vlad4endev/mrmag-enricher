@@ -2237,7 +2237,11 @@ async function apiPhotoImportYml(req, res, id) {
   const raw = await readBody(req, BULK_BODY_LIMIT);
   let body;
   try { body = JSON.parse(raw || '{}'); } catch { return json(res, 400, { error: 'Тело не JSON' }); }
-  const limit = Math.min(Math.max(Number(body.limit) || 100, 1), PHOTO_LIMITS.MAX_ITEMS);
+  // По умолчанию — весь фид (до потолка альбома). Явный limit > 0 — урезать выборку.
+  const rawLimit = body.limit;
+  const limit = (rawLimit == null || rawLimit === '' || Number(rawLimit) <= 0)
+    ? PHOTO_LIMITS.MAX_ITEMS
+    : Math.min(Math.max(Number(rawLimit) || 1, 1), PHOTO_LIMITS.MAX_ITEMS);
   const offset = Math.max(Number(body.offset) || 0, 0);
   const cat = String(body.category || '').trim().toLowerCase();
   // Раздел: путь категорий, название товара или бренд (не латиница-slug вроде pet-tara).

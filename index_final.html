@@ -2307,7 +2307,7 @@ input[type=range]::-moz-range-thumb{
           <div class="hint">JPEG · PNG · WebP · GIF</div>
         </div>
         <input type="file" id="photoFile" accept="image/jpeg,image/png,image/webp,image/gif,.jpg,.jpeg,.png,.webp,.gif" multiple hidden>
-        <button type="button" class="sbtn ghost wide" style="margin-top:8px" onclick="photoImportYml()" title="Товары из YML-фида: название и характеристики пойдут в описание"><i class="ti ti-file-code"></i> Импорт из YML-фида (ссылка)</button>
+        <button type="button" class="sbtn ghost wide" style="margin-top:8px" onclick="photoImportYml()" title="Весь YML-фид с фото в альбом; сколько описывать — выберете сами"><i class="ti ti-file-code"></i> Импорт из YML-фида (ссылка)</button>
         <button type="button" class="sbtn ghost wide" style="margin-top:6px" onclick="document.getElementById('photoYmlFile').click()" title="XML-файл фида с вашего компьютера"><i class="ti ti-file-upload"></i> Файл фида…</button>
         <input type="file" id="photoYmlFile" accept=".xml,.yml,text/xml,application/xml,application/octet-stream" hidden onchange="photoImportYmlFile(this)">
       </section>
@@ -10047,25 +10047,26 @@ async function photoImportYmlFile(input){
 }
 
 async function photoRunYmlImport(src){
-  const limit=prompt('Сколько товаров взять (каждый — отдельный платный запрос к модели):','50');
-  if(!limit) return;
-  // Пусто = весь фид. Не вводите латиницу-slug (pet-tara) — только фрагмент русского названия раздела.
-  const category=prompt('Фильтр раздела (пусто = все). Пример: салфет / банка / ПЭТ','')||'';
+  // Весь фид с реальными фото. Сколько описывать — выбираете чекбоксами в списке.
+  // Пусто = все разделы. Не вводите латиницу-slug (pet-tara) — только фрагмент русского названия.
+  const category=prompt('Фильтр раздела (пусто = весь фид). Пример: салфет / банка / ПЭТ','')||'';
+  if(category===null) return;
   if(!photoAlbum){
     await photoCreateAlbum('Фид '+new Date().toLocaleString('ru-RU'));
     if(!photoAlbum) return;
   }
-  photoStatus(src.xml?'Читаю файл фида…':'Качаю фид… у Groster ~30 МБ, может занять минуты');
+  photoStatus(src.xml?'Читаю файл фида… весь каталог':'Качаю весь фид… у Groster ~30 МБ, может занять минуты');
   try{
     const out=await apiJson('/api/photos/'+encodeURIComponent(photoAlbum.id)+'/import-yml',{
       method:'POST', headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({ ...src, limit:Number(limit), category }),
+      // limit: 0 → сервер берёт все офферы с фото (до потолка альбома)
+      body:JSON.stringify({ ...src, limit:0, category }),
     });
     await photoOpenAlbum(photoAlbum.id, true);
     await photoLoadAlbums();
     const st=out.stats;
     const extra=st?` · в фиде с фото ${st.matched ?? out.added}, noimage ${st.skipped_no_image||0}`:'';
-    photoStatus(`Из фида добавлено ${out.added}, пропущено дублей ${out.skipped}${extra}`, true);
+    photoStatus(`Из фида добавлено ${out.added}, пропущено дублей ${out.skipped}${extra}. Отметьте нужные и нажмите «Описать»`, true);
   }catch(e){ photoStatus(e.message||'ошибка импорта', false); }
 }
 

@@ -14,7 +14,8 @@ import { recordProviderSpend, usageCostRub, roundMoney } from './provider_billin
 const ALBUM_RE = /^[a-zA-Z0-9_-]{1,64}$/;
 const ITEM_RE = /^[a-zA-Z0-9_-]{8,40}$/;
 const MAX_ALBUMS = 200;
-const MAX_ITEMS = 5_000;
+// Альбом под целый YML-фид (Groster ~17k офферов с фото). Описание — выборочно чекбоксами.
+const MAX_ITEMS = 25_000;
 const MAX_FILE_BYTES = Number(process.env.PHOTO_MAX_BYTES || 12 * 1024 * 1024);
 const MAX_BATCH_BYTES = Number(process.env.PHOTO_BATCH_BYTES || 48 * 1024 * 1024);
 const MAX_BATCH_FILES = Number(process.env.PHOTO_BATCH_FILES || 40);

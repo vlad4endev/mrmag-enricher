@@ -724,8 +724,77 @@ export function photoExportRow(item, {
   return row;
 }
 
+/** Экранирование текста для XML (атрибуты и содержимое тегов). */
+export function escapeXml(s) {
+  return String(s ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
+}
+
 /**
- * ML-датасет: JSONL / JSON — компактные тексты без служебного шума.
+ * ML-выгрузка в XML «как в фиде»: yml_catalog → shop → offers → offer.
+ * Те же поля, что в JSON (image→name, caption, objects, description, alt, tags,
+ * attributes, product_id, image_id) + picture из image_url товара.
+ */
+export function photosToYmlXml(photos, { imageUrls = [] } = {}) {
+  const offers = photos.map((row, i) => {
+    const id = String(row.product_id || row.image_id || `photo-${i + 1}`).trim();
+    const lines = [`    <offer id="${escapeXml(id)}">`];
+    if (row.image) lines.push(`      <name>${escapeXml(row.image)}</name>`);
+    const picture = imageUrls[i] || row.image_url || '';
+    if (picture) lines.push(`      <picture>${escapeXml(picture)}</picture>`);
+    for (const key of ['caption', 'objects', 'description', 'alt']) {
+      const val = String(row[key] || '').trim();
+      if (val) lines.push(`      <${key}>${escapeXml(val)}</${key}>`);
+    }
+    if (Array.isArray(row.tags) && row.tags.length) {
+      lines.push('      <tags>');
+      for (const t of row.tags) {
+        const tag = String(t || '').trim();
+        if (tag) lines.push(`        <tag>${escapeXml(tag)}</tag>`);
+      }
+      lines.push('      </tags>');
+    }
+    const attrs = row.attributes && typeof row.attributes === 'object' && !Array.isArray(row.attributes)
+      ? row.attributes
+      : null;
+    if (attrs && Object.keys(attrs).length) {
+      lines.push('      <attributes>');
+      for (const [k, v] of Object.entries(attrs)) {
+        if (v == null || v === false) continue;
+        const name = String(k || '').trim();
+        if (!name) continue;
+        lines.push(`        <param name="${escapeXml(name)}">${escapeXml(String(v))}</param>`);
+      }
+      lines.push('      </attributes>');
+    }
+    if (row.product_id) lines.push(`      <product_id>${escapeXml(row.product_id)}</product_id>`);
+    if (row.image_id) lines.push(`      <image_id>${escapeXml(row.image_id)}</image_id>`);
+    if (row.image_base64) {
+      lines.push(`      <image_base64>${escapeXml(row.image_base64)}</image_base64>`);
+    }
+    lines.push('    </offer>');
+    return lines.join('\n');
+  });
+
+  return [
+    '<?xml version="1.0" encoding="UTF-8"?>',
+    '<yml_catalog>',
+    '  <shop>',
+    '    <offers>',
+    ...offers,
+    '    </offers>',
+    '  </shop>',
+    '</yml_catalog>',
+    '',
+  ].join('\n');
+}
+
+/**
+ * ML-датасет: JSONL / JSON / XML (YML-фид) — компактные тексты без служебного шума.
  * include_images=false — без base64 (лёгкий).
  */
 export function buildMlExport(albumId, {
@@ -746,7 +815,19 @@ export function buildMlExport(albumId, {
     root,
   }));
 
-  if (format === 'json') {
+  const fmt = format === 'yml' ? 'xml' : format;
+
+  if (fmt === 'xml') {
+    return {
+      filename: `photos_${meta.id}.xml`,
+      mime: 'application/xml; charset=utf-8',
+      body: photosToYmlXml(photos, {
+        imageUrls: items.map(i => i.image_url || null),
+      }),
+    };
+  }
+
+  if (fmt === 'json') {
     // Массив объектов как во вкладке JSON / пример выгрузки — без version/total/photos.
     return {
       filename: `photos_${meta.id}.json`,

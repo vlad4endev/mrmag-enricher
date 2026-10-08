@@ -285,6 +285,31 @@ console.log('yml ok');
   const arr = JSON.parse(pack.body);
   assert.equal(arr.length, 1);
   assert.equal(arr[0].image_id, row.image_id);
+
+  // XML как в фиде: yml_catalog / offer + те же ML-поля
+  const { photosToYmlXml, escapeXml } = await import('./pipeline/photos.js');
+  assert.equal(escapeXml(`a<"&>'`), 'a&lt;&quot;&amp;&gt;&apos;');
+  const xmlPack = buildMlExport(al.id, { format: 'xml' }, rootE);
+  assert.equal(xmlPack.filename, `photos_${al.id}.xml`);
+  assert.match(xmlPack.mime, /xml/);
+  assert.match(xmlPack.body, /^<\?xml version="1.0" encoding="UTF-8"\?>/);
+  assert.match(xmlPack.body, /<yml_catalog>/);
+  assert.match(xmlPack.body, /<offer id="0a0a255e-cb2a-11ee-9fb8-ac1f6b855a52">/);
+  assert.match(xmlPack.body, /<name>Агрокассета 10 ячеек 10\/67, 700 мкм,цвет  черный<\/name>/);
+  assert.match(xmlPack.body, /<picture>https:\/\/static\.groster\.me\/images\/shop\/67304082-4919-11f1-9ee8-74563c4adfb9\.png<\/picture>/);
+  assert.match(xmlPack.body, /<caption>Агрокассета на 10 ячеек<\/caption>/);
+  assert.match(xmlPack.body, /<objects>агрокассета, 10 ячеек<\/objects>/);
+  assert.match(xmlPack.body, /<description>Описание кассеты для рассады\.<\/description>/);
+  assert.match(xmlPack.body, /<alt>Черная агрокассета<\/alt>/);
+  assert.match(xmlPack.body, /<tag>агрокассета<\/tag>/);
+  assert.match(xmlPack.body, /<param name="view">сверху<\/param>/);
+  assert.match(xmlPack.body, /<product_id>0a0a255e-cb2a-11ee-9fb8-ac1f6b855a52<\/product_id>/);
+  assert.match(xmlPack.body, /<image_id>67304082-4919-11f1-9ee8-74563c4adfb9<\/image_id>/);
+  const ymlAlias = buildMlExport(al.id, { format: 'yml' }, rootE);
+  assert.equal(ymlAlias.filename, xmlPack.filename);
+  assert.equal(ymlAlias.body, xmlPack.body);
+  const direct = photosToYmlXml([row], { imageUrls: [imgUrl] });
+  assert.match(direct, /<picture>/);
   console.log('ml export schema ok');
 }
 

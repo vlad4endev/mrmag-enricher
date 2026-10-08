@@ -75,7 +75,7 @@
  *   GET  /api/photo-jobs/:id             прогресс
  *   POST /api/photo-jobs/:id/stop
  *   DELETE /api/photo-jobs/:id
- *   POST /api/photos/:id/export-ml       выгрузка ML { format, include_images? }
+ *   POST /api/photos/:id/export-ml       выгрузка ML { format: jsonl|json|xml, include_images? }
  *
  * Товар без description и annotation не пропускается молча: по имени
  * ищется описание в сети (ensureSource), и адрес найденной страницы
@@ -2420,8 +2420,10 @@ async function apiPhotoExportMl(req, res, id) {
   let body;
   try { body = JSON.parse(raw || '{}'); } catch { return json(res, 400, { error: 'Тело не JSON' }); }
   try {
+    const fmt = String(body.format || 'jsonl').toLowerCase();
+    const format = fmt === 'json' || fmt === 'xml' || fmt === 'yml' ? (fmt === 'yml' ? 'xml' : fmt) : 'jsonl';
     const pack = buildMlExport(id, {
-      format: body.format === 'json' ? 'json' : 'jsonl',
+      format,
       include_images: Boolean(body.include_images),
       only_described: body.only_described !== false,
     }, ROOT);

@@ -7,7 +7,7 @@ import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 import {
-  getAlbum, readPhotoFile, applyDescribeResult, PHOTO_LIMITS,
+  getAlbum, loadPhotoForDescribe, applyDescribeResult, PHOTO_LIMITS,
 } from './photos.js';
 import { describePhoto } from './photo_agent.js';
 import { usageCostRub } from './provider_billing.js';
@@ -238,7 +238,7 @@ export function createPhotoJobStore({
 export async function describeAlbumItem({
   albumId, itemId, model, provider, onNote, describeImpl,
 }) {
-  const file = await readPhotoFile(albumId, itemId);
+  const file = await loadPhotoForDescribe(albumId, itemId);
   const result = await (describeImpl || describePhoto)(file, {
     model,
     provider,

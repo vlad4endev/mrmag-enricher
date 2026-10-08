@@ -7,6 +7,7 @@
 import { RateLimiter } from '../lib.js';
 import { getDump } from './dumps.js';
 import { normalizeProviderUsage } from './provider_billing.js';
+import { isUsablePictureUrl } from './yml_feed.js';
 
 export const PHOTO_PROMPT_PLACEHOLDERS = [
   { key: '{{filename}}', note: 'имя файла изображения' },
@@ -17,41 +18,38 @@ export const PHOTO_PROMPT_PLACEHOLDERS = [
 ];
 
 export function defaultPhotoSystemPrompt() {
-  return `Ты — агент описания товарных фото для интернет-магазина (RU): посуда, упаковка, техника, текстиль и любой другой товар.
-По изображению верни ТОЛЬКО JSON-объект:
+  // Короткий контракт: те же поля JSON, без дублей и «лондонских» примеров (жрут токены).
+  return `Описание товарного фото (RU). Ответ — только JSON без markdown:
 {
-  "caption": "короткая подпись 8–18 слов: товар + главная визуальная фишка (принт/цвет/форма), без перечня объектов",
-  "on_image": "полный инвентарь через запятую. Сначала сам товар и его части, затем КАЖДЫЙ узнаваемый элемент принта/рисунка/надписи ОТДЕЛЬНО. Запрещено обобщать принт словами вроде «городская тематика», «графический принт», «мотивы Лондона» — вместо этого: Биг-Бен, мост Тауэр, даблдекер, фонарь, машина, деревья, скамейка, силуэт города, надпись London. 10–22 элемента, без глаголов и без предложений",
-  "description": "3–5 предложений. 1) товар, материал/цвет/форма как видно. 2–3) если есть принт — подробно: стиль (скетч/линия/силуэт), что именно нарисовано и как расположено на корпусе. 4) фон и ракурс. Не повторяй on_image списком. Не выдумывай назначение, объём, материал «плотный картон», «для горячих напитков» и другие свойства, если их не видно на фото",
-  "alt": "alt-текст для a11y, до 120 символов",
-  "tags": ["обязательно 10–18 ярлыков. Большинство — элементы принта и надписи (Биг-Бен, Тауэрский мост, даблдекер, фонарь, London…), плюс тип товара и цвет. Не ограничивайся 4–5 общими тегами вроде «стакан», «Лондон»"],
+  "caption": "8–18 слов: тип товара + главная визуальная черта; не перечисляй объекты",
+  "on_image": "10–22 элемента через запятую: товар и части, затем каждый объект принта/надписи отдельно; без глаголов и обобщений («тематика», «мотивы»)",
+  "description": "3–5 предложений: цвет/форма/материал как видно; при принте — стиль и композиция; ракурс/фон. Не дублируй on_image списком. Не выдумывай свойства вне фото",
+  "alt": "до 120 символов",
+  "tags": ["10–18: элементы принта + тип + цвет; не только общие ярлыки"],
   "attributes": {
     "view": "front|side|angle|detail|packshot|lifestyle|other",
     "color": "если видно",
-    "product_type": "тип товара если узнаваем",
-    "brand_visible": true/false,
-    "text_on_image": "все читаемые надписи через запятую или пусто"
+    "product_type": "если узнаваем",
+    "brand_visible": true,
+    "text_on_image": "читаемые надписи через запятую или пусто"
   },
-  "warnings": ["если качество плохое / водяной знак / коллаж / не товар"]
+  "warnings": ["плохое качество / водяной знак / коллаж / не товар"]
 }
-Главное правило про принт: если на товаре рисунок — он важнее фона. on_image, description и tags должны быть насыщены деталями рисунка; tags без элементов принта — плохой ответ.
-Остальное: только факты с фото; язык русский; JSON без markdown.
-Если в запросе передан dump — не противоречь известным полям, но не копируй текст дампа слепо и не выдумывай то, чего нет на фото.
-Без dump опирайся только на изображение.`;
+Принт важнее фона — его детали в on_image, description и tags. Только факты с фото.
+Если в запросе есть dump — не противоречь ему и не копируй слепо; без dump — только изображение.`;
 }
 
-/** Добавка к промпту для товаров из фида: факты магазина — истина, фото — только внешний вид. */
+/** Добавка для товаров из фида: dump = истина магазина, фото = внешний вид. */
 export const FEED_PROMPT_ADDENDUM = `
 
-РЕЖИМ «ТОВАР ИЗ ФИДА МАГАЗИНА». В запросе поле dump — проверенные данные магазина: name, category (путь разделов), brand, article, specs (характеристики), synonyms.
-Правила:
-1. Название, тип товара, размеры, объём, количество в упаковке, материал, бренд — ТОЛЬКО из dump. Числа и единицы переноси дословно (например «Объем, мл: 250» → «250 мл»), не округляй и не пересчитывай.
-2. Фото добавляет только то, что в dump не указано: цвет, форму, принт/рисунок, надписи, внешний вид упаковки.
-3. description: 3–5 предложений, начни с точного типа товара из name/category, затем ключевые характеристики из specs (3–6 самых значимых), затем внешний вид с фото. Без рекламных клише («идеально подойдёт», «высокое качество»), без выдуманных свойств и назначения, которых нет ни в dump, ни на фото.
-4. caption: тип товара + главная характеристика + заметная визуальная черта.
-5. tags: тип товара, бренд, материал, цвет, ключевые значения specs, элементы принта; используй synonyms как поисковые варианты названия.
-6. Если фото явно противоречит dump (другой товар, другой цвет/форма) — не подгоняй, добавь в warnings «фото расходится с данными фида: …» и опиши по dump.
-7. attributes: product_type и color заполни по dump/фото; brand_visible — виден ли бренд на фото.`;
+РЕЖИМ ФИДА. dump: name, category, brand, article, specs, synonyms.
+• Название, тип, размеры, объём, материал, бренд — только из dump; числа и единицы дословно.
+• С фото — лишь то, чего нет в dump: цвет, форма, принт, надписи.
+• description: тип (name/category) → 3–6 ключевых specs → вид с фото. Без рекламы и выдумок.
+• caption: тип + главная характеристика + визуальная черта.
+• tags: тип, бренд, материал, цвет, specs, принт, synonyms.
+• Фото≠dump → warning «фото расходится с данными фида: …», описание по dump.
+• attributes.product_type/color — dump/фото; brand_visible — виден ли бренд на кадре.`;
 
 /** Пустой шаблон → встроенный. */
 export function resolvePhotoSystemPrompt(template, vars = {}) {
@@ -232,7 +230,7 @@ function enrichTagsFromOnImage(tags, onImage, { min = 10, max = 18 } = {}) {
   return out.slice(0, 40);
 }
 
-/** Строгая схема для AITUNNEL json_schema — меньше пустых/чужих ключей у Gemini. */
+/** Строгая схема для AITUNNEL json_schema — короткие description (уходят в каждый запрос). */
 export const PHOTO_RESPONSE_SCHEMA = {
   name: 'photo_description',
   strict: true,
@@ -241,21 +239,11 @@ export const PHOTO_RESPONSE_SCHEMA = {
     additionalProperties: false,
     required: ['caption', 'on_image', 'description', 'alt', 'tags', 'attributes', 'warnings'],
     properties: {
-      caption: { type: 'string', description: 'Короткая подпись 8–18 слов' },
-      on_image: {
-        type: 'string',
-        description: 'Инвентарь 10–22 элементов: товар + каждый объект принта отдельно, без обобщений вроде «городская тематика»',
-      },
-      description: {
-        type: 'string',
-        description: '3–5 предложений; при наличии принта — подробно что нарисовано и в каком стиле, без выдуманных свойств товара',
-      },
-      alt: { type: 'string', description: 'alt до 120 символов' },
-      tags: {
-        type: 'array',
-        items: { type: 'string' },
-        description: '10–18 тегов: элементы принта + тип товара + цвет; не только общие ярлыки',
-      },
+      caption: { type: 'string', description: '8–18 слов' },
+      on_image: { type: 'string', description: '10–22 элемента через запятую, принт по объектам' },
+      description: { type: 'string', description: '3–5 предложений, без выдумок' },
+      alt: { type: 'string', description: 'до 120 символов' },
+      tags: { type: 'array', items: { type: 'string' }, description: '10–18 тегов' },
       attributes: {
         type: 'object',
         additionalProperties: false,
@@ -324,26 +312,48 @@ function consistencyLite(vision, dump) {
   return warnings;
 }
 
-function buildUserParts({ mime, base64, filename, productId, sku, dump, feed = false }) {
+/**
+ * Multimodal user-content: JSON с фактами фида/дампа + картинка.
+ * Для фида предпочитаем публичный http(s) URL — vision-провайдер сам забирает файл.
+ * Так серверу не нужно ходить на CDN магазина (ECONNREFUSED) и не нужен прокси.
+ */
+export function buildUserParts({
+  mime, base64, imageUrl, filename, productId, sku, dump, feed = false,
+} = {}) {
   const meta = {
     filename: filename || null,
     product_id: productId || null,
     sku: sku || null,
     dump: dump || null,
+    // Короткие task: детали уже в system (+ FEED_PROMPT_ADDENDUM).
     task: feed
-      ? 'Составь точное описание товара: факты берёшь из dump (название, specs), с фото — только цвет, форма, принт, надписи. Следуй правилам режима «товар из фида».'
+      ? 'Опиши по dump и фото (режим фида).'
       : dump
-      ? 'Опиши товар на фото. Если есть принт/рисунок — детально перечисли элементы рисунка в on_image и опиши композицию в description. Dump не копируй слепо.'
-      : (productId
-        ? 'Привязка к дампу задана, но товар в дампе не найден — опиши только фото. Принт разбери по элементам, не обобщай.'
-        : 'Опиши только фото. Если на товаре принт — on_image и tags: каждый объект рисунка отдельно (10–18 тегов); description: композиция принта. Без выдуманных свойств.'),
+        ? 'Опиши фото; dump — справка, не копируй.'
+        : (productId
+          ? 'Товар в дампе не найден — опиши только фото.'
+          : 'Опиши только фото.'),
   };
-  return [
-    { type: 'text', text: JSON.stringify(meta) },
-    {
+
+  let imagePart;
+  if (isUsablePictureUrl(imageUrl)) {
+    imagePart = { type: 'image_url', image_url: { url: String(imageUrl).trim() } };
+  } else {
+    if (!mime || !/^image\/(jpeg|png|webp|gif)$/i.test(mime)) {
+      throw Object.assign(new Error(`для описания нужна картинка JPEG/PNG/WebP/GIF, получено «${mime || 'пусто'}»`), { status: 502 });
+    }
+    if (!base64 || String(base64).length < 64) {
+      throw Object.assign(new Error('пустой буфер изображения — фото не прогрузилось'), { status: 502 });
+    }
+    imagePart = {
       type: 'image_url',
       image_url: { url: `data:${mime};base64,${base64}` },
-    },
+    };
+  }
+
+  return [
+    { type: 'text', text: JSON.stringify(meta) },
+    imagePart,
   ];
 }
 
@@ -372,6 +382,18 @@ export async function describePhoto(itemFile, opts = {}) {
 
   if (!model) throw Object.assign(new Error('Не передана модель'), { status: 400 });
 
+  const remoteUrl = isUsablePictureUrl(itemFile?.remote_url)
+    ? String(itemFile.remote_url).trim()
+    : (isUsablePictureUrl(itemFile?.item?.image_url) ? String(itemFile.item.image_url).trim() : '');
+  const hasBuf = Boolean(itemFile?.buf?.length && itemFile?.mime
+    && /^image\/(jpeg|png|webp|gif)$/i.test(itemFile.mime));
+  if (!remoteUrl && !hasBuf) {
+    throw Object.assign(
+      new Error('нет изображения для описания: нужна ссылка фида или файл JPEG/PNG/WebP/GIF'),
+      { status: 502 },
+    );
+  }
+
   const doFetch = typeof fetchImpl === 'function' ? fetchImpl : fetch;
   const rate = limiter || new RateLimiter(30);
   const feed = itemFile.item?.feed || null;
@@ -385,7 +407,15 @@ export async function describePhoto(itemFile, opts = {}) {
   } else if (dump) {
     onNote(`дамп ${category} · id ${dump.id || itemFile.item?.product_id}`);
   }
-  const base64 = itemFile.buf.toString('base64');
+
+  // Фид/CDN: отдаём URL провайдеру. Не качаем на сервер и не через прокси —
+  // иначе на VPS часто ECONNREFUSED до static.*.
+  if (remoteUrl) {
+    onNote(`фото по ссылке → vision · ${remoteUrl.length > 96 ? `${remoteUrl.slice(0, 96)}…` : remoteUrl}`);
+  } else {
+    onNote(`фото в запросе · ${itemFile.mime} · ${Math.round(itemFile.buf.length / 1024)} КБ`);
+  }
+
   const system = resolvePhotoSystemPrompt(systemPrompt, {
     filename: itemFile.item?.filename || '',
     product_id: (feed || useDump) ? (itemFile.item?.product_id || '') : '',
@@ -397,20 +427,25 @@ export async function describePhoto(itemFile, opts = {}) {
   await rate.wait(ms => onNote(`rate limit ${ms}ms`));
   onNote('запрос к vision-модели…');
 
+  const userParts = buildUserParts({
+    imageUrl: remoteUrl || undefined,
+    mime: hasBuf ? itemFile.mime : undefined,
+    base64: hasBuf && !remoteUrl ? itemFile.buf.toString('base64') : undefined,
+    filename: itemFile.item?.filename,
+    productId: (feed || useDump) ? itemFile.item?.product_id : null,
+    sku: (feed || useDump) ? itemFile.item?.sku : null,
+    dump,
+    feed: Boolean(feed),
+  });
+  const imagePart = userParts.find(p => p?.type === 'image_url');
+  const sentUrl = imagePart?.image_url?.url || '';
+  if (!sentUrl || !(sentUrl.startsWith('data:image/') || /^https?:\/\//i.test(sentUrl))) {
+    throw Object.assign(new Error('внутренний сбой: картинка не попала в запрос к модели'), { status: 500 });
+  }
+
   const messages = [
     { role: 'system', content: system },
-    {
-      role: 'user',
-      content: buildUserParts({
-        mime: itemFile.mime,
-        base64,
-        filename: itemFile.item?.filename,
-        productId: (feed || useDump) ? itemFile.item?.product_id : null,
-        sku: (feed || useDump) ? itemFile.item?.sku : null,
-        dump,
-        feed: Boolean(feed),
-      }),
-    },
+    { role: 'user', content: userParts },
   ];
 
   const baseBody = {

@@ -12,6 +12,9 @@ const SERVICE_PARAMS = new Set([
 
 const ENT = { '&amp;': '&', '&lt;': '<', '&gt;': '>', '&quot;': '"', '&apos;': "'", '&#39;': "'", '&nbsp;': ' ' };
 
+/** Заглушки магазинов: есть URL, но описывать нечего — товар пропускаем. */
+const PLACEHOLDER_PIC_RE = /(?:^|\/)(?:no[_-]?image|nophoto|no[_-]?photo|placeholder|default[_-]?(?:image|photo|product)|image[_-]?not[_-]?available|pic[_-]?empty)(?:\.[a-z0-9]+)?(?:$|[?#])/i;
+
 function decode(s) {
   return String(s || '')
     .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1')
@@ -22,8 +25,43 @@ function decode(s) {
 }
 
 function tag(xml, name) {
-  const m = xml.match(new RegExp(`<${name}>([\\s\\S]*?)</${name}>`));
+  // Первое вхождение тега в фрагменте offer (у Groster <url>/<picture> идут до <stock>).
+  const m = xml.match(new RegExp(`<${name}(?:\\s[^>]*)?>([\\s\\S]*?)</${name}>`));
   return m ? decode(m[1]) : '';
+}
+
+/**
+ * URL картинки из фида годен для превью/описания: http(s), не заглушка noimage.
+ * Прокси не используем — браузер и сервер ходят по ссылке напрямую.
+ */
+export function isUsablePictureUrl(url) {
+  const u = String(url || '').trim();
+  if (!/^https?:\/\//i.test(u)) return false;
+  if (PLACEHOLDER_PIC_RE.test(u)) return false;
+  return true;
+}
+
+/** Все <picture> оффера (в YML их бывает несколько) → абсолютные URL. */
+export function parsePictures(xml, shopUrl = '') {
+  const out = [];
+  const seen = new Set();
+  for (const m of xml.matchAll(/<picture(?:\s[^>]*)?>([\s\S]*?)<\/picture>/gi)) {
+    let raw = decode(m[1]);
+    if (!raw) continue;
+    if (!/^https?:\/\//i.test(raw) && shopUrl) {
+      try { raw = new URL(raw, shopUrl).href; } catch { /* оставляем как есть */ }
+    }
+    if (seen.has(raw)) continue;
+    seen.add(raw);
+    out.push(raw);
+  }
+  return out;
+}
+
+/** Первая пригодная картинка оффера (не noimage / placeholder). */
+export function pickPictureUrl(xml, shopUrl = '') {
+  const pics = parsePictures(xml, shopUrl);
+  return pics.find(isUsablePictureUrl) || '';
 }
 
 /** Первые `categories`: id → { name, parentId }. */
@@ -48,7 +86,7 @@ export function categoryPath(categories, id) {
   return out.join(' › ');
 }
 
-export function parseOffer(xml, categories = new Map()) {
+export function parseOffer(xml, categories = new Map(), shopUrl = '') {
   const head = /<offer\s([^>]*)>/.exec(xml)?.[1] || '';
   const id = /\bid="([^"]*)"/.exec(head)?.[1] || '';
   const params = [];
@@ -63,6 +101,8 @@ export function parseOffer(xml, categories = new Map()) {
     params.push({ name, value });
   }
   const categoryId = tag(xml, 'categoryId');
+  const pictures = parsePictures(xml, shopUrl);
+  const image_url = pictures.find(isUsablePictureUrl) || '';
   return {
     id,
     name: tag(xml, 'name'),
@@ -70,7 +110,8 @@ export function parseOffer(xml, categories = new Map()) {
     vendor_code: tag(xml, 'vendorCode'),
     description: tag(xml, 'description'),
     url: tag(xml, 'url'),
-    image_url: tag(xml, 'picture'),
+    image_url,
+    pictures,
     category_id: categoryId,
     category: categoryPath(categories, categoryId),
     params,
@@ -86,36 +127,67 @@ export async function parseYml(chunks, { limit = Infinity, offset = 0, filter = 
   const dec = new TextDecoder('utf-8');
   let buf = '';
   let categories = null;
-  let seen = 0;
+  let shopUrl = '';
+  let seen = 0; // принятые после фильтров (для offset)
+  let scanned = 0;
+  let skipped_no_image = 0;
+  let skipped_filter = 0;
   const offers = [];
 
+  const finish = () => ({
+    offers,
+    categories,
+    shopUrl,
+    stats: { scanned, skipped_no_image, skipped_filter, matched: offers.length },
+  });
+
   for await (const chunk of chunks) {
+    // ReadableStream → Uint8Array; ошибочный Buffer-as-iterable даёт числа.
+    if (typeof chunk === 'number') {
+      throw new Error('битый поток фида (ожидались байты/строки) — загрузите XML файлом');
+    }
     buf += typeof chunk === 'string' ? chunk : dec.decode(chunk, { stream: true });
+    if (!shopUrl) {
+      // <shop><name>…</name><url>https://…</url> — база для относительных <picture>
+      const shopHead = buf.match(/<shop\b[\s\S]{0,4000}?<url>([\s\S]*?)<\/url>/i);
+      if (shopHead) shopUrl = decode(shopHead[1]);
+    }
     if (!categories) {
       const end = buf.indexOf('</categories>');
       if (end >= 0) categories = parseCategories(buf.slice(0, end));
-      else if (buf.indexOf('<offer ') >= 0) categories = new Map(); // фид без categories
+      else if (buf.indexOf('<offer ') >= 0 || buf.indexOf('<offer>') >= 0) categories = new Map(); // фид без categories
       else continue;
     }
     let from = 0;
     for (;;) {
-      const s = buf.indexOf('<offer ', from);
+      const sOffer = buf.indexOf('<offer ', from);
+      const sBare = buf.indexOf('<offer>', from);
+      let s = -1;
+      if (sOffer < 0) s = sBare;
+      else if (sBare < 0) s = sOffer;
+      else s = Math.min(sOffer, sBare);
       if (s < 0) break;
       const e = buf.indexOf('</offer>', s);
       if (e < 0) break;
       from = e + 8;
-      const offer = parseOffer(buf.slice(s, from), categories);
-      if (!offer.id || !offer.name || (filter && !filter(offer))) continue;
+      const offer = parseOffer(buf.slice(s, from), categories, shopUrl);
+      if (!offer.id || !offer.name) continue;
+      scanned += 1;
+      // Без реальной картинки описывать нечего — noimage и пустые picture отбрасываем.
+      if (!offer.image_url) { skipped_no_image += 1; continue; }
+      if (filter && !filter(offer)) { skipped_filter += 1; continue; }
       if (seen++ < offset) continue;
       offers.push(offer);
-      if (offers.length >= limit) return { offers, categories };
+      if (offers.length >= limit) return finish();
     }
     // оставляем только хвост с недочитанным <offer>
-    const tail = buf.lastIndexOf('<offer ');
+    const tailOffer = buf.lastIndexOf('<offer ');
+    const tailBare = buf.lastIndexOf('<offer>');
+    const tail = Math.max(tailOffer, tailBare);
     buf = tail >= from ? buf.slice(tail) : buf.slice(from);
   }
   if (!categories) throw new Error('Не похоже на YML: нет <categories>/<offer>');
-  return { offers, categories };
+  return finish();
 }
 
 /** Читаемый блок фактов для vision-модели. */

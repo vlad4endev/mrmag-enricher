@@ -2307,9 +2307,10 @@ input[type=range]::-moz-range-thumb{
           <div class="hint">JPEG · PNG · WebP · GIF</div>
         </div>
         <input type="file" id="photoFile" accept="image/jpeg,image/png,image/webp,image/gif,.jpg,.jpeg,.png,.webp,.gif" multiple hidden>
-        <button type="button" class="sbtn ghost wide" style="margin-top:8px" onclick="photoImportYml()" title="Товары из YML-фида: название и характеристики пойдут в описание"><i class="ti ti-file-code"></i> Импорт из YML-фида (ссылка)</button>
+        <button type="button" class="sbtn ghost wide" style="margin-top:8px" onclick="photoImportYml()" title="Весь YML-фид с фото в альбом; сколько описывать — выберете сами"><i class="ti ti-file-code"></i> Импорт из YML-фида (ссылка)</button>
         <button type="button" class="sbtn ghost wide" style="margin-top:6px" onclick="document.getElementById('photoYmlFile').click()" title="XML-файл фида с вашего компьютера"><i class="ti ti-file-upload"></i> Файл фида…</button>
-        <input type="file" id="photoYmlFile" accept=".xml,text/xml,application/xml" hidden onchange="photoImportYmlFile(this)">
+        <input type="file" id="photoYmlFile" accept=".xml,.yml,text/xml,application/xml,application/octet-stream" hidden onchange="photoImportYmlFile(this)">
+        <div class="hint" style="margin-top:8px">По умолчанию в альбом попадает <b>весь фид</b> (все товары с фото). Большой XML («Файл фида») уходит кусками — без ошибки 413. Сколько описывать — отметьте чекбоксами и «Описать».</div>
       </section>
 
       <section class="photo-card">
@@ -2327,9 +2328,10 @@ input[type=range]::-moz-range-thumb{
         <div class="photo-export">
           <button type="button" class="sbtn primary" onclick="photoExportMl('jsonl')"><i class="ti ti-download"></i> JSONL</button>
           <button type="button" class="sbtn ghost" onclick="photoExportMl('json')">JSON</button>
+          <button type="button" class="sbtn ghost wide" onclick="photoExportMl('xml')" title="YML-фид: yml_catalog / offer с теми же полями описаний"><i class="ti ti-file-code"></i> XML (как фид)</button>
           <button type="button" class="sbtn ghost wide" onclick="photoExportMl('jsonl',true)">+ base64</button>
         </div>
-        <div class="photo-schema">image · caption · objects · description · alt · tags</div>
+        <div class="photo-schema">image · caption · objects · description · alt · tags · attributes · product_id · image_id</div>
       </section>
 
       <section class="photo-dock" aria-label="Прогон">
@@ -2394,8 +2396,8 @@ input[type=range]::-moz-range-thumb{
           <h3>Список → лог → полный текст</h3>
           Как в обогащении: слева настройка, в центре фото и ход прогона, справа подпись, «на картинке» и описание.
           <ol>
-            <li>Создайте <b>альбом</b> и загрузите фото.</li>
-            <li>Выберите <b>модель AITUNNEL</b> и нажмите «Описать».</li>
+            <li>Создайте <b>альбом</b>: загрузка фото или импорт YML — в альбом попадёт весь фид с картинками.</li>
+            <li>Отметьте нужные (или «Все» / «Без описания»), выберите <b>модель AITUNNEL</b> и «Описать».</li>
             <li>Откройте фото в списке — справа будет <b>полный текст</b>.</li>
           </ol>
         </div>
@@ -3010,7 +3012,7 @@ input[type=range]::-moz-range-thumb{
         </div>
 
         <div class="set-h" style="font-size:15px">Изображения (Фото · AITUNNEL)</div>
-        <p class="set-lead" style="margin-top:0">System-промпт для vision-описаний в разделе «Фото». Модель должна вернуть JSON с caption / on_image / description / alt / tags. Плейсхолдеры подставляются перед запросом к AITUNNEL.</p>
+        <p class="set-lead" style="margin-top:0">Короткий system-промпт для vision («Фото»). JSON: caption / on_image / description / alt / tags / attributes / warnings. Если сохранён старый длинный шаблон — «Сбросить» подтянет встроенный. Плейсхолдеры подставляются перед AITUNNEL.</p>
         <div class="set-card" style="margin-bottom:12px">
           <div class="set-scope-row" style="margin-bottom:8px">
             <span class="flbl" style="margin:0">Шаблон vision</span>
@@ -3175,6 +3177,7 @@ async function apiJson(url,opts){
     // Не-JSON на 502/504 отдаёт шлюз перед сервером, а не сервер. Обогащение
     // одного товара занимает до трёх минут, nginx по умолчанию ждёт минуту.
     if(r.status===502||r.status===504) throw new Error(`шлюз не дождался ответа (HTTP ${r.status}) — поднимите proxy_read_timeout, обогащение товара идёт до 3 минут`);
+    if(r.status===413) throw new Error('Слишком большой запрос (HTTP 413). Для YML нажмите «Файл фида» ещё раз — файл уходит кусками. Либо в NPM/nginx: client_max_body_size 64m.');
     throw new Error(`HTTP ${r.status}: ${brief(text)}`);
   }
   if(d===null) throw new Error(`сервер вернул не JSON: ${brief(text)||'пустой ответ'}`);
@@ -9728,9 +9731,19 @@ function photoStLabel(it){
   return 'ожидает';
 }
 
+/** Превью: фид — исходная ссылка магазина (без серверного прокси); загрузка — локальный файл. */
 function photoFileUrl(it){
-  if(!photoAlbum||!it) return '';
+  if(!it) return '';
+  if(it.image_url && /^https?:\/\//i.test(it.image_url)) return it.image_url;
+  if(!photoAlbum) return '';
   return '/api/photos/'+encodeURIComponent(photoAlbum.id)+'/file/'+encodeURIComponent(it.id);
+}
+
+/** Куда открывать картинку по клику — всегда прямая ссылка, если она есть. */
+function photoOpenUrl(it){
+  if(!it) return '';
+  if(it.image_url && /^https?:\/\//i.test(it.image_url)) return it.image_url;
+  return photoFileUrl(it);
 }
 
 function photoFilteredItems(){
@@ -10036,23 +10049,58 @@ async function photoImportYmlFile(input){
   await photoRunYmlImport({ xml:await f.text() });
 }
 
+/** Крупный XML одним POST режет nginx (413). Шлём кусками < ~400 КБ. */
+async function photoImportYmlChunked(xml, category){
+  const CHUNK=400000;
+  const parts=Math.max(1, Math.ceil(xml.length/CHUNK));
+  const upload_id='u'+Date.now().toString(36)+Math.random().toString(36).slice(2,10);
+  let out=null;
+  for(let part=0; part<parts; part++){
+    photoStatus(`Загрузка фида ${part+1}/${parts}… ${(xml.length/1e6).toFixed(1)} МБ`);
+    out=await apiJson('/api/photos/'+encodeURIComponent(photoAlbum.id)+'/import-yml',{
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({
+        upload_id, part, parts,
+        data:xml.slice(part*CHUNK, (part+1)*CHUNK),
+        limit:0, category,
+      }),
+    });
+  }
+  return out;
+}
+
 async function photoRunYmlImport(src){
-  const limit=prompt('Сколько товаров взять (каждый — отдельный платный запрос к модели):','50');
-  if(!limit) return;
-  const category=prompt('Только раздел, в названии пути которого есть… (пусто — любой):','')||'';
+  // Весь фид с реальными фото (limit:0). Сколько описывать — чекбоксы после импорта.
+  // Пусто = все разделы. Не латиница-slug (pet-tara) — фрагмент русского названия.
+  const categoryRaw=prompt('Фильтр раздела (пусто = весь фид, как есть). Пример: салфет / банка / ПЭТ','');
+  if(categoryRaw===null) return; // Отмена
+  const category=String(categoryRaw).trim();
   if(!photoAlbum){
     await photoCreateAlbum('Фид '+new Date().toLocaleString('ru-RU'));
     if(!photoAlbum) return;
   }
-  photoStatus('Читаю фид… крупный фид может занять минуты');
+  photoStatus(src.xml?'Читаю файл фида… весь каталог':'Качаю весь фид… у Groster ~30 МБ, может занять минуты');
   try{
-    const out=await apiJson('/api/photos/'+encodeURIComponent(photoAlbum.id)+'/import-yml',{
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({ ...src, limit:Number(limit), category }),
-    });
+    let out;
+    if(src.xml && src.xml.length>400000){
+      out=await photoImportYmlChunked(src.xml, category);
+    }else{
+      out=await apiJson('/api/photos/'+encodeURIComponent(photoAlbum.id)+'/import-yml',{
+        method:'POST', headers:{'Content-Type':'application/json'},
+        // limit: 0 → сервер берёт все офферы с фото (до потолка альбома)
+        body:JSON.stringify({ ...src, limit:0, category }),
+      });
+    }
     await photoOpenAlbum(photoAlbum.id, true);
     await photoLoadAlbums();
-    photoStatus(`Из фида добавлено ${out.added}, пропущено дублей ${out.skipped}`, true);
+    const st=out.stats;
+    const inFeed=st?.matched ?? out.added;
+    const extra=st?` · в фиде с фото ${inFeed}, noimage ${st.skipped_no_image||0}`:'';
+    photoStatus(
+      `В альбоме ${out.added} из фида (как в каталоге с фото)${out.skipped?`, дублей ${out.skipped}`:''}${extra}. `
+      + 'Отметьте сколько нужно и нажмите «Описать»',
+      true,
+    );
   }catch(e){ photoStatus(e.message||'ошибка импорта', false); }
 }
 
@@ -10117,12 +10165,14 @@ function photoRenderList(){
     if(photoIsDumpBound(it)) metaParts.push('дамп '+it.dump_category+'/'+it.product_id);
     const cost=usageCostRub(it.usage);
     const costHtml=cost!=null?`<span class="ri-cost has" title="Списано за описание">${esc(formatRub(cost))}</span>`:'<span class="ri-cost"></span>';
+    const title=it.feed?.name||it.filename||'';
+    const openUrl=photoOpenUrl(it);
     return `<div class="ri photo-ri s-${st}${photoCurId===it.id?' on':''}${photoSel.has(it.id)?' sel':''}" data-id="${esc(it.id)}" role="button" tabindex="0" onclick="photoFocus('${esc(it.id)}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();photoFocus('${esc(it.id)}')}">
       <input type="checkbox" class="photo-check" ${photoSel.has(it.id)?'checked':''} onclick="photoToggleSel('${esc(it.id)}',event)" aria-label="Выбрать для прогона">
-      <span class="ri-thumb"><img src="${photoFileUrl(it)}" alt="" loading="lazy"></span>
+      <span class="ri-thumb">${openUrl?`<a href="${esc(openUrl)}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()" title="Открыть картинку по ссылке"><img src="${esc(photoFileUrl(it))}" alt="" loading="lazy" referrerpolicy="no-referrer"></a>`:`<img src="${esc(photoFileUrl(it))}" alt="" loading="lazy">`}</span>
       <span class="ri-b">
-        <span class="ri-n" title="${esc(it.filename)}">${esc(it.filename)}</span>
-        <span class="ri-m">${esc(metaParts[0])}${photoIsDumpBound(it)?` · <span class="dump-tag">дамп ${esc(it.dump_category)}/${esc(it.product_id)}</span>`:''}${preview?` · ${esc(String(preview).slice(0,72))}`:''}</span>
+        <span class="ri-n" title="${esc(title)}">${esc(title)}</span>
+        <span class="ri-m">${esc(metaParts[0])}${photoIsDumpBound(it)?` · <span class="dump-tag">дамп ${esc(it.dump_category)}/${esc(it.product_id)}</span>`:''}${it.image_url?` · <a href="${esc(it.image_url)}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()">ссылка</a>`:''}${preview?` · ${esc(String(preview).slice(0,72))}`:''}</span>
       </span>
       ${costHtml}
       <span class="ri-st ${st==='run'?'run':st}" aria-hidden="true">${st==='run'?'↻':''}</span>
@@ -10244,33 +10294,40 @@ function photoToggleDumpBind(){
   else photoBindDump(it.id);
 }
 
-/** Компактный JSON как в выгрузке — стабильный порядок, без служебных полей. */
+/** Компактный JSON как в ML-выгрузке — полный набор полей, стабильный порядок. */
 function photoSlimJson(it){
   if(!it) return {};
-  const row={};
-  if(it.filename) row.image=String(it.filename);
-  if(it.caption) row.caption=String(it.caption);
-  if(it.on_image) row.objects=String(it.on_image);
-  if(it.description) row.description=String(it.description);
-  if(it.alt) row.alt=String(it.alt);
-  if(Array.isArray(it.tags)&&it.tags.length) row.tags=it.tags.filter(Boolean);
+  const order=['view','color','product_type','brand_visible','text_on_image'];
+  const attributes={};
   if(it.attributes&&typeof it.attributes==='object'){
-    const order=['view','color','product_type','brand_visible','text_on_image'];
-    const a={};
     for(const k of order){
       const v=it.attributes[k];
       if(v==null||v===false||String(v).trim()==='') continue;
-      a[k]=typeof v==='boolean'?v:String(v).trim();
+      attributes[k]=typeof v==='boolean'?v:String(v).trim();
     }
     for(const [k,v] of Object.entries(it.attributes)){
-      if(k in a||order.includes(k)) continue;
+      if(k in attributes||order.includes(k)) continue;
       if(v==null||v===false||String(v).trim()==='') continue;
-      a[k]=typeof v==='boolean'?v:String(v).trim();
+      attributes[k]=typeof v==='boolean'?v:String(v).trim();
     }
-    if(Object.keys(a).length) row.attributes=a;
   }
-  if(it.product_id) row.product_id=String(it.product_id);
-  return row;
+  let imageId=it.image_id?String(it.image_id):'';
+  if(!imageId && it.image_url){
+    const stem=String(it.image_url).split(/[?#]/)[0].split('/').pop()||'';
+    imageId=stem.replace(/\.[^.]+$/,'').trim();
+  }
+  if(!imageId && it.id) imageId=String(it.id);
+  return {
+    image:String(it.feed?.name||it.filename||'').trim(),
+    caption:String(it.caption||'').trim(),
+    objects:String(it.on_image||'').trim(),
+    description:String(it.description||'').trim(),
+    alt:String(it.alt||'').trim(),
+    tags:Array.isArray(it.tags)?[...new Set(it.tags.map(t=>String(t).trim()).filter(Boolean))]:[],
+    attributes,
+    product_id:it.product_id!=null?String(it.product_id).trim():'',
+    image_id:imageId,
+  };
 }
 
 function photoCopyDetail(){
@@ -10340,11 +10397,12 @@ function photoRenderDetail(){
       dumpBdg.title='Привязать к разделу дампа и id товара';
     }
   }
-  const shortName=photoShortName(it.filename||'Фото', 36);
+  const shortName=photoShortName(it.feed?.name||it.filename||'Фото', 36);
   if(title){
-    title.innerHTML=`<span class="pt-name" title="${esc(it.filename||'')}">${esc(shortName)}</span>`
-      +`<span class="pt-meta">${it.bytes?`<b>${Math.round(it.bytes/1024)} KB</b>`:'фото'}`
+    title.innerHTML=`<span class="pt-name" title="${esc(it.feed?.name||it.filename||'')}">${esc(shortName)}</span>`
+      +`<span class="pt-meta">${it.bytes?`<b>${Math.round(it.bytes/1024)} KB</b>`:(it.image_url?'по ссылке':'фото')}`
       +(photoIsDumpBound(it)?` · дамп <b>${esc(it.dump_category)}</b>/<b>${esc(it.product_id)}</b>`:'')
+      +(it.feed?.category?` · ${esc(it.feed.category)}`:'')
       +`</span>`;
   }
 
@@ -10360,17 +10418,21 @@ function photoRenderDetail(){
   const stChip=it.status==='error'?'err':photoIsDescribed(it)?'ok':'warn';
   const when=it.described_at?new Date(it.described_at).toLocaleString('ru-RU',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'}):'';
 
+  const openUrl=photoOpenUrl(it);
+  const titleName=it.feed?.name||it.filename||'';
   let html=`<div class="photo-detail">`;
   html+=`<div class="photo-detail-top">
-    <div class="ph-img"><img src="${photoFileUrl(it)}" alt="${esc(it.alt||it.filename||'')}"></div>
+    <div class="ph-img">${openUrl?`<a href="${esc(openUrl)}" target="_blank" rel="noopener noreferrer" title="Открыть картинку по ссылке"><img src="${esc(photoFileUrl(it))}" alt="${esc(it.alt||titleName)}" referrerpolicy="no-referrer"></a>`:`<img src="${esc(photoFileUrl(it))}" alt="${esc(it.alt||titleName)}">`}</div>
     <div class="ph-meta">
-      <div class="ph-file" title="${esc(it.filename||'')}">${esc(it.filename||'')}</div>
+      <div class="ph-file" title="${esc(titleName)}">${esc(titleName)}</div>
       <div class="photo-detail-chips">
         <span class="chip ${stChip}">${esc(photoStLabel(it))}</span>
         ${it.mime?`<span class="chip"><b>mime</b> ${esc(it.mime)}</span>`:''}
         ${it.bytes?`<span class="chip"><b>${Math.round(it.bytes/1024)}</b> KB</span>`:''}
         ${when?`<span class="chip"><b>время</b> ${esc(when)}</span>`:''}
         ${usageCostRub(it.usage)!=null?`<span class="chip ok"><b>списано</b> ${esc(formatRub(usageCostRub(it.usage)))}</span>`:''}
+        ${it.image_url?`<a class="chip" href="${esc(it.image_url)}" target="_blank" rel="noopener noreferrer" title="${esc(it.image_url)}"><b>фото</b> открыть</a>`:''}
+        ${it.feed?.url?`<a class="chip" href="${esc(it.feed.url)}" target="_blank" rel="noopener noreferrer"><b>товар</b> на сайте</a>`:''}
       </div>
     </div>
   </div>`;
@@ -10392,6 +10454,15 @@ function photoRenderDetail(){
   }
   if(warns.length){
     html+=`<div class="warnbox"><div class="wt">Предупреждения</div>${warns.map(w=>`<div class="wi">${esc(String(w))}</div>`).join('')}</div>`;
+  }
+
+  if(it.feed){
+    const specs=Array.isArray(it.feed.specs)?it.feed.specs:[];
+    html+=`<div class="photo-sec"><div class="st">Из YML-фида <i>${specs.length||0}</i></div><div class="body">`
+      +`<div><b>${esc(it.feed.name||'')}</b>${it.feed.category?` · ${esc(it.feed.category)}`:''}</div>`
+      +(it.feed.article?`<div class="muted">артикул ${esc(it.feed.article)}</div>`:'')
+      +(specs.length?`<div class="photo-attrs" style="margin-top:8px">${specs.slice(0,24).map(p=>`<div class="pa"><span class="k">${esc(p.name)}</span><span class="v">${esc(p.value)}</span></div>`).join('')}</div>`:'')
+      +`</div></div>`;
   }
 
   const cap=String(it.caption||'').trim();
@@ -10552,7 +10623,10 @@ async function photoStartDescribe(){
     return;
   }
   if(!photoModel){ photoStatus('Выберите модель AITUNNEL', false); return; }
-  const item_ids=photoSel.size?[...photoSel]:null;
+  // Пусто или «Все» — не тащим тысячи id в POST (иначе nginx 413).
+  const allIds=photoAlbum.items.map(i=>i.id);
+  const selectedAll=!photoSel.size||(photoSel.size===allIds.length&&allIds.every(id=>photoSel.has(id)));
+  const item_ids=selectedAll?null:[...photoSel];
   try{
     const job=await apiJson('/api/photos/'+encodeURIComponent(photoAlbum.id)+'/describe',{
       method:'POST', headers:{'Content-Type':'application/json'},
@@ -10647,7 +10721,7 @@ async function photoExportMl(format, includeImages){
     const m=cd.match(/filename="([^"]+)"/);
     const a=document.createElement('a');
     a.href=URL.createObjectURL(blob);
-    a.download=m?m[1]:`photos_${photoAlbum.id}.${format==='json'?'json':'jsonl'}`;
+    a.download=m?m[1]:`photos_${photoAlbum.id}.${format==='json'?'json':format==='xml'||format==='yml'?'xml':'jsonl'}`;
     a.click();
     URL.revokeObjectURL(a.href);
     photoStatus('Выгрузка скачана', true);

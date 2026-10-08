@@ -2327,9 +2327,10 @@ input[type=range]::-moz-range-thumb{
         <div class="photo-export">
           <button type="button" class="sbtn primary" onclick="photoExportMl('jsonl')"><i class="ti ti-download"></i> JSONL</button>
           <button type="button" class="sbtn ghost" onclick="photoExportMl('json')">JSON</button>
+          <button type="button" class="sbtn ghost wide" onclick="photoExportMl('xml')" title="YML-фид: yml_catalog / offer с теми же полями описаний"><i class="ti ti-file-code"></i> XML (как фид)</button>
           <button type="button" class="sbtn ghost wide" onclick="photoExportMl('jsonl',true)">+ base64</button>
         </div>
-        <div class="photo-schema">image · caption · objects · description · alt · tags</div>
+        <div class="photo-schema">image · caption · objects · description · alt · tags · attributes · product_id · image_id</div>
       </section>
 
       <section class="photo-dock" aria-label="Прогон">
@@ -2338,8 +2339,12 @@ input[type=range]::-moz-range-thumb{
           <button type="button" class="sbtn primary" id="photoDescribeBtn" onclick="photoStartDescribe()"><i class="ti ti-sparkles"></i> Описать</button>
           <button type="button" class="sbtn ghost" onclick="photoStopDescribe()">Стоп</button>
         </div>
+        <label class="photo-budget" style="display:flex;align-items:center;gap:6px;margin-top:8px;font-size:12px;color:var(--t3)">
+          <span title="Опционально: остановить прогон при достижении суммы в ₽">Лимит ₽</span>
+          <input type="number" id="photoMaxCostRub" min="0" step="1" placeholder="без лимита" style="width:7rem;padding:4px 6px">
+        </label>
         <div class="photo-status" id="photoStatusBox">
-          <div id="photoJobHint">Отметьте фото в списке или опишите все без текста.</div>
+          <div id="photoJobHint">Отметьте фото или опишите только без текста (уже описанные не тратятся). Для 15k задайте лимит ₽.</div>
           <div id="photoStatus">Нет альбома</div>
         </div>
       </section>
@@ -10244,33 +10249,40 @@ function photoToggleDumpBind(){
   else photoBindDump(it.id);
 }
 
-/** Компактный JSON как в выгрузке — стабильный порядок, без служебных полей. */
+/** Компактный JSON как в выгрузке — тот же набор и порядок ключей, что ML-файл. */
 function photoSlimJson(it){
   if(!it) return {};
-  const row={};
-  if(it.filename) row.image=String(it.filename);
-  if(it.caption) row.caption=String(it.caption);
-  if(it.on_image) row.objects=String(it.on_image);
-  if(it.description) row.description=String(it.description);
-  if(it.alt) row.alt=String(it.alt);
-  if(Array.isArray(it.tags)&&it.tags.length) row.tags=it.tags.filter(Boolean);
+  const order=['view','color','product_type','brand_visible','text_on_image'];
+  const attributes={};
   if(it.attributes&&typeof it.attributes==='object'){
-    const order=['view','color','product_type','brand_visible','text_on_image'];
-    const a={};
     for(const k of order){
       const v=it.attributes[k];
       if(v==null||v===false||String(v).trim()==='') continue;
-      a[k]=typeof v==='boolean'?v:String(v).trim();
+      attributes[k]=typeof v==='boolean'?v:String(v).trim();
     }
     for(const [k,v] of Object.entries(it.attributes)){
-      if(k in a||order.includes(k)) continue;
+      if(k in attributes||order.includes(k)) continue;
       if(v==null||v===false||String(v).trim()==='') continue;
-      a[k]=typeof v==='boolean'?v:String(v).trim();
+      attributes[k]=typeof v==='boolean'?v:String(v).trim();
     }
-    if(Object.keys(a).length) row.attributes=a;
   }
-  if(it.product_id) row.product_id=String(it.product_id);
-  return row;
+  let imageId=it.image_id?String(it.image_id).trim():'';
+  if(!imageId && it.image_url){
+    const stem=String(it.image_url).split(/[?#]/)[0].split('/').pop()||'';
+    imageId=stem.replace(/\.[^.]+$/,'').trim();
+  }
+  if(!imageId && it.id) imageId=String(it.id);
+  return {
+    image:String(it.feed?.name||it.filename||'').trim(),
+    caption:String(it.caption||'').trim(),
+    objects:String(it.on_image||'').trim(),
+    description:String(it.description||'').trim(),
+    alt:String(it.alt||'').trim(),
+    tags:Array.isArray(it.tags)?[...new Set(it.tags.map(t=>String(t).trim()).filter(Boolean))]:[],
+    attributes,
+    product_id:it.product_id!=null?String(it.product_id).trim():'',
+    image_id:imageId,
+  };
 }
 
 function photoCopyDetail(){
@@ -10545,6 +10557,17 @@ function photoRenderModel(){
   }
 }
 
+function photoDescribeCandidateCount(){
+  if(!photoAlbum) return 0;
+  if(photoSel.size){
+    return [...photoSel].filter(id=>{
+      const it=photoAlbum.items.find(i=>i.id===id);
+      return it && !photoIsDescribed(it);
+    }).length;
+  }
+  return photoAlbum.items.filter(i=>i.status==='uploaded'||i.status==='error').length;
+}
+
 async function photoStartDescribe(){
   if(!photoAlbum){ photoStatus('Сначала альбом', false); return; }
   if(!photoAitunnelSettings()){
@@ -10553,6 +10576,22 @@ async function photoStartDescribe(){
   }
   if(!photoModel){ photoStatus('Выберите модель AITUNNEL', false); return; }
   const item_ids=photoSel.size?[...photoSel]:null;
+  const candidates=photoDescribeCandidateCount();
+  if(!candidates){
+    photoStatus('Нечего описывать: нет фото без описания (или все выбранные уже описаны)', false);
+    return;
+  }
+  const costEl=document.getElementById('photoMaxCostRub');
+  const maxRaw=costEl?.value?.trim();
+  const max_cost_rub=maxRaw!==''&&maxRaw!=null?Number(maxRaw):null;
+  if(max_cost_rub!=null&&(!Number.isFinite(max_cost_rub)||max_cost_rub<=0)){
+    photoStatus('Лимит ₽ должен быть положительным числом', false);
+    return;
+  }
+  if(candidates>100){
+    const lim=max_cost_rub!=null?` Лимит бюджета: ${max_cost_rub} ₽.`:' Лимит ₽ не задан — прогон идёт до конца или Стоп.';
+    if(!confirm(`Запустить описание ${candidates} фото?${lim}\nУже описанные не оплачиваются повторно. Остановить можно кнопкой Стоп.`)) return;
+  }
   try{
     const job=await apiJson('/api/photos/'+encodeURIComponent(photoAlbum.id)+'/describe',{
       method:'POST', headers:{'Content-Type':'application/json'},
@@ -10560,11 +10599,13 @@ async function photoStartDescribe(){
         model:photoModel.id,
         provider:PHOTO_PROVIDER_ID,
         item_ids,
+        force:false,
+        max_cost_rub:max_cost_rub!=null?max_cost_rub:undefined,
       }),
     });
     photoJobId=job.id;
     photoRunLogLines=[];
-    photoAppendRunLog([{ message:`Старт ${job.id} · ${job.total} фото · ${photoModel.id}`, level:'info' }]);
+    photoAppendRunLog([{ message:`Старт ${job.id} · ${job.total} фото · ${photoModel.id}${job.max_cost_rub!=null?` · лимит ${job.max_cost_rub} ₽`:''}`, level:'info' }]);
     photoStatus(`Прогон ${job.id}: 0/${job.total}`, true);
     photoPollJob();
   }catch(e){ photoStatus(e.message||'не запущен', false); }
@@ -10586,7 +10627,10 @@ function photoPollJob(){
       const st=await apiJson('/api/photo-jobs/'+encodeURIComponent(photoJobId)+'?logFrom='+logFrom);
       document.getElementById('photoJobHint').textContent=
         `${st.status}: ${st.done}/${st.total} · ok ${st.ok} · err ${st.err}`
-        +(st.cost?` · ${formatRub(Number(st.cost))}`:'');
+        +(st.skipped?` · skip ${st.skipped}`:'')
+        +(st.cost?` · ${formatRub(Number(st.cost))}`:'')
+        +(st.max_cost_rub!=null?` / лимит ${formatRub(Number(st.max_cost_rub))}`:'')
+        +(st.stop_reason?` · ${st.stop_reason}`:'');
       const bar=document.getElementById('photoBarF');
       if(bar && st.total) bar.style.width=Math.round((st.done/st.total)*100)+'%';
       const line=document.getElementById('photoRunline');
@@ -10629,7 +10673,9 @@ function photoPollJob(){
 
 async function photoExportMl(format, includeImages){
   if(!photoAlbum){ photoStatus('Нет альбома', false); return; }
-  photoStatus('Собираем ML-выгрузку…');
+  const described=(photoAlbum.items||[]).filter(photoIsDescribed).length;
+  if(!described){ photoStatus('Нет описанных фото для выгрузки', false); return; }
+  photoStatus(`Собираем ML-выгрузку (${described})…`);
   try{
     const res=await fetch('/api/photos/'+encodeURIComponent(photoAlbum.id)+'/export-ml',{
       method:'POST',
@@ -10642,15 +10688,19 @@ async function photoExportMl(format, includeImages){
       try{ err=(await res.json()).error||err; }catch{ /* */ }
       throw new Error(err);
     }
+    const exported=Number(res.headers.get('X-Export-Count')||0);
+    if(exported && exported!==described){
+      throw new Error(`Выгрузка неполная: в файле ${exported}, описано ${described}`);
+    }
     const blob=await res.blob();
     const cd=res.headers.get('Content-Disposition')||'';
     const m=cd.match(/filename="([^"]+)"/);
     const a=document.createElement('a');
     a.href=URL.createObjectURL(blob);
-    a.download=m?m[1]:`photos_${photoAlbum.id}.${format==='json'?'json':'jsonl'}`;
+    a.download=m?m[1]:`photos_${photoAlbum.id}.${format==='json'?'json':format==='xml'||format==='yml'?'xml':'jsonl'}`;
     a.click();
     URL.revokeObjectURL(a.href);
-    photoStatus('Выгрузка скачана', true);
+    photoStatus(`Выгрузка скачана: ${exported||described} из ${described} описанных`, true);
   }catch(e){ photoStatus(e.message||'не выгрузилось', false); }
 }
 

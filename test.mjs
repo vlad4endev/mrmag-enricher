@@ -2875,7 +2875,7 @@ console.log('\nТовар без описания: поиск в сети');
     assert.equal(calls[0].url, 'https://api.aitunnel.ru/v1/aitunnel/balance');
     assert.equal(calls[0].init.method, 'GET');
   });
-  t('сумма по альбому после описания', () => {
+  await tAsync('сумма по альбому после описания', async () => {
     const album = createAlbum('тест', {}, dir);
     const metaPath = path.join(process.env.PHOTOS_DIR, album.id, 'meta.json');
     const meta = JSON.parse(fs.readFileSync(metaPath, 'utf-8'));
@@ -2898,7 +2898,7 @@ console.log('\nТовар без описания: поиск в сети');
       created_at: Date.now(),
     });
     fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2));
-    applyDescribeResult(album.id, 'abcdefghij', {
+    await applyDescribeResult(album.id, 'abcdefghij', {
       caption: 'подпись',
       description: 'описание товара на фото',
       alt: 'alt',
@@ -2968,6 +2968,253 @@ console.log('\nТовар без описания: поиск в сети');
     assert.equal(out[0].pricing_source, 'fallback');
     assert.ok(out[0].pricing.prompt > 0);
   });
+}
+
+{
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'enricher-photo-safe-'));
+  const prevSettings = process.env.SETTINGS_PATH;
+  const prevPhotos = process.env.PHOTOS_DIR;
+  const prevJobs = process.env.PHOTO_JOBS_DIR;
+  process.env.SETTINGS_PATH = path.join(dir, 'config.json');
+  process.env.PHOTOS_DIR = path.join(dir, 'photos');
+  process.env.PHOTO_JOBS_DIR = path.join(dir, 'photo_jobs');
+  fs.copyFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), 'config.json'), process.env.SETTINGS_PATH);
+
+  const { createAlbum, applyDescribeResult, PHOTO_LIMITS } = await import('./pipeline/photos.js');
+  const {
+    createPhotoJobStore, isFeedFetchError,
+  } = await import('./pipeline/photo_jobs.js');
+  const { describePhoto } = await import('./pipeline/photo_agent.js');
+
+  function seedItems(albumId, specs) {
+    const metaPath = path.join(process.env.PHOTOS_DIR, albumId, 'meta.json');
+    const meta = JSON.parse(fs.readFileSync(metaPath, 'utf-8'));
+    for (const s of specs) {
+      meta.items.push({
+        id: s.id,
+        filename: `${s.id}.jpg`,
+        stored: `${s.id}.jpg`,
+        mime: 'image/jpeg',
+        bytes: 100,
+        status: s.status || 'uploaded',
+        description: s.status === 'described' ? 'уже есть' : null,
+        caption: s.status === 'described' ? 'cap' : null,
+        alt: null,
+        tags: [],
+        attributes: {},
+        warnings: [],
+        error: s.status === 'error' ? 'old' : null,
+        usage: null,
+        described_at: s.status === 'described' ? Date.now() : null,
+        created_at: Date.now(),
+      });
+      const files = path.join(process.env.PHOTOS_DIR, albumId, 'files');
+      fs.mkdirSync(files, { recursive: true });
+      fs.writeFileSync(path.join(files, `${s.id}.jpg`), Buffer.alloc(100, 1));
+    }
+    fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2));
+  }
+
+  function waitJob(store, id, ms = 5000) {
+    const t0 = Date.now();
+    return new Promise((resolve, reject) => {
+      const tick = () => {
+        const j = store.get(id);
+        if (!j) return reject(new Error('job missing'));
+        if (j.finished_at || j.status === 'done' || j.status === 'stopped') return resolve(j);
+        if (Date.now() - t0 > ms) return reject(new Error(`timeout status=${j.status}`));
+        setTimeout(tick, 20);
+      };
+      tick();
+    });
+  }
+
+  console.log('\nСтабильность фото-прогона');
+  t('PHOTO_MAX_ITEMS ≥ 15000', () => {
+    assert.ok(PHOTO_LIMITS.MAX_ITEMS >= 15_000, PHOTO_LIMITS.MAX_ITEMS);
+  });
+  t('isFeedFetchError отличает битый URL от vision', () => {
+    assert.equal(isFeedFetchError(new Error('изображение недоступно http://x — товар пропущен')), true);
+    assert.equal(isFeedFetchError(new Error('таймаут vision 90000ms')), false);
+    assert.equal(isFeedFetchError(new Error('HTTP 429: rate')), false);
+  });
+
+  await tAsync('create без pending → 400, не все id', async () => {
+    const album = createAlbum('full', {}, dir);
+    seedItems(album.id, [
+      { id: 'desc000001', status: 'described' },
+      { id: 'desc000002', status: 'described' },
+    ]);
+    const store = createPhotoJobStore({
+      describeOne: async () => { throw new Error('не должен вызываться'); },
+      dir: process.env.PHOTO_JOBS_DIR,
+      concurrency: 1,
+    });
+    await assert.rejects(
+      async () => store.create({ album_id: album.id, model: 'test-model' }),
+      /Нечего описывать/,
+    );
+  });
+
+  await tAsync('item_ids без force пропускает described', async () => {
+    const album = createAlbum('skip', {}, dir);
+    seedItems(album.id, [
+      { id: 'skip000001', status: 'described' },
+      { id: 'skip000002', status: 'uploaded' },
+    ]);
+    let called = [];
+    const store = createPhotoJobStore({
+      describeOne: async ({ itemId }) => {
+        called.push(itemId);
+        return { usage: { cost_rub: 0.1 } };
+      },
+      dir: process.env.PHOTO_JOBS_DIR,
+      concurrency: 1,
+    });
+    const job = store.create({
+      album_id: album.id,
+      model: 'test-model',
+      item_ids: ['skip000001', 'skip000002'],
+      force: false,
+    });
+    assert.equal(job.item_ids.length, 1);
+    assert.equal(job.item_ids[0], 'skip000002');
+    assert.equal(job.skipped, 1);
+    await waitJob(store, job.id);
+    assert.deepEqual(called, ['skip000002']);
+  });
+
+  await tAsync('стоп по max_cost_rub', async () => {
+    const album = createAlbum('budget', {}, dir);
+    seedItems(album.id, [
+      { id: 'budg000001', status: 'uploaded' },
+      { id: 'budg000002', status: 'uploaded' },
+      { id: 'budg000003', status: 'uploaded' },
+    ]);
+    let nCalls = 0;
+    const store = createPhotoJobStore({
+      describeOne: async () => {
+        nCalls += 1;
+        return { usage: { cost_rub: 5 } };
+      },
+      dir: process.env.PHOTO_JOBS_DIR,
+      concurrency: 1,
+    });
+    const job = store.create({
+      album_id: album.id,
+      model: 'test-model',
+      max_cost_rub: 6,
+    });
+    const done = await waitJob(store, job.id);
+    assert.equal(done.status, 'stopped');
+    assert.match(String(done.stop_reason), /лимит бюджета/);
+    assert.ok(nCalls <= 2, `calls=${nCalls}`);
+    assert.ok(done.cost >= 5);
+  });
+
+  await tAsync('стоп по серии ошибок API', async () => {
+    const album = createAlbum('consec', {}, dir);
+    seedItems(album.id, Array.from({ length: 8 }, (_, i) => ({
+      id: `cerr${String(i).padStart(6, '0')}`,
+      status: 'uploaded',
+    })));
+    const store = createPhotoJobStore({
+      describeOne: async () => { throw Object.assign(new Error('HTTP 503'), { status: 503 }); },
+      dir: process.env.PHOTO_JOBS_DIR,
+      concurrency: 1,
+      maxConsecutiveErrors: 3,
+    });
+    const job = store.create({ album_id: album.id, model: 'test-model' });
+    const done = await waitJob(store, job.id);
+    assert.equal(done.status, 'stopped');
+    assert.match(String(done.stop_reason), /подряд/);
+    assert.equal(done.err, 3);
+    assert.ok(done.done <= 4);
+  });
+
+  await tAsync('mutex: параллельные applyDescribeResult не теряют поля', async () => {
+    const album = createAlbum('mutex', {}, dir);
+    seedItems(album.id, [
+      { id: 'mutx000001', status: 'uploaded' },
+      { id: 'mutx000002', status: 'uploaded' },
+    ]);
+    await Promise.all([
+      applyDescribeResult(album.id, 'mutx000001', {
+        caption: 'один', description: 'описание один', alt: 'a1', tags: ['a'],
+        usage: { cost_rub: 0.01 },
+      }, dir),
+      applyDescribeResult(album.id, 'mutx000002', {
+        caption: 'два', description: 'описание два', alt: 'a2', tags: ['b'],
+        usage: { cost_rub: 0.02 },
+      }, dir),
+    ]);
+    const meta = JSON.parse(fs.readFileSync(path.join(process.env.PHOTOS_DIR, album.id, 'meta.json'), 'utf-8'));
+    const a = meta.items.find(i => i.id === 'mutx000001');
+    const b = meta.items.find(i => i.id === 'mutx000002');
+    assert.equal(a.status, 'described');
+    assert.equal(a.caption, 'один');
+    assert.equal(b.status, 'described');
+    assert.equal(b.caption, 'два');
+  });
+
+  await tAsync('vision retry: 429 затем 200', async () => {
+    let calls = 0;
+    const tinyPng = Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+      'base64',
+    );
+    const result = await describePhoto({
+      buf: tinyPng,
+      mime: 'image/png',
+      item: { filename: 'x.png' },
+    }, {
+      model: 'test-vision',
+      apiKey: 'sk-test',
+      chatUrl: 'https://example.test/v1/chat/completions',
+      limiter: { wait: async () => {} },
+      fetchImpl: async () => {
+        calls += 1;
+        if (calls === 1) {
+          return {
+            ok: false,
+            status: 429,
+            headers: { get: (h) => (h.toLowerCase() === 'retry-after' ? '0' : null) },
+            async text() { return JSON.stringify({ error: { message: 'rate', code: 429 } }); },
+          };
+        }
+        return {
+          ok: true,
+          status: 200,
+          headers: { get: () => null },
+          async text() {
+            return JSON.stringify({
+              choices: [{ message: { content: JSON.stringify({
+                caption: 'тест подпись товара',
+                description: 'Полное описание тестового товара на белом фоне для проверки ретрая.',
+                on_image: 'товар',
+                alt: 'alt',
+                tags: ['тест', 'товар'],
+                attributes: { view: 'front' },
+                warnings: [],
+              }) } }],
+              usage: { prompt_tokens: 1, completion_tokens: 2, cost_rub: 0.01 },
+            });
+          },
+        };
+      },
+    });
+    assert.ok(calls >= 2, `calls=${calls}`);
+    assert.ok(result.caption);
+    assert.ok(result.description);
+  });
+
+  if (prevSettings === undefined) delete process.env.SETTINGS_PATH;
+  else process.env.SETTINGS_PATH = prevSettings;
+  if (prevPhotos === undefined) delete process.env.PHOTOS_DIR;
+  else process.env.PHOTOS_DIR = prevPhotos;
+  if (prevJobs === undefined) delete process.env.PHOTO_JOBS_DIR;
+  else process.env.PHOTO_JOBS_DIR = prevJobs;
+  fs.rmSync(dir, { recursive: true, force: true });
 }
 
 console.log(`\n✅ ${n} проверок пройдено\n`);

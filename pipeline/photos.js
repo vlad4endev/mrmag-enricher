@@ -14,10 +14,28 @@ import { recordProviderSpend, usageCostRub, roundMoney } from './provider_billin
 const ALBUM_RE = /^[a-zA-Z0-9_-]{1,64}$/;
 const ITEM_RE = /^[a-zA-Z0-9_-]{8,40}$/;
 const MAX_ALBUMS = 200;
-const MAX_ITEMS = 5_000;
+/** Потолок альбома: 15k+ прогоны; переопределяется PHOTO_MAX_ITEMS. */
+const MAX_ITEMS = Math.max(1, Math.min(100_000, Number(process.env.PHOTO_MAX_ITEMS || 20_000)));
 const MAX_FILE_BYTES = Number(process.env.PHOTO_MAX_BYTES || 12 * 1024 * 1024);
 const MAX_BATCH_BYTES = Number(process.env.PHOTO_BATCH_BYTES || 48 * 1024 * 1024);
 const MAX_BATCH_FILES = Number(process.env.PHOTO_BATCH_FILES || 40);
+
+/** Очередь на альбом: параллельные workers не затирают чужие поля в meta.json. */
+const albumTails = new Map();
+
+export async function withAlbumLock(albumId, fn) {
+  const key = String(albumId || '');
+  const prev = albumTails.get(key) || Promise.resolve();
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  albumTails.set(key, prev.then(() => gate, () => gate));
+  await prev.catch(() => {});
+  try {
+    return await fn();
+  } finally {
+    release();
+  }
+}
 
 const MIME_EXT = {
   'image/jpeg': 'jpg',
@@ -205,6 +223,24 @@ function publicAlbum(meta) {
   };
 }
 
+/** Id картинки для выгрузки: явный image_id → stem URL фида → id записи. */
+export function photoImageId(item) {
+  if (!item) return '';
+  if (item.image_id != null && String(item.image_id).trim()) return String(item.image_id).trim();
+  if (item.image_url) {
+    const stem = String(item.image_url).split(/[?#]/)[0].split('/').pop() || '';
+    const id = stem.replace(/\.[^.]+$/, '').trim();
+    if (id) return id;
+  }
+  return item.id ? String(item.id) : '';
+}
+
+/** Позиция готова к ML-выгрузке: описана vision’ом (или вручную помечена ready). */
+export function isPhotoExportable(item) {
+  if (!item) return false;
+  return item.status === 'described' || item.status === 'ready';
+}
+
 function publicItem(item) {
   const product_id = item.product_id || null;
   const dump_category = item.dump_category || null;
@@ -214,6 +250,7 @@ function publicItem(item) {
     mime: item.mime,
     bytes: item.bytes,
     product_id,
+    image_id: photoImageId(item) || null,
     sku: item.sku || null,
     dump_category,
     dump_bound: Boolean(product_id && dump_category),
@@ -319,8 +356,15 @@ async function fetchFeedImage(meta, item, root, fetchImpl = fetch) {
   const stored = `${item.id}.${MIME_EXT[got.mime]}`;
   fs.mkdirSync(filesDir(meta.id, root), { recursive: true });
   fs.writeFileSync(path.join(filesDir(meta.id, root), stored), got.buf);
-  Object.assign(item, { stored, mime: got.mime, bytes: got.buf.length });
-  writeMeta(meta, root);
+  // Под lock: параллельный applyDescribeResult не должен затереть stored.
+  await withAlbumLock(meta.id, async () => {
+    const fresh = readMeta(meta.id, root);
+    const row = fresh.items.find(i => i.id === item.id);
+    if (!row) throw httpError(404, 'Фото не найдено');
+    Object.assign(row, { stored, mime: got.mime, bytes: got.buf.length });
+    Object.assign(item, { stored, mime: got.mime, bytes: got.buf.length });
+    writeMeta(fresh, root);
+  });
 }
 
 /**
@@ -462,13 +506,19 @@ export function patchPhotoItem(albumId, itemId, patch, root) {
     }
     if ('description' in patch && patch.description != null) {
       item.description = String(patch.description).slice(0, 8000);
-      if (item.status === 'uploaded') item.status = 'described';
     }
     if ('caption' in patch && patch.caption != null) item.caption = String(patch.caption).slice(0, 1000);
     if ('on_image' in patch && patch.on_image != null) item.on_image = String(patch.on_image).slice(0, 2000);
     if ('alt' in patch && patch.alt != null) item.alt = String(patch.alt).slice(0, 500);
     if ('tags' in patch && Array.isArray(patch.tags)) {
       item.tags = patch.tags.map(t => String(t).trim()).filter(Boolean).slice(0, 40);
+    }
+    // Любая правка текста описания → в выгрузку (не оставляем uploaded с заполненным caption).
+    if (
+      item.status === 'uploaded'
+      && (String(item.caption || '').trim() || String(item.description || '').trim())
+    ) {
+      item.status = 'described';
     }
   }
   writeMeta(meta, root);
@@ -503,42 +553,44 @@ export async function readPhotoFile(albumId, itemId, root) {
   };
 }
 
-export function applyDescribeResult(albumId, itemId, result, root) {
-  const meta = readMeta(assertAlbumId(albumId), root);
-  const id = assertItemId(itemId);
-  const item = meta.items.find(i => i.id === id);
-  if (!item) throw httpError(404, 'Фото не найдено');
+export async function applyDescribeResult(albumId, itemId, result, root) {
+  return withAlbumLock(albumId, async () => {
+    const meta = readMeta(assertAlbumId(albumId), root);
+    const id = assertItemId(itemId);
+    const item = meta.items.find(i => i.id === id);
+    if (!item) throw httpError(404, 'Фото не найдено');
 
-  if (result?.error) {
-    item.status = 'error';
-    item.error = String(result.error).slice(0, 800);
-    if (result.usage) {
-      item.usage = result.usage;
-      recordProviderSpend('aitunnel', result.usage, root);
+    if (result?.error) {
+      item.status = 'error';
+      item.error = String(result.error).slice(0, 800);
+      if (result.usage) {
+        item.usage = result.usage;
+        recordProviderSpend('aitunnel', result.usage, root);
+      }
+      writeMeta(meta, root);
+      return publicItem(item);
     }
+
+    item.status = 'described';
+    item.error = null;
+    item.description = String(result.description || '').slice(0, 8000);
+    item.caption = String(result.caption || '').slice(0, 1000);
+    item.on_image = String(result.on_image || '').slice(0, 2000) || null;
+    item.alt = String(result.alt || '').slice(0, 500);
+    item.tags = Array.isArray(result.tags)
+      ? result.tags.map(t => String(t).trim()).filter(Boolean).slice(0, 40)
+      : [];
+    item.attributes = result.attributes && typeof result.attributes === 'object'
+      ? result.attributes
+      : {};
+    item.warnings = Array.isArray(result.warnings) ? result.warnings.slice(0, 20) : [];
+    item.usage = result.usage || null;
+    if (result.usage) recordProviderSpend('aitunnel', result.usage, root);
+    item.described_at = Date.now();
+    if (result.model) meta.model = result.model;
     writeMeta(meta, root);
     return publicItem(item);
-  }
-
-  item.status = 'described';
-  item.error = null;
-  item.description = String(result.description || '').slice(0, 8000);
-  item.caption = String(result.caption || '').slice(0, 1000);
-  item.on_image = String(result.on_image || '').slice(0, 2000) || null;
-  item.alt = String(result.alt || '').slice(0, 500);
-  item.tags = Array.isArray(result.tags)
-    ? result.tags.map(t => String(t).trim()).filter(Boolean).slice(0, 40)
-    : [];
-  item.attributes = result.attributes && typeof result.attributes === 'object'
-    ? result.attributes
-    : {};
-  item.warnings = Array.isArray(result.warnings) ? result.warnings.slice(0, 20) : [];
-  item.usage = result.usage || null;
-  if (result.usage) recordProviderSpend('aitunnel', result.usage, root);
-  item.described_at = Date.now();
-  if (result.model) meta.model = result.model;
-  writeMeta(meta, root);
-  return publicItem(item);
+  });
 }
 
 const ATTR_ORDER = ['view', 'color', 'product_type', 'brand_visible', 'text_on_image'];
@@ -565,52 +617,44 @@ function orderedAttributes(raw) {
   return Object.keys(cleaned).length ? cleaned : null;
 }
 
+/** Стабильный порядок ключей рабочего ML-формата. */
+export const PHOTO_EXPORT_KEYS = [
+  'image', 'caption', 'objects', 'description', 'alt', 'tags', 'attributes', 'product_id', 'image_id',
+];
+
 /**
- * Компактная запись для ML/витрины — стабильный порядок ключей, без пустых полей.
+ * Запись ML-выгрузки — полный набор полей в стабильном порядке:
+ * image · caption · objects · description · alt · tags · attributes · product_id · image_id
+ * image — название товара (как в фиде), не URL.
  */
 export function photoExportRow(item, {
   include_images = false,
   album_id = null,
   root,
 } = {}) {
-  const row = {};
-
-  // Идентификаторы первыми: id товара и id изображения (у фида — имя файла картинки магазина без расширения).
-  const productId = item.product_id != null ? String(item.product_id).trim() : '';
-  if (productId) row.product_id = productId;
-  const imageId = item.image_url
-    ? item.filename.replace(/\.[^.]+$/, '')
-    : item.id;
-  if (imageId) row.image_id = imageId;
-
-  const image = String(item.filename || '').trim();
-  if (image) row.image = image;
-
+  const image = String(item.feed?.name || item.filename || '').trim();
   const caption = String(item.caption || '').trim();
   const objects = String(item.on_image || '').trim();
   const description = String(item.description || '').trim();
   const alt = String(item.alt || '').trim();
-  if (caption) row.caption = caption;
-  if (objects) row.objects = objects;
-  if (description) row.description = description;
-  if (alt) row.alt = alt;
-
   const tags = Array.isArray(item.tags)
     ? [...new Set(item.tags.map(t => String(t).trim()).filter(Boolean))]
     : [];
-  if (tags.length) row.tags = tags;
+  const attributes = orderedAttributes(item.attributes) || {};
+  const productId = item.product_id != null ? String(item.product_id).trim() : '';
+  const imageId = photoImageId(item);
 
-  const attributes = orderedAttributes(item.attributes);
-  if (attributes) row.attributes = attributes;
-
-  if (item.feed) {
-    row.name = item.feed.name;
-    if (item.feed.category) row.category = item.feed.category;
-    if (item.feed.url) row.url = item.feed.url;
-    if (item.image_url) row.image_url = item.image_url;
-    if (item.feed.article) row.sku = item.feed.article;
-  }
-
+  const row = {
+    image,
+    caption,
+    objects,
+    description,
+    alt,
+    tags,
+    attributes,
+    product_id: productId,
+    image_id: imageId,
+  };
 
   if (include_images && album_id && item.stored && root) {
     try {
@@ -622,8 +666,78 @@ export function photoExportRow(item, {
   return row;
 }
 
+/** Экранирование текста для XML (атрибуты и содержимое тегов). */
+export function escapeXml(s) {
+  return String(s ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
+}
+
 /**
- * ML-датасет: JSONL / JSON — компактные тексты без служебного шума.
+ * ML-выгрузка в XML «как в фиде»: yml_catalog → shop → offers → offer.
+ * Те же поля, что в JSON (image→name, caption, objects, description, alt, tags,
+ * attributes, product_id, image_id) + picture из image_url товара.
+ */
+export function photosToYmlXml(photos, { imageUrls = [] } = {}) {
+  const offers = photos.map((row, i) => {
+    const id = String(row.product_id || row.image_id || `photo-${i + 1}`).trim();
+    const lines = [`    <offer id="${escapeXml(id)}">`];
+    if (row.image) lines.push(`      <name>${escapeXml(row.image)}</name>`);
+    const picture = imageUrls[i] || row.image_url || '';
+    if (picture) lines.push(`      <picture>${escapeXml(picture)}</picture>`);
+    for (const key of ['caption', 'objects', 'description', 'alt']) {
+      const val = String(row[key] || '').trim();
+      if (val) lines.push(`      <${key}>${escapeXml(val)}</${key}>`);
+    }
+    if (Array.isArray(row.tags) && row.tags.length) {
+      lines.push('      <tags>');
+      for (const t of row.tags) {
+        const tag = String(t || '').trim();
+        if (tag) lines.push(`        <tag>${escapeXml(tag)}</tag>`);
+      }
+      lines.push('      </tags>');
+    }
+    const attrs = row.attributes && typeof row.attributes === 'object' && !Array.isArray(row.attributes)
+      ? row.attributes
+      : null;
+    if (attrs && Object.keys(attrs).length) {
+      lines.push('      <attributes>');
+      for (const [k, v] of Object.entries(attrs)) {
+        if (v == null || v === false) continue;
+        const name = String(k || '').trim();
+        if (!name) continue;
+        lines.push(`        <param name="${escapeXml(name)}">${escapeXml(String(v))}</param>`);
+      }
+      lines.push('      </attributes>');
+    }
+    if (row.product_id) lines.push(`      <product_id>${escapeXml(row.product_id)}</product_id>`);
+    if (row.image_id) lines.push(`      <image_id>${escapeXml(row.image_id)}</image_id>`);
+    if (row.image_base64) {
+      lines.push(`      <image_base64>${escapeXml(row.image_base64)}</image_base64>`);
+    }
+    lines.push('    </offer>');
+    return lines.join('\n');
+  });
+
+  return [
+    '<?xml version="1.0" encoding="UTF-8"?>',
+    '<yml_catalog>',
+    '  <shop>',
+    '    <offers>',
+    ...offers,
+    '    </offers>',
+    '  </shop>',
+    '</yml_catalog>',
+    '',
+  ].join('\n');
+}
+
+/**
+ * ML-датасет: JSONL / JSON / XML (YML-фид).
+ * Все described|ready попадают в файл; ключи строки — стабильный рабочий набор.
  * include_images=false — без base64 (лёгкий).
  */
 export function buildMlExport(albumId, {
@@ -634,7 +748,7 @@ export function buildMlExport(albumId, {
   const meta = readMeta(assertAlbumId(albumId), root);
   let items = meta.items.slice();
   if (only_described) {
-    items = items.filter(i => i.status === 'described' || i.status === 'ready');
+    items = items.filter(isPhotoExportable);
   }
   if (!items.length) throw httpError(400, 'Нет описанных фото для выгрузки');
 
@@ -644,9 +758,33 @@ export function buildMlExport(albumId, {
     root,
   }));
 
-  if (format === 'json') {
-    // Массив объектов как во вкладке JSON / пример выгрузки — без version/total/photos.
+  // Инвариант: ни одна обработанная позиция не потерялась и ключи полные.
+  if (photos.length !== items.length) {
+    throw httpError(500, `Выгрузка обрезана: ${photos.length} из ${items.length}`);
+  }
+  for (const row of photos) {
+    for (const key of PHOTO_EXPORT_KEYS) {
+      if (!(key in row)) throw httpError(500, `В выгрузке нет поля «${key}»`);
+    }
+  }
+
+  const fmt = format === 'yml' ? 'xml' : format;
+  const pack = { count: photos.length, album_id: meta.id };
+
+  if (fmt === 'xml') {
     return {
+      ...pack,
+      filename: `photos_${meta.id}.xml`,
+      mime: 'application/xml; charset=utf-8',
+      body: photosToYmlXml(photos, {
+        imageUrls: items.map(i => i.image_url || null),
+      }),
+    };
+  }
+
+  if (fmt === 'json') {
+    return {
+      ...pack,
       filename: `photos_${meta.id}.json`,
       mime: 'application/json; charset=utf-8',
       body: `${JSON.stringify(photos, null, 2)}\n`,
@@ -655,6 +793,7 @@ export function buildMlExport(albumId, {
 
   const lines = photos.map(r => JSON.stringify(r)).join('\n') + '\n';
   return {
+    ...pack,
     filename: `photos_${meta.id}.jsonl`,
     mime: 'application/x-ndjson; charset=utf-8',
     body: lines,

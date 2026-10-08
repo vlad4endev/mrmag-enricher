@@ -573,6 +573,32 @@ export async function readPhotoFile(albumId, itemId, root) {
   };
 }
 
+/**
+ * Вход для vision-описания.
+ * Товары из YML: только remote_url — провайдер сам забирает картинку с CDN.
+ * Серверу не нужно скачивать static.groster.me (там часто ECONNREFUSED) и не нужен прокси.
+ * Загруженные вручную файлы — байты с диска.
+ */
+export async function loadPhotoForDescribe(albumId, itemId, root) {
+  const meta = readMeta(assertAlbumId(albumId), root);
+  const id = assertItemId(itemId);
+  const item = meta.items.find(i => i.id === id);
+  if (!item) throw httpError(404, 'Фото не найдено');
+
+  if (isUsablePictureUrl(item.image_url)) {
+    return {
+      item: publicItem(item),
+      remote_url: String(item.image_url).trim(),
+      mime: item.mime || null,
+      buf: null,
+      path: null,
+      from_url: true,
+    };
+  }
+
+  return readPhotoFile(albumId, itemId, root);
+}
+
 export function applyDescribeResult(albumId, itemId, result, root) {
   const id = assertItemId(itemId);
   // Пишем в свежий meta: параллельная скачка фото могла уже проставить stored/mime.

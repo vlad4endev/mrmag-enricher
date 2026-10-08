@@ -146,6 +146,7 @@ import {
   bootstrapPhotosDir, listAlbums, createAlbum, getAlbum, deleteAlbum,
   uploadPhotos, importFeedOffers, patchPhotoItem, deletePhotoItem, readPhotoFile, buildMlExport,
   applyDescribeResult, patchAlbum, photosDir, PHOTO_LIMITS, sumPhotoSpend,
+  loadPhotoForDescribe,
 } from './pipeline/photos.js';
 import { describePhoto, defaultPhotoSystemPrompt, PHOTO_PROMPT_PLACEHOLDERS, resolvePhotoSystemPrompt } from './pipeline/photo_agent.js';
 import { parseYml } from './pipeline/yml_feed.js';
@@ -2138,20 +2139,19 @@ async function describePhotoOne({ albumId, itemId, model, provider, onNote = () 
   }
   const resolvedModel = resolveProviderModel(prov, model, settings) || model;
   const albumBefore = (() => { try { return getAlbum(albumId, ROOT); } catch { return null; } })();
-  const itemBefore = albumBefore?.items?.find(i => i.id === itemId) || null;
-  if (itemBefore?.image_url && !itemBefore?.stored) {
-    onNote('скачиваю фото по ссылке фида…');
-  }
-  const file = await readPhotoFile(albumId, itemId, ROOT);
-  if (!file?.buf?.length || !file?.mime) {
+  // Фид: ссылка уходит в AITUNNEL как есть — без скачивания на сервер и без прокси.
+  // Иначе на VPS static.groster.me часто даёт ECONNREFUSED / обрыв TLS через прокси.
+  const file = await loadPhotoForDescribe(albumId, itemId, ROOT);
+  if (!file?.remote_url && !file?.buf?.length) {
     throw Object.assign(
-      new Error(itemBefore?.image_url
-        ? `не удалось прогрузить изображение ${itemBefore.image_url}`
+      new Error(file?.item?.image_url
+        ? `нет изображения для описания: ${file.item.image_url}`
         : 'нет файла изображения для описания'),
       { status: 502 },
     );
   }
-  onNote(`фото прогружено · ${file.mime} · ${Math.round(file.buf.length / 1024)} КБ`);
+  if (file.remote_url) onNote('фото: ссылка фида → vision (без скачивания на сервер)');
+  else onNote(`фото с диска · ${file.mime} · ${Math.round(file.buf.length / 1024)} КБ`);
   let albumCat = albumBefore?.category || null;
   const dumpCat = file.item?.dump_category || albumCat || null;
   const useDump = Boolean(file.item?.product_id && dumpCat);

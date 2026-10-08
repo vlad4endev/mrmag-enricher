@@ -98,19 +98,11 @@ console.log('yml ok');
   console.log('placeholder skip ok');
 }
 
-// Картинка из фида прогружается и реально уходит в vision-запрос вместе с фактами YML
+// Фид → vision: ссылка картинки уходит провайдеру, сервер CDN не качает (нет ECONNREFUSED/прокси)
 {
-  const http = await import('node:http');
   const { describePhoto, buildUserParts } = await import('./pipeline/photo_agent.js');
-  const { readPhotoFile, applyDescribeResult } = await import('./pipeline/photos.js');
-  const png = Buffer.concat([Buffer.from('89504e470d0a1a0a', 'hex'), Buffer.alloc(2500, 7)]);
-  let hits = 0;
-  const srv = http.createServer((q, r) => {
-    hits += 1;
-    r.setHeader('content-type', 'image/png');
-    r.end(png);
-  }).listen(0);
-  const imgUrl = `http://127.0.0.1:${srv.address().port}/product.png`;
+  const { loadPhotoForDescribe, applyDescribeResult } = await import('./pipeline/photos.js');
+  const imgUrl = 'https://static.groster.me/images/shop/67304082-4919-11f1-9ee8-74563c4adfb9.png';
   const root4 = fs.mkdtempSync(path.join(os.tmpdir(), 'desc-'));
   process.env.PHOTOS_DIR = path.join(root4, 'photos');
   const al = createAlbum('d', {}, root4);
@@ -128,33 +120,22 @@ console.log('yml ok');
   }], root4);
   const itemId = getAlbum(al.id, root4).items[0].id;
 
-  // 1) прогрузка по ссылке → байты совпадают с исходным PNG
-  const file = await readPhotoFile(al.id, itemId, root4);
-  assert.equal(file.mime, 'image/png');
-  assert.deepEqual(file.buf, png);
+  // loadPhotoForDescribe не ходит в сеть — только remote_url
+  const file = await loadPhotoForDescribe(al.id, itemId, root4);
+  assert.equal(file.remote_url, imgUrl);
+  assert.equal(file.buf, null);
   assert.equal(file.item.feed.name, 'Банка Твист 250 мл');
-  assert.ok(file.item.image_url === imgUrl);
 
-  // 2) buildUserParts кладёт data-URL с тем же base64
   const parts = buildUserParts({
-    mime: file.mime,
-    base64: file.buf.toString('base64'),
+    imageUrl: file.remote_url,
     filename: file.item.filename,
     productId: file.item.product_id,
-    dump: {
-      name: file.item.feed.name,
-      specs: { 'Объем, мл': '250' },
-    },
+    dump: { name: file.item.feed.name, specs: { 'Объем, мл': '250' } },
     feed: true,
   });
-  assert.equal(parts.length, 2);
-  assert.equal(parts[1].type, 'image_url');
-  const dataUrl = parts[1].image_url.url;
-  assert.match(dataUrl, /^data:image\/png;base64,/);
-  assert.deepEqual(Buffer.from(dataUrl.split(',')[1], 'base64'), png);
+  assert.equal(parts[1].image_url.url, imgUrl);
   assert.match(parts[0].text, /Банка Твист|Объем/);
 
-  // 3) describePhoto шлёт в API и картинку, и факты фида; ответ сохраняется
   let captured = null;
   const notes = [];
   const result = await describePhoto(file, {
@@ -190,29 +171,47 @@ console.log('yml ok');
   });
   assert.ok(captured, 'vision-запрос ушёл');
   const content = captured.messages.find(m => m.role === 'user').content;
-  assert.ok(Array.isArray(content), 'multimodal content');
   const img = content.find(p => p.type === 'image_url');
-  assert.ok(img?.image_url?.url?.startsWith('data:image/png;base64,'));
-  assert.deepEqual(Buffer.from(img.image_url.url.split(',')[1], 'base64'), png);
-  const textPart = content.find(p => p.type === 'text').text;
-  assert.match(textPart, /250/);
-  assert.match(textPart, /Банка Твист/);
+  assert.equal(img.image_url.url, imgUrl, 'в vision ушла ссылка магазина, не data-URL');
+  assert.match(content.find(p => p.type === 'text').text, /250/);
   assert.match(captured.messages[0].content, /ТОВАР ИЗ ФИДА|dump/i);
-  assert.ok(notes.some(n => /фото/.test(n)));
-  assert.equal(result.caption.includes('Банка') || result.description.includes('банка') || true, true);
+  assert.ok(notes.some(n => /ссылк/i.test(n)));
+  assert.ok(!notes.some(n => /прокси|ECONNREFUSED|скачива/i.test(n)));
 
   const saved = applyDescribeResult(al.id, itemId, result, root4);
   assert.equal(saved.status, 'described');
   assert.ok(saved.description);
-  // после описания image_url и кэш на диске на месте (повторный read без новой закачки)
-  const again = getAlbum(al.id, root4).items[0];
-  assert.equal(again.image_url, imgUrl);
-  assert.equal(again.mime, 'image/png');
-  assert.ok(again.bytes >= png.length);
-  const cached = await readPhotoFile(al.id, itemId, root4);
-  assert.deepEqual(cached.buf, png);
-  assert.equal(hits, 1, 'повторный read должен взять кэш с диска, не качать снова');
+  assert.equal(getAlbum(al.id, root4).items[0].image_url, imgUrl);
+  console.log('describe uses remote image url ok');
+}
 
-  srv.close();
-  console.log('describe uses loaded image ok');
+// Загруженный файл без image_url — по-прежнему data-URL из байтов
+{
+  const { describePhoto, buildUserParts } = await import('./pipeline/photo_agent.js');
+  const png = Buffer.concat([Buffer.from('89504e470d0a1a0a', 'hex'), Buffer.alloc(2500, 9)]);
+  const parts = buildUserParts({ mime: 'image/png', base64: png.toString('base64') });
+  assert.match(parts[1].image_url.url, /^data:image\/png;base64,/);
+  let captured = null;
+  await describePhoto({ item: { filename: 'x.png' }, mime: 'image/png', buf: png }, {
+    model: 'test-vision',
+    chatUrl: 'http://vision.test/v1/chat/completions',
+    fetchImpl: async (_u, init) => {
+      captured = JSON.parse(init.body);
+      return {
+        ok: true, status: 200,
+        async text() {
+          return JSON.stringify({
+            choices: [{ message: { content: JSON.stringify({
+              caption: 'Тест', on_image: 'x', description: 'Описание тестового фото для проверки.',
+              alt: 't', tags: ['t'], attributes: {}, warnings: [],
+            }) } }],
+            usage: {},
+          });
+        },
+      };
+    },
+  });
+  const img = captured.messages.find(m => m.role === 'user').content.find(p => p.type === 'image_url');
+  assert.deepEqual(Buffer.from(img.image_url.url.split(',')[1], 'base64'), png);
+  console.log('describe uses local bytes ok');
 }

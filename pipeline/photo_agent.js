@@ -7,6 +7,7 @@
 import { RateLimiter } from '../lib.js';
 import { getDump } from './dumps.js';
 import { normalizeProviderUsage } from './provider_billing.js';
+import { isUsablePictureUrl } from './yml_feed.js';
 
 export const PHOTO_PROMPT_PLACEHOLDERS = [
   { key: '{{filename}}', note: 'имя файла изображения' },
@@ -324,14 +325,14 @@ function consistencyLite(vision, dump) {
   return warnings;
 }
 
-/** Собирает multimodal user-content: JSON с фактами фида/дампа + data-URL картинки. */
-export function buildUserParts({ mime, base64, filename, productId, sku, dump, feed = false }) {
-  if (!mime || !/^image\/(jpeg|png|webp|gif)$/i.test(mime)) {
-    throw Object.assign(new Error(`для описания нужна картинка JPEG/PNG/WebP/GIF, получено «${mime || 'пусто'}»`), { status: 502 });
-  }
-  if (!base64 || String(base64).length < 64) {
-    throw Object.assign(new Error('пустой буфер изображения — фото не прогрузилось'), { status: 502 });
-  }
+/**
+ * Multimodal user-content: JSON с фактами фида/дампа + картинка.
+ * Для фида предпочитаем публичный http(s) URL — vision-провайдер сам забирает файл.
+ * Так серверу не нужно ходить на CDN магазина (ECONNREFUSED) и не нужен прокси.
+ */
+export function buildUserParts({
+  mime, base64, imageUrl, filename, productId, sku, dump, feed = false,
+} = {}) {
   const meta = {
     filename: filename || null,
     product_id: productId || null,
@@ -345,12 +346,26 @@ export function buildUserParts({ mime, base64, filename, productId, sku, dump, f
         ? 'Привязка к дампу задана, но товар в дампе не найден — опиши только фото. Принт разбери по элементам, не обобщай.'
         : 'Опиши только фото. Если на товаре принт — on_image и tags: каждый объект рисунка отдельно (10–18 тегов); description: композиция принта. Без выдуманных свойств.'),
   };
-  return [
-    { type: 'text', text: JSON.stringify(meta) },
-    {
+
+  let imagePart;
+  if (isUsablePictureUrl(imageUrl)) {
+    imagePart = { type: 'image_url', image_url: { url: String(imageUrl).trim() } };
+  } else {
+    if (!mime || !/^image\/(jpeg|png|webp|gif)$/i.test(mime)) {
+      throw Object.assign(new Error(`для описания нужна картинка JPEG/PNG/WebP/GIF, получено «${mime || 'пусто'}»`), { status: 502 });
+    }
+    if (!base64 || String(base64).length < 64) {
+      throw Object.assign(new Error('пустой буфер изображения — фото не прогрузилось'), { status: 502 });
+    }
+    imagePart = {
       type: 'image_url',
       image_url: { url: `data:${mime};base64,${base64}` },
-    },
+    };
+  }
+
+  return [
+    { type: 'text', text: JSON.stringify(meta) },
+    imagePart,
   ];
 }
 
@@ -378,11 +393,17 @@ export async function describePhoto(itemFile, opts = {}) {
   } = opts;
 
   if (!model) throw Object.assign(new Error('Не передана модель'), { status: 400 });
-  if (!itemFile?.buf?.length) {
-    throw Object.assign(new Error('нет байтов изображения — сначала прогрузите фото по ссылке'), { status: 502 });
-  }
-  if (!itemFile?.mime || !/^image\/(jpeg|png|webp|gif)$/i.test(itemFile.mime)) {
-    throw Object.assign(new Error(`некорректный тип изображения: ${itemFile?.mime || 'пусто'}`), { status: 502 });
+
+  const remoteUrl = isUsablePictureUrl(itemFile?.remote_url)
+    ? String(itemFile.remote_url).trim()
+    : (isUsablePictureUrl(itemFile?.item?.image_url) ? String(itemFile.item.image_url).trim() : '');
+  const hasBuf = Boolean(itemFile?.buf?.length && itemFile?.mime
+    && /^image\/(jpeg|png|webp|gif)$/i.test(itemFile.mime));
+  if (!remoteUrl && !hasBuf) {
+    throw Object.assign(
+      new Error('нет изображения для описания: нужна ссылка фида или файл JPEG/PNG/WebP/GIF'),
+      { status: 502 },
+    );
   }
 
   const doFetch = typeof fetchImpl === 'function' ? fetchImpl : fetch;
@@ -398,9 +419,15 @@ export async function describePhoto(itemFile, opts = {}) {
   } else if (dump) {
     onNote(`дамп ${category} · id ${dump.id || itemFile.item?.product_id}`);
   }
-  onNote(`фото в запросе · ${itemFile.mime} · ${Math.round(itemFile.buf.length / 1024)} КБ`
-    + (itemFile.item?.image_url ? ' · по ссылке фида' : ''));
-  const base64 = itemFile.buf.toString('base64');
+
+  // Фид/CDN: отдаём URL провайдеру. Не качаем на сервер и не через прокси —
+  // иначе на VPS часто ECONNREFUSED до static.*.
+  if (remoteUrl) {
+    onNote(`фото по ссылке → vision · ${remoteUrl.length > 96 ? `${remoteUrl.slice(0, 96)}…` : remoteUrl}`);
+  } else {
+    onNote(`фото в запросе · ${itemFile.mime} · ${Math.round(itemFile.buf.length / 1024)} КБ`);
+  }
+
   const system = resolvePhotoSystemPrompt(systemPrompt, {
     filename: itemFile.item?.filename || '',
     product_id: (feed || useDump) ? (itemFile.item?.product_id || '') : '',
@@ -413,17 +440,18 @@ export async function describePhoto(itemFile, opts = {}) {
   onNote('запрос к vision-модели…');
 
   const userParts = buildUserParts({
-    mime: itemFile.mime,
-    base64,
+    imageUrl: remoteUrl || undefined,
+    mime: hasBuf ? itemFile.mime : undefined,
+    base64: hasBuf && !remoteUrl ? itemFile.buf.toString('base64') : undefined,
     filename: itemFile.item?.filename,
     productId: (feed || useDump) ? itemFile.item?.product_id : null,
     sku: (feed || useDump) ? itemFile.item?.sku : null,
     dump,
     feed: Boolean(feed),
   });
-  // Страховка: в multimodal-запросе обязательно есть data-URL картинки.
   const imagePart = userParts.find(p => p?.type === 'image_url');
-  if (!imagePart?.image_url?.url?.startsWith(`data:${itemFile.mime};base64,`)) {
+  const sentUrl = imagePart?.image_url?.url || '';
+  if (!sentUrl || !(sentUrl.startsWith('data:image/') || /^https?:\/\//i.test(sentUrl))) {
     throw Object.assign(new Error('внутренний сбой: картинка не попала в запрос к модели'), { status: 500 });
   }
 

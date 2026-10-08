@@ -77,3 +77,111 @@ console.log('yml ok');
   srv.close();
   console.log('image validation ok');
 }
+
+// ML-выгрузка: полный набор полей + image_id, image = название товара; все described в файле
+{
+  const {
+    photoExportRow, photoImageId, buildMlExport, applyDescribeResult,
+    photosToYmlXml, escapeXml, PHOTO_EXPORT_KEYS, isPhotoExportable,
+  } = await import('./pipeline/photos.js');
+  const rootE = fs.mkdtempSync(path.join(os.tmpdir(), 'yml-exp-'));
+  process.env.PHOTOS_DIR = path.join(rootE, 'photos');
+  const al = createAlbum('exp', {}, rootE);
+  const imgUrl = 'https://static.groster.me/images/shop/67304082-4919-11f1-9ee8-74563c4adfb9.png';
+  importFeedOffers(al.id, [{
+    id: '0a0a255e-cb2a-11ee-9fb8-ac1f6b855a52',
+    name: 'Агрокассета 10 ячеек 10/67, 700 мкм,цвет  черный',
+    vendor: 'X',
+    vendor_code: 'A-1',
+    image_url: imgUrl,
+    category: 'Агро › Кассеты',
+    description: '',
+    url: 'https://shop/p/1',
+    params: [],
+    synonyms: [],
+  }, {
+    id: 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb',
+    name: 'Второй товар без описания',
+    vendor: 'Y',
+    vendor_code: 'B-2',
+    image_url: 'https://static.groster.me/images/shop/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee.jpg',
+    category: 'Агро',
+    description: '',
+    url: 'https://shop/p/2',
+    params: [],
+    synonyms: [],
+  }], rootE);
+  const items = getAlbum(al.id, rootE).items;
+  assert.equal(items.length, 2);
+  assert.equal(items[0].image_id, '67304082-4919-11f1-9ee8-74563c4adfb9');
+  assert.equal(photoImageId(items[0]), '67304082-4919-11f1-9ee8-74563c4adfb9');
+  assert.equal(isPhotoExportable(items[0]), false);
+
+  await applyDescribeResult(al.id, items[0].id, {
+    caption: 'Агрокассета на 10 ячеек',
+    on_image: 'агрокассета, 10 ячеек',
+    description: 'Описание кассеты для рассады.',
+    alt: 'Черная агрокассета',
+    tags: ['агрокассета', 'рассада'],
+    attributes: { view: 'сверху', color: 'черный', product_type: 'агрокассета' },
+  }, rootE);
+  await applyDescribeResult(al.id, items[1].id, {
+    caption: 'Второй товар',
+    on_image: 'коробка',
+    description: 'Короткое описание второго.',
+    alt: 'Второй',
+    tags: ['второй'],
+    attributes: { view: 'front' },
+  }, rootE);
+
+  const after = getAlbum(al.id, rootE).items;
+  assert.equal(after.filter(isPhotoExportable).length, 2);
+
+  const row = photoExportRow(after[0]);
+  assert.deepEqual(Object.keys(row), PHOTO_EXPORT_KEYS);
+  assert.equal(row.image, 'Агрокассета 10 ячеек 10/67, 700 мкм,цвет  черный');
+  assert.equal(row.product_id, '0a0a255e-cb2a-11ee-9fb8-ac1f6b855a52');
+  assert.equal(row.image_id, '67304082-4919-11f1-9ee8-74563c4adfb9');
+  assert.equal(row.objects, 'агрокассета, 10 ячеек');
+  assert.ok(!('image_url' in row));
+  assert.ok(!('name' in row));
+
+  const pack = buildMlExport(al.id, { format: 'json' }, rootE);
+  const arr = JSON.parse(pack.body);
+  assert.equal(pack.count, 2);
+  assert.equal(arr.length, 2, 'все описанные должны попасть в JSON');
+  assert.equal(arr[0].image_id, row.image_id);
+  assert.equal(arr[1].product_id, 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb');
+  for (const r of arr) {
+    assert.deepEqual(Object.keys(r), PHOTO_EXPORT_KEYS);
+  }
+
+  const jsonl = buildMlExport(al.id, { format: 'jsonl' }, rootE);
+  assert.equal(jsonl.body.trim().split('\n').length, 2);
+
+  assert.equal(escapeXml(`a<"&>'`), 'a&lt;&quot;&amp;&gt;&apos;');
+  const xmlPack = buildMlExport(al.id, { format: 'xml' }, rootE);
+  assert.equal(xmlPack.filename, `photos_${al.id}.xml`);
+  assert.equal(xmlPack.count, 2);
+  assert.match(xmlPack.mime, /xml/);
+  assert.match(xmlPack.body, /^<\?xml version="1.0" encoding="UTF-8"\?>/);
+  assert.match(xmlPack.body, /<yml_catalog>/);
+  assert.match(xmlPack.body, /<offer id="0a0a255e-cb2a-11ee-9fb8-ac1f6b855a52">/);
+  assert.match(xmlPack.body, /<offer id="bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb">/);
+  assert.match(xmlPack.body, /<name>Агрокассета 10 ячеек 10\/67, 700 мкм,цвет  черный<\/name>/);
+  assert.match(xmlPack.body, /<picture>https:\/\/static\.groster\.me\/images\/shop\/67304082-4919-11f1-9ee8-74563c4adfb9\.png<\/picture>/);
+  assert.match(xmlPack.body, /<caption>Агрокассета на 10 ячеек<\/caption>/);
+  assert.match(xmlPack.body, /<objects>агрокассета, 10 ячеек<\/objects>/);
+  assert.match(xmlPack.body, /<description>Описание кассеты для рассады\.<\/description>/);
+  assert.match(xmlPack.body, /<alt>Черная агрокассета<\/alt>/);
+  assert.match(xmlPack.body, /<tag>агрокассета<\/tag>/);
+  assert.match(xmlPack.body, /<param name="view">сверху<\/param>/);
+  assert.match(xmlPack.body, /<product_id>0a0a255e-cb2a-11ee-9fb8-ac1f6b855a52<\/product_id>/);
+  assert.match(xmlPack.body, /<image_id>67304082-4919-11f1-9ee8-74563c4adfb9<\/image_id>/);
+  const ymlAlias = buildMlExport(al.id, { format: 'yml' }, rootE);
+  assert.equal(ymlAlias.filename, xmlPack.filename);
+  assert.equal(ymlAlias.body, xmlPack.body);
+  const direct = photosToYmlXml([row], { imageUrls: [imgUrl] });
+  assert.match(direct, /<picture>/);
+  console.log('ml export schema ok');
+}

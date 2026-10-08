@@ -1201,7 +1201,7 @@ input[type=range]::-moz-range-thumb{
   background:color-mix(in srgb,var(--rbg) 70%,var(--bg2));
 }
 .photo-page .photo-export{
-  display:grid;grid-template-columns:1fr 1fr 1fr;gap:7px;
+  display:grid;grid-template-columns:1fr 1fr;gap:7px;
 }
 .photo-page .photo-export .sbtn{
   min-height:36px;justify-content:center;border-radius:10px;font-size:12px;
@@ -2328,7 +2328,7 @@ input[type=range]::-moz-range-thumb{
         <div class="photo-export">
           <button type="button" class="sbtn primary" onclick="photoExportMl('jsonl')"><i class="ti ti-download"></i> JSONL</button>
           <button type="button" class="sbtn ghost" onclick="photoExportMl('json')">JSON</button>
-          <button type="button" class="sbtn ghost" onclick="photoExportMl('xml')" title="YML-фид: yml_catalog / offer с теми же полями описаний"><i class="ti ti-file-code"></i> XML</button>
+          <button type="button" class="sbtn ghost wide" onclick="photoExportMl('xml')" title="YML-фид: yml_catalog / offer с теми же полями описаний"><i class="ti ti-file-code"></i> XML (как фид)</button>
           <button type="button" class="sbtn ghost wide" onclick="photoExportMl('jsonl',true)">+ base64</button>
         </div>
         <div class="photo-schema">image · caption · objects · description · alt · tags · attributes · product_id · image_id</div>

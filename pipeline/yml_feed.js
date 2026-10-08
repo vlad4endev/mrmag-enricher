@@ -25,7 +25,7 @@ function decode(s) {
 }
 
 function tag(xml, name) {
-  // Только прямой потомок: первое вхождение имени на уровне offer (не вложенный <stock><url>).
+  // Первое вхождение тега в фрагменте offer (у Groster <url>/<picture> идут до <stock>).
   const m = xml.match(new RegExp(`<${name}(?:\\s[^>]*)?>([\\s\\S]*?)</${name}>`));
   return m ? decode(m[1]) : '';
 }

@@ -240,3 +240,50 @@ console.log('yml ok');
   assert.ok(!fs.existsSync(b.uploadDir));
   console.log('yml chunk upload ok');
 }
+
+// ML-выгрузка: полный набор полей + image_id, image = название товара
+{
+  const { photoExportRow, photoImageId, buildMlExport, applyDescribeResult } = await import('./pipeline/photos.js');
+  const rootE = fs.mkdtempSync(path.join(os.tmpdir(), 'yml-exp-'));
+  process.env.PHOTOS_DIR = path.join(rootE, 'photos');
+  const al = createAlbum('exp', {}, rootE);
+  const imgUrl = 'https://static.groster.me/images/shop/67304082-4919-11f1-9ee8-74563c4adfb9.png';
+  importFeedOffers(al.id, [{
+    id: '0a0a255e-cb2a-11ee-9fb8-ac1f6b855a52',
+    name: 'Агрокассета 10 ячеек 10/67, 700 мкм,цвет  черный',
+    vendor: 'X',
+    vendor_code: 'A-1',
+    image_url: imgUrl,
+    category: 'Агро › Кассеты',
+    description: '',
+    url: 'https://shop/p/1',
+    params: [],
+    synonyms: [],
+  }], rootE);
+  const item = getAlbum(al.id, rootE).items[0];
+  assert.equal(item.image_id, '67304082-4919-11f1-9ee8-74563c4adfb9');
+  assert.equal(photoImageId(item), '67304082-4919-11f1-9ee8-74563c4adfb9');
+  applyDescribeResult(al.id, item.id, {
+    caption: 'Агрокассета на 10 ячеек',
+    on_image: 'агрокассета, 10 ячеек',
+    description: 'Описание кассеты для рассады.',
+    alt: 'Черная агрокассета',
+    tags: ['агрокассета', 'рассада'],
+    attributes: { view: 'сверху', color: 'черный', product_type: 'агрокассета' },
+  }, rootE);
+  const row = photoExportRow(getAlbum(al.id, rootE).items[0]);
+  assert.deepEqual(Object.keys(row), [
+    'image', 'caption', 'objects', 'description', 'alt', 'tags', 'attributes', 'product_id', 'image_id',
+  ]);
+  assert.equal(row.image, 'Агрокассета 10 ячеек 10/67, 700 мкм,цвет  черный');
+  assert.equal(row.product_id, '0a0a255e-cb2a-11ee-9fb8-ac1f6b855a52');
+  assert.equal(row.image_id, '67304082-4919-11f1-9ee8-74563c4adfb9');
+  assert.equal(row.objects, 'агрокассета, 10 ячеек');
+  assert.ok(!('image_url' in row));
+  assert.ok(!('name' in row));
+  const pack = buildMlExport(al.id, { format: 'json' }, rootE);
+  const arr = JSON.parse(pack.body);
+  assert.equal(arr.length, 1);
+  assert.equal(arr[0].image_id, row.image_id);
+  console.log('ml export schema ok');
+}

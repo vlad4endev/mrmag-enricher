@@ -2310,7 +2310,7 @@ input[type=range]::-moz-range-thumb{
         <button type="button" class="sbtn ghost wide" style="margin-top:8px" onclick="photoImportYml()" title="Весь YML-фид с фото в альбом; сколько описывать — выберете сами"><i class="ti ti-file-code"></i> Импорт из YML-фида (ссылка)</button>
         <button type="button" class="sbtn ghost wide" style="margin-top:6px" onclick="document.getElementById('photoYmlFile').click()" title="XML-файл фида с вашего компьютера"><i class="ti ti-file-upload"></i> Файл фида…</button>
         <input type="file" id="photoYmlFile" accept=".xml,.yml,text/xml,application/xml,application/octet-stream" hidden onchange="photoImportYmlFile(this)">
-        <div class="hint" style="margin-top:8px">По умолчанию в альбом попадает <b>весь фид</b> (все товары с фото). Сколько описывать — отметьте чекбоксами и «Описать».</div>
+        <div class="hint" style="margin-top:8px">По умолчанию в альбом попадает <b>весь фид</b> (все товары с фото). Большой XML («Файл фида») уходит кусками — без ошибки 413. Сколько описывать — отметьте чекбоксами и «Описать».</div>
       </section>
 
       <section class="photo-card">
@@ -2330,7 +2330,7 @@ input[type=range]::-moz-range-thumb{
           <button type="button" class="sbtn ghost" onclick="photoExportMl('json')">JSON</button>
           <button type="button" class="sbtn ghost wide" onclick="photoExportMl('jsonl',true)">+ base64</button>
         </div>
-        <div class="photo-schema">image · caption · objects · description · alt · tags</div>
+        <div class="photo-schema">image · caption · objects · description · alt · tags · attributes · product_id · image_id</div>
       </section>
 
       <section class="photo-dock" aria-label="Прогон">
@@ -10293,33 +10293,40 @@ function photoToggleDumpBind(){
   else photoBindDump(it.id);
 }
 
-/** Компактный JSON как в выгрузке — стабильный порядок, без служебных полей. */
+/** Компактный JSON как в ML-выгрузке — полный набор полей, стабильный порядок. */
 function photoSlimJson(it){
   if(!it) return {};
-  const row={};
-  if(it.filename) row.image=String(it.filename);
-  if(it.caption) row.caption=String(it.caption);
-  if(it.on_image) row.objects=String(it.on_image);
-  if(it.description) row.description=String(it.description);
-  if(it.alt) row.alt=String(it.alt);
-  if(Array.isArray(it.tags)&&it.tags.length) row.tags=it.tags.filter(Boolean);
+  const order=['view','color','product_type','brand_visible','text_on_image'];
+  const attributes={};
   if(it.attributes&&typeof it.attributes==='object'){
-    const order=['view','color','product_type','brand_visible','text_on_image'];
-    const a={};
     for(const k of order){
       const v=it.attributes[k];
       if(v==null||v===false||String(v).trim()==='') continue;
-      a[k]=typeof v==='boolean'?v:String(v).trim();
+      attributes[k]=typeof v==='boolean'?v:String(v).trim();
     }
     for(const [k,v] of Object.entries(it.attributes)){
-      if(k in a||order.includes(k)) continue;
+      if(k in attributes||order.includes(k)) continue;
       if(v==null||v===false||String(v).trim()==='') continue;
-      a[k]=typeof v==='boolean'?v:String(v).trim();
+      attributes[k]=typeof v==='boolean'?v:String(v).trim();
     }
-    if(Object.keys(a).length) row.attributes=a;
   }
-  if(it.product_id) row.product_id=String(it.product_id);
-  return row;
+  let imageId=it.image_id?String(it.image_id):'';
+  if(!imageId && it.image_url){
+    const stem=String(it.image_url).split(/[?#]/)[0].split('/').pop()||'';
+    imageId=stem.replace(/\.[^.]+$/,'').trim();
+  }
+  if(!imageId && it.id) imageId=String(it.id);
+  return {
+    image:String(it.feed?.name||it.filename||'').trim(),
+    caption:String(it.caption||'').trim(),
+    objects:String(it.on_image||'').trim(),
+    description:String(it.description||'').trim(),
+    alt:String(it.alt||'').trim(),
+    tags:Array.isArray(it.tags)?[...new Set(it.tags.map(t=>String(t).trim()).filter(Boolean))]:[],
+    attributes,
+    product_id:it.product_id!=null?String(it.product_id).trim():'',
+    image_id:imageId,
+  };
 }
 
 function photoCopyDetail(){

@@ -206,6 +206,18 @@ function publicAlbum(meta) {
   };
 }
 
+/** Id картинки магазина: stem из URL (…/uuid.png → uuid), иначе сохранённый image_id / id позиции. */
+export function photoImageId(item) {
+  if (!item) return '';
+  if (item.image_id != null && String(item.image_id).trim()) return String(item.image_id).trim();
+  if (item.image_url) {
+    const stem = String(item.image_url).split(/[?#]/)[0].split('/').pop() || '';
+    const id = stem.replace(/\.[^.]+$/, '').trim();
+    if (id) return id;
+  }
+  return item.id ? String(item.id) : '';
+}
+
 function publicItem(item) {
   const product_id = item.product_id || null;
   const dump_category = item.dump_category || null;
@@ -215,6 +227,7 @@ function publicItem(item) {
     mime: item.mime,
     bytes: item.bytes,
     product_id,
+    image_id: photoImageId(item) || null,
     sku: item.sku || null,
     dump_category,
     dump_bound: Boolean(product_id && dump_category),
@@ -375,17 +388,21 @@ export function importFeedOffers(albumId, offers, root) {
   }
   for (const o of fresh) {
     const id = newId();
+    const picStem = (o.image_url.split(/[?#]/)[0].split('/').pop() || o.id)
+      .replace(/\.[^.]+$/, '');
     const picName = (o.image_url.split(/[?#]/)[0].split('/').pop() || o.id)
       .replace(/[^\w.\-а-яА-ЯёЁ]+/g, '_')
       .slice(0, 120);
     meta.items.push({
       id,
-      // В списке показываем название товара; имя файла картинки магазина оставляем в image_url.
+      // В списке и в ML-поле image — название товара; URL картинки — в image_url.
       filename: String(o.name || picName).replace(/[^\w.\- ()а-яА-ЯёЁ«»\"'/,+]+/g, ' ').trim().slice(0, 180) || picName,
       stored: null,
       mime: null,
       bytes: 0,
       image_url: o.image_url,
+      // Id файла картинки в CDN магазина (для выгрузки image_id).
+      image_id: String(picStem || o.id).trim(),
       product_id: o.id,
       sku: o.vendor_code || null,
       dump_category: null,
@@ -664,54 +681,38 @@ function orderedAttributes(raw) {
 }
 
 /**
- * Компактная запись для ML/витрины — стабильный порядок ключей, без пустых полей.
+ * Запись ML-выгрузки — полный набор полей в стабильном порядке:
+ * image · caption · objects · description · alt · tags · attributes · product_id · image_id
+ * image — название товара (как в фиде), не URL.
  */
 export function photoExportRow(item, {
   include_images = false,
   album_id = null,
   root,
 } = {}) {
-  const row = {};
-
-  // Идентификаторы первыми: id товара и id изображения (у фида — имя файла картинки магазина без расширения).
-  const productId = item.product_id != null ? String(item.product_id).trim() : '';
-  if (productId) row.product_id = productId;
-  const imageId = item.image_url
-    ? String(item.image_url).split(/[?#]/)[0].split('/').pop()?.replace(/\.[^.]+$/, '') || item.id
-    : item.id;
-  if (imageId) row.image_id = imageId;
-
-  // Для фида в image — исходный URL (открывается напрямую); иначе имя загруженного файла.
-  const image = item.image_url
-    ? String(item.image_url).trim()
-    : String(item.filename || '').trim();
-  if (image) row.image = image;
-
+  const image = String(item.feed?.name || item.filename || '').trim();
   const caption = String(item.caption || '').trim();
   const objects = String(item.on_image || '').trim();
   const description = String(item.description || '').trim();
   const alt = String(item.alt || '').trim();
-  if (caption) row.caption = caption;
-  if (objects) row.objects = objects;
-  if (description) row.description = description;
-  if (alt) row.alt = alt;
-
   const tags = Array.isArray(item.tags)
     ? [...new Set(item.tags.map(t => String(t).trim()).filter(Boolean))]
     : [];
-  if (tags.length) row.tags = tags;
+  const attributes = orderedAttributes(item.attributes) || {};
+  const productId = item.product_id != null ? String(item.product_id).trim() : '';
+  const imageId = photoImageId(item);
 
-  const attributes = orderedAttributes(item.attributes);
-  if (attributes) row.attributes = attributes;
-
-  if (item.feed) {
-    row.name = item.feed.name;
-    if (item.feed.category) row.category = item.feed.category;
-    if (item.feed.url) row.url = item.feed.url;
-    if (item.image_url) row.image_url = item.image_url;
-    if (item.feed.article) row.sku = item.feed.article;
-  }
-
+  const row = {
+    image,
+    caption,
+    objects,
+    description,
+    alt,
+    tags,
+    attributes,
+    product_id: productId,
+    image_id: imageId,
+  };
 
   if (include_images && album_id && item.stored && root) {
     try {

@@ -10049,12 +10049,13 @@ async function photoImportYmlFile(input){
 async function photoRunYmlImport(src){
   const limit=prompt('Сколько товаров взять (каждый — отдельный платный запрос к модели):','50');
   if(!limit) return;
-  const category=prompt('Только раздел, в названии пути которого есть… (пусто — любой):','')||'';
+  // Пусто = весь фид. Не вводите латиницу-slug (pet-tara) — только фрагмент русского названия раздела.
+  const category=prompt('Фильтр раздела (пусто = все). Пример: салфет / банка / ПЭТ','')||'';
   if(!photoAlbum){
     await photoCreateAlbum('Фид '+new Date().toLocaleString('ru-RU'));
     if(!photoAlbum) return;
   }
-  photoStatus('Читаю фид… крупный фид может занять минуты');
+  photoStatus(src.xml?'Читаю файл фида…':'Качаю фид… у Groster ~30 МБ, может занять минуты');
   try{
     const out=await apiJson('/api/photos/'+encodeURIComponent(photoAlbum.id)+'/import-yml',{
       method:'POST', headers:{'Content-Type':'application/json'},
@@ -10062,7 +10063,9 @@ async function photoRunYmlImport(src){
     });
     await photoOpenAlbum(photoAlbum.id, true);
     await photoLoadAlbums();
-    photoStatus(`Из фида добавлено ${out.added}, пропущено дублей ${out.skipped}`, true);
+    const st=out.stats;
+    const extra=st?` · в фиде с фото ${st.matched ?? out.added}, noimage ${st.skipped_no_image||0}`:'';
+    photoStatus(`Из фида добавлено ${out.added}, пропущено дублей ${out.skipped}${extra}`, true);
   }catch(e){ photoStatus(e.message||'ошибка импорта', false); }
 }
 

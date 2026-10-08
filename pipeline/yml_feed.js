@@ -128,10 +128,24 @@ export async function parseYml(chunks, { limit = Infinity, offset = 0, filter = 
   let buf = '';
   let categories = null;
   let shopUrl = '';
-  let seen = 0;
+  let seen = 0; // принятые после фильтров (для offset)
+  let scanned = 0;
+  let skipped_no_image = 0;
+  let skipped_filter = 0;
   const offers = [];
 
+  const finish = () => ({
+    offers,
+    categories,
+    shopUrl,
+    stats: { scanned, skipped_no_image, skipped_filter, matched: offers.length },
+  });
+
   for await (const chunk of chunks) {
+    // ReadableStream → Uint8Array; ошибочный Buffer-as-iterable даёт числа.
+    if (typeof chunk === 'number') {
+      throw new Error('битый поток фида (ожидались байты/строки) — загрузите XML файлом');
+    }
     buf += typeof chunk === 'string' ? chunk : dec.decode(chunk, { stream: true });
     if (!shopUrl) {
       // <shop><name>…</name><url>https://…</url> — база для относительных <picture>
@@ -157,11 +171,14 @@ export async function parseYml(chunks, { limit = Infinity, offset = 0, filter = 
       if (e < 0) break;
       from = e + 8;
       const offer = parseOffer(buf.slice(s, from), categories, shopUrl);
-      // Без реальной картинки описывать нечего — noimage и пустые picture отбрасываем здесь.
-      if (!offer.id || !offer.name || !offer.image_url || (filter && !filter(offer))) continue;
+      if (!offer.id || !offer.name) continue;
+      scanned += 1;
+      // Без реальной картинки описывать нечего — noimage и пустые picture отбрасываем.
+      if (!offer.image_url) { skipped_no_image += 1; continue; }
+      if (filter && !filter(offer)) { skipped_filter += 1; continue; }
       if (seen++ < offset) continue;
       offers.push(offer);
-      if (offers.length >= limit) return { offers, categories, shopUrl };
+      if (offers.length >= limit) return finish();
     }
     // оставляем только хвост с недочитанным <offer>
     const tailOffer = buf.lastIndexOf('<offer ');
@@ -170,7 +187,7 @@ export async function parseYml(chunks, { limit = Infinity, offset = 0, filter = 
     buf = tail >= from ? buf.slice(tail) : buf.slice(from);
   }
   if (!categories) throw new Error('Не похоже на YML: нет <categories>/<offer>');
-  return { offers, categories, shopUrl };
+  return finish();
 }
 
 /** Читаемый блок фактов для vision-модели. */

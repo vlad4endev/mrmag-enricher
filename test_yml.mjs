@@ -28,6 +28,12 @@ const { offers, shopUrl } = await parseYml(chunks);
 assert.equal(shopUrl, 'https://shop.example');
 // o2 без picture, o3 только noimage — отброшены; o1, o4 (вторая picture), o5 (relative→absolute)
 assert.equal(offers.length, 3);
+{
+  const filtered = await parseYml([xml], { limit: 50, filter: o => o.category.toLowerCase().includes('неттакогораздела') });
+  assert.equal(filtered.offers.length, 0);
+  assert.ok(filtered.stats.skipped_filter >= 1);
+  assert.ok(filtered.stats.scanned >= 3);
+}
 const [o, oMulti, oRel] = offers;
 assert.equal(o.name, 'Банка "Твист" 250 мл');
 assert.equal(o.category, 'Стеклянная тара › Стеклянные банки');

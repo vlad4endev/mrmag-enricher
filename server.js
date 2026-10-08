@@ -2240,33 +2240,72 @@ async function apiPhotoImportYml(req, res, id) {
   const limit = Math.min(Math.max(Number(body.limit) || 100, 1), PHOTO_LIMITS.MAX_ITEMS);
   const offset = Math.max(Number(body.offset) || 0, 0);
   const cat = String(body.category || '').trim().toLowerCase();
-  const filter = cat ? o => o.category.toLowerCase().includes(cat) : null;
+  // Раздел: путь категорий, название товара или бренд (не латиница-slug вроде pet-tara).
+  const filter = cat
+    ? (o) => {
+      const blob = `${o.category || ''} ${o.name || ''} ${o.vendor || ''}`.toLowerCase();
+      return blob.includes(cat);
+    }
+    : null;
   try {
     let chunks;
     if (body.url) {
       if (!/^https?:\/\//i.test(body.url)) return json(res, 400, { error: 'Нужна ссылка http(s)' });
+      // Только прямой поток. Фид Groster ~30+ МБ — через прокси приложения (лимит 8 МБ
+      // и полная буферизация) он не проходит. При ECONNREFUSED — «Файл фида».
       let r;
       try {
-        r = await fetch(body.url, { signal: AbortSignal.timeout(300_000) });
+        r = await fetch(body.url, {
+          signal: AbortSignal.timeout(300_000),
+          headers: {
+            Accept: 'application/xml,text/xml,*/*',
+            'User-Agent': 'Mozilla/5.0 (compatible; OgranPhotos/1.0)',
+          },
+          redirect: 'follow',
+        });
       } catch (direct) {
-        // Сеть сервера режет часть сайтов (DNS/DPI) — пробуем через прокси приложения. ponytail: ответ через прокси буферизуется целиком.
-        try {
-          r = await providerFetch(body.url, { signal: AbortSignal.timeout(300_000) }, { useProxy: true });
-        } catch (viaProxy) {
-          return json(res, 502, { error: `Сервер не достаёт до фида (напрямую: ${direct.cause?.code || direct.message}; через прокси: ${viaProxy.message}). Загрузите файл фида кнопкой «Файл фида».` });
-        }
+        return json(res, 502, {
+          error: `Сервер не достаёт до фида (${direct.cause?.code || direct.message}). `
+            + 'Скачайте https://groster.me/anyquery на компьютер и загрузите кнопкой «Файл фида» '
+            + '(в NPM/nginx: client_max_body_size 64m). Прокси для фида не используем — файл ~30 МБ.',
+        });
       }
       if (!r.ok) return json(res, 502, { error: `Фид: HTTP ${r.status}` });
-      chunks = r.body;
+      chunks = r.body || [await r.text()];
     } else if (body.xml) {
-      chunks = [String(body.xml)];
+      const xml = String(body.xml);
+      if (xml.length < 64 || !/<offer[\s>]/i.test(xml)) {
+        return json(res, 400, { error: 'В файле нет YML-офферов — нужен XML с <offer> (например groster.me/anyquery)' });
+      }
+      chunks = [xml];
     } else {
       return json(res, 400, { error: 'Передайте url или xml' });
     }
-    const { offers } = await parseYml(chunks, { limit, offset, filter });
-    if (!offers.length) return json(res, 400, { error: 'В фиде нет подходящих товаров' });
-    return json(res, 200, importFeedOffers(id, offers, ROOT));
+    const { offers, stats } = await parseYml(chunks, { limit, offset, filter });
+    if (!offers.length) {
+      const st = stats || {};
+      if (cat && (st.skipped_filter || 0) > 0) {
+        return json(res, 400, {
+          error: `По фильтру «${cat}» ничего не осталось: с фото отсеяно ${st.skipped_filter}, `
+            + `без фото/noimage ${st.skipped_no_image || 0} (просмотрено ${st.scanned || 0}). `
+            + 'Оставьте поле раздела пустым или укажите часть русского названия («салфет», «банка»).',
+        });
+      }
+      return json(res, 400, {
+        error: `В фиде нет товаров с реальной картинкой`
+          + (st.scanned ? ` (просмотрено ${st.scanned}, noimage/без фото: ${st.skipped_no_image || 0})` : '')
+          + '. Для Groster: скачайте XML и «Файл фида», раздел оставьте пустым.',
+      });
+    }
+    const out = importFeedOffers(id, offers, ROOT);
+    return json(res, 200, { ...out, stats });
   } catch (e) {
+    const msg = String(e.message || e);
+    if (/too large|слишком велико|entity too large|413/i.test(msg)) {
+      return json(res, 413, {
+        error: 'Файл фида слишком большой для прокси. В nginx/NPM: client_max_body_size 64m; затем снова «Файл фида».',
+      });
+    }
     return json(res, e.status || 400, { error: e.message });
   }
 }

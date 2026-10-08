@@ -2310,6 +2310,7 @@ input[type=range]::-moz-range-thumb{
         <button type="button" class="sbtn ghost wide" style="margin-top:8px" onclick="photoImportYml()" title="Весь YML-фид с фото в альбом; сколько описывать — выберете сами"><i class="ti ti-file-code"></i> Импорт из YML-фида (ссылка)</button>
         <button type="button" class="sbtn ghost wide" style="margin-top:6px" onclick="document.getElementById('photoYmlFile').click()" title="XML-файл фида с вашего компьютера"><i class="ti ti-file-upload"></i> Файл фида…</button>
         <input type="file" id="photoYmlFile" accept=".xml,.yml,text/xml,application/xml,application/octet-stream" hidden onchange="photoImportYmlFile(this)">
+        <div class="hint" style="margin-top:8px">По умолчанию в альбом попадает <b>весь фид</b> (все товары с фото). Сколько описывать — отметьте чекбоксами и «Описать».</div>
       </section>
 
       <section class="photo-card">
@@ -2394,8 +2395,8 @@ input[type=range]::-moz-range-thumb{
           <h3>Список → лог → полный текст</h3>
           Как в обогащении: слева настройка, в центре фото и ход прогона, справа подпись, «на картинке» и описание.
           <ol>
-            <li>Создайте <b>альбом</b> и загрузите фото.</li>
-            <li>Выберите <b>модель AITUNNEL</b> и нажмите «Описать».</li>
+            <li>Создайте <b>альбом</b>: загрузка фото или импорт YML — в альбом попадёт весь фид с картинками.</li>
+            <li>Отметьте нужные (или «Все» / «Без описания»), выберите <b>модель AITUNNEL</b> и «Описать».</li>
             <li>Откройте фото в списке — справа будет <b>полный текст</b>.</li>
           </ol>
         </div>
@@ -10047,10 +10048,11 @@ async function photoImportYmlFile(input){
 }
 
 async function photoRunYmlImport(src){
-  // Весь фид с реальными фото. Сколько описывать — выбираете чекбоксами в списке.
-  // Пусто = все разделы. Не вводите латиницу-slug (pet-tara) — только фрагмент русского названия.
-  const category=prompt('Фильтр раздела (пусто = весь фид). Пример: салфет / банка / ПЭТ','')||'';
-  if(category===null) return;
+  // Весь фид с реальными фото (limit:0). Сколько описывать — чекбоксы после импорта.
+  // Пусто = все разделы. Не латиница-slug (pet-tara) — фрагмент русского названия.
+  const categoryRaw=prompt('Фильтр раздела (пусто = весь фид, как есть). Пример: салфет / банка / ПЭТ','');
+  if(categoryRaw===null) return; // Отмена
+  const category=String(categoryRaw).trim();
   if(!photoAlbum){
     await photoCreateAlbum('Фид '+new Date().toLocaleString('ru-RU'));
     if(!photoAlbum) return;
@@ -10065,8 +10067,13 @@ async function photoRunYmlImport(src){
     await photoOpenAlbum(photoAlbum.id, true);
     await photoLoadAlbums();
     const st=out.stats;
-    const extra=st?` · в фиде с фото ${st.matched ?? out.added}, noimage ${st.skipped_no_image||0}`:'';
-    photoStatus(`Из фида добавлено ${out.added}, пропущено дублей ${out.skipped}${extra}. Отметьте нужные и нажмите «Описать»`, true);
+    const inFeed=st?.matched ?? out.added;
+    const extra=st?` · в фиде с фото ${inFeed}, noimage ${st.skipped_no_image||0}`:'';
+    photoStatus(
+      `В альбоме ${out.added} из фида (как в каталоге с фото)${out.skipped?`, дублей ${out.skipped}`:''}${extra}. `
+      + 'Отметьте сколько нужно и нажмите «Описать»',
+      true,
+    );
   }catch(e){ photoStatus(e.message||'ошибка импорта', false); }
 }
 

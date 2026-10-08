@@ -2,58 +2,62 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { parseYml, offerFacts } from './pipeline/yml_feed.js';
+import { parseYml, offerFacts, isUsablePictureUrl, parsePictures } from './pipeline/yml_feed.js';
 import { createAlbum, importFeedOffers, getAlbum } from './pipeline/photos.js';
 
-const xml = `<?xml version="1.0"?><yml_catalog><shop><categories>
+const xml = `<?xml version="1.0"?><yml_catalog><shop><name>T</name><url>https://shop.example</url><categories>
 <category id="p1" url="x">Стеклянная тара</category><category id="c1" parentId="p1" url="y">Стеклянные банки</category></categories><offers>
 <offer id="o1" available="true"><vendor>Aviora</vendor><vendorCode>104-127</vendorCode><name>Банка &quot;Твист&quot; 250 мл</name><description></description><url>u1</url><categoryId>c1</categoryId><picture>https://s/1.png</picture><price>5</price>
 <param name="Объем, мл">250</param><param name="Хит">false</param><param name="Code">1</param><param name="Синоним">банка твист</param></offer>
-<offer id="o2"><name>Без фото</name><categoryId>c1</categoryId></offer></offers></shop></yml_catalog>`;
+<offer id="o2"><name>Без фото</name><categoryId>c1</categoryId></offer>
+<offer id="o3"><name>Заглушка</name><categoryId>c1</categoryId><picture>https://shop.example/images/noimage.png</picture></offer>
+<offer id="o4"><name>Сначала заглушка</name><categoryId>c1</categoryId>
+<picture>https://shop.example/images/noimage.png</picture>
+<picture>https://cdn.example/real/product.jpg</picture></offer>
+<offer id="o5"><name>Относительный путь</name><categoryId>c1</categoryId><picture>/images/shop/item.webp</picture></offer>
+</offers></shop></yml_catalog>`;
+
+assert.equal(isUsablePictureUrl('https://s/1.png'), true);
+assert.equal(isUsablePictureUrl('https://shop.example/images/noimage.png'), false);
+assert.equal(isUsablePictureUrl('/local.png'), false);
 
 // режем на куски по 7 байт: граница чанка не должна ломать разбор
 const bytes = Buffer.from(xml);
 const chunks = []; for (let i = 0; i < bytes.length; i += 7) chunks.push(bytes.subarray(i, i + 7));
-const { offers } = await parseYml(chunks);
-assert.equal(offers.length, 2);
-const [o] = offers;
+const { offers, shopUrl } = await parseYml(chunks);
+assert.equal(shopUrl, 'https://shop.example');
+// o2 без picture, o3 только noimage — отброшены; o1, o4 (вторая picture), o5 (relative→absolute)
+assert.equal(offers.length, 3);
+const [o, oMulti, oRel] = offers;
 assert.equal(o.name, 'Банка "Твист" 250 мл');
 assert.equal(o.category, 'Стеклянная тара › Стеклянные банки');
 assert.deepEqual(o.params, [{ name: 'Объем, мл', value: '250' }]); // служебные param отброшены
 assert.deepEqual(offerFacts(o).specs, { 'Объем, мл': '250' });
 assert.deepEqual(o.synonyms, ['банка твист']);
+assert.equal(oMulti.image_url, 'https://cdn.example/real/product.jpg');
+assert.deepEqual(parsePictures(`<picture>https://a/1.png</picture><picture>https://b/2.png</picture>`), [
+  'https://a/1.png', 'https://b/2.png',
+]);
+assert.equal(oRel.image_url, 'https://shop.example/images/shop/item.webp');
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'yml-'));
 process.env.PHOTOS_DIR = path.join(root, 'photos');
 const album = createAlbum('t', {}, root);
 const r = importFeedOffers(album.id, offers, root);
-assert.equal(r.added, 1);                      // оффер без фото пропущен
+assert.equal(r.added, 3);
 assert.equal(importFeedOffers(album.id, offers, root).added, 0); // повтор не дублирует
 const item = getAlbum(album.id, root).items[0];
 assert.equal(item.feed.specs[0].value, '250');
 assert.equal(item.image_url, 'https://s/1.png');
+assert.match(item.filename, /Банка/);
 console.log('yml ok');
 
-// providerFetch отдаёт бинарное тело (картинки идут через него, если сайт магазина недоступен напрямую)
-{
-  const { providerFetch } = await import('./socks.js');
-  const http = await import('node:http');
-  const bin = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0, 255, 128, 7]);
-  const srv = http.createServer((q, r) => r.end(bin)).listen(0);
-  const res = await providerFetch(`http://127.0.0.1:${srv.address().port}/x.png`, {}, { useProxy: false });
-  assert.deepEqual(Buffer.from(await res.arrayBuffer()), bin);
-  let got = Buffer.alloc(0);
-  for await (const c of res.body) got = Buffer.concat([got, c]);
-  assert.deepEqual(got, bin);
-  srv.close();
-  console.log('binary ok');
-}
-
-// Скачивание фото из фида: берём только настоящую картинку, иначе товар пропускается без вызова модели
+// Скачивание фото из фида: только напрямую (без прокси), только настоящая картинка
 {
   const http = await import('node:http');
   const { readPhotoFile } = await import('./pipeline/photos.js');
   const png = Buffer.concat([Buffer.from('89504e470d0a1a0a', 'hex'), Buffer.alloc(2000, 1)]);
+  let viaProxyAttempt = 0;
   const srv = http.createServer((q, r) => {
     if (q.url === '/ok.png') return r.end(png);
     if (q.url === '/stub.png') { r.setHeader('content-type', 'text/html'); return r.end('<html>' + 'x'.repeat(3000)); }
@@ -62,8 +66,7 @@ console.log('yml ok');
     r.statusCode = 404; r.end('no');
   }).listen(0);
   const base = `http://127.0.0.1:${srv.address().port}`;
-  const mk = (name) => ({ ...xmlOffer, id: 'p-' + name, image_url: `${base}/${name}.png` });
-  const xmlOffer = offers[0];
+  const mk = (name) => ({ ...o, id: 'p-' + name, image_url: `${base}/${name}.png` });
   const root2 = fs.mkdtempSync(path.join(os.tmpdir(), 'img-'));
   process.env.PHOTOS_DIR = path.join(root2, 'photos');
   const al = createAlbum('i', {}, root2);
@@ -74,6 +77,23 @@ console.log('yml ok');
   for (const n of ['stub', 'fake', 'tiny', 'missing']) {
     await assert.rejects(readPhotoFile(al.id, byName(n), root2), /изображение недоступно/, n);
   }
+  // прокси в коде скачивания картинок больше нет — попыток через providerFetch быть не должно
+  assert.equal(viaProxyAttempt, 0);
   srv.close();
   console.log('image validation ok');
+}
+
+// noimage и пустые ссылки не попадают в альбом
+{
+  const root3 = fs.mkdtempSync(path.join(os.tmpdir(), 'ni-'));
+  process.env.PHOTOS_DIR = path.join(root3, 'photos');
+  const al = createAlbum('n', {}, root3);
+  const r3 = importFeedOffers(al.id, [
+    { id: 'a', name: 'x', image_url: 'https://shop/images/noimage.png', params: [] },
+    { id: 'b', name: 'y', image_url: '', params: [] },
+    { id: 'c', name: 'z', image_url: 'https://cdn/ok.jpg', params: [] },
+  ], root3);
+  assert.equal(r3.added, 1);
+  assert.equal(getAlbum(al.id, root3).items[0].image_url, 'https://cdn/ok.jpg');
+  console.log('placeholder skip ok');
 }

@@ -8,7 +8,7 @@ import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 import { resolveDictRoot } from './dict.js';
-import { providerFetch } from '../socks.js';
+import { isUsablePictureUrl } from './yml_feed.js';
 import { recordProviderSpend, usageCostRub, roundMoney } from './provider_billing.js';
 
 const ALBUM_RE = /^[a-zA-Z0-9_-]{1,64}$/;
@@ -288,38 +288,50 @@ function decodeDataUrlOrBase64(raw) {
   return { mimeHint: null, buf: Buffer.from(s.replace(/\s+/g, ''), 'base64') };
 }
 
-/** Картинка фидового товара скачивается при первом обращении и кэшируется в альбоме. */
+/**
+ * Картинка фидового товара скачивается при первом обращении (для vision) и кэшируется.
+ * Важно: только напрямую, без прокси — иначе магазинные CDN/static часто отдают мусор.
+ */
 async function fetchFeedImage(meta, item, root, fetchImpl = fetch) {
   const MIN_IMAGE_BYTES = 1024; // заглушки/пиксели трекеров — не фото товара
-  // Источник годится, только если по ссылке реально лежит картинка (проверяем содержимое, а не расширение в URL).
-  async function attempt(get) {
-    const res = await get();
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const type = String(res.headers?.get?.('content-type') || '').toLowerCase();
-    if (/^(text|application\/(xml|json))/.test(type)) throw new Error(`по ссылке не картинка (${type.split(';')[0]})`);
-    const buf = Buffer.from(await res.arrayBuffer());
-    if (buf.length < MIN_IMAGE_BYTES) throw new Error('файл слишком мал для фото');
-    if (buf.length > MAX_FILE_BYTES) throw new Error('файл слишком большой');
-    const mime = sniffMime(buf); // без имени файла: только сигнатура JPEG/PNG/WebP/GIF
-    if (!mime) throw new Error('содержимое не JPEG/PNG/WebP/GIF');
-    return { buf, mime };
+  if (!isUsablePictureUrl(item.image_url)) {
+    throw httpError(502, `изображение недоступно ${item.image_url} (заглушка или пустая ссылка) — товар пропущен`);
   }
 
-  const errors = [];
-  let got = null;
-  // Сеть сервера может резать сайт магазина (DNS/DPI): прямое соединение, затем прокси приложения.
-  for (const [label, get] of [
-    ['напрямую', () => fetchImpl(item.image_url, { signal: AbortSignal.timeout(30_000) })],
-    ['через прокси', () => providerFetch(item.image_url, { signal: AbortSignal.timeout(60_000) }, { useProxy: true })],
-  ]) {
-    try { got = await attempt(get); break; } catch (e) { errors.push(`${label}: ${e.cause?.code || e.message}`); }
+  let res;
+  try {
+    res = await fetchImpl(item.image_url, {
+      signal: AbortSignal.timeout(30_000),
+      redirect: 'follow',
+      headers: {
+        Accept: 'image/avif,image/webp,image/apng,image/*,*/*;q=0.8',
+        'User-Agent': 'Mozilla/5.0 (compatible; OgranPhotos/1.0)',
+      },
+    });
+  } catch (e) {
+    throw httpError(502, `изображение недоступно ${item.image_url} (напрямую: ${e.cause?.code || e.message}) — товар пропущен`);
   }
-  if (!got) throw httpError(502, `изображение недоступно ${item.image_url} (${errors.join('; ')}) — товар пропущен`);
+  if (!res.ok) throw httpError(502, `изображение недоступно ${item.image_url} (HTTP ${res.status}) — товар пропущен`);
+  const type = String(res.headers?.get?.('content-type') || '').toLowerCase();
+  if (/^(text|application\/(xml|json))/.test(type)) {
+    throw httpError(502, `изображение недоступно ${item.image_url} (по ссылке не картинка: ${type.split(';')[0]}) — товар пропущен`);
+  }
+  const buf = Buffer.from(await res.arrayBuffer());
+  if (buf.length < MIN_IMAGE_BYTES) {
+    throw httpError(502, `изображение недоступно ${item.image_url} (файл слишком мал для фото) — товар пропущен`);
+  }
+  if (buf.length > MAX_FILE_BYTES) {
+    throw httpError(502, `изображение недоступно ${item.image_url} (файл слишком большой) — товар пропущен`);
+  }
+  const mime = sniffMime(buf); // без имени файла: только сигнатура JPEG/PNG/WebP/GIF
+  if (!mime) {
+    throw httpError(502, `изображение недоступно ${item.image_url} (содержимое не JPEG/PNG/WebP/GIF) — товар пропущен`);
+  }
 
-  const stored = `${item.id}.${MIME_EXT[got.mime]}`;
+  const stored = `${item.id}.${MIME_EXT[mime]}`;
   fs.mkdirSync(filesDir(meta.id, root), { recursive: true });
-  fs.writeFileSync(path.join(filesDir(meta.id, root), stored), got.buf);
-  Object.assign(item, { stored, mime: got.mime, bytes: got.buf.length });
+  fs.writeFileSync(path.join(filesDir(meta.id, root), stored), buf);
+  Object.assign(item, { stored, mime, bytes: buf.length });
   writeMeta(meta, root);
 }
 
@@ -330,15 +342,21 @@ async function fetchFeedImage(meta, item, root, fetchImpl = fetch) {
 export function importFeedOffers(albumId, offers, root) {
   const meta = readMeta(assertAlbumId(albumId), root);
   const have = new Set(meta.items.map(i => i.product_id).filter(Boolean));
-  const fresh = offers.filter(o => o.image_url && !have.has(o.id));
+  // Только офферы с реальной http(s)-картинкой (не noimage) и ещё не импортированные.
+  const usable = offers.filter(o => isUsablePictureUrl(o.image_url));
+  const fresh = usable.filter(o => !have.has(o.id));
   if (meta.items.length + fresh.length > MAX_ITEMS) {
     throw httpError(400, `Лимит фото в альбоме: ${MAX_ITEMS} — уменьшите выборку`);
   }
   for (const o of fresh) {
     const id = newId();
+    const picName = (o.image_url.split(/[?#]/)[0].split('/').pop() || o.id)
+      .replace(/[^\w.\-а-яА-ЯёЁ]+/g, '_')
+      .slice(0, 120);
     meta.items.push({
       id,
-      filename: (o.image_url.split(/[?#]/)[0].split('/').pop() || o.id).replace(/[^\w.\-а-яА-ЯёЁ]+/g, '_').slice(0, 120),
+      // В списке показываем название товара; имя файла картинки магазина оставляем в image_url.
+      filename: String(o.name || picName).replace(/[^\w.\- ()а-яА-ЯёЁ«»\"'/,+]+/g, ' ').trim().slice(0, 180) || picName,
       stored: null,
       mime: null,
       bytes: 0,
@@ -363,7 +381,11 @@ export function importFeedOffers(albumId, offers, root) {
     });
   }
   writeMeta(meta, root);
-  return { album: publicAlbum(meta), added: fresh.length, skipped: offers.length - fresh.length };
+  return {
+    album: publicAlbum(meta),
+    added: fresh.length,
+    skipped: offers.length - fresh.length,
+  };
 }
 
 /**
@@ -579,11 +601,14 @@ export function photoExportRow(item, {
   const productId = item.product_id != null ? String(item.product_id).trim() : '';
   if (productId) row.product_id = productId;
   const imageId = item.image_url
-    ? item.filename.replace(/\.[^.]+$/, '')
+    ? String(item.image_url).split(/[?#]/)[0].split('/').pop()?.replace(/\.[^.]+$/, '') || item.id
     : item.id;
   if (imageId) row.image_id = imageId;
 
-  const image = String(item.filename || '').trim();
+  // Для фида в image — исходный URL (открывается напрямую); иначе имя загруженного файла.
+  const image = item.image_url
+    ? String(item.image_url).trim()
+    : String(item.filename || '').trim();
   if (image) row.image = image;
 
   const caption = String(item.caption || '').trim();

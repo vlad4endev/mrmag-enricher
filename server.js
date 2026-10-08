@@ -2297,6 +2297,7 @@ async function apiPhotoImportYml(req, res, id) {
         const out = await importYmlChunksToAlbum(id, fileChunks, opts);
         return json(res, 200, out);
       } finally {
+        fileChunks.destroy();
         discardYmlUpload(ROOT, staged.uploadDir);
       }
     } catch (e) {

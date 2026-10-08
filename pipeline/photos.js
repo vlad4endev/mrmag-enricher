@@ -14,10 +14,28 @@ import { recordProviderSpend, usageCostRub, roundMoney } from './provider_billin
 const ALBUM_RE = /^[a-zA-Z0-9_-]{1,64}$/;
 const ITEM_RE = /^[a-zA-Z0-9_-]{8,40}$/;
 const MAX_ALBUMS = 200;
-const MAX_ITEMS = 5_000;
+/** Потолок альбома: 15k+ прогоны; переопределяется PHOTO_MAX_ITEMS. */
+const MAX_ITEMS = Math.max(1, Math.min(100_000, Number(process.env.PHOTO_MAX_ITEMS || 20_000)));
 const MAX_FILE_BYTES = Number(process.env.PHOTO_MAX_BYTES || 12 * 1024 * 1024);
 const MAX_BATCH_BYTES = Number(process.env.PHOTO_BATCH_BYTES || 48 * 1024 * 1024);
 const MAX_BATCH_FILES = Number(process.env.PHOTO_BATCH_FILES || 40);
+
+/** Очередь на альбом: параллельные workers не затирают чужие поля в meta.json. */
+const albumTails = new Map();
+
+export async function withAlbumLock(albumId, fn) {
+  const key = String(albumId || '');
+  const prev = albumTails.get(key) || Promise.resolve();
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  albumTails.set(key, prev.then(() => gate, () => gate));
+  await prev.catch(() => {});
+  try {
+    return await fn();
+  } finally {
+    release();
+  }
+}
 
 const MIME_EXT = {
   'image/jpeg': 'jpg',
@@ -319,8 +337,15 @@ async function fetchFeedImage(meta, item, root, fetchImpl = fetch) {
   const stored = `${item.id}.${MIME_EXT[got.mime]}`;
   fs.mkdirSync(filesDir(meta.id, root), { recursive: true });
   fs.writeFileSync(path.join(filesDir(meta.id, root), stored), got.buf);
-  Object.assign(item, { stored, mime: got.mime, bytes: got.buf.length });
-  writeMeta(meta, root);
+  // Под lock: параллельный applyDescribeResult не должен затереть stored.
+  await withAlbumLock(meta.id, async () => {
+    const fresh = readMeta(meta.id, root);
+    const row = fresh.items.find(i => i.id === item.id);
+    if (!row) throw httpError(404, 'Фото не найдено');
+    Object.assign(row, { stored, mime: got.mime, bytes: got.buf.length });
+    Object.assign(item, { stored, mime: got.mime, bytes: got.buf.length });
+    writeMeta(fresh, root);
+  });
 }
 
 /**
@@ -503,42 +528,44 @@ export async function readPhotoFile(albumId, itemId, root) {
   };
 }
 
-export function applyDescribeResult(albumId, itemId, result, root) {
-  const meta = readMeta(assertAlbumId(albumId), root);
-  const id = assertItemId(itemId);
-  const item = meta.items.find(i => i.id === id);
-  if (!item) throw httpError(404, 'Фото не найдено');
+export async function applyDescribeResult(albumId, itemId, result, root) {
+  return withAlbumLock(albumId, async () => {
+    const meta = readMeta(assertAlbumId(albumId), root);
+    const id = assertItemId(itemId);
+    const item = meta.items.find(i => i.id === id);
+    if (!item) throw httpError(404, 'Фото не найдено');
 
-  if (result?.error) {
-    item.status = 'error';
-    item.error = String(result.error).slice(0, 800);
-    if (result.usage) {
-      item.usage = result.usage;
-      recordProviderSpend('aitunnel', result.usage, root);
+    if (result?.error) {
+      item.status = 'error';
+      item.error = String(result.error).slice(0, 800);
+      if (result.usage) {
+        item.usage = result.usage;
+        recordProviderSpend('aitunnel', result.usage, root);
+      }
+      writeMeta(meta, root);
+      return publicItem(item);
     }
+
+    item.status = 'described';
+    item.error = null;
+    item.description = String(result.description || '').slice(0, 8000);
+    item.caption = String(result.caption || '').slice(0, 1000);
+    item.on_image = String(result.on_image || '').slice(0, 2000) || null;
+    item.alt = String(result.alt || '').slice(0, 500);
+    item.tags = Array.isArray(result.tags)
+      ? result.tags.map(t => String(t).trim()).filter(Boolean).slice(0, 40)
+      : [];
+    item.attributes = result.attributes && typeof result.attributes === 'object'
+      ? result.attributes
+      : {};
+    item.warnings = Array.isArray(result.warnings) ? result.warnings.slice(0, 20) : [];
+    item.usage = result.usage || null;
+    if (result.usage) recordProviderSpend('aitunnel', result.usage, root);
+    item.described_at = Date.now();
+    if (result.model) meta.model = result.model;
     writeMeta(meta, root);
     return publicItem(item);
-  }
-
-  item.status = 'described';
-  item.error = null;
-  item.description = String(result.description || '').slice(0, 8000);
-  item.caption = String(result.caption || '').slice(0, 1000);
-  item.on_image = String(result.on_image || '').slice(0, 2000) || null;
-  item.alt = String(result.alt || '').slice(0, 500);
-  item.tags = Array.isArray(result.tags)
-    ? result.tags.map(t => String(t).trim()).filter(Boolean).slice(0, 40)
-    : [];
-  item.attributes = result.attributes && typeof result.attributes === 'object'
-    ? result.attributes
-    : {};
-  item.warnings = Array.isArray(result.warnings) ? result.warnings.slice(0, 20) : [];
-  item.usage = result.usage || null;
-  if (result.usage) recordProviderSpend('aitunnel', result.usage, root);
-  item.described_at = Date.now();
-  if (result.model) meta.model = result.model;
-  writeMeta(meta, root);
-  return publicItem(item);
+  });
 }
 
 const ATTR_ORDER = ['view', 'color', 'product_type', 'brand_visible', 'text_on_image'];

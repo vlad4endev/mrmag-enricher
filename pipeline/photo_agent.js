@@ -4,9 +4,24 @@
  * (dump_category + product_id), подмешиваем карточку для сверки.
  */
 
-import { RateLimiter } from '../lib.js';
+import { RateLimiter, sleep } from '../lib.js';
 import { getDump } from './dumps.js';
 import { normalizeProviderUsage } from './provider_billing.js';
+
+/** HTTP-коды, при которых vision стоит повторить (как enrichment в lib.js). */
+export const VISION_RETRYABLE = new Set([408, 409, 429, 500, 502, 503, 504, 524]);
+const VISION_TRANSIENT_ATTEMPTS = Math.max(1, Math.min(5, Number(process.env.PHOTO_VISION_RETRIES || 3)));
+
+function visionRetryAfterMs(res, attempt) {
+  const ra = res?.headers?.get?.('retry-after');
+  if (ra) {
+    const sec = Number(ra);
+    if (Number.isFinite(sec)) return Math.min(60_000, Math.max(0, sec * 1000));
+    const at = Date.parse(ra);
+    if (Number.isFinite(at)) return Math.min(60_000, Math.max(0, at - Date.now()));
+  }
+  return Math.min(60_000, attempt * 4000);
+}
 
 export const PHOTO_PROMPT_PLACEHOLDERS = [
   { key: '{{filename}}', note: 'имя файла изображения' },
@@ -450,11 +465,12 @@ export async function describePhoto(itemFile, opts = {}) {
     return { res, text, data };
   }
 
-  let res;
-  let text;
-  let data;
-  let lastHttpErr = null;
-  try {
+  /** Один проход по форматам ответа (schema → json_object → none). */
+  async function postWithFormatFallback() {
+    let lastHttpErr = null;
+    let res;
+    let text;
+    let data;
     for (let i = 0; i < formatAttempts.length; i++) {
       const fmt = formatAttempts[i];
       const out = await postOnce(fmt);
@@ -463,23 +479,58 @@ export async function describePhoto(itemFile, opts = {}) {
       data = out.data;
       if (res.ok && !data?.error) {
         if (i > 0) onNote(`vision: ответ без ${i === 1 ? 'json_schema' : 'response_format'}`);
-        break;
+        return { res, text, data };
       }
+      const code = data?.error?.code ?? res.status;
       const msg = data?.error?.message || `HTTP ${res.status}: ${String(text).slice(0, 180)}`;
-      lastHttpErr = Object.assign(new Error(msg), { status: res.status >= 400 ? res.status : 502 });
-      // Неподдерживаемый response_format / схема → пробуем следующий вариант
-      const retryable = res.status === 400 || res.status === 422
+      lastHttpErr = Object.assign(new Error(msg), {
+        status: res.status >= 400 ? res.status : 502,
+        code: Number(code) || res.status,
+        res,
+      });
+      // Неподдерживаемый response_format / схема → следующий вариант формата
+      const formatRetry = res.status === 400 || res.status === 422
         || /response_format|json_schema|json_object|unsupported|unknown|не поддерж/i.test(msg);
-      if (!retryable || i === formatAttempts.length - 1) throw lastHttpErr;
+      // 429/5xx — наружный transient-retry, не смена формата
+      if (VISION_RETRYABLE.has(Number(code)) || VISION_RETRYABLE.has(res.status)) {
+        throw lastHttpErr;
+      }
+      if (!formatRetry || i === formatAttempts.length - 1) throw lastHttpErr;
       onNote(`vision: ${msg.slice(0, 80)} → другой формат ответа`);
     }
-  } catch (e) {
-    if (e?.status) throw e;
-    const timed = e.name === 'TimeoutError' || e.cause?.name === 'TimeoutError';
-    throw Object.assign(
-      new Error(timed ? `таймаут vision ${timeoutMs}ms` : `vision: ${e.message}`),
-      { status: 502 },
-    );
+    throw lastHttpErr || Object.assign(new Error('vision HTTP error'), { status: 502 });
+  }
+
+  let res;
+  let text;
+  let data;
+  let lastHttpErr = null;
+  for (let attempt = 1; attempt <= VISION_TRANSIENT_ATTEMPTS; attempt++) {
+    try {
+      const out = await postWithFormatFallback();
+      res = out.res;
+      text = out.text;
+      data = out.data;
+      lastHttpErr = null;
+      break;
+    } catch (e) {
+      const timed = e.name === 'TimeoutError' || e.cause?.name === 'TimeoutError'
+        || /^таймаут vision/i.test(String(e.message || ''));
+      const code = Number(e.code ?? e.status) || 0;
+      const transient = timed || VISION_RETRYABLE.has(code)
+        || (!e.status && /fetch|network|ECONN|ETIMEDOUT|socket/i.test(String(e.message || '')));
+      if (transient && attempt < VISION_TRANSIENT_ATTEMPTS) {
+        const wait = visionRetryAfterMs(e.res, attempt);
+        onNote(`retry ${attempt}/${VISION_TRANSIENT_ATTEMPTS}, ${timed ? 'timeout' : code || 'net'}, ${wait}ms`);
+        await sleep(wait);
+        continue;
+      }
+      if (e?.status) throw e;
+      throw Object.assign(
+        new Error(timed ? `таймаут vision ${timeoutMs}ms` : `vision: ${e.message}`),
+        { status: 502 },
+      );
+    }
   }
 
   if (!res?.ok || data?.error) {

@@ -2338,8 +2338,12 @@ input[type=range]::-moz-range-thumb{
           <button type="button" class="sbtn primary" id="photoDescribeBtn" onclick="photoStartDescribe()"><i class="ti ti-sparkles"></i> Описать</button>
           <button type="button" class="sbtn ghost" onclick="photoStopDescribe()">Стоп</button>
         </div>
+        <label class="photo-budget" style="display:flex;align-items:center;gap:6px;margin-top:8px;font-size:12px;color:var(--t3)">
+          <span title="Опционально: остановить прогон при достижении суммы в ₽">Лимит ₽</span>
+          <input type="number" id="photoMaxCostRub" min="0" step="1" placeholder="без лимита" style="width:7rem;padding:4px 6px">
+        </label>
         <div class="photo-status" id="photoStatusBox">
-          <div id="photoJobHint">Отметьте фото в списке или опишите все без текста.</div>
+          <div id="photoJobHint">Отметьте фото или опишите только без текста (уже описанные не тратятся). Для 15k задайте лимит ₽.</div>
           <div id="photoStatus">Нет альбома</div>
         </div>
       </section>
@@ -10545,6 +10549,17 @@ function photoRenderModel(){
   }
 }
 
+function photoDescribeCandidateCount(){
+  if(!photoAlbum) return 0;
+  if(photoSel.size){
+    return [...photoSel].filter(id=>{
+      const it=photoAlbum.items.find(i=>i.id===id);
+      return it && !photoIsDescribed(it);
+    }).length;
+  }
+  return photoAlbum.items.filter(i=>i.status==='uploaded'||i.status==='error').length;
+}
+
 async function photoStartDescribe(){
   if(!photoAlbum){ photoStatus('Сначала альбом', false); return; }
   if(!photoAitunnelSettings()){
@@ -10553,6 +10568,22 @@ async function photoStartDescribe(){
   }
   if(!photoModel){ photoStatus('Выберите модель AITUNNEL', false); return; }
   const item_ids=photoSel.size?[...photoSel]:null;
+  const candidates=photoDescribeCandidateCount();
+  if(!candidates){
+    photoStatus('Нечего описывать: нет фото без описания (или все выбранные уже описаны)', false);
+    return;
+  }
+  const costEl=document.getElementById('photoMaxCostRub');
+  const maxRaw=costEl?.value?.trim();
+  const max_cost_rub=maxRaw!==''&&maxRaw!=null?Number(maxRaw):null;
+  if(max_cost_rub!=null&&(!Number.isFinite(max_cost_rub)||max_cost_rub<=0)){
+    photoStatus('Лимит ₽ должен быть положительным числом', false);
+    return;
+  }
+  if(candidates>100){
+    const lim=max_cost_rub!=null?` Лимит бюджета: ${max_cost_rub} ₽.`:' Лимит ₽ не задан — прогон идёт до конца или Стоп.';
+    if(!confirm(`Запустить описание ${candidates} фото?${lim}\nУже описанные не оплачиваются повторно. Остановить можно кнопкой Стоп.`)) return;
+  }
   try{
     const job=await apiJson('/api/photos/'+encodeURIComponent(photoAlbum.id)+'/describe',{
       method:'POST', headers:{'Content-Type':'application/json'},
@@ -10560,11 +10591,13 @@ async function photoStartDescribe(){
         model:photoModel.id,
         provider:PHOTO_PROVIDER_ID,
         item_ids,
+        force:false,
+        max_cost_rub:max_cost_rub!=null?max_cost_rub:undefined,
       }),
     });
     photoJobId=job.id;
     photoRunLogLines=[];
-    photoAppendRunLog([{ message:`Старт ${job.id} · ${job.total} фото · ${photoModel.id}`, level:'info' }]);
+    photoAppendRunLog([{ message:`Старт ${job.id} · ${job.total} фото · ${photoModel.id}${job.max_cost_rub!=null?` · лимит ${job.max_cost_rub} ₽`:''}`, level:'info' }]);
     photoStatus(`Прогон ${job.id}: 0/${job.total}`, true);
     photoPollJob();
   }catch(e){ photoStatus(e.message||'не запущен', false); }
@@ -10586,7 +10619,10 @@ function photoPollJob(){
       const st=await apiJson('/api/photo-jobs/'+encodeURIComponent(photoJobId)+'?logFrom='+logFrom);
       document.getElementById('photoJobHint').textContent=
         `${st.status}: ${st.done}/${st.total} · ok ${st.ok} · err ${st.err}`
-        +(st.cost?` · ${formatRub(Number(st.cost))}`:'');
+        +(st.skipped?` · skip ${st.skipped}`:'')
+        +(st.cost?` · ${formatRub(Number(st.cost))}`:'')
+        +(st.max_cost_rub!=null?` / лимит ${formatRub(Number(st.max_cost_rub))}`:'')
+        +(st.stop_reason?` · ${st.stop_reason}`:'');
       const bar=document.getElementById('photoBarF');
       if(bar && st.total) bar.style.width=Math.round((st.done/st.total)*100)+'%';
       const line=document.getElementById('photoRunline');

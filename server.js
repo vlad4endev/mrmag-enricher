@@ -2155,7 +2155,7 @@ async function describePhotoOne({ albumId, itemId, model, provider, onNote = () 
     limiter: limiterFor(`${prov.id}:${resolvedModel}`),
     systemPrompt: settings.model?.photo_system_prompt || '',
   });
-  const saved = applyDescribeResult(albumId, itemId, result, ROOT);
+  const saved = await applyDescribeResult(albumId, itemId, result, ROOT);
   return { item: saved, usage: result.usage, dump_linked: result.dump_linked };
 }
 
@@ -2293,14 +2293,45 @@ async function apiPhotoDescribe(req, res, id) {
   const raw = await readBody(req, 1_000_000);
   let body;
   try { body = JSON.parse(raw || '{}'); } catch { return json(res, 400, { error: 'Тело не JSON' }); }
-  const { model, item_ids } = body || {};
+  const { model, item_ids, force, max_cost_rub } = body || {};
   if (!model || typeof model !== 'string') return json(res, 400, { error: 'Не передана модель' });
+
+  // Preflight: кэш баланса + лёгкий live-запрос (не блокируем прогон при сбое API баланса).
+  let balance_rub = null;
+  try {
+    const settings = loadSettings(ROOT);
+    const prov = (settings.providers || []).find(p => p.id === 'aitunnel')
+      || (settings.providers || []).find(p => isAitunnelProvider(p));
+    if (prov) {
+      const cached = loadProviderUsage(ROOT).providers[prov.id] || {};
+      if (typeof cached.last_balance === 'number') balance_rub = cached.last_balance;
+      const ep = providerEndpoint(prov, settings);
+      if (ep.apiKey) {
+        try {
+          const live = await fetchAitunnelBalance({
+            baseUrl: ep.baseUrl,
+            headers: ep.headers,
+            fetchImpl: (url, init) => providerFetch(url, init, { useProxy: providerUsesProxy(prov) }),
+            timeoutMs: 8_000,
+          });
+          if (typeof live.balance === 'number' || typeof live.budget === 'number') {
+            touchProviderBalance(prov.id, live, ROOT);
+          }
+          if (typeof live.balance === 'number') balance_rub = live.balance;
+        } catch { /* лог внутри job create по кэшу */ }
+      }
+    }
+  } catch { /* */ }
+
   try {
     const job = photoStore.create({
       album_id: id,
       model,
       provider: 'aitunnel',
       item_ids: item_ids || null,
+      force: Boolean(force),
+      max_cost_rub: max_cost_rub ?? null,
+      balance_rub,
     });
     return json(res, 202, photoStore.summary(job));
   } catch (e) {

@@ -192,6 +192,18 @@ export function createPhotoJobStore({
     return { ids, skipped };
   }
 
+  /** Идущий прогон по альбому — для UI после reload и запрета второго старта. */
+  function activeForAlbum(albumId) {
+    const aid = String(albumId || '');
+    if (!aid) return null;
+    for (const job of jobs.values()) {
+      if (job.album_id === aid && job.status === 'running' && !job.finished_at && !job.removed) {
+        return job;
+      }
+    }
+    return null;
+  }
+
   function create({
     album_id,
     model,
@@ -203,6 +215,14 @@ export function createPhotoJobStore({
   }) {
     if (!album_id) throw Object.assign(new Error('Нет album_id'), { status: 400 });
     if (!model) throw Object.assign(new Error('Нет модели'), { status: 400 });
+
+    const live = activeForAlbum(album_id);
+    if (live) {
+      throw Object.assign(
+        new Error(`Уже идёт прогон ${live.id} (${live.done}/${live.item_ids.length}) — закройте страницу: он продолжит; Стоп — чтобы остановить`),
+        { status: 409, job_id: live.id },
+      );
+    }
 
     // Индекс id+status — не publicAlbum со всеми description (OOM / 502 на 15k).
     const album = getAlbumJobIndex(album_id);
@@ -244,6 +264,7 @@ export function createPhotoJobStore({
     };
     jobs.set(id, job);
     pushLog(job, `старт: ${ids.length} фото · ${model}${skipped ? ` · skip ${skipped} уже описанных` : ''}`);
+    pushLog(job, 'фон: закрытие вкладки не останавливает прогон — Стоп или конец очереди');
     if (costCap != null) pushLog(job, `лимит бюджета: ${costCap} ₽`);
     if (bal != null) {
       pushLog(job, `баланс AITUNNEL: ${bal} ₽`);
@@ -385,7 +406,7 @@ export function createPhotoJobStore({
     return n;
   }
 
-  return { create, get, list, state, summary, stop, remove, restore, resolveItemIds };
+  return { create, get, list, state, summary, stop, remove, restore, resolveItemIds, activeForAlbum };
 }
 
 /** Обёртка одного фото для store — вызывается из server.js с провайдером. */

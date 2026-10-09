@@ -3243,6 +3243,34 @@ ${Array.from({ length: 5 }, (_, i) => `<offer id="o${i}"><name>T${i}</name><pict
     assert.equal(after.items.length, 2);
   });
 
+  await tAsync('второй create по тому же альбому → 409, activeForAlbum', async () => {
+    const album = createAlbum('mutex-job', {}, dir);
+    seedItems(album.id, [
+      { id: 'mj00000001', status: 'uploaded' },
+      { id: 'mj00000002', status: 'uploaded' },
+    ]);
+    let release;
+    const gate = new Promise((r) => { release = r; });
+    const store = createPhotoJobStore({
+      describeOne: async () => {
+        await gate;
+        return { usage: { cost_rub: 0.01 } };
+      },
+      dir: process.env.PHOTO_JOBS_DIR,
+      concurrency: 1,
+    });
+    const first = store.create({ album_id: album.id, model: 'test-model' });
+    assert.equal(first.status, 'running');
+    assert.equal(store.activeForAlbum(album.id)?.id, first.id);
+    await assert.rejects(
+      async () => store.create({ album_id: album.id, model: 'test-model' }),
+      (e) => e.status === 409 && /Уже идёт прогон/.test(e.message),
+    );
+    release();
+    await waitJob(store, first.id);
+    assert.equal(store.activeForAlbum(album.id), null);
+  });
+
   await tAsync('create без pending → 400, не все id', async () => {
     const album = createAlbum('full', {}, dir);
     seedItems(album.id, [

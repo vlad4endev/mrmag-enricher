@@ -2344,7 +2344,7 @@ input[type=range]::-moz-range-thumb{
           <input type="number" id="photoMaxCostRub" min="0" step="1" placeholder="без лимита" style="width:7rem;padding:4px 6px">
         </label>
         <div class="photo-status" id="photoStatusBox">
-          <div id="photoJobHint">Импорт тянет весь фид (до лимита альбома), уже добавленные пропускает. «Описать» — все без текста до конца. Лимит ₽ — только если нужно остановить траты.</div>
+          <div id="photoJobHint">Прогон идёт на сервере: закрытие/обновление страницы его не рвёт — при возврате прогресс подхватится. Стоп — только кнопка Стоп. Импорт добирает фид, уже описанные не затирает.</div>
           <div id="photoStatus">Нет альбома</div>
         </div>
       </section>
@@ -9691,6 +9691,23 @@ let photoProvId=PHOTO_PROVIDER_ID;
 let photoJobId=null;
 let photoPoll=null;
 let photoInited=false;
+const PHOTO_JOB_KEY='photoJobId';
+const PHOTO_JOB_ALBUM_KEY='photoJobAlbumId';
+
+function photoSaveJob(id, albumId){
+  try{
+    if(id) localStorage.setItem(PHOTO_JOB_KEY, id);
+    if(albumId) localStorage.setItem(PHOTO_JOB_ALBUM_KEY, albumId);
+  }catch{ /* private mode */ }
+}
+
+function photoClearSavedJob(){
+  try{
+    localStorage.removeItem(PHOTO_JOB_KEY);
+    localStorage.removeItem(PHOTO_JOB_ALBUM_KEY);
+  }catch{ /* */ }
+  photoJobId=null;
+}
 let photoLimits={ MAX_BATCH_FILES:40 };
 let photoRunLogLines=[];
 let photoRunLogOpen=false;
@@ -9946,6 +9963,7 @@ async function photoInit(){
   photoPickDefaultModel();
   photoRenderModel();
   await photoLoadAlbums();
+  await photoResumeJob();
 }
 
 function photoBindZone(){
@@ -10665,6 +10683,10 @@ function photoDescribeCandidateCount(){
 
 async function photoStartDescribe(){
   if(!photoAlbum){ photoStatus('Сначала альбом', false); return; }
+  if(photoJobId && photoPoll){
+    photoStatus('Прогон уже идёт в фоне — прогресс справа/в статусе. Стоп — чтобы остановить.', false);
+    return;
+  }
   if(!photoAitunnelSettings()){
     photoStatus('Добавьте AITUNNEL в Настройки → Провайдеры', false);
     return;
@@ -10715,33 +10737,116 @@ async function photoStartDescribe(){
       }),
     });
     photoJobId=job.id;
+    photoSaveJob(job.id, photoAlbum.id);
     photoRunLogLines=[];
-    photoAppendRunLog([{ message:`Старт ${job.id} · ${job.total} фото · ${photoModel.id}${job.max_cost_rub!=null?` · лимит ${job.max_cost_rub} ₽`:''}`, level:'info' }]);
-    photoStatus(`Прогон ${job.id}: 0/${job.total}`, true);
+    photoAppendRunLog([{ message:`Старт ${job.id} · ${job.total} фото · ${photoModel.id}${job.max_cost_rub!=null?` · лимит ${job.max_cost_rub} ₽`:''} · фон`, level:'info' }]);
+    photoStatus(`Прогон ${job.id}: 0/${job.total} (фон — вкладку можно закрыть)`, true);
     photoPollJob();
-  }catch(e){ photoStatus(e.message||'не запущен', false); }
+  }catch(e){
+    const msg=e.message||'не запущен';
+    // 409: уже идёт — подхватить вместо ошибки.
+    const m=msg.match(/прогон\s+([a-f0-9]+)/i);
+    if(m){
+      photoStatus(msg, false);
+      await photoAttachJob(m[1], photoAlbum.id);
+      return;
+    }
+    photoStatus(msg, false);
+  }
 }
 
 async function photoStopDescribe(){
-  if(!photoJobId) return;
-  try{ await apiJson('/api/photo-jobs/'+encodeURIComponent(photoJobId)+'/stop',{method:'POST'}); }
-  catch(e){ photoStatus(e.message||'стоп не принят', false); }
+  if(!photoJobId){
+    // На случай reload без photoJobId в RAM — возьмём из localStorage / списка.
+    let saved=null;
+    try{ saved=localStorage.getItem(PHOTO_JOB_KEY); }catch{}
+    if(saved) photoJobId=saved;
+  }
+  if(!photoJobId){ photoStatus('Нет активного прогона', false); return; }
+  try{
+    await apiJson('/api/photo-jobs/'+encodeURIComponent(photoJobId)+'/stop',{method:'POST'});
+    photoStatus('Стоп запрошен — дождитесь остановки воркеров…', true);
+  }catch(e){ photoStatus(e.message||'стоп не принят', false); }
 }
 
-function photoPollJob(){
+/** Подхватить идущий прогон после reload/закрытия вкладки. */
+async function photoAttachJob(id, albumId){
+  if(!id) return false;
+  try{
+    const st=await apiJson('/api/photo-jobs/'+encodeURIComponent(id)+'?logFrom=0');
+    if(st.status!=='running'){
+      photoClearSavedJob();
+      return false;
+    }
+    const aid=albumId||st.album_id;
+    if(aid && (!photoAlbum||photoAlbum.id!==aid)){
+      await photoOpenAlbum(aid, true);
+    }
+    photoJobId=id;
+    photoSaveJob(id, aid||photoAlbum?.id);
+    const hint=document.getElementById('photoJobHint');
+    if(hint){
+      hint.textContent=`running: ${st.done}/${st.total} · ok ${st.ok} · err ${st.err}`
+        +(st.cost?` · ${formatRub(Number(st.cost))}`:'')
+        +' · фон';
+    }
+    const bar=document.getElementById('photoBarF');
+    if(bar && st.total) bar.style.width=Math.round((st.done/st.total)*100)+'%';
+    const line=document.getElementById('photoRunline');
+    if(line) line.textContent=`Прогон: ${st.done}/${st.total} · ok ${st.ok} · err ${st.err} (фон)`;
+    photoAppendRunLog([{
+      message:`Восстановлен фон-прогон ${id}: ${st.done}/${st.total}`,
+      level:'info',
+    }]);
+    if(st.log?.length){
+      photoAppendRunLog(st.log.map(l=>({
+        message:l.message||String(l),
+        level:/err|fail|ошиб/i.test(l.message||'')?'err':/ok|готово|описан/i.test(l.message||'')?'ok':'info',
+      })));
+    }
+    photoStatus(`Прогон ${id}: ${st.done}/${st.total} (подхвачен после возврата)`, true);
+    const logFrom=(st.log_from||0)+(st.log?.length||0);
+    photoPollJob({ logFrom });
+    return true;
+  }catch{
+    return false;
+  }
+}
+
+async function photoResumeJob(){
+  if(photoPoll) return;
+  let saved=null, savedAlbum=null;
+  try{
+    saved=localStorage.getItem(PHOTO_JOB_KEY);
+    savedAlbum=localStorage.getItem(PHOTO_JOB_ALBUM_KEY);
+  }catch{}
+  if(saved && await photoAttachJob(saved, savedAlbum)) return;
+  try{
+    const {jobs}=await apiJson('/api/photo-jobs');
+    const preferAlbum=photoAlbum?.id||savedAlbum;
+    const live=(jobs||[]).find(j=>j.status==='running' && (!preferAlbum||j.album_id===preferAlbum))
+      ||(jobs||[]).find(j=>j.status==='running');
+    if(live) await photoAttachJob(live.id, live.album_id);
+  }catch{ /* нет списка — ок */ }
+}
+
+function photoPollJob(opts){
   if(photoPoll) clearInterval(photoPoll);
-  let logFrom=0;
+  let logFrom=Number(opts?.logFrom)||0;
   let ticks=0;
+  let fails=0;
   photoPoll=setInterval(async()=>{
-    if(!photoJobId){ clearInterval(photoPoll); return; }
+    if(!photoJobId){ clearInterval(photoPoll); photoPoll=null; return; }
     try{
       const st=await apiJson('/api/photo-jobs/'+encodeURIComponent(photoJobId)+'?logFrom='+logFrom);
+      fails=0;
       document.getElementById('photoJobHint').textContent=
         `${st.status}: ${st.done}/${st.total} · ok ${st.ok} · err ${st.err}`
         +(st.skipped?` · skip ${st.skipped}`:'')
         +(st.cost?` · ${formatRub(Number(st.cost))}`:'')
         +(st.max_cost_rub!=null?` / лимит ${formatRub(Number(st.max_cost_rub))}`:'')
-        +(st.stop_reason?` · ${st.stop_reason}`:'');
+        +(st.stop_reason?` · ${st.stop_reason}`:'')
+        +(st.status==='running'?' · фон':'');
       const bar=document.getElementById('photoBarF');
       if(bar && st.total) bar.style.width=Math.round((st.done/st.total)*100)+'%';
       const line=document.getElementById('photoRunline');
@@ -10765,7 +10870,8 @@ function photoPollJob(){
       if(st.status==='done'||st.status==='stopped'||st.status==='interrupted'){
         clearInterval(photoPoll); photoPoll=null;
         const keepCur=photoCurId;
-        await photoOpenAlbum(photoAlbum.id, true);
+        const albumId=photoAlbum?.id||st.album_id;
+        if(albumId) await photoOpenAlbum(albumId, true);
         if(keepCur && photoItemById(keepCur)) photoCurId=keepCur;
         photoRenderList();
         photoRenderDetail();
@@ -10788,12 +10894,21 @@ function photoPollJob(){
           msg=`Прогон остановлен${reason} · ok ${st.ok} · err ${st.err}.`;
         }
         photoStatus(msg, st.status==='done'&&!st.err);
-        photoJobId=null;
+        photoClearSavedJob();
         refreshAitunnelBills({force:true});
       }
     }catch(e){
-      clearInterval(photoPoll); photoPoll=null;
-      photoStatus(e.message||'опрос упал', false);
+      // Сеть/502: не сбрасываем job — сервер продолжает; после F5 подхватим снова.
+      fails+=1;
+      photoStatus(
+        fails>=6
+          ?`Связь с опросом потеряна (${e.message||'сеть'}) — прогон на сервере идёт. Обновите страницу.`
+          :`Опрос… ${e.message||'сеть'}`,
+        false,
+      );
+      if(fails>=12){
+        clearInterval(photoPoll); photoPoll=null;
+      }
     }
   }, 1200);
 }

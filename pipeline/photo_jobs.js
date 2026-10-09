@@ -53,6 +53,23 @@ export function isFeedFetchError(err) {
   return /изображение недоступно|файл на диске не найден|файл слишком|содержимое не JPEG|по ссылке не картинка|товар пропущен|таймаут фото/i.test(msg);
 }
 
+/** Сетевой таймаут vision (ETIMEDOUT / AbortSignal) — не стопаем весь прогон. */
+export function isVisionNetError(err) {
+  if (err?.timeout) return true;
+  const msg = String(err?.message || err || '');
+  const code = String(err?.code || '');
+  return /таймаут vision|vision:\s*таймаут|ETIMEDOUT|UND_ERR_CONNECT_TIMEOUT|UND_ERR_HEADERS_TIMEOUT|UND_ERR_BODY_TIMEOUT/i.test(`${msg} ${code}`);
+}
+
+/** Старые логи/коды → читаемое сообщение. */
+export function normalizePhotoJobError(err) {
+  const raw = String(err?.message || err || '').trim() || 'неизвестная ошибка';
+  if (/^vision:\s*ETIMEDOUT$/i.test(raw) || /^ETIMEDOUT$/i.test(raw)) {
+    return 'таймаут vision (сеть ETIMEDOUT)';
+  }
+  return raw;
+}
+
 function parseMaxCost(v) {
   if (v == null || v === '') return null;
   const n = Number(v);
@@ -329,6 +346,8 @@ export function createPhotoJobStore({
     const queue = job.item_ids.map((itemId, idx) => ({ itemId, idx }));
     let cursor = 0;
     const itemTimeout = itemTimeoutMs;
+    /** Один повтор в конце очереди на item при сетевом таймауте vision. */
+    const deferredNet = new Set();
 
     const worker = async () => {
       while (cursor < queue.length) {
@@ -344,6 +363,7 @@ export function createPhotoJobStore({
         const { itemId, idx } = slot;
         job.current_id = itemId;
         job.heartbeat_at = now();
+        let counted = true;
         try {
           pushLog(job, `[${idx + 1}/${job.item_ids.length}] ${itemId}`);
           save(job);
@@ -372,26 +392,39 @@ export function createPhotoJobStore({
           }
         } catch (e) {
           if (job.finished_at || job.removed) return;
+          const msg = normalizePhotoJobError(e);
           const rawHint = e.raw ? ` · raw: ${String(e.raw).replace(/\s+/g, ' ').slice(0, 220)}` : '';
-          job.results[idx] = { id: itemId, ok: false, error: e.message, raw: e.raw || null };
-          job.err += 1;
-          try {
-            await applyDescribeResult(job.album_id, itemId, { error: e.message + rawHint });
-          } catch { /* */ }
-          pushLog(job, `err ${itemId}: ${e.message}${rawHint}`, 'err');
+          const softNet = isVisionNetError(e) || isFeedFetchError(e) || e.timeout;
 
-          if (isFeedFetchError(e) || e.timeout) {
+          // Сетевой таймаут — один отложенный повтор, не портим ok/err до финала.
+          if (softNet && isVisionNetError(e) && !deferredNet.has(itemId)) {
+            deferredNet.add(itemId);
+            queue.push({ itemId, idx });
+            counted = false;
             job.consecutive_err = 0;
+            pushLog(job, `warn ${itemId}: ${msg} → повтор в конце очереди`, 'warn');
+            save(job);
           } else {
-            job.consecutive_err = (job.consecutive_err || 0) + 1;
-            const cap = job.max_consecutive_errors || maxConsecutiveErrors;
-            if (job.consecutive_err >= cap) {
-              requestStop(job, `стоп: ${cap} ошибок API/сети подряд`);
+            job.results[idx] = { id: itemId, ok: false, error: msg, raw: e.raw || null };
+            job.err += 1;
+            try {
+              await applyDescribeResult(job.album_id, itemId, { error: msg + rawHint });
+            } catch { /* */ }
+            pushLog(job, `err ${itemId}: ${msg}${rawHint}`, 'err');
+
+            if (softNet) {
+              job.consecutive_err = 0;
+            } else {
+              job.consecutive_err = (job.consecutive_err || 0) + 1;
+              const cap = job.max_consecutive_errors || maxConsecutiveErrors;
+              if (job.consecutive_err >= cap) {
+                requestStop(job, `стоп: ${cap} ошибок API/сети подряд`);
+              }
             }
           }
         }
         if (job.finished_at || job.removed) return;
-        job.done += 1;
+        if (counted) job.done += 1;
         job.current_id = null;
         job.heartbeat_at = now();
         save(job);

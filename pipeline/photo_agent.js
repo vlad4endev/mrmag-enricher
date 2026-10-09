@@ -599,8 +599,10 @@ export async function describePhoto(itemFile, opts = {}) {
         }
         throw e;
       }
-      if (timed) {
-        throw Object.assign(new Error(`таймаут vision ${timeoutMs}ms`), { status: 502, code: e?.code });
+      // Любой ETIMEDOUT (даже если классификатор не сработал) → таймаут, не «vision: ETIMEDOUT».
+      const chain = visionErrorChainText(e);
+      if (timed || /ETIMEDOUT|UND_ERR_CONNECT_TIMEOUT|UND_ERR_HEADERS_TIMEOUT|UND_ERR_BODY_TIMEOUT/i.test(chain)) {
+        throw Object.assign(new Error(`таймаут vision ${timeoutMs}ms`), { status: 502, code: e?.code || 'ETIMEDOUT' });
       }
       const detail = String(netError(e, chatUrl) || e?.message || e?.code || '').trim()
         || 'неизвестная ошибка';

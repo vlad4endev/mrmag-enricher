@@ -3177,9 +3177,18 @@ async function apiJson(url,opts){
       throw new Error(extra.length?`${own}: ${extra.join('; ')}`:own);
     }
     if(r.status===401) throw new Error('Требуется вход — откройте страницу заново и введите пароль');
-    // Не-JSON на 502/504 отдаёт шлюз перед сервером, а не сервер. Обогащение
-    // одного товара занимает до трёх минут, nginx по умолчанию ждёт минуту.
-    if(r.status===502||r.status===504) throw new Error(`шлюз не дождался ответа (HTTP ${r.status}) — поднимите proxy_read_timeout, обогащение товара идёт до 3 минут`);
+    // Не-JSON на 502/504 отдаёт шлюз (nginx-proxy-manager) перед Node, а не сервер.
+    // 504 — классический proxy_read_timeout. 502 без JSON — апстрим мёртв или тот же таймаут.
+    if(r.status===504){
+      throw new Error('шлюз не дождался ответа (HTTP 504) — в NPM → Advanced вставьте proxy_read_timeout 300s (см. docker/npm-advanced.conf); обогащение товара идёт до 3 минут');
+    }
+    if(r.status===502){
+      const hint=brief(text);
+      const looksTimeout=/gateway|time-?out|504|502/i.test(hint);
+      throw new Error(looksTimeout
+        ? 'шлюз не дождался ответа (HTTP 502) — поднимите proxy_read_timeout до 300s в NPM (docker/npm-advanced.conf); обогащение товара идёт до 3 минут'
+        : `шлюз не достал до сервиса (HTTP 502)${hint?': '+hint:''} — проверьте docker compose ps / логи ai-enricher`);
+    }
     throw new Error(`HTTP ${r.status}: ${brief(text)}`);
   }
   if(d===null) throw new Error(`сервер вернул не JSON: ${brief(text)||'пустой ответ'}`);

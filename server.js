@@ -2232,15 +2232,23 @@ async function apiPhotoImportYml(req, res, id) {
     let chunks;
     if (body.url) {
       if (!/^https?:\/\//i.test(body.url)) return json(res, 400, { error: 'Нужна ссылка http(s)' });
+      // NPM proxy_read_timeout часто 60s: долгая закачка фида рвёт соединение 502/504.
+      // Держимся ниже минуты; крупные фиды — кнопкой «Файл фида» (чанки без длинного GET).
+      const feedMs = Math.max(10_000, Math.min(55_000, Number(process.env.PHOTO_FEED_FETCH_MS || 50_000)));
       let r;
       try {
-        r = await fetch(body.url, { signal: AbortSignal.timeout(300_000) });
+        r = await fetch(body.url, { signal: AbortSignal.timeout(feedMs) });
       } catch (direct) {
         // Сеть сервера режет часть сайтов (DNS/DPI) — пробуем через прокси приложения. ponytail: ответ через прокси буферизуется целиком.
         try {
-          r = await providerFetch(body.url, { signal: AbortSignal.timeout(300_000) }, { useProxy: true });
+          r = await providerFetch(body.url, { signal: AbortSignal.timeout(feedMs) }, { useProxy: true });
         } catch (viaProxy) {
-          return json(res, 502, { error: `Сервер не достаёт до фида (напрямую: ${direct.cause?.code || direct.message}; через прокси: ${viaProxy.message}). Загрузите файл фида кнопкой «Файл фида».` });
+          const timed = /timeout|TimeoutError|aborted/i.test(String(direct.message || '') + String(viaProxy.message || ''));
+          return json(res, 502, {
+            error: timed
+              ? `Фид не успел скачаться за ${Math.round(feedMs / 1000)}с (лимит шлюза). Загрузите XML кнопкой «Файл фида» — так надёжнее для больших каталогов.`
+              : `Сервер не достаёт до фида (напрямую: ${direct.cause?.code || direct.message}; через прокси: ${viaProxy.message}). Загрузите файл фида кнопкой «Файл фида».`,
+          });
         }
       }
       if (!r.ok) return json(res, 502, { error: `Фид: HTTP ${r.status}` });
@@ -2296,31 +2304,12 @@ async function apiPhotoDescribe(req, res, id) {
   const { model, item_ids, force, max_cost_rub } = body || {};
   if (!model || typeof model !== 'string') return json(res, 400, { error: 'Не передана модель' });
 
-  // Preflight: кэш баланса + лёгкий live-запрос (не блокируем прогон при сбое API баланса).
+  // Preflight только из кэша — live balance не держим HTTP под NPM (риск 502).
+  // Актуальный баланс пользователь смотрит отдельно через /api/providers/.../balance.
   let balance_rub = null;
   try {
-    const settings = loadSettings(ROOT);
-    const prov = (settings.providers || []).find(p => p.id === 'aitunnel')
-      || (settings.providers || []).find(p => isAitunnelProvider(p));
-    if (prov) {
-      const cached = loadProviderUsage(ROOT).providers[prov.id] || {};
-      if (typeof cached.last_balance === 'number') balance_rub = cached.last_balance;
-      const ep = providerEndpoint(prov, settings);
-      if (ep.apiKey) {
-        try {
-          const live = await fetchAitunnelBalance({
-            baseUrl: ep.baseUrl,
-            headers: ep.headers,
-            fetchImpl: (url, init) => providerFetch(url, init, { useProxy: providerUsesProxy(prov) }),
-            timeoutMs: 8_000,
-          });
-          if (typeof live.balance === 'number' || typeof live.budget === 'number') {
-            touchProviderBalance(prov.id, live, ROOT);
-          }
-          if (typeof live.balance === 'number') balance_rub = live.balance;
-        } catch { /* лог внутри job create по кэшу */ }
-      }
-    }
+    const cached = loadProviderUsage(ROOT).providers.aitunnel || {};
+    if (typeof cached.last_balance === 'number') balance_rub = cached.last_balance;
   } catch { /* */ }
 
   try {

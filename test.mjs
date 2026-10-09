@@ -2985,7 +2985,7 @@ console.log('\nТовар без описания: поиск в сети');
     getAlbumJobIndex, compactAlbumMeta, listAlbums, readPhotoFile, PHOTO_LIMITS,
   } = await import('./pipeline/photos.js');
   const {
-    createPhotoJobStore, isFeedFetchError,
+    createPhotoJobStore, isFeedFetchError, isVisionNetError, normalizePhotoJobError,
   } = await import('./pipeline/photo_jobs.js');
   const {
     describePhoto, visionFormatAttempts, _resetVisionFormatMemory,
@@ -3064,6 +3064,14 @@ console.log('\nТовар без описания: поиск в сети');
     assert.equal(isFeedFetchError(new Error('изображение недоступно http://x — товар пропущен')), true);
     assert.equal(isFeedFetchError(new Error('таймаут vision 90000ms')), false);
     assert.equal(isFeedFetchError(new Error('HTTP 429: rate')), false);
+  });
+  t('isVisionNetError + normalize ETIMEDOUT', () => {
+    assert.equal(isVisionNetError(new Error('vision: ETIMEDOUT')), true);
+    assert.equal(isVisionNetError(new Error('таймаут vision 90000ms')), true);
+    assert.equal(isVisionNetError(Object.assign(new Error('x'), { code: 'ETIMEDOUT' })), true);
+    assert.equal(isVisionNetError(new Error('HTTP 400 bad')), false);
+    assert.equal(normalizePhotoJobError(new Error('vision: ETIMEDOUT')), 'таймаут vision (сеть ETIMEDOUT)');
+    assert.equal(normalizePhotoJobError(new Error('таймаут vision 90000ms')), 'таймаут vision 90000ms');
   });
   t('импорт фида сохраняет next_offset для продолжения', () => {
     const album = createAlbum('cursor', {}, dir);
@@ -3286,7 +3294,7 @@ ${Array.from({ length: 5 }, (_, i) => `<offer id="o${i}"><name>T${i}</name><pict
     assert.ok(done.finished_at);
   });
 
-  await tAsync('таймаут одного фото → err, прогон идёт дальше', async () => {
+  await tAsync('таймаут одного фото → повтор, затем err; прогон идёт дальше', async () => {
     const album = createAlbum('item-to', {}, dir);
     seedItems(album.id, [
       { id: 'ito0000001', status: 'uploaded' },
@@ -3307,12 +3315,13 @@ ${Array.from({ length: 5 }, (_, i) => `<offer id="o${i}"><name>T${i}</name><pict
       stopGraceMs: 5_000,
     });
     const job = store.create({ album_id: album.id, model: 'test-model' });
-    const done = await waitJob(store, job.id, 5_000);
+    const done = await waitJob(store, job.id, 8_000);
     assert.equal(done.status, 'done');
     assert.equal(done.ok, 1);
     assert.equal(done.err, 1);
     assert.equal(done.done, 2);
-    assert.equal(n, 2);
+    assert.equal(n, 3); // hang → requeue → hang again + success на втором
+    assert.ok(done.log.some((l) => /повтор в конце очереди/.test(l.message)));
   });
 
   await tAsync('второй create по тому же альбому → 409, activeForAlbum', async () => {
@@ -3434,6 +3443,33 @@ ${Array.from({ length: 5 }, (_, i) => `<offer id="o${i}"><name>T${i}</name><pict
     assert.match(String(done.stop_reason), /подряд/);
     assert.equal(done.err, 3);
     assert.ok(done.done <= 4);
+  });
+
+  await tAsync('ETIMEDOUT → повтор в конце очереди, затем ok', async () => {
+    const album = createAlbum('requeue', {}, dir);
+    seedItems(album.id, [
+      { id: 'rqeu000001', status: 'uploaded' },
+      { id: 'rqeu000002', status: 'uploaded' },
+    ]);
+    const calls = [];
+    const store = createPhotoJobStore({
+      describeOne: async ({ itemId }) => {
+        calls.push(itemId);
+        if (itemId === 'rqeu000001' && calls.filter((id) => id === 'rqeu000001').length === 1) {
+          throw Object.assign(new Error('vision: ETIMEDOUT'), { code: 'ETIMEDOUT' });
+        }
+        return { usage: { cost_rub: 0.2 } };
+      },
+      dir: process.env.PHOTO_JOBS_DIR,
+      concurrency: 1,
+    });
+    const job = store.create({ album_id: album.id, model: 'test-model' });
+    const done = await waitJob(store, job.id, 8000);
+    assert.equal(done.status, 'done');
+    assert.equal(done.ok, 2);
+    assert.equal(done.err, 0);
+    assert.ok(calls.filter((id) => id === 'rqeu000001').length >= 2, `calls=${calls}`);
+    assert.ok(done.log.some((l) => /повтор в конце очереди/.test(l.message)), 'нет warn о повторе');
   });
 
   await tAsync('mutex: параллельные applyDescribeResult не теряют поля', async () => {

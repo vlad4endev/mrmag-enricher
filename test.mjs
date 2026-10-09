@@ -3077,6 +3077,48 @@ ${Array.from({ length: 5 }, (_, i) => `<offer id="o${i}"><name>T${i}</name><pict
     assert.equal(exhausted, true);
   });
 
+  await tAsync('повторный импорт не затирает уже описанные', async () => {
+    const album = createAlbum('keep-desc', {}, dir);
+    const first = importFeedOffers(album.id, [{
+      id: 'keep1', name: 'Товар 1', image_url: 'https://img.test/1.jpg',
+      category: '', vendor: '', vendor_code: '', url: '',
+      params: [], synonyms: [], description: '',
+    }], dir, { offset: 0, limit: 1, scanned: 1 });
+    assert.equal(first.added, 1);
+    const itemId = getAlbum(album.id, dir).items[0].id;
+    await applyDescribeResult(album.id, itemId, {
+      caption: 'сохранённая подпись',
+      description: 'полное сохранённое описание товара',
+      alt: 'alt',
+      tags: ['keep'],
+      usage: { cost_rub: 0.1 },
+    }, dir);
+    const before = getAlbum(album.id, dir).items[0];
+    assert.equal(before.status, 'described');
+    assert.equal(before.caption, 'сохранённая подпись');
+
+    const again = importFeedOffers(album.id, [
+      {
+        id: 'keep1', name: 'Товар 1 ИЗМЕНЁН', image_url: 'https://img.test/1b.jpg',
+        category: '', vendor: '', vendor_code: '', url: '',
+        params: [], synonyms: [], description: '',
+      },
+      {
+        id: 'keep2', name: 'Товар 2', image_url: 'https://img.test/2.jpg',
+        category: '', vendor: '', vendor_code: '', url: '',
+        params: [], synonyms: [], description: '',
+      },
+    ], dir, { offset: 0, limit: 2, scanned: 2 });
+    assert.equal(again.added, 1);
+    assert.equal(again.skipped, 1);
+    const after = getAlbum(album.id, dir);
+    const kept = after.items.find(i => i.product_id === 'keep1');
+    assert.equal(kept.status, 'described');
+    assert.equal(kept.caption, 'сохранённая подпись');
+    assert.equal(kept.description, 'полное сохранённое описание товара');
+    assert.equal(after.items.length, 2);
+  });
+
   await tAsync('create без pending → 400, не все id', async () => {
     const album = createAlbum('full', {}, dir);
     seedItems(album.id, [

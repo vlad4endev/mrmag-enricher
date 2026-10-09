@@ -10063,10 +10063,13 @@ async function photoRunYmlImport(src){
     return;
   }
   const category=prompt('Только раздел (пусто — весь фид):','')||'';
+  const described=(photoAlbum.items||[]).filter(i=>i.status==='described'||i.status==='ready').length;
   if(!confirm(
     `Импортировать весь оставшийся фид?\n\n`
-    +`Уже в альбоме: ${have}\nМеста: ${room} (лимит ${maxItems})\n`
-    +`Уже добавленные id пропускаются — доберёт недостающие до конца фида.\n\n`
+    +`Уже в альбоме: ${have} (из них описано: ${described})\n`
+    +`Места: ${room} (лимит ${maxItems})\n\n`
+    +`Уже описанные НЕ удаляются и НЕ переописываются.\n`
+    +`Уже добавленные id пропускаются — только новые товары.\n\n`
     +`Для 15k+ лучше «Файл фида», не ссылка.`,
   )) return;
 
@@ -10088,7 +10091,12 @@ async function photoRunYmlImport(src){
       true,
     );
     if(pending>0){
-      if(confirm(`В альбоме ${pending} без описания. Запустить описание до конца? (лимит ₽ в поле Прогон — по желанию)`)){
+      const kept=(photoAlbum.items||[]).filter(i=>i.status==='described'||i.status==='ready').length;
+      if(confirm(
+        `Без описания: ${pending}. Запустить описание до конца?\n\n`
+        +`Уже описанные (${kept}) не трогаем и не списываем повторно.\n`
+        +`Лимит ₽ в поле Прогон — по желанию (пусто = до конца).`,
+      )){
         if(photoSel instanceof Set) photoSel.clear();
         await photoStartDescribe();
       }
@@ -10624,10 +10632,11 @@ async function photoStartDescribe(){
     return;
   }
   if(candidates>100){
+    const kept=(photoAlbum.items||[]).filter(i=>i.status==='described'||i.status==='ready').length;
     const lim=max_cost_rub!=null
       ?` Лимит бюджета: ${max_cost_rub} ₽ — остановится раньше конца.`
-      :` Без лимита ₽ — прогон идёт по всем ${candidates} до конца (или Стоп).`;
-    if(!confirm(`Запустить описание ${candidates} фото?${lim}\nУже описанные не оплачиваются повторно.`)) return;
+      :` Без лимита ₽ — прогон идёт по ${candidates} без описания до конца (или Стоп).`;
+    if(!confirm(`Описать ${candidates} фото без текста?${lim}\nУже описанные (${kept}) пропускаются — данные и деньги не теряются.`)) return;
   }
   try{
     const job=await apiJson('/api/photos/'+encodeURIComponent(photoAlbum.id)+'/describe',{

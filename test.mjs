@@ -2980,7 +2980,7 @@ console.log('\nТовар без описания: поиск в сети');
   process.env.PHOTO_JOBS_DIR = path.join(dir, 'photo_jobs');
   fs.copyFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), 'config.json'), process.env.SETTINGS_PATH);
 
-  const { createAlbum, applyDescribeResult, PHOTO_LIMITS } = await import('./pipeline/photos.js');
+  const { createAlbum, applyDescribeResult, importFeedOffers, getAlbum, PHOTO_LIMITS } = await import('./pipeline/photos.js');
   const {
     createPhotoJobStore, isFeedFetchError,
   } = await import('./pipeline/photo_jobs.js');
@@ -3037,6 +3037,32 @@ console.log('\nТовар без описания: поиск в сети');
     assert.equal(isFeedFetchError(new Error('изображение недоступно http://x — товар пропущен')), true);
     assert.equal(isFeedFetchError(new Error('таймаут vision 90000ms')), false);
     assert.equal(isFeedFetchError(new Error('HTTP 429: rate')), false);
+  });
+  t('импорт фида сохраняет next_offset для продолжения', () => {
+    const album = createAlbum('cursor', {}, dir);
+    const mk = (n, from = 0) => Array.from({ length: n }, (_, i) => ({
+      id: `offer${from + i}`,
+      name: `Товар ${from + i}`,
+      image_url: `https://img.test/${from + i}.jpg`,
+      category: '', vendor: '', vendor_code: '', url: '',
+      params: [], synonyms: [], description: '',
+    }));
+    const a = importFeedOffers(album.id, mk(1000, 0), dir, { offset: 0, limit: 1000 });
+    assert.equal(a.added, 1000);
+    assert.equal(a.next_offset, 1000);
+    assert.equal(a.exhausted, false);
+    const b = importFeedOffers(album.id, mk(500, 1000), dir, { offset: 1000, limit: 1000 });
+    assert.equal(b.added, 500);
+    assert.equal(b.next_offset, 1500);
+    assert.equal(b.exhausted, true);
+    const got = getAlbum(album.id, dir);
+    assert.equal(got.items.length, 1500);
+    assert.equal(got.feed_import.next_offset, 1500);
+    // Повтор первых 1000 — все дубли, курсор всё равно двигаем по consumed.
+    const dup = importFeedOffers(album.id, mk(1000, 0), dir, { offset: 0, limit: 1000 });
+    assert.equal(dup.added, 0);
+    assert.equal(dup.skipped, 1000);
+    assert.equal(dup.next_offset, 1000);
   });
 
   await tAsync('create без pending → 400, не все id', async () => {

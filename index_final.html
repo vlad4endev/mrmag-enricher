@@ -2344,7 +2344,7 @@ input[type=range]::-moz-range-thumb{
           <input type="number" id="photoMaxCostRub" min="0" step="1" placeholder="без лимита" style="width:7rem;padding:4px 6px">
         </label>
         <div class="photo-status" id="photoStatusBox">
-          <div id="photoJobHint">Отметьте фото или опишите только без текста (уже описанные не тратятся). Для 15k задайте лимит ₽.</div>
+          <div id="photoJobHint">Отметьте фото или опишите только без текста. Импорт фида идёт кусками (limit+offset) — после 1000 укажите следующий offset. Для контроля трат задайте лимит ₽.</div>
           <div id="photoStatus">Нет альбома</div>
         </div>
       </section>
@@ -10051,22 +10051,46 @@ async function photoImportYmlFile(input){
 }
 
 async function photoRunYmlImport(src){
-  const limit=prompt('Сколько товаров взять (каждый — отдельный платный запрос к модели):','50');
-  if(!limit) return;
-  const category=prompt('Только раздел, в названии пути которого есть… (пусто — любой):','')||'';
   if(!photoAlbum){
     await photoCreateAlbum('Фид '+new Date().toLocaleString('ru-RU'));
     if(!photoAlbum) return;
   }
-  photoStatus('Читаю фид… крупный фид может занять минуты');
+  const have=photoAlbum.items?.length||0;
+  // Курсор фида: без offset повторный импорт снова читает первые N (кажется, что «стоп на 1000»).
+  const savedNext=Number(photoAlbum.feed_import?.next_offset)||0;
+  const suggestOffset=savedNext>0?savedNext:0;
+  const limitRaw=prompt(
+    `Сколько товаров взять из фида (сейчас в альбоме ${have}).\nДля 15k лучше 2000–5000 за раз:`,
+    have>=1000?'2000':'1000',
+  );
+  if(limitRaw==null||limitRaw==='') return;
+  const limit=Number(limitRaw);
+  if(!Number.isFinite(limit)||limit<=0){ photoStatus('Нужно положительное число товаров', false); return; }
+  const offsetRaw=prompt(
+    `Сдвиг в фиде (offset).\n0 — с начала. Чтобы продолжить после прошлого импорта — ${suggestOffset||'сколько уже взяли'}:`,
+    String(suggestOffset),
+  );
+  if(offsetRaw==null) return;
+  const offset=Math.max(0, Number(offsetRaw)||0);
+  const category=prompt('Только раздел, в названии пути которого есть… (пусто — любой):','')||'';
+  photoStatus(`Читаю фид… offset=${offset}, limit=${limit}`);
   try{
     const out=await apiJson('/api/photos/'+encodeURIComponent(photoAlbum.id)+'/import-yml',{
       method:'POST', headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({ ...src, limit:Number(limit), category }),
+      body:JSON.stringify({ ...src, limit, offset, category }),
     });
     await photoOpenAlbum(photoAlbum.id, true);
     await photoLoadAlbums();
-    photoStatus(`Из фида добавлено ${out.added}, пропущено дублей ${out.skipped}`, true);
+    if(out.exhausted&&!out.added){
+      photoStatus(out.message||`Фид исчерпан с offset=${offset}`, true);
+      return;
+    }
+    const next=out.next_offset??(offset+(out.added||0)+(out.skipped||0));
+    photoStatus(
+      `Из фида +${out.added}, дублей ${out.skipped||0}`
+      +(out.exhausted?' · фид закончился':` · следующий offset=${next} (продолжить импорт с ним)`),
+      true,
+    );
   }catch(e){ photoStatus(e.message||'ошибка импорта', false); }
 }
 
@@ -10668,8 +10692,24 @@ function photoPollJob(){
         photoRenderList();
         photoRenderDetail();
         await photoLoadAlbums();
-        photoAppendRunLog([{ message:`Финиш: ${st.status} · ok ${st.ok} · err ${st.err}${st.cost?` · ${formatRub(Number(st.cost))}`:''}`, level:st.err?'warn':'ok' }]);
-        photoStatus(st.status==='done'?'Описание готово':'Прогон остановлен', st.err?false:true);
+        const pending=(photoAlbum?.items||[]).filter(i=>i.status==='uploaded'||i.status==='error').length;
+        const reason=st.stop_reason?` · ${st.stop_reason}`:'';
+        photoAppendRunLog([{
+          message:`Финиш: ${st.status} · ok ${st.ok} · err ${st.err}${st.cost?` · ${formatRub(Number(st.cost))}`:''}${reason}`
+            +(st.status==='done'&&pending?` · ещё ждут описания: ${pending}`:''),
+          level:st.status==='done'&&!st.err?'ok':'warn',
+        }]);
+        let msg;
+        if(st.status==='done'){
+          msg=pending
+            ?`Очередь прогона исчерпана (ok ${st.ok}/${st.total}). Ещё без описания: ${pending} — импортируйте следующий кусок фида (offset) или запустите Описать снова.`
+            :`Описание готово: ok ${st.ok}/${st.total}${st.err?`, ошибок ${st.err}`:''}.`;
+        }else if(st.status==='interrupted'){
+          msg=`Прогон прерван перезапуском сервера${reason}. Уже описанные сохранены — можно Описать снова.`;
+        }else{
+          msg=`Прогон остановлен${reason} · ok ${st.ok} · err ${st.err}.`;
+        }
+        photoStatus(msg, st.status==='done'&&!st.err);
         photoJobId=null;
         refreshAitunnelBills({force:true});
       }

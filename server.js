@@ -2259,8 +2259,23 @@ async function apiPhotoImportYml(req, res, id) {
       return json(res, 400, { error: 'Передайте url или xml' });
     }
     const { offers } = await parseYml(chunks, { limit, offset, filter });
-    if (!offers.length) return json(res, 400, { error: 'В фиде нет подходящих товаров' });
-    return json(res, 200, importFeedOffers(id, offers, ROOT));
+    if (!offers.length) {
+      // offset за концом фида — не ошибка при «продолжить», а сигнал что импорт исчерпан.
+      if (offset > 0) {
+        return json(res, 200, {
+          album: getAlbum(id, ROOT),
+          added: 0,
+          skipped: 0,
+          offset,
+          next_offset: offset,
+          exhausted: true,
+          message: `С offset=${offset} в фиде больше нет товаров — импорт закончен`,
+        });
+      }
+      return json(res, 400, { error: 'В фиде нет подходящих товаров' });
+    }
+    // next_offset = offset + offers.length — следующий кусок 15k без повторного чтения первых N.
+    return json(res, 200, importFeedOffers(id, offers, ROOT, { offset, limit }));
   } catch (e) {
     return json(res, e.status || 400, { error: e.message });
   }

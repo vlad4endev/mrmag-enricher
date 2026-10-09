@@ -12,6 +12,24 @@ import { normalizeProviderUsage } from './provider_billing.js';
 export const VISION_RETRYABLE = new Set([408, 409, 429, 500, 502, 503, 504, 524]);
 const VISION_TRANSIENT_ATTEMPTS = Math.max(1, Math.min(5, Number(process.env.PHOTO_VISION_RETRIES || 3)));
 
+/** Модели, которые на AITUNNEL отвергают любой response_format (400 not supported). */
+const modelsRejectResponseFormat = new Set();
+
+function rememberModelRejectsFormat(model, message) {
+  const id = String(model || '').toLowerCase();
+  const key = id.split('/').pop() || id;
+  if (!key) return;
+  if (/not supported by this model|response_format|json_schema|json_object|unsupported/i.test(String(message || ''))) {
+    modelsRejectResponseFormat.add(key);
+    if (id !== key) modelsRejectResponseFormat.add(id);
+  }
+}
+
+/** @internal тесты */
+export function _resetVisionFormatMemory() {
+  modelsRejectResponseFormat.clear();
+}
+
 function visionRetryAfterMs(res, attempt) {
   const ra = res?.headers?.get?.('retry-after');
   if (ra) {
@@ -288,6 +306,30 @@ export const PHOTO_RESPONSE_SCHEMA = {
   },
 };
 
+/**
+ * Порядок попыток response_format.
+ * gemini-*-flash-image / *-image на AITUNNEL: сразу без формата (иначе 2×400 на каждое фото).
+ */
+export function visionFormatAttempts(model, chatUrl = '') {
+  const id = String(model || '').toLowerCase();
+  const key = id.split('/').pop() || id;
+  if (modelsRejectResponseFormat.has(key) || modelsRejectResponseFormat.has(id)) {
+    return [null];
+  }
+  // Gemini image / imagen: structured output часто не поддержан.
+  if (/-image(?:-|$)|image-preview|^imagen/i.test(key)) {
+    return [null];
+  }
+  if (/openrouter\.ai/i.test(chatUrl) && /gemini/i.test(id)) {
+    return [{ type: 'json_object' }, null];
+  }
+  return [
+    { type: 'json_schema', json_schema: PHOTO_RESPONSE_SCHEMA },
+    { type: 'json_object' },
+    null,
+  ];
+}
+
 function dumpContext(productId, sku, category, root) {
   const key = String(productId || sku || '').trim();
   const catId = String(category || '').trim();
@@ -437,12 +479,7 @@ export async function describePhoto(itemFile, opts = {}) {
   // OpenRouter-only: остальные шлюзы (AITUNNEL и т.п.) могут отвергнуть неизвестное поле.
   if (/openrouter\.ai/i.test(chatUrl)) baseBody.usage = { include: true };
 
-  // Сначала json_schema (AITUNNEL/Gemini), потом мягкий json_object, потом без формата.
-  const formatAttempts = [
-    { type: 'json_schema', json_schema: PHOTO_RESPONSE_SCHEMA },
-    { type: 'json_object' },
-    null,
-  ];
+  const formatAttempts = visionFormatAttempts(model, chatUrl);
 
   async function postOnce(responseFormat) {
     const body = { ...baseBody };
@@ -478,11 +515,13 @@ export async function describePhoto(itemFile, opts = {}) {
       text = out.text;
       data = out.data;
       if (res.ok && !data?.error) {
-        if (i > 0) onNote(`vision: ответ без ${i === 1 ? 'json_schema' : 'response_format'}`);
+        if (i > 0) onNote(`vision: ответ без ${fmt ? 'json_schema' : 'response_format'}`);
         return { res, text, data };
       }
       const code = data?.error?.code ?? res.status;
-      const msg = data?.error?.message || `HTTP ${res.status}: ${String(text).slice(0, 180)}`;
+      const rawMsg = data?.error?.message ?? data?.error ?? '';
+      const msg = String(rawMsg || '').trim()
+        || `HTTP ${res.status}: ${String(text).slice(0, 180)}`;
       lastHttpErr = Object.assign(new Error(msg), {
         status: res.status >= 400 ? res.status : 502,
         code: Number(code) || res.status,
@@ -490,11 +529,12 @@ export async function describePhoto(itemFile, opts = {}) {
       });
       // Неподдерживаемый response_format / схема → следующий вариант формата
       const formatRetry = res.status === 400 || res.status === 422
-        || /response_format|json_schema|json_object|unsupported|unknown|не поддерж/i.test(msg);
+        || /response_format|json_schema|json_object|unsupported|not supported by this model|unknown|не поддерж/i.test(msg);
       // 429/5xx — наружный transient-retry, не смена формата
       if (VISION_RETRYABLE.has(Number(code)) || VISION_RETRYABLE.has(res.status)) {
         throw lastHttpErr;
       }
+      if (formatRetry) rememberModelRejectsFormat(model, msg);
       if (!formatRetry || i === formatAttempts.length - 1) throw lastHttpErr;
       onNote(`vision: ${msg.slice(0, 80)} → другой формат ответа`);
     }
@@ -525,9 +565,15 @@ export async function describePhoto(itemFile, opts = {}) {
         await sleep(wait);
         continue;
       }
-      if (e?.status) throw e;
+      if (e?.status) {
+        if (!String(e.message || '').trim()) {
+          e.message = `vision HTTP ${e.status || e.code || '?'}`.trim();
+        }
+        throw e;
+      }
+      const detail = String(e?.message || e?.code || '').trim() || 'неизвестная ошибка';
       throw Object.assign(
-        new Error(timed ? `таймаут vision ${timeoutMs}ms` : `vision: ${e.message}`),
+        new Error(timed ? `таймаут vision ${timeoutMs}ms` : `vision: ${detail}`),
         { status: 502 },
       );
     }

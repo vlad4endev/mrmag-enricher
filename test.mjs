@@ -2987,7 +2987,9 @@ console.log('\nТовар без описания: поиск в сети');
   const {
     createPhotoJobStore, isFeedFetchError,
   } = await import('./pipeline/photo_jobs.js');
-  const { describePhoto } = await import('./pipeline/photo_agent.js');
+  const {
+    describePhoto, visionFormatAttempts, _resetVisionFormatMemory,
+  } = await import('./pipeline/photo_agent.js');
 
   function seedItems(albumId, specs) {
     const metaPath = path.join(process.env.PHOTOS_DIR, albumId, 'meta.json');
@@ -3035,6 +3037,17 @@ console.log('\nТовар без описания: поиск в сети');
   console.log('\nСтабильность фото-прогона');
   t('PHOTO_MAX_ITEMS ≥ 15000', () => {
     assert.ok(PHOTO_LIMITS.MAX_ITEMS >= 15_000, PHOTO_LIMITS.MAX_ITEMS);
+  });
+  t('visionFormatAttempts: gemini-*-image сразу без response_format', () => {
+    _resetVisionFormatMemory();
+    assert.deepEqual(visionFormatAttempts('gemini-2.5-flash-image'), [null]);
+    assert.deepEqual(visionFormatAttempts('google/gemini-2.5-flash-image'), [null]);
+    assert.deepEqual(visionFormatAttempts('gemini-2.0-flash-image-preview'), [null]);
+    const ordinary = visionFormatAttempts('gemini-2.5-flash');
+    assert.equal(ordinary.length, 3);
+    assert.equal(ordinary[0]?.type, 'json_schema');
+    assert.equal(ordinary[1]?.type, 'json_object');
+    assert.equal(ordinary[2], null);
   });
   t('isFeedFetchError отличает битый URL от vision', () => {
     assert.equal(isFeedFetchError(new Error('изображение недоступно http://x — товар пропущен')), true);
@@ -3486,6 +3499,139 @@ ${Array.from({ length: 5 }, (_, i) => `<offer id="o${i}"><name>T${i}</name><pict
     assert.ok(calls >= 2, `calls=${calls}`);
     assert.ok(result.caption);
     assert.ok(result.description);
+  });
+
+  await tAsync('gemini-*-image: один запрос без response_format', async () => {
+    _resetVisionFormatMemory();
+    let calls = 0;
+    let lastBody = null;
+    const tinyPng = Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+      'base64',
+    );
+    const result = await describePhoto({
+      buf: tinyPng,
+      mime: 'image/png',
+      item: { filename: 'x.png' },
+    }, {
+      model: 'gemini-2.5-flash-image',
+      apiKey: 'sk-test',
+      chatUrl: 'https://api.aitunnel.ru/v1/chat/completions',
+      limiter: { wait: async () => {} },
+      fetchImpl: async (_url, init) => {
+        calls += 1;
+        lastBody = JSON.parse(init.body);
+        return {
+          ok: true,
+          status: 200,
+          headers: { get: () => null },
+          async text() {
+            return JSON.stringify({
+              choices: [{ message: { content: JSON.stringify({
+                caption: 'таз голубой',
+                description: 'Круглый пластиковый таз голубого цвета на белом фоне.',
+                on_image: 'таз',
+                alt: 'таз',
+                tags: ['таз'],
+                attributes: { view: 'front', color: 'голубой' },
+                warnings: [],
+              }) } }],
+              usage: { prompt_tokens: 10, completion_tokens: 20, cost_rub: 0.5 },
+            });
+          },
+        };
+      },
+    });
+    assert.equal(calls, 1, `ожидали 1 запрос, получили ${calls}`);
+    assert.equal('response_format' in lastBody, false, 'response_format не должен уходить');
+    assert.ok(result.caption);
+  });
+
+  await tAsync('пустой vision error → понятное сообщение', async () => {
+    _resetVisionFormatMemory();
+    const tinyPng = Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+      'base64',
+    );
+    let err;
+    try {
+      await describePhoto({
+        buf: tinyPng,
+        mime: 'image/png',
+        item: { filename: 'x.png' },
+      }, {
+        model: 'test-vision',
+        apiKey: 'sk-test',
+        chatUrl: 'https://example.test/v1/chat/completions',
+        limiter: { wait: async () => {} },
+        fetchImpl: async () => {
+          throw Object.assign(new Error(''), { name: 'TypeError' });
+        },
+      });
+    } catch (e) {
+      err = e;
+    }
+    assert.ok(err, 'ожидали ошибку');
+    assert.match(String(err.message), /vision:/);
+    assert.ok(String(err.message).replace(/^vision:\s*/, '').trim().length > 0, err.message);
+  });
+
+  await tAsync('модель запоминает отказ response_format', async () => {
+    _resetVisionFormatMemory();
+    const tinyPng = Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+      'base64',
+    );
+    const okBody = {
+      choices: [{ message: { content: JSON.stringify({
+        caption: 'товар',
+        description: 'Описание товара для проверки запоминания формата ответа.',
+        on_image: 'товар',
+        alt: 'alt',
+        tags: ['t'],
+        attributes: {},
+        warnings: [],
+      }) } }],
+      usage: { cost_rub: 0.1 },
+    };
+    let call = 0;
+    const fetchImpl = async (_url, init) => {
+      call += 1;
+      const body = JSON.parse(init.body);
+      if (body.response_format) {
+        return {
+          ok: false,
+          status: 400,
+          headers: { get: () => null },
+          async text() {
+            return JSON.stringify({
+              error: { code: 400, message: 'The request is not supported by this model' },
+            });
+          },
+        };
+      }
+      return {
+        ok: true,
+        status: 200,
+        headers: { get: () => null },
+        async text() { return JSON.stringify(okBody); },
+      };
+    };
+    const opts = {
+      model: 'some-custom-vision',
+      apiKey: 'sk-test',
+      chatUrl: 'https://api.aitunnel.ru/v1/chat/completions',
+      limiter: { wait: async () => {} },
+      fetchImpl,
+    };
+    const item = { buf: tinyPng, mime: 'image/png', item: { filename: 'x.png' } };
+    await describePhoto(item, opts);
+    const afterFirst = call;
+    assert.ok(afterFirst >= 2, `первый проход: fallback форматов, calls=${afterFirst}`);
+    call = 0;
+    assert.deepEqual(visionFormatAttempts('some-custom-vision'), [null]);
+    await describePhoto(item, opts);
+    assert.equal(call, 1, `второй проход без формата: ожидался 1 запрос, получили ${call}`);
   });
 
   if (prevSettings === undefined) delete process.env.SETTINGS_PATH;

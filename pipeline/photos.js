@@ -118,6 +118,69 @@ function blankAlbum(id, name = '') {
   };
 }
 
+function statsPath(albumId, root) {
+  return path.join(albumDir(albumId, root), 'stats.json');
+}
+
+/** Ужать feed на диске: shop_description/синонимы не нужны после импорта для списка. */
+function slimItemFeed(feed) {
+  if (!feed || typeof feed !== 'object') return feed || null;
+  const specs = feed.specs && typeof feed.specs === 'object' && !Array.isArray(feed.specs)
+    ? feed.specs
+    : null;
+  let slimSpecs = specs;
+  if (specs) {
+    const keys = Object.keys(specs);
+    if (keys.length > 40) {
+      slimSpecs = {};
+      for (const k of keys.slice(0, 40)) slimSpecs[k] = specs[k];
+    }
+  }
+  return {
+    name: feed.name != null ? String(feed.name).slice(0, 300) : null,
+    category: feed.category != null ? String(feed.category).slice(0, 200) : null,
+    brand: feed.brand || feed.vendor || null,
+    article: feed.article || feed.vendor_code || null,
+    url: feed.url || null,
+    specs: slimSpecs,
+    // shop_description / synonyms специально не пишем — раздувают meta на 15k.
+  };
+}
+
+function albumStatsFromItems(album) {
+  const items = album.items || [];
+  let described = 0;
+  let errors = 0;
+  let bytes = 0;
+  for (const i of items) {
+    if (i.status === 'described' || i.status === 'ready') described += 1;
+    else if (i.status === 'error') errors += 1;
+    bytes += Number(i.bytes) || 0;
+  }
+  return {
+    id: album.id,
+    name: album.name,
+    category: album.category || null,
+    model: album.model || null,
+    created_at: album.created_at,
+    updated_at: album.updated_at,
+    items: items.length,
+    described,
+    errors,
+    pending: items.length - described - errors,
+    bytes,
+  };
+}
+
+function writeAlbumStats(album, root) {
+  const id = assertAlbumId(album.id);
+  const stats = albumStatsFromItems(album);
+  const tmp = `${statsPath(id, root)}.tmp`;
+  fs.writeFileSync(tmp, `${JSON.stringify(stats)}\n`, 'utf-8');
+  fs.renameSync(tmp, statsPath(id, root));
+  return stats;
+}
+
 function readMeta(albumId, root) {
   const file = metaPath(albumId, root);
   if (!fs.existsSync(file)) throw httpError(404, 'Альбом не найден');
@@ -135,13 +198,37 @@ function readMeta(albumId, root) {
 
 function writeMeta(album, root) {
   const id = assertAlbumId(album.id);
-  const dir = albumDir(id, root);
   fs.mkdirSync(filesDir(id, root), { recursive: true });
   album.updated_at = Date.now();
+  // Компактный JSON: pretty-print на 15k × feed раздувает stringify и ловит heap OOM.
+  for (const it of album.items || []) {
+    if (it.feed) it.feed = slimItemFeed(it.feed);
+  }
   const tmp = `${metaPath(id, root)}.tmp`;
-  fs.writeFileSync(tmp, `${JSON.stringify(album, null, 2)}\n`, 'utf-8');
+  fs.writeFileSync(tmp, `${JSON.stringify(album)}\n`, 'utf-8');
   fs.renameSync(tmp, metaPath(id, root));
+  try { writeAlbumStats(album, root); } catch { /* stats — best effort */ }
   return album;
+}
+
+/**
+ * Одноразовая ужать meta на диске (shop_description / лишние specs).
+ * Вызывать при открытии большого альбома — следующий parse легче.
+ */
+export function compactAlbumMeta(albumId, root) {
+  return withAlbumLock(albumId, async () => {
+    const meta = readMeta(assertAlbumId(albumId), root);
+    let changed = 0;
+    for (const it of meta.items || []) {
+      if (!it.feed) continue;
+      const before = JSON.stringify(it.feed).length;
+      it.feed = slimItemFeed(it.feed);
+      if (JSON.stringify(it.feed).length < before) changed += 1;
+    }
+    if (changed) writeMeta(meta, root);
+    else writeAlbumStats(meta, root);
+    return { compacted: changed, items: meta.items.length };
+  });
 }
 
 export function listAlbums(root) {
@@ -154,23 +241,31 @@ export function listAlbums(root) {
 
   return names.slice(0, MAX_ALBUMS).map((id) => {
     try {
+      // Не парсим meta.json 15k на каждый GET /api/photos — только лёгкий stats.json.
+      const sp = statsPath(id, root);
+      if (fs.existsSync(sp)) {
+        try {
+          const st = JSON.parse(fs.readFileSync(sp, 'utf-8'));
+          if (st && typeof st === 'object' && typeof st.items === 'number') {
+            return {
+              id: st.id || id,
+              name: st.name || id,
+              category: st.category || null,
+              model: st.model || null,
+              created_at: st.created_at,
+              updated_at: st.updated_at,
+              items: st.items,
+              described: st.described || 0,
+              errors: st.errors || 0,
+              pending: st.pending != null ? st.pending : Math.max(0, st.items - (st.described || 0) - (st.errors || 0)),
+              bytes: st.bytes || 0,
+            };
+          }
+        } catch { /* fallback ниже */ }
+      }
       const meta = readMeta(id, root);
-      const described = meta.items.filter(i => i.status === 'described' || i.status === 'ready').length;
-      const errors = meta.items.filter(i => i.status === 'error').length;
-      const bytes = meta.items.reduce((s, i) => s + (Number(i.bytes) || 0), 0);
-      return {
-        id: meta.id,
-        name: meta.name,
-        category: meta.category || null,
-        model: meta.model || null,
-        created_at: meta.created_at,
-        updated_at: meta.updated_at,
-        items: meta.items.length,
-        described,
-        errors,
-        pending: meta.items.length - described - errors,
-        bytes,
-      };
+      const stats = writeAlbumStats(meta, root);
+      return stats;
     } catch {
       return { id, name: id, items: 0, described: 0, errors: 0, pending: 0, bytes: 0, broken: true };
     }
@@ -190,7 +285,25 @@ export function createAlbum(name, { category = null } = {}, root) {
 }
 
 export function getAlbum(albumId, root, opts = {}) {
-  const meta = readMeta(assertAlbumId(albumId), root);
+  const id = assertAlbumId(albumId);
+  const meta = readMeta(id, root);
+  // Лениво ужать meta на диске (pretty → compact + slim feed), чтобы следующие
+  // открытие/describe не раздували heap. Не ждём — ответ уже из RAM.
+  const n = meta.items?.length || 0;
+  if (n >= 500) {
+    const st = statsPath(id, root);
+    let needCompact = !fs.existsSync(st);
+    try {
+      // pretty-print meta начинается с "{\n" и весит заметно больше compact.
+      const sz = fs.statSync(metaPath(id, root)).size;
+      if (sz > n * 800) needCompact = true;
+    } catch { needCompact = true; }
+    if (needCompact) {
+      setImmediate(() => {
+        compactAlbumMeta(id, root).catch(() => {});
+      });
+    }
+  }
   return publicAlbum(meta, opts);
 }
 
@@ -298,6 +411,11 @@ function publicItem(item, { light = false } = {}) {
     // Только имя из фида — specs/shop_description на 15k съедают сотни МБ в JSON.
     const fname = item.feed?.name ? String(item.feed.name).slice(0, 200) : null;
     base.feed = fname ? { name: fname } : null;
+    // Полные description на 15k × 5KB тоже давят ответ; карточка тянет GET …/items/:id.
+    if (base.description && base.description.length > 280) {
+      base.description = `${base.description.slice(0, 280)}…`;
+      base.description_truncated = true;
+    }
     return base;
   }
   base.feed = item.feed || null;

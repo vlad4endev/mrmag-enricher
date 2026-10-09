@@ -145,7 +145,7 @@ import { exportTemplatesView } from './pipeline/export_template.js';
 import {
   bootstrapPhotosDir, listAlbums, createAlbum, getAlbum, getPhotoItem, deleteAlbum,
   uploadPhotos, importFeedOffers, patchPhotoItem, deletePhotoItem, readPhotoFile, buildMlExport,
-  applyDescribeResult, patchAlbum, photosDir, PHOTO_LIMITS, sumPhotoSpend,
+  applyDescribeResult, patchAlbum, photosDir, PHOTO_LIMITS,
 } from './pipeline/photos.js';
 import { describePhoto, defaultPhotoSystemPrompt, PHOTO_PROMPT_PLACEHOLDERS, resolvePhotoSystemPrompt } from './pipeline/photo_agent.js';
 import { parseYml } from './pipeline/yml_feed.js';
@@ -1044,7 +1044,9 @@ async function apiProviderBalance(res, id) {
   const ep = providerEndpoint(prov, settings);
   if (!ep.apiKey) return json(res, 400, { error: 'Нет API-ключа AITUNNEL' });
 
-  const spent_rub = providerSpentRub(prov.id, { photos: sumPhotoSpend(ROOT) }, ROOT);
+  // Не сканируем все альбомы (sumPhotoSpend) на каждый баланс — на 15k это
+  // JSON.parse(meta) и FATAL heap OOM. Ledger provider_usage.json достаточно.
+  const spent_rub = providerSpentRub(prov.id, { photos: 0 }, ROOT);
   const cached = loadProviderUsage(ROOT).providers[prov.id] || {};
   const payload = {
     provider: prov.id,

@@ -31,7 +31,9 @@ RUN node -e "Promise.all([import('./lib.js'),import('./catalog.js'),import('./so
 RUN mkdir -p /data/cache /data/out /data/jobs /data/dictionaries /data/dumps /data/photo_jobs /data/refine_jobs && chown -R node:node /data
 # Встроенная поддержка HTTPS_PROXY в fetch — появилась в Node 24. Нужна там,
 # где до openrouter.ai не достучаться напрямую: сам прокси задаётся в .env.
+# Heap явно: 15k meta.json иначе FATAL «Reached heap limit» на дефолтных ~256–512M.
 ENV NODE_USE_ENV_PROXY=1 \
+    NODE_OPTIONS=--max-old-space-size=1536 \
     SETTINGS_PATH=/data/config.json \
     DICTIONARIES_DIR=/data/dictionaries \
     DUMPS_DIR=/data/dumps \

@@ -2980,7 +2980,10 @@ console.log('\nТовар без описания: поиск в сети');
   process.env.PHOTO_JOBS_DIR = path.join(dir, 'photo_jobs');
   fs.copyFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), 'config.json'), process.env.SETTINGS_PATH);
 
-  const { createAlbum, applyDescribeResult, importFeedOffers, getAlbum, PHOTO_LIMITS } = await import('./pipeline/photos.js');
+  const {
+    createAlbum, applyDescribeResult, importFeedOffers, getAlbum, getPhotoItem,
+    compactAlbumMeta, listAlbums, PHOTO_LIMITS,
+  } = await import('./pipeline/photos.js');
   const {
     createPhotoJobStore, isFeedFetchError,
   } = await import('./pipeline/photo_jobs.js');
@@ -3110,9 +3113,52 @@ ${Array.from({ length: 5 }, (_, i) => `<offer id="o${i}"><name>T${i}</name><pict
     assert.equal(light.items.length, 50);
     assert.ok(!light.items[0].feed?.specs, 'light без specs');
     assert.ok(full.items[0].feed?.specs, 'full со specs');
+    assert.equal(light.items[0].description_truncated, true);
+    assert.ok(light.items[0].description.length <= 281);
+    assert.ok(!full.items[0].description_truncated);
+    assert.equal(full.items[0].description.length, 5000);
+    const one = getPhotoItem(album.id, light.items[0].id, dir);
+    assert.equal(one.description.length, 5000);
+    assert.ok(!one.description_truncated);
     const lightBytes = Buffer.byteLength(JSON.stringify(light));
     const fullBytes = Buffer.byteLength(JSON.stringify(full));
-    assert.ok(lightBytes < fullBytes * 0.5, `light=${lightBytes} full=${fullBytes}`);
+    // После slim feed на диске выигрыш — в основном description/specs одной карточки.
+    assert.ok(lightBytes < fullBytes, `light=${lightBytes} full=${fullBytes}`);
+    assert.ok(
+      Buffer.byteLength(JSON.stringify(light.items[0]))
+        < Buffer.byteLength(JSON.stringify(full.items[0])) * 0.4,
+      'light-карточка заметно легче full',
+    );
+  });
+
+  await tAsync('compact meta + stats.json без pretty / shop_description', async () => {
+    const album = createAlbum('compact-oom', {}, dir);
+    importFeedOffers(album.id, [{
+      id: 'c1', name: 'Товар', image_url: 'https://img.test/c1.jpg',
+      category: 'cat', vendor: 'v', vendor_code: 'a', url: '',
+      params: [{ name: 'p', value: 'v' }], synonyms: ['s'], description: 'd'.repeat(500),
+    }], dir, { offset: 0, limit: 1, scanned: 1 });
+    const metaPath = path.join(process.env.PHOTOS_DIR, album.id, 'meta.json');
+    // Имитация старого pretty meta с shop_description.
+    const meta = JSON.parse(fs.readFileSync(metaPath, 'utf-8'));
+    meta.items[0].feed = {
+      name: 'Товар',
+      specs: { p: 'v' },
+      shop_description: 'S'.repeat(5000),
+      synonyms: ['a', 'b', 'c'],
+    };
+    fs.writeFileSync(metaPath, `${JSON.stringify(meta, null, 2)}\n`);
+    const before = fs.statSync(metaPath).size;
+    const out = await compactAlbumMeta(album.id, dir);
+    assert.ok(out.compacted >= 1);
+    const raw = fs.readFileSync(metaPath, 'utf-8');
+    assert.ok(!raw.includes('\n  '), 'compact без pretty-indent');
+    assert.ok(!raw.includes('shop_description'));
+    assert.ok(fs.statSync(metaPath).size < before);
+    const statsPath = path.join(process.env.PHOTOS_DIR, album.id, 'stats.json');
+    assert.ok(fs.existsSync(statsPath));
+    const listed = listAlbums(dir).find(a => a.id === album.id);
+    assert.equal(listed.items, 1);
   });
 
   await tAsync('повторный импорт не затирает уже описанные', async () => {

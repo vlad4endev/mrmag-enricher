@@ -10021,6 +10021,10 @@ async function photoOpenAlbum(id, quiet){
     photoRenderAlbums();
     photoRenderList();
     photoRenderDetail();
+    if(photoNeedsHydrate(photoItemById(photoCurId))){
+      await photoHydrateItem(photoCurId);
+      if(photoCurId) photoRenderDetail();
+    }
     if(!quiet) photoStatus(`${photoAlbum.items.length} фото`, true);
   }catch(e){ photoStatus(e.message||'не открыт', false); }
 }
@@ -10178,10 +10182,40 @@ function photoRenderList(){
   }).join('');
 }
 
+/** Light-альбом режет description/on_image — добираем карточку через GET …/items/:id. */
+async function photoHydrateItem(id){
+  if(!photoAlbum||!id) return null;
+  const cur=photoItemById(id);
+  if(!cur||cur._hydrated) return cur;
+  try{
+    const out=await apiJson(
+      '/api/photos/'+encodeURIComponent(photoAlbum.id)+'/items/'+encodeURIComponent(id),
+    );
+    const item={...(out.item||{}), _hydrated:true};
+    delete item.description_truncated;
+    const idx=(photoAlbum.items||[]).findIndex(i=>i.id===id);
+    if(idx>=0) photoAlbum.items[idx]=item;
+    else photoAlbum.items.push(item);
+    return item;
+  }catch{
+    return cur;
+  }
+}
+
+function photoNeedsHydrate(it){
+  if(!it||it._hydrated) return false;
+  return Boolean(it.description_truncated) || photoIsDescribed(it);
+}
+
 function photoFocus(id){
   photoCurId=id;
   photoRenderList();
   photoRenderDetail();
+  if(photoNeedsHydrate(photoItemById(id))){
+    void photoHydrateItem(id).then(full=>{
+      if(photoCurId===id && full) photoRenderDetail();
+    });
+  }
 }
 
 function photoToggleSel(id, e){
@@ -10228,7 +10262,8 @@ async function photoPatchItem(id, patch){
     '/api/photos/'+encodeURIComponent(photoAlbum.id)+'/items/'+encodeURIComponent(id),
     { method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify(patch) },
   );
-  const item=out.item;
+  const item={...(out.item||{}), _hydrated:true};
+  delete item.description_truncated;
   const idx=(photoAlbum.items||[]).findIndex(i=>i.id===id);
   if(idx>=0) photoAlbum.items[idx]=item;
   else photoAlbum.items.push(item);

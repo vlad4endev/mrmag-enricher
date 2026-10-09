@@ -84,8 +84,8 @@ services:
     environment:
       HOST: 0.0.0.0                  # внутри контейнера — на всех интерфейсах
       PORT: 3000
-      # 15k альбом + JSON-ответ: дефолтный heap ~256–512M ловит FATAL heap OOM.
-      NODE_OPTIONS: "${NODE_OPTIONS:---max-old-space-size=768}"
+      # Дублируем Dockerfile: compose env не должен затирать пустым NODE_OPTIONS из .env.
+      NODE_OPTIONS: "--max-old-space-size=1536"
       PAGE_CACHE_DIR: /data/cache
       OUT_DIR: /data/out
       JOBS_DIR: /data/jobs           # фоновые прогоны на томе: restart их доводит
@@ -98,9 +98,8 @@ services:
     volumes:
       - enricher-data:/data
     restart: unless-stopped
-    # Обход каталога и vision-прогоны: base64 картинок + concurrency 2 съедают RAM.
-    # 15k meta.json + ответ API — держим запас над heap 768.
-    mem_limit: 1536m
+    # Heap 1536 + запас на JSON.parse(meta) 15k и base64 vision.
+    mem_limit: 2048m
     stop_grace_period: 15s
 
 volumes:

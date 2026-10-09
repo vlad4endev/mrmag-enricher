@@ -143,7 +143,7 @@ import {
 } from './settings.js';
 import { exportTemplatesView } from './pipeline/export_template.js';
 import {
-  bootstrapPhotosDir, listAlbums, createAlbum, getAlbum, deleteAlbum,
+  bootstrapPhotosDir, listAlbums, createAlbum, getAlbum, getPhotoItem, deleteAlbum,
   uploadPhotos, importFeedOffers, patchPhotoItem, deletePhotoItem, readPhotoFile, buildMlExport,
   applyDescribeResult, patchAlbum, photosDir, PHOTO_LIMITS, sumPhotoSpend,
 } from './pipeline/photos.js';
@@ -2187,8 +2187,19 @@ async function apiPhotoCreate(req, res) {
   }
 }
 
-function apiPhotoGet(res, id) {
-  try { return json(res, 200, { album: getAlbum(id, ROOT) }); }
+function apiPhotoGet(res, id, url) {
+  try {
+    // По умолчанию light — полный feed на 5k+ валит heap (FATAL Allocation failed).
+    const full = url?.searchParams?.get('full') === '1'
+      || url?.searchParams?.get('light') === '0';
+    return json(res, 200, { album: getAlbum(id, ROOT, { light: !full }) });
+  } catch (e) {
+    return json(res, e.status || 500, { error: e.message });
+  }
+}
+
+function apiPhotoItemGet(res, albumId, itemId) {
+  try { return json(res, 200, { item: getPhotoItem(albumId, itemId, ROOT) }); }
   catch (e) { return json(res, e.status || 500, { error: e.message }); }
 }
 
@@ -2813,13 +2824,14 @@ const server = http.createServer(async (req, res) => {
     if (photoExport && req.method === 'POST') return await apiPhotoExportMl(req, res, photoExport[1]);
     const photoItem = u.pathname.match(/^\/api\/photos\/([^/]+)\/items\/([^/]+)$/);
     if (photoItem) {
+      if (req.method === 'GET') return apiPhotoItemGet(res, photoItem[1], photoItem[2]);
       if (req.method === 'PATCH') return await apiPhotoItemPatch(req, res, photoItem[1], photoItem[2]);
       if (req.method === 'DELETE') return apiPhotoItemDelete(res, photoItem[1], photoItem[2]);
     }
     const photoAlbum = u.pathname.match(/^\/api\/photos\/([^/]+)$/);
     if (photoAlbum) {
       const id = photoAlbum[1];
-      if (req.method === 'GET') return apiPhotoGet(res, id);
+      if (req.method === 'GET') return apiPhotoGet(res, id, u);
       if (req.method === 'PATCH') return await apiPhotoPatch(req, res, id);
       if (req.method === 'DELETE') return apiPhotoDelete(res, id);
     }

@@ -189,9 +189,18 @@ export function createAlbum(name, { category = null } = {}, root) {
   return publicAlbum(album);
 }
 
-export function getAlbum(albumId, root) {
+export function getAlbum(albumId, root, opts = {}) {
   const meta = readMeta(assertAlbumId(albumId), root);
-  return publicAlbum(meta);
+  return publicAlbum(meta, opts);
+}
+
+/** Одна позиция целиком (с feed) — для карточки справа, без всего альбома. */
+export function getPhotoItem(albumId, itemId, root) {
+  const meta = readMeta(assertAlbumId(albumId), root);
+  const id = assertItemId(itemId);
+  const item = meta.items.find(i => i.id === id);
+  if (!item) throw httpError(404, 'Фото не найдено');
+  return publicItem(item, { light: false });
 }
 
 /** Сумма списаний AITUNNEL по всем описанным фото, ₽. */
@@ -211,8 +220,9 @@ export function sumPhotoSpend(root) {
   return roundMoney(sum);
 }
 
-function publicAlbum(meta) {
+function publicAlbum(meta, { light = true } = {}) {
   const fi = meta.feed_import && typeof meta.feed_import === 'object' ? meta.feed_import : null;
+  const items = meta.items || [];
   return {
     id: meta.id,
     name: meta.name,
@@ -231,7 +241,10 @@ function publicAlbum(meta) {
         updated_at: fi.updated_at || null,
       }
       : null,
-    items: (meta.items || []).map(publicItem),
+    item_count: items.length,
+    described: items.filter(i => i.status === 'described' || i.status === 'ready').length,
+    // light=true (default): без feed.specs / usage — иначе 5k+ альбом валит Node heap OOM.
+    items: items.map(i => publicItem(i, { light })),
   };
 }
 
@@ -253,10 +266,11 @@ export function isPhotoExportable(item) {
   return item.status === 'described' || item.status === 'ready';
 }
 
-function publicItem(item) {
+function publicItem(item, { light = false } = {}) {
   const product_id = item.product_id || null;
   const dump_category = item.dump_category || null;
-  return {
+  const cost = usageCostRub(item.usage);
+  const base = {
     id: item.id,
     filename: item.filename,
     mime: item.mime,
@@ -266,21 +280,32 @@ function publicItem(item) {
     sku: item.sku || null,
     dump_category,
     dump_bound: Boolean(product_id && dump_category),
-    feed: item.feed || null,
     image_url: item.image_url || null,
     status: item.status || 'uploaded',
     description: item.description || null,
     caption: item.caption || null,
-    on_image: item.on_image || null,
+    on_image: light ? null : (item.on_image || null),
     alt: item.alt || null,
-    tags: item.tags || [],
-    attributes: item.attributes || {},
-    warnings: item.warnings || [],
+    tags: Array.isArray(item.tags) ? (light ? item.tags.slice(0, 12) : item.tags) : [],
+    attributes: light ? {} : (item.attributes || {}),
+    warnings: light ? [] : (item.warnings || []),
     error: item.error || null,
-    usage: item.usage || null,
+    usage: cost != null ? { cost_rub: cost, cost, currency: 'RUB' } : null,
     described_at: item.described_at || null,
     created_at: item.created_at,
   };
+  if (light) {
+    // Только имя из фида — specs/shop_description на 15k съедают сотни МБ в JSON.
+    const fname = item.feed?.name ? String(item.feed.name).slice(0, 200) : null;
+    base.feed = fname ? { name: fname } : null;
+    return base;
+  }
+  base.feed = item.feed || null;
+  base.usage = item.usage || base.usage;
+  base.on_image = item.on_image || null;
+  base.attributes = item.attributes || {};
+  base.warnings = item.warnings || [];
+  return base;
 }
 
 export function renameAlbum(albumId, name, root) {

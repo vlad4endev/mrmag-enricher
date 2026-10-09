@@ -227,6 +227,7 @@ function publicAlbum(meta) {
         last_offset: Number(fi.last_offset) || 0,
         last_limit: Number(fi.last_limit) || 0,
         last_added: Number(fi.last_added) || 0,
+        exhausted: Boolean(fi.exhausted),
         updated_at: fi.updated_at || null,
       }
       : null,
@@ -421,12 +422,17 @@ export function importFeedOffers(albumId, offers, root, cursor = null) {
   const offset = Math.max(0, Number(cursor?.offset) || 0);
   const limit = Math.max(0, Number(cursor?.limit) || 0);
   const consumed = Array.isArray(offers) ? offers.length : 0;
-  const next_offset = offset + consumed;
+  // scanned — сколько подходящих offer просмотрели в фиде (включая skipIds).
+  const scanned = Math.max(consumed, Number(cursor?.scanned) || 0);
+  const next_offset = scanned > 0 ? scanned : offset + consumed;
+  const exhausted = cursor?.exhausted === true
+    || (limit > 0 && consumed < limit);
   meta.feed_import = {
     next_offset,
     last_offset: offset,
     last_limit: limit || consumed,
     last_added: fresh.length,
+    exhausted: Boolean(exhausted),
     updated_at: Date.now(),
   };
   writeMeta(meta, root);
@@ -436,7 +442,7 @@ export function importFeedOffers(albumId, offers, root, cursor = null) {
     skipped: offers.length - fresh.length,
     offset,
     next_offset,
-    exhausted: limit > 0 ? consumed < limit : consumed === 0,
+    exhausted: Boolean(exhausted),
   };
 }
 

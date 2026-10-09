@@ -2308,7 +2308,7 @@ input[type=range]::-moz-range-thumb{
         </div>
         <input type="file" id="photoFile" accept="image/jpeg,image/png,image/webp,image/gif,.jpg,.jpeg,.png,.webp,.gif" multiple hidden>
         <button type="button" class="sbtn ghost wide" style="margin-top:8px" onclick="photoImportYml()" title="Товары из YML-фида: название и характеристики пойдут в описание"><i class="ti ti-file-code"></i> Импорт из YML-фида (ссылка)</button>
-        <button type="button" class="sbtn ghost wide" style="margin-top:6px" onclick="document.getElementById('photoYmlFile').click()" title="XML-файл фида с вашего компьютера"><i class="ti ti-file-upload"></i> Файл фида…</button>
+        <button type="button" class="sbtn primary wide" style="margin-top:6px" onclick="document.getElementById('photoYmlFile').click()" title="Для 15k+ надёжнее файл, не URL"><i class="ti ti-file-upload"></i> Файл фида (весь каталог)…</button>
         <input type="file" id="photoYmlFile" accept=".xml,text/xml,application/xml" hidden onchange="photoImportYmlFile(this)">
       </section>
 
@@ -2344,7 +2344,7 @@ input[type=range]::-moz-range-thumb{
           <input type="number" id="photoMaxCostRub" min="0" step="1" placeholder="без лимита" style="width:7rem;padding:4px 6px">
         </label>
         <div class="photo-status" id="photoStatusBox">
-          <div id="photoJobHint">Отметьте фото или опишите только без текста. Импорт фида идёт кусками (limit+offset) — после 1000 укажите следующий offset. Для контроля трат задайте лимит ₽.</div>
+          <div id="photoJobHint">Импорт тянет весь фид (до лимита альбома), уже добавленные пропускает. «Описать» — все без текста до конца. Лимит ₽ — только если нужно остановить траты.</div>
           <div id="photoStatus">Нет альбома</div>
         </div>
       </section>
@@ -10056,41 +10056,43 @@ async function photoRunYmlImport(src){
     if(!photoAlbum) return;
   }
   const have=photoAlbum.items?.length||0;
-  // Курсор фида: без offset повторный импорт снова читает первые N (кажется, что «стоп на 1000»).
-  const savedNext=Number(photoAlbum.feed_import?.next_offset)||0;
-  const suggestOffset=savedNext>0?savedNext:0;
-  const limitRaw=prompt(
-    `Сколько товаров взять из фида (сейчас в альбоме ${have}).\nДля 15k лучше 2000–5000 за раз:`,
-    have>=1000?'2000':'1000',
-  );
-  if(limitRaw==null||limitRaw==='') return;
-  const limit=Number(limitRaw);
-  if(!Number.isFinite(limit)||limit<=0){ photoStatus('Нужно положительное число товаров', false); return; }
-  const offsetRaw=prompt(
-    `Сдвиг в фиде (offset).\n0 — с начала. Чтобы продолжить после прошлого импорта — ${suggestOffset||'сколько уже взяли'}:`,
-    String(suggestOffset),
-  );
-  if(offsetRaw==null) return;
-  const offset=Math.max(0, Number(offsetRaw)||0);
-  const category=prompt('Только раздел, в названии пути которого есть… (пусто — любой):','')||'';
-  photoStatus(`Читаю фид… offset=${offset}, limit=${limit}`);
+  const maxItems=photoLimits.MAX_ITEMS||20000;
+  const room=Math.max(0, maxItems-have);
+  if(!room){
+    photoStatus(`Альбом полон (${have}/${maxItems})`, false);
+    return;
+  }
+  const category=prompt('Только раздел (пусто — весь фид):','')||'';
+  if(!confirm(
+    `Импортировать весь оставшийся фид?\n\n`
+    +`Уже в альбоме: ${have}\nМеста: ${room} (лимит ${maxItems})\n`
+    +`Уже добавленные id пропускаются — доберёт недостающие до конца фида.\n\n`
+    +`Для 15k+ лучше «Файл фида», не ссылка.`,
+  )) return;
+
+  photoStatus(`Читаю весь фид… уже ${have}, доберём до ${maxItems}`);
   try{
     const out=await apiJson('/api/photos/'+encodeURIComponent(photoAlbum.id)+'/import-yml',{
       method:'POST', headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({ ...src, limit, offset, category }),
+      body:JSON.stringify({ ...src, all:true, category }),
     });
     await photoOpenAlbum(photoAlbum.id, true);
     await photoLoadAlbums();
-    if(out.exhausted&&!out.added){
-      photoStatus(out.message||`Фид исчерпан с offset=${offset}`, true);
-      return;
-    }
-    const next=out.next_offset??(offset+(out.added||0)+(out.skipped||0));
+    const total=photoAlbum.items?.length||0;
+    const pending=(photoAlbum.items||[]).filter(i=>i.status==='uploaded'||i.status==='error').length;
     photoStatus(
-      `Из фида +${out.added}, дублей ${out.skipped||0}`
-      +(out.exhausted?' · фид закончился':` · следующий offset=${next} (продолжить импорт с ним)`),
+      (out.message||`+${out.added}`)
+      +` · в альбоме ${total}`
+      +(out.exhausted?' · фид прочитан целиком':'')
+      +(pending?` · без описания: ${pending}`:''),
       true,
     );
+    if(pending>0){
+      if(confirm(`В альбоме ${pending} без описания. Запустить описание до конца? (лимит ₽ в поле Прогон — по желанию)`)){
+        if(photoSel instanceof Set) photoSel.clear();
+        await photoStartDescribe();
+      }
+    }
   }catch(e){ photoStatus(e.message||'ошибка импорта', false); }
 }
 
@@ -10622,8 +10624,10 @@ async function photoStartDescribe(){
     return;
   }
   if(candidates>100){
-    const lim=max_cost_rub!=null?` Лимит бюджета: ${max_cost_rub} ₽.`:' Лимит ₽ не задан — прогон идёт до конца или Стоп.';
-    if(!confirm(`Запустить описание ${candidates} фото?${lim}\nУже описанные не оплачиваются повторно. Остановить можно кнопкой Стоп.`)) return;
+    const lim=max_cost_rub!=null
+      ?` Лимит бюджета: ${max_cost_rub} ₽ — остановится раньше конца.`
+      :` Без лимита ₽ — прогон идёт по всем ${candidates} до конца (или Стоп).`;
+    if(!confirm(`Запустить описание ${candidates} фото?${lim}\nУже описанные не оплачиваются повторно.`)) return;
   }
   try{
     const job=await apiJson('/api/photos/'+encodeURIComponent(photoAlbum.id)+'/describe',{

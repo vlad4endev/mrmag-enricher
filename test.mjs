@@ -3047,22 +3047,34 @@ console.log('\nТовар без описания: поиск в сети');
       category: '', vendor: '', vendor_code: '', url: '',
       params: [], synonyms: [], description: '',
     }));
-    const a = importFeedOffers(album.id, mk(1000, 0), dir, { offset: 0, limit: 1000 });
+    const a = importFeedOffers(album.id, mk(1000, 0), dir, { offset: 0, limit: 1000, scanned: 1000 });
     assert.equal(a.added, 1000);
     assert.equal(a.next_offset, 1000);
     assert.equal(a.exhausted, false);
-    const b = importFeedOffers(album.id, mk(500, 1000), dir, { offset: 1000, limit: 1000 });
+    const b = importFeedOffers(album.id, mk(500, 1000), dir, {
+      offset: 1000, limit: 1000, scanned: 1500, exhausted: true,
+    });
     assert.equal(b.added, 500);
     assert.equal(b.next_offset, 1500);
     assert.equal(b.exhausted, true);
     const got = getAlbum(album.id, dir);
     assert.equal(got.items.length, 1500);
     assert.equal(got.feed_import.next_offset, 1500);
-    // Повтор первых 1000 — все дубли, курсор всё равно двигаем по consumed.
-    const dup = importFeedOffers(album.id, mk(1000, 0), dir, { offset: 0, limit: 1000 });
-    assert.equal(dup.added, 0);
-    assert.equal(dup.skipped, 1000);
-    assert.equal(dup.next_offset, 1000);
+  });
+
+  await tAsync('parseYml skipIds добирает новые за уже импортированными', async () => {
+    const { parseYml } = await import('./pipeline/yml_feed.js');
+    const xml = `<?xml version="1.0"?><yml_catalog><shop><categories></categories><offers>
+${Array.from({ length: 5 }, (_, i) => `<offer id="o${i}"><name>T${i}</name><picture>https://x/${i}.jpg</picture></offer>`).join('\n')}
+</offers></shop></yml_catalog>`;
+    const known = new Set(['o0', 'o1', 'o2']);
+    const { offers, skipped_known, exhausted } = await parseYml([xml], {
+      limit: 10,
+      skipIds: known,
+    });
+    assert.deepEqual(offers.map(o => o.id), ['o3', 'o4']);
+    assert.equal(skipped_known, 3);
+    assert.equal(exhausted, true);
   });
 
   await tAsync('create без pending → 400, не все id', async () => {

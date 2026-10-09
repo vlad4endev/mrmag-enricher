@@ -2989,6 +2989,7 @@ console.log('\nТовар без описания: поиск в сети');
   } = await import('./pipeline/photo_jobs.js');
   const {
     describePhoto, visionFormatAttempts, _resetVisionFormatMemory,
+    isVisionTimeout, isVisionTransient,
   } = await import('./pipeline/photo_agent.js');
 
   function seedItems(albumId, specs) {
@@ -3048,6 +3049,16 @@ console.log('\nТовар без описания: поиск в сети');
     assert.equal(ordinary[0]?.type, 'json_schema');
     assert.equal(ordinary[1]?.type, 'json_object');
     assert.equal(ordinary[2], null);
+  });
+  t('isVisionTimeout: ETIMEDOUT в code/cause — да', () => {
+    assert.equal(isVisionTimeout(Object.assign(new Error(''), { code: 'ETIMEDOUT' })), true);
+    assert.equal(isVisionTimeout(Object.assign(new Error('fetch failed'), {
+      cause: Object.assign(new Error('connect ETIMEDOUT'), { code: 'ETIMEDOUT' }),
+    })), true);
+    assert.equal(isVisionTimeout(Object.assign(new Error('x'), { name: 'TimeoutError' })), true);
+    assert.equal(isVisionTimeout(new Error('HTTP 400 bad schema')), false);
+    assert.equal(isVisionTransient(Object.assign(new Error(''), { code: 'ETIMEDOUT' })), true);
+    assert.equal(isVisionTransient(Object.assign(new Error('bad'), { status: 400 })), false);
   });
   t('isFeedFetchError отличает битый URL от vision', () => {
     assert.equal(isFeedFetchError(new Error('изображение недоступно http://x — товар пропущен')), true);
@@ -3574,6 +3585,97 @@ ${Array.from({ length: 5 }, (_, i) => `<offer id="o${i}"><name>T${i}</name><pict
     assert.ok(err, 'ожидали ошибку');
     assert.match(String(err.message), /vision:/);
     assert.ok(String(err.message).replace(/^vision:\s*/, '').trim().length > 0, err.message);
+  });
+
+  await tAsync('ETIMEDOUT в code → retry, затем успех', async () => {
+    _resetVisionFormatMemory();
+    const prevBase = process.env.PHOTO_VISION_RETRY_BASE_MS;
+    process.env.PHOTO_VISION_RETRY_BASE_MS = '50';
+    let calls = 0;
+    const notes = [];
+    const tinyPng = Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+      'base64',
+    );
+    try {
+      const result = await describePhoto({
+        buf: tinyPng,
+        mime: 'image/png',
+        item: { filename: 'x.png' },
+      }, {
+        model: 'gemini-3.1-flash-lite-preview',
+        apiKey: 'sk-test',
+        chatUrl: 'https://api.aitunnel.ru/v1/chat/completions',
+        limiter: { wait: async () => {} },
+        onNote: (m) => notes.push(m),
+        fetchImpl: async () => {
+          calls += 1;
+          if (calls === 1) {
+            throw Object.assign(new Error(''), { code: 'ETIMEDOUT' });
+          }
+          return {
+            ok: true,
+            status: 200,
+            headers: { get: () => null },
+            async text() {
+              return JSON.stringify({
+                choices: [{ message: { content: JSON.stringify({
+                  caption: 'трубочки жёлтые',
+                  description: 'Пластиковые трубочки жёлтого цвета в индивидуальной упаковке.',
+                  on_image: 'трубочки',
+                  alt: 'трубочки',
+                  tags: ['трубочки'],
+                  attributes: { view: 'front', color: 'жёлтый' },
+                  warnings: [],
+                }) } }],
+                usage: { cost_rub: 0.3 },
+              });
+            },
+          };
+        },
+      });
+      assert.equal(calls, 2);
+      assert.ok(notes.some(n => /retry 1\/\d+, timeout/i.test(n)), notes.join(' | '));
+      assert.ok(result.caption);
+    } finally {
+      if (prevBase === undefined) delete process.env.PHOTO_VISION_RETRY_BASE_MS;
+      else process.env.PHOTO_VISION_RETRY_BASE_MS = prevBase;
+    }
+  });
+
+  await tAsync('ETIMEDOUT исчерпал retry → таймаут vision', async () => {
+    _resetVisionFormatMemory();
+    const prevBase = process.env.PHOTO_VISION_RETRY_BASE_MS;
+    process.env.PHOTO_VISION_RETRY_BASE_MS = '50';
+    const tinyPng = Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+      'base64',
+    );
+    let err;
+    try {
+      await describePhoto({
+        buf: tinyPng,
+        mime: 'image/png',
+        item: { filename: 'x.png' },
+      }, {
+        model: 'test-vision',
+        apiKey: 'sk-test',
+        chatUrl: 'https://api.aitunnel.ru/v1/chat/completions',
+        limiter: { wait: async () => {} },
+        timeoutMs: 12_000,
+        fetchImpl: async () => {
+          throw Object.assign(new Error(''), { code: 'ETIMEDOUT' });
+        },
+      });
+    } catch (e) {
+      err = e;
+    } finally {
+      if (prevBase === undefined) delete process.env.PHOTO_VISION_RETRY_BASE_MS;
+      else process.env.PHOTO_VISION_RETRY_BASE_MS = prevBase;
+    }
+    assert.ok(err);
+    assert.match(String(err.message), /таймаут vision 12000ms/);
+    assert.ok(!/^vision:\s*ETIMEDOUT$/.test(String(err.message)), err.message);
   });
 
   await tAsync('модель запоминает отказ response_format', async () => {

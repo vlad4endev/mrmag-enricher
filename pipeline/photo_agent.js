@@ -4,7 +4,7 @@
  * (dump_category + product_id), подмешиваем карточку для сверки.
  */
 
-import { RateLimiter, sleep } from '../lib.js';
+import { RateLimiter, sleep, netError } from '../lib.js';
 import { getDump } from './dumps.js';
 import { normalizeProviderUsage } from './provider_billing.js';
 
@@ -30,6 +30,35 @@ export function _resetVisionFormatMemory() {
   modelsRejectResponseFormat.clear();
 }
 
+/** undici: «fetch failed» + cause.code=ETIMEDOUT — смотрим всю цепочку. */
+function visionErrorChainText(e) {
+  const parts = [];
+  for (let cur = e, i = 0; cur && i < 6; cur = cur.cause, i++) {
+    parts.push(`${cur?.name || ''} ${cur?.code || ''} ${cur?.message || ''}`);
+  }
+  return parts.join(' ');
+}
+
+/** Таймаут AbortSignal / TCP ETIMEDOUT / undici connect timeout. */
+export function isVisionTimeout(e) {
+  if (!e) return false;
+  if (e.name === 'TimeoutError' || e.cause?.name === 'TimeoutError') return true;
+  const text = visionErrorChainText(e);
+  return /TimeoutError|ETIMEDOUT|UND_ERR_CONNECT_TIMEOUT|UND_ERR_HEADERS_TIMEOUT|UND_ERR_BODY_TIMEOUT|aborted due to timeout|^таймаут vision/i.test(text);
+}
+
+/** Сеть / 429 / 5xx — можно повторить запрос к vision. */
+export function isVisionTransient(e) {
+  if (isVisionTimeout(e)) return true;
+  const http = Number(e?.status) || 0;
+  const code = Number(e?.code) || 0;
+  if (VISION_RETRYABLE.has(http) || VISION_RETRYABLE.has(code)) return true;
+  // HTTP 4xx (кроме retryable) — не transient
+  if (http >= 400 && http < 500) return false;
+  const text = visionErrorChainText(e);
+  return /fetch|network|ECONN|ENOTFOUND|EAI_AGAIN|EPIPE|ECONNRESET|socket|UND_ERR|прокси|не отвечает/i.test(text);
+}
+
 function visionRetryAfterMs(res, attempt) {
   const ra = res?.headers?.get?.('retry-after');
   if (ra) {
@@ -38,7 +67,8 @@ function visionRetryAfterMs(res, attempt) {
     const at = Date.parse(ra);
     if (Number.isFinite(at)) return Math.min(60_000, Math.max(0, at - Date.now()));
   }
-  return Math.min(60_000, attempt * 4000);
+  const base = Math.max(50, Number(process.env.PHOTO_VISION_RETRY_BASE_MS || 4000));
+  return Math.min(60_000, attempt * base);
 }
 
 export const PHOTO_PROMPT_PLACEHOLDERS = [
@@ -554,26 +584,28 @@ export async function describePhoto(itemFile, opts = {}) {
       lastHttpErr = null;
       break;
     } catch (e) {
-      const timed = e.name === 'TimeoutError' || e.cause?.name === 'TimeoutError'
-        || /^таймаут vision/i.test(String(e.message || ''));
+      const timed = isVisionTimeout(e);
+      const transient = isVisionTransient(e);
       const code = Number(e.code ?? e.status) || 0;
-      const transient = timed || VISION_RETRYABLE.has(code)
-        || (!e.status && /fetch|network|ECONN|ETIMEDOUT|socket/i.test(String(e.message || '')));
       if (transient && attempt < VISION_TRANSIENT_ATTEMPTS) {
         const wait = visionRetryAfterMs(e.res, attempt);
         onNote(`retry ${attempt}/${VISION_TRANSIENT_ATTEMPTS}, ${timed ? 'timeout' : code || 'net'}, ${wait}ms`);
         await sleep(wait);
         continue;
       }
-      if (e?.status) {
+      if (e?.status && !timed) {
         if (!String(e.message || '').trim()) {
           e.message = `vision HTTP ${e.status || e.code || '?'}`.trim();
         }
         throw e;
       }
-      const detail = String(e?.message || e?.code || '').trim() || 'неизвестная ошибка';
+      if (timed) {
+        throw Object.assign(new Error(`таймаут vision ${timeoutMs}ms`), { status: 502, code: e?.code });
+      }
+      const detail = String(netError(e, chatUrl) || e?.message || e?.code || '').trim()
+        || 'неизвестная ошибка';
       throw Object.assign(
-        new Error(timed ? `таймаут vision ${timeoutMs}ms` : `vision: ${detail}`),
+        new Error(`vision: ${detail}`),
         { status: 502 },
       );
     }

@@ -950,14 +950,18 @@ export async function fetchHttp(url, {
   if (proxyUrl) {
     const tunnel = await connectHttpProxy(proxyUrl, u.hostname, Number(u.port) || (u.protocol === 'https:' ? 443 : 80), timeoutMs);
     if (u.protocol === 'https:') {
-      socket = await new Promise((resolve, reject) => {
-        const s = tls.connect({
-          socket: tunnel,
-          servername: u.hostname,
-          ALPNProtocols: ['http/1.1'],
-        }, () => resolve(s));
-        s.once('error', reject);
-      });
+      try {
+        socket = await tlsOverTunnel(tunnel, u.hostname, { alpn: true });
+      } catch (e1) {
+        try { tunnel.destroy(); } catch { /* */ }
+        const tunnel2 = await connectHttpProxy(proxyUrl, u.hostname, Number(u.port) || 443, timeoutMs);
+        try {
+          socket = await tlsOverTunnel(tunnel2, u.hostname, { alpn: false });
+        } catch (e2) {
+          try { tunnel2.destroy(); } catch { /* */ }
+          throw e2;
+        }
+      }
     } else {
       socket = tunnel;
     }
@@ -1022,7 +1026,7 @@ export async function fetchHttp(url, {
  * без лишнего прыжка через localhost-мост.
  */
 export function providerFetch(url, init = {}, { useProxy = false } = {}) {
-  const timeoutMs = 120_000;
+  const timeoutMs = Number(init.timeoutMs) || 120_000;
   if (!useProxy || !isProxyActive()) {
     return fetchHttp(url, {
       method: init.method || 'GET',
@@ -1054,6 +1058,106 @@ export function providerFetch(url, init = {}, { useProxy = false } = {}) {
   });
 }
 
+/** VLESS-compose: http://proxy:7890 ↔ socks5://proxy:1080 на одном контейнере. */
+function siblingSocksFromHttp(proxyUrl) {
+  try {
+    const u = new URL(proxyUrl);
+    const port = Number(u.port) || 80;
+    if (port === 1080) return null;
+    // Стандартный VLESS в docker-compose: HTTP 7890, SOCKS 1080.
+    if (port === 7890 || u.hostname === 'proxy' || u.hostname === 'enricher-vless') {
+      return {
+        host: u.hostname,
+        port: 1080,
+        user: u.username || null,
+        pass: u.password || null,
+      };
+    }
+  } catch { /* */ }
+  return null;
+}
+
+const BROWSER_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+
+/**
+ * Скачать URL перебором маршрутов (фид-картинки с VPS часто режутся напрямую).
+ * Порядок: напрямую → socks → http-proxy → sibling socks(:1080) → повтор socks без ALPN уже внутри.
+ * Возвращает { res, via } или бросает с errors[].
+ */
+export async function fetchUrlRoutes(url, {
+  headers = {},
+  timeoutMs = 60_000,
+  signal = null,
+  preferProxy = false,
+} = {}) {
+  const hdrs = {
+    'User-Agent': BROWSER_UA,
+    Accept: 'image/avif,image/webp,image/apng,image/*,*/*;q=0.8',
+    'Accept-Language': 'ru-RU,ru;q=0.9,en;q=0.8',
+    ...headers,
+  };
+  const routes = [];
+  const push = (label, fn) => routes.push({ label, fn });
+
+  const direct = () => fetchHttp(url, {
+    method: 'GET', headers: hdrs, timeoutMs, signal, proxyUrl: null,
+  });
+  const viaSocks = (cfg, label = 'socks5') => () => fetchViaSocks(url, {
+    method: 'GET', headers: hdrs, timeoutMs, signal,
+  }, cfg);
+  const viaHttp = (proxyUrl) => () => fetchHttp(url, {
+    method: 'GET', headers: hdrs, timeoutMs, signal, proxyUrl,
+  });
+
+  if (!preferProxy) push('напрямую', direct);
+  if (isProxyActive()) {
+    if (runtime.socksCfg) push('socks5', viaSocks(runtime.socksCfg));
+    const proxyUrl = getProxyHttpUrl();
+    if (proxyUrl) {
+      // Мост 127.0.0.1 — дубль socks; для чистого http://proxy:7890 — CONNECT.
+      if (!runtime.socksCfg || !/127\.0\.0\.1|localhost/i.test(proxyUrl)) {
+        push('http-proxy', viaHttp(proxyUrl));
+      }
+      const sib = siblingSocksFromHttp(proxyUrl);
+      if (sib && !(runtime.socksCfg && runtime.socksCfg.host === sib.host && runtime.socksCfg.port === sib.port)) {
+        push('socks5:1080', viaSocks(sib));
+      }
+    }
+  }
+  if (preferProxy) push('напрямую', direct);
+
+  if (!routes.length) push('напрямую', direct);
+
+  const errors = [];
+  for (const { label, fn } of routes) {
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        const res = await fn();
+        return { res, via: attempt > 1 ? `${label}×${attempt}` : label };
+      } catch (e) {
+        const msg = e.cause?.code || e.code || e.message || String(e);
+        errors.push(attempt > 1 ? `${label}#${attempt}: ${msg}` : `${label}: ${msg}`);
+        const retryable = /TLS|socket|ECONNRESET|ECONNREFUSED|disconnect|hang up|EPIPE|timed?\s*out/i.test(String(msg));
+        if (!retryable || attempt === 2) break;
+        await new Promise((r) => setTimeout(r, 400 * attempt));
+      }
+    }
+  }
+  const err = new Error(`не достали URL (${errors.join('; ')})`);
+  err.errors = errors;
+  throw err;
+}
+
+/** TLS поверх уже открытого туннеля; без ALPN — запасной вариант (часть CDN/VLESS рвёт ALPN). */
+function tlsOverTunnel(tunnel, hostname, { alpn = true } = {}) {
+  return new Promise((resolve, reject) => {
+    const opts = { socket: tunnel, servername: hostname };
+    if (alpn) opts.ALPNProtocols = ['http/1.1'];
+    const s = tls.connect(opts, () => resolve(s));
+    s.once('error', reject);
+  });
+}
+
 /** HTTPS/HTTP через SOCKS5 напрямую (tg://socks / socks5://). */
 async function fetchViaSocks(url, {
   method = 'GET',
@@ -1061,6 +1165,7 @@ async function fetchViaSocks(url, {
   body = null,
   timeoutMs = 60_000,
   signal = null,
+  alpn = true,
 } = {}, socksCfg) {
   let u;
   try { u = new URL(url); }
@@ -1072,14 +1177,18 @@ async function fetchViaSocks(url, {
   const tunnel = await socksConnect(socksCfg, u.hostname, targetPort, Math.min(timeoutMs, 25_000));
   let socket = tunnel;
   if (u.protocol === 'https:') {
-    socket = await new Promise((resolve, reject) => {
-      const s = tls.connect({
-        socket: tunnel,
-        servername: u.hostname,
-        ALPNProtocols: ['http/1.1'],
-      }, () => resolve(s));
-      s.once('error', reject);
-    });
+    try {
+      socket = await tlsOverTunnel(tunnel, u.hostname, { alpn });
+    } catch (e) {
+      try { tunnel.destroy(); } catch { /* */ }
+      if (alpn) {
+        // Повтор без ALPN — частый фикс «disconnected before secure TLS» через VLESS.
+        return fetchViaSocks(url, {
+          method, headers, body, timeoutMs, signal, alpn: false,
+        }, socksCfg);
+      }
+      throw e;
+    }
   }
 
   const payload = body == null ? null

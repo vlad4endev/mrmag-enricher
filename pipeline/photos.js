@@ -8,7 +8,7 @@ import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 import { resolveDictRoot } from './dict.js';
-import { providerFetch } from '../socks.js';
+import { providerFetch, fetchUrlRoutes } from '../socks.js';
 import { recordProviderSpend, usageCostRub, roundMoney } from './provider_billing.js';
 
 const ALBUM_RE = /^[a-zA-Z0-9_-]{1,64}$/;
@@ -125,16 +125,23 @@ function statsPath(albumId, root) {
 /** Ужать feed на диске: shop_description/синонимы не нужны после импорта для списка. */
 function slimItemFeed(feed) {
   if (!feed || typeof feed !== 'object') return feed || null;
-  const specs = feed.specs && typeof feed.specs === 'object' && !Array.isArray(feed.specs)
-    ? feed.specs
-    : null;
-  let slimSpecs = specs;
-  if (specs) {
-    const keys = Object.keys(specs);
-    if (keys.length > 40) {
-      slimSpecs = {};
-      for (const k of keys.slice(0, 40)) slimSpecs[k] = specs[k];
+  let slimSpecs = null;
+  const raw = feed.specs ?? feed.params;
+  if (Array.isArray(raw)) {
+    // YML params: [{name,value}] → компактный объект (массив иначе обнулялся!).
+    slimSpecs = {};
+    for (const p of raw.slice(0, 40)) {
+      if (!p || p.name == null) continue;
+      slimSpecs[String(p.name).slice(0, 80)] = String(p.value ?? '').slice(0, 300);
     }
+    if (!Object.keys(slimSpecs).length) slimSpecs = null;
+  } else if (raw && typeof raw === 'object') {
+    const keys = Object.keys(raw);
+    slimSpecs = {};
+    for (const k of keys.slice(0, 40)) {
+      slimSpecs[String(k).slice(0, 80)] = String(raw[k] ?? '').slice(0, 300);
+    }
+    if (!Object.keys(slimSpecs).length) slimSpecs = null;
   }
   return {
     name: feed.name != null ? String(feed.name).slice(0, 300) : null,
@@ -207,16 +214,21 @@ function readMeta(albumId, root) {
   }
 }
 
+function feedNeedsSlim(feed) {
+  if (!feed || typeof feed !== 'object') return false;
+  // Уже компактный объект specs без shop_description/synonyms — не трогаем.
+  if (feed.shop_description != null || feed.synonyms != null) return true;
+  if (Array.isArray(feed.specs) || Array.isArray(feed.params)) return true;
+  return false;
+}
+
 function writeMeta(album, root) {
   const id = assertAlbumId(album.id);
   fs.mkdirSync(filesDir(id, root), { recursive: true });
   album.updated_at = Date.now();
-  // slim один раз: на каждом applyDescribe (15k) полный проход по feed убивает прогон.
-  if (!album._feeds_slimmed) {
-    for (const it of album.items || []) {
-      if (it.feed) it.feed = slimItemFeed(it.feed);
-    }
-    album._feeds_slimmed = true;
+  // Slim только «грязные» feed (новый импорт). Уже сжатые на applyDescribe не гоняем 15k раз.
+  for (const it of album.items || []) {
+    if (it.feed && feedNeedsSlim(it.feed)) it.feed = slimItemFeed(it.feed);
   }
   const file = metaPath(id, root);
   const tmp = `${file}.tmp`;
@@ -260,7 +272,6 @@ export function compactAlbumMeta(albumId, root) {
       it.feed = slimItemFeed(it.feed);
       if (JSON.stringify(it.feed).length < before) changed += 1;
     }
-    meta._feeds_slimmed = true;
     if (changed) writeMeta(meta, root);
     else writeAlbumStats(meta, root);
     return { compacted: changed, items: meta.items.length };
@@ -521,8 +532,7 @@ function decodeDataUrlOrBase64(raw) {
 async function fetchFeedImage(meta, item, root, fetchImpl = fetch) {
   const MIN_IMAGE_BYTES = 1024; // заглушки/пиксели трекеров — не фото товара
   // Источник годится, только если по ссылке реально лежит картинка (проверяем содержимое, а не расширение в URL).
-  async function attempt(get) {
-    const res = await get();
+  async function validate(res) {
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const type = String(res.headers?.get?.('content-type') || '').toLowerCase();
     if (/^(text|application\/(xml|json))/.test(type)) throw new Error(`по ссылке не картинка (${type.split(';')[0]})`);
@@ -534,14 +544,32 @@ async function fetchFeedImage(meta, item, root, fetchImpl = fetch) {
     return { buf, mime };
   }
 
-  const errors = [];
   let got = null;
-  // Сеть сервера может резать сайт магазина (DNS/DPI): прямое соединение, затем прокси приложения.
-  for (const [label, get] of [
-    ['напрямую', () => fetchImpl(item.image_url, { signal: AbortSignal.timeout(30_000) })],
-    ['через прокси', () => providerFetch(item.image_url, { signal: AbortSignal.timeout(60_000) }, { useProxy: true })],
-  ]) {
-    try { got = await attempt(get); break; } catch (e) { errors.push(`${label}: ${e.cause?.code || e.message}`); }
+  let errors = [];
+  // VPS часто не достаёт CDN магазина (ECONNREFUSED) — перебор: direct → socks → http-proxy → :1080.
+  try {
+    const { res, via } = await fetchUrlRoutes(item.image_url, {
+      timeoutMs: 60_000,
+      signal: AbortSignal.timeout(90_000),
+      preferProxy: false,
+    });
+    got = await validate(res);
+    got.via = via;
+  } catch (e) {
+    errors = Array.isArray(e.errors) ? e.errors : [e.cause?.code || e.message];
+    // Запасной путь: старый providerFetch / голый fetch (на случай кастомного fetchImpl в тестах).
+    for (const [label, get] of [
+      ['напрямую-fetch', () => fetchImpl(item.image_url, { signal: AbortSignal.timeout(30_000) })],
+      ['provider-proxy', () => providerFetch(item.image_url, { signal: AbortSignal.timeout(60_000) }, { useProxy: true })],
+    ]) {
+      try {
+        got = await validate(await get());
+        got.via = label;
+        break;
+      } catch (e2) {
+        errors.push(`${label}: ${e2.cause?.code || e2.message}`);
+      }
+    }
   }
   if (!got) throw httpError(502, `изображение недоступно ${item.image_url} (${errors.join('; ')}) — товар пропущен`);
 

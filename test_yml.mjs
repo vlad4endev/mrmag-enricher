@@ -29,8 +29,9 @@ const album = createAlbum('t', {}, root);
 const r = importFeedOffers(album.id, offers, root);
 assert.equal(r.added, 1);                      // оффер без фото пропущен
 assert.equal(importFeedOffers(album.id, offers, root).added, 0); // повтор не дублирует
-const item = getAlbum(album.id, root).items[0];
-assert.equal(item.feed.specs[0].value, '250');
+const item = getAlbum(album.id, root, { light: false }).items[0];
+// После slim: params[] → объект { name: value }.
+assert.equal(item.feed.specs['Объем, мл'] ?? item.feed.specs?.[0]?.value, '250');
 assert.equal(item.image_url, 'https://s/1.png');
 console.log('yml ok');
 
@@ -111,7 +112,7 @@ console.log('yml ok');
     params: [],
     synonyms: [],
   }], rootE);
-  const items = getAlbum(al.id, rootE).items;
+  const items = getAlbum(al.id, rootE, { light: false }).items;
   assert.equal(items.length, 2);
   assert.equal(items[0].image_id, '67304082-4919-11f1-9ee8-74563c4adfb9');
   assert.equal(photoImageId(items[0]), '67304082-4919-11f1-9ee8-74563c4adfb9');
@@ -134,7 +135,7 @@ console.log('yml ok');
     attributes: { view: 'front' },
   }, rootE);
 
-  const after = getAlbum(al.id, rootE).items;
+  const after = getAlbum(al.id, rootE, { light: false }).items;
   assert.equal(after.filter(isPhotoExportable).length, 2);
 
   const row = photoExportRow(after[0]);

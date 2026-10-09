@@ -3077,6 +3077,44 @@ ${Array.from({ length: 5 }, (_, i) => `<offer id="o${i}"><name>T${i}</name><pict
     assert.equal(exhausted, true);
   });
 
+  t('light-альбом не тащит feed.specs (анти-OOM)', () => {
+    const album = createAlbum('light-oom', {}, dir);
+    const heavy = Array.from({ length: 50 }, (_, i) => ({
+      id: `h${i}`,
+      name: `Товар ${i}`,
+      image_url: `https://img.test/${i}.jpg`,
+      category: 'cat',
+      vendor: 'v',
+      vendor_code: 'a',
+      url: '',
+      params: Array.from({ length: 40 }, (_, j) => ({ name: `p${j}`, value: `v${j}-${'x'.repeat(40)}` })),
+      synonyms: ['a', 'b'],
+      description: 'd'.repeat(2000),
+    }));
+    importFeedOffers(album.id, heavy, dir, { offset: 0, limit: 50, scanned: 50 });
+    // Пометим одно описанным с длинным текстом
+    const id0 = getAlbum(album.id, dir).items[0].id;
+    const metaPath = path.join(process.env.PHOTOS_DIR, album.id, 'meta.json');
+    const meta = JSON.parse(fs.readFileSync(metaPath, 'utf-8'));
+    meta.items[0].status = 'described';
+    meta.items[0].description = 'D'.repeat(5000);
+    meta.items[0].feed = {
+      name: 'Товар 0',
+      specs: Object.fromEntries(heavy[0].params.map(p => [p.name, p.value])),
+      shop_description: 'S'.repeat(3000),
+    };
+    fs.writeFileSync(metaPath, JSON.stringify(meta));
+
+    const light = getAlbum(album.id, dir, { light: true });
+    const full = getAlbum(album.id, dir, { light: false });
+    assert.equal(light.items.length, 50);
+    assert.ok(!light.items[0].feed?.specs, 'light без specs');
+    assert.ok(full.items[0].feed?.specs, 'full со specs');
+    const lightBytes = Buffer.byteLength(JSON.stringify(light));
+    const fullBytes = Buffer.byteLength(JSON.stringify(full));
+    assert.ok(lightBytes < fullBytes * 0.5, `light=${lightBytes} full=${fullBytes}`);
+  });
+
   await tAsync('повторный импорт не затирает уже описанные', async () => {
     const album = createAlbum('keep-desc', {}, dir);
     const first = importFeedOffers(album.id, [{

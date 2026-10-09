@@ -110,7 +110,29 @@ export function createPhotoJobStore({
     };
   }
 
-  function get(id) { return jobs.get(id) || null; }
+  function loadFromDisk(id) {
+    try {
+      const job = JSON.parse(fs.readFileSync(file(id), 'utf-8'));
+      return job?.id ? job : null;
+    } catch {
+      return null;
+    }
+  }
+
+  function get(id) {
+    const mem = jobs.get(id) || null;
+    if (!mem) return loadFromDisk(id);
+    // results срезаны при restore — подтянуть с диска для опроса UI
+    if (mem._results_on_disk && !Array.isArray(mem.results)) {
+      const disk = loadFromDisk(id);
+      if (disk) {
+        mem.results = disk.results;
+        mem.log = disk.log;
+        mem._results_on_disk = false;
+      }
+    }
+    return mem;
+  }
 
   function list() {
     return [...jobs.values()]
@@ -337,7 +359,6 @@ export function createPhotoJobStore({
           try { fs.unlinkSync(path.join(dir, name)); } catch { /* */ }
           continue;
         }
-        jobs.set(job.id, job);
         if (job.status === 'running' && !job.finished_at) {
           // Не догоняем автоматически дорогие vision-прогоны после рестарта —
           // помечаем interrupted, чтобы не сжечь бюджет молча.
@@ -347,6 +368,16 @@ export function createPhotoJobStore({
           pushLog(job, 'прерван перезапуском сервера', 'warn');
           save(job, true);
         }
+        // Законченные прогоны на 5k+ results не держим в RAM — список/summary хватает;
+        // state() при запросе перечитает файл с диска при необходимости.
+        if (job.finished_at && Array.isArray(job.results) && job.results.length > 200) {
+          job.results = undefined;
+          if (Array.isArray(job.log) && job.log.length > 100) {
+            job.log = job.log.slice(-100);
+          }
+          job._results_on_disk = true;
+        }
+        jobs.set(job.id, job);
         n += 1;
       } catch { /* */ }
     }

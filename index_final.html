@@ -10784,19 +10784,20 @@ async function photoAttachJob(id, albumId){
     }
     photoJobId=id;
     photoSaveJob(id, aid||photoAlbum?.id);
+    const stopping=Boolean(st.stop||st.stop_reason);
     const hint=document.getElementById('photoJobHint');
     if(hint){
-      hint.textContent=`running: ${st.done}/${st.total} · ok ${st.ok} · err ${st.err}`
+      hint.textContent=`${st.status}: ${st.done}/${st.total} · ok ${st.ok} · err ${st.err}`
         +(st.cost?` · ${formatRub(Number(st.cost))}`:'')
-        +' · фон';
+        +(stopping?` · ${st.stop_reason||'остановка…'}`:' · фон');
     }
     const bar=document.getElementById('photoBarF');
     if(bar && st.total) bar.style.width=Math.round((st.done/st.total)*100)+'%';
     const line=document.getElementById('photoRunline');
-    if(line) line.textContent=`Прогон: ${st.done}/${st.total} · ok ${st.ok} · err ${st.err} (фон)`;
+    if(line) line.textContent=`Прогон: ${st.done}/${st.total} · ok ${st.ok} · err ${st.err}${stopping?' · стоп…':' (фон)'}`;
     photoAppendRunLog([{
-      message:`Восстановлен фон-прогон ${id}: ${st.done}/${st.total}`,
-      level:'info',
+      message:`Восстановлен фон-прогон ${id}: ${st.done}/${st.total}${stopping?' · ждём остановку':''}`,
+      level:stopping?'warn':'info',
     }]);
     if(st.log?.length){
       photoAppendRunLog(st.log.map(l=>({
@@ -10804,7 +10805,13 @@ async function photoAttachJob(id, albumId){
         level:/err|fail|ошиб/i.test(l.message||'')?'err':/ok|готово|описан/i.test(l.message||'')?'ok':'info',
       })));
     }
-    photoStatus(`Прогон ${id}: ${st.done}/${st.total} (подхвачен после возврата)`, true);
+    if(stopping){
+      photoStatus(`Прогон ${id}: стоп запрошен (${st.done}/${st.total}) — дожидаюсь закрытия…`, false);
+      // Дожать зависший stop на сервере.
+      try{ await apiJson('/api/photo-jobs/'+encodeURIComponent(id)+'/stop',{method:'POST'}); }catch{ /* */ }
+    }else{
+      photoStatus(`Прогон ${id}: ${st.done}/${st.total} (подхвачен после возврата)`, true);
+    }
     const logFrom=(st.log_from||0)+(st.log?.length||0);
     photoPollJob({ logFrom });
     return true;
@@ -10840,17 +10847,23 @@ function photoPollJob(opts){
     try{
       const st=await apiJson('/api/photo-jobs/'+encodeURIComponent(photoJobId)+'?logFrom='+logFrom);
       fails=0;
+      const stopping=Boolean(st.stop||(st.stop_reason&&st.status==='running'));
       document.getElementById('photoJobHint').textContent=
         `${st.status}: ${st.done}/${st.total} · ok ${st.ok} · err ${st.err}`
         +(st.skipped?` · skip ${st.skipped}`:'')
+        +(st.current_id?` · сейчас ${st.current_id}`:'')
         +(st.cost?` · ${formatRub(Number(st.cost))}`:'')
         +(st.max_cost_rub!=null?` / лимит ${formatRub(Number(st.max_cost_rub))}`:'')
         +(st.stop_reason?` · ${st.stop_reason}`:'')
-        +(st.status==='running'?' · фон':'');
+        +(stopping?'':(st.status==='running'?' · фон':''));
       const bar=document.getElementById('photoBarF');
       if(bar && st.total) bar.style.width=Math.round((st.done/st.total)*100)+'%';
       const line=document.getElementById('photoRunline');
-      if(line) line.textContent=`Прогон: ${st.done}/${st.total} · ok ${st.ok} · err ${st.err}`;
+      if(line){
+        line.textContent=`Прогон: ${st.done}/${st.total} · ok ${st.ok} · err ${st.err}`
+          +(stopping?' · останавливается…':'')
+          +(st.current_id&&!stopping?` · ${st.current_id}`:'');
+      }
       if(st.log?.length){
         logFrom=st.log_from+(st.log.length);
         photoAppendRunLog(st.log.map(l=>({

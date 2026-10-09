@@ -19,6 +19,30 @@ export const PHOTO_JOB_MAX_CONSEC_ERR = Math.max(
   1,
   Math.min(100, Number(process.env.PHOTO_JOB_MAX_CONSEC_ERR || 15)),
 );
+/** Один товар: скачивание + vision. Без этого stop/зависание сети держат job вечно на 0/N. */
+export const PHOTO_JOB_ITEM_TIMEOUT_MS = Math.max(
+  30_000,
+  Math.min(600_000, Number(process.env.PHOTO_JOB_ITEM_TIMEOUT_MS || 150_000)),
+);
+/** После Стоп ждём in-flight, затем принудительно closed. */
+export const PHOTO_JOB_STOP_GRACE_MS = Math.max(
+  3_000,
+  Math.min(120_000, Number(process.env.PHOTO_JOB_STOP_GRACE_MS || 20_000)),
+);
+
+function sleep(ms) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+function withTimeout(promise, ms, label) {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      reject(Object.assign(new Error(label || `таймаут ${ms}ms`), { status: 504, timeout: true }));
+    }, ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
 
 const DESCRIBED = new Set(['described', 'ready']);
 const PENDING = new Set(['uploaded', 'error']);
@@ -26,7 +50,7 @@ const PENDING = new Set(['uploaded', 'error']);
 /** Ошибки скачивания фида — не копят consecutive (шлюз может быть жив). */
 export function isFeedFetchError(err) {
   const msg = String(err?.message || err || '');
-  return /изображение недоступно|файл на диске не найден|файл слишком|содержимое не JPEG|по ссылке не картинка|товар пропущен/i.test(msg);
+  return /изображение недоступно|файл на диске не найден|файл слишком|содержимое не JPEG|по ссылке не картинка|товар пропущен|таймаут фото/i.test(msg);
 }
 
 function parseMaxCost(v) {
@@ -42,6 +66,8 @@ export function createPhotoJobStore({
   ttlMs = Number(process.env.PHOTO_JOBS_TTL_MS || 7 * 24 * 3600_000),
   concurrency = PHOTO_JOB_CONCURRENCY,
   maxConsecutiveErrors = PHOTO_JOB_MAX_CONSEC_ERR,
+  itemTimeoutMs = PHOTO_JOB_ITEM_TIMEOUT_MS,
+  stopGraceMs = PHOTO_JOB_STOP_GRACE_MS,
   log = console.log,
 } = {}) {
   const jobs = new Map();
@@ -92,6 +118,8 @@ export function createPhotoJobStore({
       cost: job.cost,
       max_cost_rub: job.max_cost_rub ?? null,
       stop_reason: job.stop_reason || null,
+      current_id: job.current_id || null,
+      heartbeat_at: job.heartbeat_at || null,
       at: job.at,
       finished_at: job.finished_at || null,
       stop: Boolean(job.stop),
@@ -284,13 +312,27 @@ export function createPhotoJobStore({
     save(job, true);
   }
 
+  function finalizeJob(job, status) {
+    if (job.finished_at || job.removed) return;
+    job.status = status;
+    job.finished_at = now();
+    const reason = job.stop_reason ? ` · ${job.stop_reason}` : '';
+    pushLog(
+      job,
+      `готово: ok=${job.ok} err=${job.err}${job.skipped ? ` skip=${job.skipped}` : ''}${reason}`,
+      job.err || job.stop || status === 'stopped' ? 'warn' : 'ok',
+    );
+    save(job, true);
+  }
+
   async function run(job) {
     const queue = job.item_ids.map((itemId, idx) => ({ itemId, idx }));
     let cursor = 0;
+    const itemTimeout = itemTimeoutMs;
 
     const worker = async () => {
       while (cursor < queue.length) {
-        if (job.stop || job.removed) break;
+        if (job.stop || job.removed || job.finished_at) break;
 
         if (job.max_cost_rub != null && job.cost >= job.max_cost_rub) {
           if (!job.stop) requestStop(job, `лимит бюджета ${job.max_cost_rub} ₽`);
@@ -300,15 +342,23 @@ export function createPhotoJobStore({
         const slot = queue[cursor++];
         if (!slot) break;
         const { itemId, idx } = slot;
+        job.current_id = itemId;
+        job.heartbeat_at = now();
         try {
           pushLog(job, `[${idx + 1}/${job.item_ids.length}] ${itemId}`);
-          const result = await describeOne({
-            albumId: job.album_id,
-            itemId,
-            model: job.model,
-            provider: job.provider,
-            onNote: (msg) => pushLog(job, `  ${itemId}: ${msg}`),
-          });
+          save(job);
+          const result = await withTimeout(
+            describeOne({
+              albumId: job.album_id,
+              itemId,
+              model: job.model,
+              provider: job.provider,
+              onNote: (msg) => pushLog(job, `  ${itemId}: ${msg}`),
+            }),
+            itemTimeout,
+            `таймаут фото ${Math.round(itemTimeout / 1000)}с (${itemId})`,
+          );
+          if (job.finished_at || job.removed) return;
           job.results[idx] = { id: itemId, ok: true, ...result };
           job.ok += 1;
           job.consecutive_err = 0;
@@ -321,6 +371,7 @@ export function createPhotoJobStore({
             requestStop(job, `лимит бюджета ${job.max_cost_rub} ₽ (набрано ${job.cost.toFixed(2)} ₽)`);
           }
         } catch (e) {
+          if (job.finished_at || job.removed) return;
           const rawHint = e.raw ? ` · raw: ${String(e.raw).replace(/\s+/g, ' ').slice(0, 220)}` : '';
           job.results[idx] = { id: itemId, ok: false, error: e.message, raw: e.raw || null };
           job.err += 1;
@@ -329,7 +380,7 @@ export function createPhotoJobStore({
           } catch { /* */ }
           pushLog(job, `err ${itemId}: ${e.message}${rawHint}`, 'err');
 
-          if (isFeedFetchError(e)) {
+          if (isFeedFetchError(e) || e.timeout) {
             job.consecutive_err = 0;
           } else {
             job.consecutive_err = (job.consecutive_err || 0) + 1;
@@ -339,33 +390,63 @@ export function createPhotoJobStore({
             }
           }
         }
+        if (job.finished_at || job.removed) return;
         job.done += 1;
+        job.current_id = null;
+        job.heartbeat_at = now();
         save(job);
       }
     };
 
     const n = Math.min(concurrency, job.item_ids.length);
-    await Promise.all(Array.from({ length: n }, () => worker()));
+    const workersDone = Promise.all(Array.from({ length: n }, () => worker()));
+
+    // Стоп при зависшем describeOne раньше ждал вечно → UI «running · остановка запрошена · 0/N».
+    const stopWatch = (async () => {
+      while (!job.finished_at && !job.removed) {
+        await sleep(1000);
+        if (!job.stop) continue;
+        await sleep(stopGraceMs);
+        if (!job.finished_at && !job.removed) {
+          pushLog(job, `принудительная остановка после ${Math.round(stopGraceMs / 1000)}с ожидания`, 'warn');
+          return 'force-stop';
+        }
+      }
+      return 'ended';
+    })();
+
+    const outcome = await Promise.race([
+      workersDone.then(() => 'workers'),
+      stopWatch,
+    ]);
 
     if (job.removed) return;
-    job.status = job.stop ? 'stopped' : 'done';
-    job.finished_at = now();
-    const reason = job.stop_reason ? ` · ${job.stop_reason}` : '';
-    pushLog(
-      job,
-      `готово: ok=${job.ok} err=${job.err}${job.skipped ? ` skip=${job.skipped}` : ''}${reason}`,
-      job.err || job.stop ? 'warn' : 'ok',
-    );
-    save(job, true);
+    if (outcome === 'force-stop') {
+      finalizeJob(job, 'stopped');
+      return;
+    }
+    await workersDone.catch(() => {});
+    finalizeJob(job, job.stop ? 'stopped' : 'done');
   }
 
   function stop(id) {
-    const job = jobs.get(id);
+    const job = jobs.get(id) || loadFromDisk(id);
     if (!job) return false;
+    jobs.set(job.id, job);
+    if (job.finished_at) return true;
     job.stop = true;
     job.stop_reason = job.stop_reason || 'остановка запрошена';
+    job.stop_at = now();
     pushLog(job, 'остановка запрошена', 'warn');
     save(job, true);
+    // Если воркеры уже мертвы (рестарт UI / зависший await) — закроем сами.
+    setTimeout(() => {
+      const live = jobs.get(id);
+      if (live && !live.finished_at && live.stop) {
+        pushLog(live, 'стоп: воркеры не ответили — закрываю job', 'warn');
+        finalizeJob(live, 'stopped');
+      }
+    }, stopGraceMs + 500);
     return true;
   }
 

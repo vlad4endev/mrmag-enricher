@@ -3243,6 +3243,54 @@ ${Array.from({ length: 5 }, (_, i) => `<offer id="o${i}"><name>T${i}</name><pict
     assert.equal(after.items.length, 2);
   });
 
+  await tAsync('зависший describe + Стоп → job closed по grace', async () => {
+    const album = createAlbum('hang-stop', {}, dir);
+    seedItems(album.id, [{ id: 'hang000001', status: 'uploaded' }]);
+    const store = createPhotoJobStore({
+      describeOne: async () => new Promise(() => { /* never */ }),
+      dir: process.env.PHOTO_JOBS_DIR,
+      concurrency: 1,
+      stopGraceMs: 200,
+      itemTimeoutMs: 60_000,
+    });
+    const job = store.create({ album_id: album.id, model: 'test-model' });
+    assert.equal(job.status, 'running');
+    await new Promise((r) => setTimeout(r, 30));
+    store.stop(job.id);
+    const done = await waitJob(store, job.id, 5_000);
+    assert.equal(done.status, 'stopped');
+    assert.ok(done.finished_at);
+  });
+
+  await tAsync('таймаут одного фото → err, прогон идёт дальше', async () => {
+    const album = createAlbum('item-to', {}, dir);
+    seedItems(album.id, [
+      { id: 'ito0000001', status: 'uploaded' },
+      { id: 'ito0000002', status: 'uploaded' },
+    ]);
+    let n = 0;
+    const store = createPhotoJobStore({
+      describeOne: async ({ itemId }) => {
+        n += 1;
+        if (itemId === 'ito0000001') {
+          await new Promise(() => { /* hang until item timeout */ });
+        }
+        return { usage: { cost_rub: 0.01 } };
+      },
+      dir: process.env.PHOTO_JOBS_DIR,
+      concurrency: 1,
+      itemTimeoutMs: 80,
+      stopGraceMs: 5_000,
+    });
+    const job = store.create({ album_id: album.id, model: 'test-model' });
+    const done = await waitJob(store, job.id, 5_000);
+    assert.equal(done.status, 'done');
+    assert.equal(done.ok, 1);
+    assert.equal(done.err, 1);
+    assert.equal(done.done, 2);
+    assert.equal(n, 2);
+  });
+
   await tAsync('второй create по тому же альбому → 409, activeForAlbum', async () => {
     const album = createAlbum('mutex-job', {}, dir);
     seedItems(album.id, [

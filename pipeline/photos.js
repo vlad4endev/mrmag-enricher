@@ -211,9 +211,12 @@ function writeMeta(album, root) {
   const id = assertAlbumId(album.id);
   fs.mkdirSync(filesDir(id, root), { recursive: true });
   album.updated_at = Date.now();
-  // Компактный JSON: pretty-print на 15k × feed раздувает stringify и ловит heap OOM.
-  for (const it of album.items || []) {
-    if (it.feed) it.feed = slimItemFeed(it.feed);
+  // slim один раз: на каждом applyDescribe (15k) полный проход по feed убивает прогон.
+  if (!album._feeds_slimmed) {
+    for (const it of album.items || []) {
+      if (it.feed) it.feed = slimItemFeed(it.feed);
+    }
+    album._feeds_slimmed = true;
   }
   const file = metaPath(id, root);
   const tmp = `${file}.tmp`;
@@ -257,6 +260,7 @@ export function compactAlbumMeta(albumId, root) {
       it.feed = slimItemFeed(it.feed);
       if (JSON.stringify(it.feed).length < before) changed += 1;
     }
+    meta._feeds_slimmed = true;
     if (changed) writeMeta(meta, root);
     else writeAlbumStats(meta, root);
     return { compacted: changed, items: meta.items.length };

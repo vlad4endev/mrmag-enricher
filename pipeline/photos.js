@@ -212,6 +212,7 @@ export function sumPhotoSpend(root) {
 }
 
 function publicAlbum(meta) {
+  const fi = meta.feed_import && typeof meta.feed_import === 'object' ? meta.feed_import : null;
   return {
     id: meta.id,
     name: meta.name,
@@ -219,6 +220,17 @@ function publicAlbum(meta) {
     model: meta.model || null,
     created_at: meta.created_at,
     updated_at: meta.updated_at,
+    // Курсор YML: следующий offset для продолжения импорта (не путать с числом фото в альбоме).
+    feed_import: fi
+      ? {
+        next_offset: Number(fi.next_offset) || 0,
+        last_offset: Number(fi.last_offset) || 0,
+        last_limit: Number(fi.last_limit) || 0,
+        last_added: Number(fi.last_added) || 0,
+        exhausted: Boolean(fi.exhausted),
+        updated_at: fi.updated_at || null,
+      }
+      : null,
     items: (meta.items || []).map(publicItem),
   };
 }
@@ -370,8 +382,9 @@ async function fetchFeedImage(meta, item, root, fetchImpl = fetch) {
 /**
  * Импорт товаров из YML (см. yml_feed.js): фото не качаем сразу, храним ссылку и факты фида.
  * Повторный импорт того же фида пропускает уже добавленные offer id.
+ * cursor: { offset, limit } — куда сдвинуться в фиде в следующий раз (parseYml offset+len).
  */
-export function importFeedOffers(albumId, offers, root) {
+export function importFeedOffers(albumId, offers, root, cursor = null) {
   const meta = readMeta(assertAlbumId(albumId), root);
   const have = new Set(meta.items.map(i => i.product_id).filter(Boolean));
   const fresh = offers.filter(o => o.image_url && !have.has(o.id));
@@ -406,8 +419,31 @@ export function importFeedOffers(albumId, offers, root) {
       created_at: Date.now(),
     });
   }
+  const offset = Math.max(0, Number(cursor?.offset) || 0);
+  const limit = Math.max(0, Number(cursor?.limit) || 0);
+  const consumed = Array.isArray(offers) ? offers.length : 0;
+  // scanned — сколько подходящих offer просмотрели в фиде (включая skipIds).
+  const scanned = Math.max(consumed, Number(cursor?.scanned) || 0);
+  const next_offset = scanned > 0 ? scanned : offset + consumed;
+  const exhausted = cursor?.exhausted === true
+    || (limit > 0 && consumed < limit);
+  meta.feed_import = {
+    next_offset,
+    last_offset: offset,
+    last_limit: limit || consumed,
+    last_added: fresh.length,
+    exhausted: Boolean(exhausted),
+    updated_at: Date.now(),
+  };
   writeMeta(meta, root);
-  return { album: publicAlbum(meta), added: fresh.length, skipped: offers.length - fresh.length };
+  return {
+    album: publicAlbum(meta),
+    added: fresh.length,
+    skipped: offers.length - fresh.length,
+    offset,
+    next_offset,
+    exhausted: Boolean(exhausted),
+  };
 }
 
 /**

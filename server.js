@@ -2224,10 +2224,24 @@ async function apiPhotoImportYml(req, res, id) {
   const raw = await readBody(req, BULK_BODY_LIMIT);
   let body;
   try { body = JSON.parse(raw || '{}'); } catch { return json(res, 400, { error: 'Тело не JSON' }); }
-  const limit = Math.min(Math.max(Number(body.limit) || 100, 1), PHOTO_LIMITS.MAX_ITEMS);
+  const albumNow = getAlbum(id, ROOT);
+  const have = albumNow.items?.length || 0;
+  const room = Math.max(0, PHOTO_LIMITS.MAX_ITEMS - have);
+  if (room <= 0) {
+    return json(res, 400, { error: `Альбом полон (${PHOTO_LIMITS.MAX_ITEMS}). Удалите лишнее или поднимите PHOTO_MAX_ITEMS.` });
+  }
+  // all/fill: добираем до потолка альбома, пропуская уже импортированные id (15k+ за один проход).
+  const wantAll = body.all === true || body.fill === true
+    || body.limit === 'all' || body.limit === -1 || body.limit === 0;
+  const limit = wantAll
+    ? room
+    : Math.min(Math.max(Number(body.limit) || room, 1), PHOTO_LIMITS.MAX_ITEMS, room);
   const offset = Math.max(Number(body.offset) || 0, 0);
   const cat = String(body.category || '').trim().toLowerCase();
   const filter = cat ? o => o.category.toLowerCase().includes(cat) : null;
+  const skipIds = wantAll || body.skip_known !== false
+    ? new Set((albumNow.items || []).map(i => i.product_id).filter(Boolean))
+    : null;
   try {
     let chunks;
     if (body.url) {
@@ -2258,9 +2272,37 @@ async function apiPhotoImportYml(req, res, id) {
     } else {
       return json(res, 400, { error: 'Передайте url или xml' });
     }
-    const { offers } = await parseYml(chunks, { limit, offset, filter });
-    if (!offers.length) return json(res, 400, { error: 'В фиде нет подходящих товаров' });
-    return json(res, 200, importFeedOffers(id, offers, ROOT));
+    const parsed = await parseYml(chunks, { limit, offset, filter, skipIds });
+    const { offers, scanned = 0, skipped_known = 0, exhausted = false } = parsed;
+    if (!offers.length) {
+      return json(res, 200, {
+        album: albumNow,
+        added: 0,
+        skipped: skipped_known,
+        offset,
+        next_offset: scanned,
+        exhausted: true,
+        message: skipped_known
+          ? `Новых товаров нет: в фиде ${skipped_known} уже есть в альбоме`
+          : (offset > 0
+            ? `С offset=${offset} в фиде больше нет товаров — импорт закончен`
+            : 'В фиде нет подходящих товаров'),
+      });
+    }
+    const out = importFeedOffers(id, offers, ROOT, {
+      offset,
+      limit,
+      scanned,
+      exhausted,
+    });
+    return json(res, 200, {
+      ...out,
+      skipped_known,
+      scanned,
+      message: out.exhausted
+        ? `Фид прочитан целиком: +${out.added} (уже было ${skipped_known})`
+        : `Добавлено ${out.added}, альбом ${have + out.added}/${PHOTO_LIMITS.MAX_ITEMS}`,
+    });
   } catch (e) {
     return json(res, e.status || 400, { error: e.message });
   }

@@ -2980,7 +2980,7 @@ console.log('\nТовар без описания: поиск в сети');
   process.env.PHOTO_JOBS_DIR = path.join(dir, 'photo_jobs');
   fs.copyFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), 'config.json'), process.env.SETTINGS_PATH);
 
-  const { createAlbum, applyDescribeResult, PHOTO_LIMITS } = await import('./pipeline/photos.js');
+  const { createAlbum, applyDescribeResult, importFeedOffers, getAlbum, PHOTO_LIMITS } = await import('./pipeline/photos.js');
   const {
     createPhotoJobStore, isFeedFetchError,
   } = await import('./pipeline/photo_jobs.js');
@@ -3037,6 +3037,86 @@ console.log('\nТовар без описания: поиск в сети');
     assert.equal(isFeedFetchError(new Error('изображение недоступно http://x — товар пропущен')), true);
     assert.equal(isFeedFetchError(new Error('таймаут vision 90000ms')), false);
     assert.equal(isFeedFetchError(new Error('HTTP 429: rate')), false);
+  });
+  t('импорт фида сохраняет next_offset для продолжения', () => {
+    const album = createAlbum('cursor', {}, dir);
+    const mk = (n, from = 0) => Array.from({ length: n }, (_, i) => ({
+      id: `offer${from + i}`,
+      name: `Товар ${from + i}`,
+      image_url: `https://img.test/${from + i}.jpg`,
+      category: '', vendor: '', vendor_code: '', url: '',
+      params: [], synonyms: [], description: '',
+    }));
+    const a = importFeedOffers(album.id, mk(1000, 0), dir, { offset: 0, limit: 1000, scanned: 1000 });
+    assert.equal(a.added, 1000);
+    assert.equal(a.next_offset, 1000);
+    assert.equal(a.exhausted, false);
+    const b = importFeedOffers(album.id, mk(500, 1000), dir, {
+      offset: 1000, limit: 1000, scanned: 1500, exhausted: true,
+    });
+    assert.equal(b.added, 500);
+    assert.equal(b.next_offset, 1500);
+    assert.equal(b.exhausted, true);
+    const got = getAlbum(album.id, dir);
+    assert.equal(got.items.length, 1500);
+    assert.equal(got.feed_import.next_offset, 1500);
+  });
+
+  await tAsync('parseYml skipIds добирает новые за уже импортированными', async () => {
+    const { parseYml } = await import('./pipeline/yml_feed.js');
+    const xml = `<?xml version="1.0"?><yml_catalog><shop><categories></categories><offers>
+${Array.from({ length: 5 }, (_, i) => `<offer id="o${i}"><name>T${i}</name><picture>https://x/${i}.jpg</picture></offer>`).join('\n')}
+</offers></shop></yml_catalog>`;
+    const known = new Set(['o0', 'o1', 'o2']);
+    const { offers, skipped_known, exhausted } = await parseYml([xml], {
+      limit: 10,
+      skipIds: known,
+    });
+    assert.deepEqual(offers.map(o => o.id), ['o3', 'o4']);
+    assert.equal(skipped_known, 3);
+    assert.equal(exhausted, true);
+  });
+
+  await tAsync('повторный импорт не затирает уже описанные', async () => {
+    const album = createAlbum('keep-desc', {}, dir);
+    const first = importFeedOffers(album.id, [{
+      id: 'keep1', name: 'Товар 1', image_url: 'https://img.test/1.jpg',
+      category: '', vendor: '', vendor_code: '', url: '',
+      params: [], synonyms: [], description: '',
+    }], dir, { offset: 0, limit: 1, scanned: 1 });
+    assert.equal(first.added, 1);
+    const itemId = getAlbum(album.id, dir).items[0].id;
+    await applyDescribeResult(album.id, itemId, {
+      caption: 'сохранённая подпись',
+      description: 'полное сохранённое описание товара',
+      alt: 'alt',
+      tags: ['keep'],
+      usage: { cost_rub: 0.1 },
+    }, dir);
+    const before = getAlbum(album.id, dir).items[0];
+    assert.equal(before.status, 'described');
+    assert.equal(before.caption, 'сохранённая подпись');
+
+    const again = importFeedOffers(album.id, [
+      {
+        id: 'keep1', name: 'Товар 1 ИЗМЕНЁН', image_url: 'https://img.test/1b.jpg',
+        category: '', vendor: '', vendor_code: '', url: '',
+        params: [], synonyms: [], description: '',
+      },
+      {
+        id: 'keep2', name: 'Товар 2', image_url: 'https://img.test/2.jpg',
+        category: '', vendor: '', vendor_code: '', url: '',
+        params: [], synonyms: [], description: '',
+      },
+    ], dir, { offset: 0, limit: 2, scanned: 2 });
+    assert.equal(again.added, 1);
+    assert.equal(again.skipped, 1);
+    const after = getAlbum(album.id, dir);
+    const kept = after.items.find(i => i.product_id === 'keep1');
+    assert.equal(kept.status, 'described');
+    assert.equal(kept.caption, 'сохранённая подпись');
+    assert.equal(kept.description, 'полное сохранённое описание товара');
+    assert.equal(after.items.length, 2);
   });
 
   await tAsync('create без pending → 400, не все id', async () => {

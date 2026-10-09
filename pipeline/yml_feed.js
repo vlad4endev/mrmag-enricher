@@ -80,14 +80,24 @@ export function parseOffer(xml, categories = new Map()) {
 
 /**
  * chunks — любой async/sync iterable строк или Buffer (fetch body, fs.createReadStream).
- * filter(offer) → bool, limit — максимум принятых товаров; после лимита поток не читаем.
+ * filter(offer) → bool
+ * limit — максимум НОВЫХ товаров в ответе (после offset / skipIds)
+ * offset — пропустить первые N подходящих (по filter)
+ * skipIds — Set product_id уже в альбоме: их не считаем в limit, читаем дальше до конца фида
  */
-export async function parseYml(chunks, { limit = Infinity, offset = 0, filter = null } = {}) {
+export async function parseYml(chunks, {
+  limit = Infinity,
+  offset = 0,
+  filter = null,
+  skipIds = null,
+} = {}) {
   const dec = new TextDecoder('utf-8');
   let buf = '';
   let categories = null;
   let seen = 0;
+  let skippedKnown = 0;
   const offers = [];
+  const known = skipIds instanceof Set ? skipIds : null;
 
   for await (const chunk of chunks) {
     buf += typeof chunk === 'string' ? chunk : dec.decode(chunk, { stream: true });
@@ -107,15 +117,27 @@ export async function parseYml(chunks, { limit = Infinity, offset = 0, filter = 
       const offer = parseOffer(buf.slice(s, from), categories);
       if (!offer.id || !offer.name || (filter && !filter(offer))) continue;
       if (seen++ < offset) continue;
+      if (known && known.has(offer.id)) {
+        skippedKnown += 1;
+        continue;
+      }
       offers.push(offer);
-      if (offers.length >= limit) return { offers, categories };
+      if (offers.length >= limit) {
+        return { offers, categories, scanned: seen, skipped_known: skippedKnown, exhausted: false };
+      }
     }
     // оставляем только хвост с недочитанным <offer>
     const tail = buf.lastIndexOf('<offer ');
     buf = tail >= from ? buf.slice(tail) : buf.slice(from);
   }
   if (!categories) throw new Error('Не похоже на YML: нет <categories>/<offer>');
-  return { offers, categories };
+  return {
+    offers,
+    categories,
+    scanned: seen,
+    skipped_known: skippedKnown,
+    exhausted: true,
+  };
 }
 
 /** Читаемый блок фактов для vision-модели. */

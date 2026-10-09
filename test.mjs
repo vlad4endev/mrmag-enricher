@@ -2982,7 +2982,7 @@ console.log('\nТовар без описания: поиск в сети');
 
   const {
     createAlbum, applyDescribeResult, importFeedOffers, getAlbum, getPhotoItem,
-    compactAlbumMeta, listAlbums, PHOTO_LIMITS,
+    getAlbumJobIndex, compactAlbumMeta, listAlbums, readPhotoFile, PHOTO_LIMITS,
   } = await import('./pipeline/photos.js');
   const {
     createPhotoJobStore, isFeedFetchError,
@@ -3129,6 +3129,46 @@ ${Array.from({ length: 5 }, (_, i) => `<offer id="o${i}"><name>T${i}</name><pict
         < Buffer.byteLength(JSON.stringify(full.items[0])) * 0.4,
       'light-карточка заметно легче full',
     );
+  });
+
+  t('job index только id+status (анти-OOM describe)', () => {
+    const album = createAlbum('job-idx', {}, dir);
+    importFeedOffers(album.id, [{
+      id: 'j1', name: 'Товар', image_url: 'https://img.test/j1.jpg',
+      category: '', vendor: '', vendor_code: '', url: '',
+      params: [], synonyms: [], description: '',
+    }], dir, { offset: 0, limit: 1, scanned: 1 });
+    const idx = getAlbumJobIndex(album.id, dir);
+    assert.equal(idx.items.length, 1);
+    assert.equal(idx.items[0].status, 'uploaded');
+    assert.ok(idx.items[0].id);
+    assert.equal(idx.items[0].description, undefined);
+    assert.equal(idx.items[0].feed, undefined);
+  });
+
+  await tAsync('readPhotoFile кэширует meta — повтор без второго parse-эффекта', async () => {
+    const album = createAlbum('file-cache', {}, dir);
+    const files = path.join(process.env.PHOTOS_DIR, album.id, 'files');
+    fs.mkdirSync(files, { recursive: true });
+    // Минимальный JPEG (1×1)
+    const jpeg = Buffer.from(
+      '/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/2wBDAQkJCQwLDBgNDRgyIRwhMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjL/wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAn/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/8QAFQEBAQAAAAAAAAAAAAAAAAAAAAX/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIQAxAAAAGfAP/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAQUCf//EABQRAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQMBAT8Bf//EABQRAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQIBAT8Bf//Z',
+      'base64',
+    );
+    const metaPath = path.join(process.env.PHOTOS_DIR, album.id, 'meta.json');
+    const meta = JSON.parse(fs.readFileSync(metaPath, 'utf-8'));
+    const id = 'fcitem01';
+    meta.items.push({
+      id, filename: 'x.jpg', stored: 'x.jpg', mime: 'image/jpeg', bytes: jpeg.length,
+      status: 'uploaded', description: null, caption: null, alt: null, tags: [],
+      attributes: {}, warnings: [], created_at: Date.now(),
+    });
+    fs.writeFileSync(metaPath, JSON.stringify(meta));
+    fs.writeFileSync(path.join(files, 'x.jpg'), jpeg);
+    const a = await readPhotoFile(album.id, id, dir);
+    const b = await readPhotoFile(album.id, id, dir);
+    assert.equal(a.mime, 'image/jpeg');
+    assert.equal(b.buf.length, a.buf.length);
   });
 
   await tAsync('compact meta + stats.json без pretty / shop_description', async () => {

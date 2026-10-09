@@ -181,14 +181,25 @@ function writeAlbumStats(album, root) {
   return stats;
 }
 
+/** Кэш meta.json: без него каждый GET /file/ и describe парсят 15k JSON → heap OOM / битые img. */
+const metaCache = new Map(); // absPath → { mtimeMs, size, meta }
+
+function invalidateMetaCache(albumId, root) {
+  try { metaCache.delete(metaPath(assertAlbumId(albumId), root)); } catch { /* */ }
+}
+
 function readMeta(albumId, root) {
   const file = metaPath(albumId, root);
   if (!fs.existsSync(file)) throw httpError(404, 'Альбом не найден');
   try {
+    const st = fs.statSync(file);
+    const hit = metaCache.get(file);
+    if (hit && hit.mtimeMs === st.mtimeMs && hit.size === st.size) return hit.meta;
     const raw = JSON.parse(fs.readFileSync(file, 'utf-8'));
     if (!raw || typeof raw !== 'object' || !Array.isArray(raw.items)) {
       throw new Error('битый meta.json');
     }
+    metaCache.set(file, { mtimeMs: st.mtimeMs, size: st.size, meta: raw });
     return raw;
   } catch (e) {
     if (e.status) throw e;
@@ -204,11 +215,32 @@ function writeMeta(album, root) {
   for (const it of album.items || []) {
     if (it.feed) it.feed = slimItemFeed(it.feed);
   }
-  const tmp = `${metaPath(id, root)}.tmp`;
+  const file = metaPath(id, root);
+  const tmp = `${file}.tmp`;
   fs.writeFileSync(tmp, `${JSON.stringify(album)}\n`, 'utf-8');
-  fs.renameSync(tmp, metaPath(id, root));
+  fs.renameSync(tmp, file);
+  try {
+    const st = fs.statSync(file);
+    metaCache.set(file, { mtimeMs: st.mtimeMs, size: st.size, meta: album });
+  } catch {
+    invalidateMetaCache(id, root);
+  }
   try { writeAlbumStats(album, root); } catch { /* stats — best effort */ }
   return album;
+}
+
+/**
+ * Только id+status для очереди describe — без publicAlbum (15k × description).
+ */
+export function getAlbumJobIndex(albumId, root) {
+  const meta = readMeta(assertAlbumId(albumId), root);
+  return {
+    id: meta.id,
+    items: (meta.items || []).map(i => ({
+      id: i.id,
+      status: i.status || 'uploaded',
+    })),
+  };
 }
 
 /**
@@ -452,6 +484,7 @@ export function patchAlbum(albumId, patch = {}, root) {
 }
 
 export function deleteAlbum(albumId, root) {
+  invalidateMetaCache(albumId, root);
   const id = assertAlbumId(albumId);
   const dir = albumDir(id, root);
   if (!fs.existsSync(dir)) throw httpError(404, 'Альбом не найден');

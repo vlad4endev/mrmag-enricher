@@ -9742,9 +9742,25 @@ function photoStLabel(it){
   return 'ожидает';
 }
 
-function photoFileUrl(it){
+function photoFileUrlLocal(it){
   if(!photoAlbum||!it) return '';
   return '/api/photos/'+encodeURIComponent(photoAlbum.id)+'/file/'+encodeURIComponent(it.id);
+}
+
+function photoFileUrl(it){
+  if(!photoAlbum||!it) return '';
+  // Фид: браузер тянет оригинал — иначе каждый thumb парсит meta.json 15k на сервере.
+  if(it.image_url) return it.image_url;
+  return photoFileUrlLocal(it);
+}
+
+/** CDN фида отдал ошибку/hotlink — добираем через /file/ (с кэшем meta на сервере). */
+function photoImgFallback(img, id){
+  if(!img||img.dataset.fb) return;
+  img.dataset.fb='1';
+  const it=photoItemById(id);
+  const local=photoFileUrlLocal(it||{id});
+  if(local && img.src!==local) img.src=local;
 }
 
 function photoFilteredItems(){
@@ -10171,7 +10187,7 @@ function photoRenderList(){
     const costHtml=cost!=null?`<span class="ri-cost has" title="Списано за описание">${esc(formatRub(cost))}</span>`:'<span class="ri-cost"></span>';
     return `<div class="ri photo-ri s-${st}${photoCurId===it.id?' on':''}${photoSel.has(it.id)?' sel':''}" data-id="${esc(it.id)}" role="button" tabindex="0" onclick="photoFocus('${esc(it.id)}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();photoFocus('${esc(it.id)}')}">
       <input type="checkbox" class="photo-check" ${photoSel.has(it.id)?'checked':''} onclick="photoToggleSel('${esc(it.id)}',event)" aria-label="Выбрать для прогона">
-      <span class="ri-thumb"><img src="${photoFileUrl(it)}" alt="" loading="lazy"></span>
+      <span class="ri-thumb"><img src="${esc(photoFileUrl(it))}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="photoImgFallback(this,'${esc(it.id)}')"></span>
       <span class="ri-b">
         <span class="ri-n" title="${esc(it.filename)}">${esc(it.filename)}</span>
         <span class="ri-m">${esc(metaParts[0])}${photoIsDumpBound(it)?` · <span class="dump-tag">дамп ${esc(it.dump_category)}/${esc(it.product_id)}</span>`:''}${preview?` · ${esc(String(preview).slice(0,72))}`:''}</span>
@@ -10225,7 +10241,8 @@ function photoToggleSel(id, e){
 }
 function photoSelectAll(){
   if(!photoAlbum) return;
-  photoSel=new Set(photoAlbum.items.map(i=>i.id));
+  // Только видимый фильтр — не 15k id разом (ломает POST describe).
+  photoSel=new Set(photoFilteredItems().map(i=>i.id));
   photoRenderList();
 }
 function photoSelectUndescribed(){
@@ -10452,7 +10469,7 @@ function photoRenderDetail(){
 
   let html=`<div class="photo-detail">`;
   html+=`<div class="photo-detail-top">
-    <div class="ph-img"><img src="${photoFileUrl(it)}" alt="${esc(it.alt||it.filename||'')}"></div>
+    <div class="ph-img"><img src="${esc(photoFileUrl(it))}" alt="${esc(it.alt||it.filename||'')}" referrerpolicy="no-referrer" onerror="photoImgFallback(this,'${esc(it.id)}')"></div>
     <div class="ph-meta">
       <div class="ph-file" title="${esc(it.filename||'')}">${esc(it.filename||'')}</div>
       <div class="photo-detail-chips">
@@ -10653,8 +10670,20 @@ async function photoStartDescribe(){
     return;
   }
   if(!photoModel){ photoStatus('Выберите модель AITUNNEL', false); return; }
-  const item_ids=photoSel.size?[...photoSel]:null;
-  const candidates=photoDescribeCandidateCount();
+  const pendingIds=(photoAlbum.items||[])
+    .filter(i=>i.status==='uploaded'||i.status==='error')
+    .map(i=>i.id);
+  // Не шлём 10k id в POST: если выбраны все ожидающие — сервер сам возьмёт pending.
+  let item_ids=null;
+  if(photoSel.size){
+    const selectedPending=pendingIds.filter(id=>photoSel.has(id));
+    if(!selectedPending.length){
+      photoStatus('Нечего описывать: нет фото без описания (или все выбранные уже описаны)', false);
+      return;
+    }
+    if(selectedPending.length<pendingIds.length) item_ids=selectedPending;
+  }
+  const candidates=item_ids?item_ids.length:pendingIds.length;
   if(!candidates){
     photoStatus('Нечего описывать: нет фото без описания (или все выбранные уже описаны)', false);
     return;
@@ -10673,6 +10702,7 @@ async function photoStartDescribe(){
       :` Без лимита ₽ — прогон идёт по ${candidates} без описания до конца (или Стоп).`;
     if(!confirm(`Описать ${candidates} фото без текста?${lim}\nУже описанные (${kept}) пропускаются — данные и деньги не теряются.`)) return;
   }
+  photoStatus(`Запуск прогона (${candidates})…`);
   try{
     const job=await apiJson('/api/photos/'+encodeURIComponent(photoAlbum.id)+'/describe',{
       method:'POST', headers:{'Content-Type':'application/json'},

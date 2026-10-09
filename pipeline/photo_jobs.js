@@ -7,7 +7,7 @@ import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 import {
-  getAlbum, readPhotoFile, applyDescribeResult, PHOTO_LIMITS,
+  getAlbumJobIndex, readPhotoFile, applyDescribeResult, PHOTO_LIMITS,
 } from './photos.js';
 import { describePhoto } from './photo_agent.js';
 import { usageCostRub } from './provider_billing.js';
@@ -204,7 +204,8 @@ export function createPhotoJobStore({
     if (!album_id) throw Object.assign(new Error('Нет album_id'), { status: 400 });
     if (!model) throw Object.assign(new Error('Нет модели'), { status: 400 });
 
-    const album = getAlbum(album_id);
+    // Индекс id+status — не publicAlbum со всеми description (OOM / 502 на 15k).
+    const album = getAlbumJobIndex(album_id);
     const { ids, skipped } = resolveItemIds(album, item_ids, Boolean(force));
     if (ids.length > PHOTO_LIMITS.MAX_ITEMS) {
       throw Object.assign(new Error('Слишком много фото'), { status: 400 });

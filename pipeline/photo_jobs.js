@@ -10,7 +10,7 @@ import {
   getAlbum, readPhotoFile, applyDescribeResult, PHOTO_LIMITS,
 } from './photos.js';
 import { describePhoto } from './photo_agent.js';
-import { usageCostRub } from './provider_billing.js';
+import { effectiveFundsRub, isFundsError, usageCostRub } from './provider_billing.js';
 
 const now = () => Date.now();
 const LOG_CAP = 2000;
@@ -18,6 +18,11 @@ export const PHOTO_JOB_CONCURRENCY = Math.max(1, Math.min(4, Number(process.env.
 export const PHOTO_JOB_MAX_CONSEC_ERR = Math.max(
   1,
   Math.min(100, Number(process.env.PHOTO_JOB_MAX_CONSEC_ERR || 15)),
+);
+/** Стоп прогона, когда usage.balance (или бюджет ключа) ≤ порога, ₽. */
+export const PHOTO_MIN_BALANCE_RUB = Math.max(
+  0,
+  Number(process.env.PHOTO_MIN_BALANCE_RUB ?? 1),
 );
 
 const DESCRIBED = new Set(['described', 'ready']);
@@ -28,6 +33,8 @@ export function isFeedFetchError(err) {
   const msg = String(err?.message || err || '');
   return /изображение недоступно|файл на диске не найден|файл слишком|содержимое не JPEG|по ссылке не картинка|товар пропущен/i.test(msg);
 }
+
+export { isFundsError };
 
 function parseMaxCost(v) {
   if (v == null || v === '') return null;
@@ -91,6 +98,8 @@ export function createPhotoJobStore({
       skipped: job.skipped || 0,
       cost: job.cost,
       max_cost_rub: job.max_cost_rub ?? null,
+      min_balance_rub: job.min_balance_rub ?? null,
+      last_balance: typeof job.last_balance === 'number' ? job.last_balance : null,
       stop_reason: job.stop_reason || null,
       at: job.at,
       finished_at: job.finished_at || null,
@@ -178,6 +187,8 @@ export function createPhotoJobStore({
     force = false,
     max_cost_rub = null,
     balance_rub = null,
+    budget_rub = null,
+    min_balance_rub = null,
   }) {
     if (!album_id) throw Object.assign(new Error('Нет album_id'), { status: 400 });
     if (!model) throw Object.assign(new Error('Нет модели'), { status: 400 });
@@ -190,9 +201,20 @@ export function createPhotoJobStore({
 
     const costCap = parseMaxCost(max_cost_rub);
     const bal = typeof balance_rub === 'number' && Number.isFinite(balance_rub) ? balance_rub : null;
+    const keyBudget = typeof budget_rub === 'number' && Number.isFinite(budget_rub) ? budget_rub : null;
+    const floor = typeof min_balance_rub === 'number' && Number.isFinite(min_balance_rub)
+      ? Math.max(0, min_balance_rub)
+      : PHOTO_MIN_BALANCE_RUB;
+    const funds = effectiveFundsRub({ balance: bal, budget: keyBudget });
 
-    if (bal != null && bal <= 0) {
-      throw Object.assign(new Error('Баланс AITUNNEL пуст — пополнение перед прогоном'), { status: 402 });
+    if (funds != null && funds <= floor) {
+      const why = keyBudget != null && (bal == null || keyBudget <= (bal ?? Infinity))
+        ? 'бюджет ключа AITUNNEL исчерпан'
+        : 'баланс AITUNNEL пуст';
+      throw Object.assign(
+        new Error(`${why} (≤ ${floor} ₽) — пополнение перед прогоном`),
+        { status: 402, funds: true },
+      );
     }
 
     const id = crypto.randomBytes(6).toString('hex');
@@ -211,6 +233,8 @@ export function createPhotoJobStore({
       skipped,
       cost: 0,
       max_cost_rub: costCap,
+      min_balance_rub: floor,
+      last_balance: bal,
       consecutive_err: 0,
       max_consecutive_errors: maxConsecutiveErrors,
       stop_reason: null,
@@ -221,12 +245,12 @@ export function createPhotoJobStore({
     };
     jobs.set(id, job);
     pushLog(job, `старт: ${ids.length} фото · ${model}${skipped ? ` · skip ${skipped} уже описанных` : ''}`);
-    if (costCap != null) pushLog(job, `лимит бюджета: ${costCap} ₽`);
-    if (bal != null) {
-      pushLog(job, `баланс AITUNNEL: ${bal} ₽`);
-      if (costCap != null && bal < costCap) {
-        pushLog(job, `баланс (${bal} ₽) ниже лимита прогона (${costCap} ₽)`, 'warn');
-      }
+    if (costCap != null) pushLog(job, `лимит бюджета прогона: ${costCap} ₽`);
+    if (bal != null) pushLog(job, `баланс AITUNNEL: ${bal} ₽`);
+    if (keyBudget != null) pushLog(job, `бюджет ключа: ${keyBudget} ₽`);
+    pushLog(job, `стоп при балансе ≤ ${floor} ₽`);
+    if (funds != null && costCap != null && funds < costCap) {
+      pushLog(job, `доступно ${funds} ₽ — меньше лимита прогона ${costCap} ₽`, 'warn');
     }
     save(job, true);
     void run(job);
@@ -271,10 +295,19 @@ export function createPhotoJobStore({
           const costRub = usageCostRub(result?.usage)
             ?? (typeof result?.usage?.cost === 'number' ? result.usage.cost : null);
           if (typeof costRub === 'number') job.cost += costRub;
-          pushLog(job, `ok ${itemId}${typeof costRub === 'number' ? ` · ${costRub.toFixed(2)} ₽` : ''}`, 'ok');
+          // usage.balance из каждого ответа AITUNNEL (docs/payments) — живой стоп без лишнего GET.
+          const liveBal = typeof result?.usage?.balance === 'number' ? result.usage.balance : null;
+          if (liveBal != null) job.last_balance = liveBal;
+          const balHint = liveBal != null ? ` · баланс ${liveBal.toFixed(2)} ₽` : '';
+          pushLog(job, `ok ${itemId}${typeof costRub === 'number' ? ` · ${costRub.toFixed(2)} ₽` : ''}${balHint}`, 'ok');
 
           if (job.max_cost_rub != null && job.cost >= job.max_cost_rub) {
             requestStop(job, `лимит бюджета ${job.max_cost_rub} ₽ (набрано ${job.cost.toFixed(2)} ₽)`);
+          } else if (liveBal != null && liveBal <= (job.min_balance_rub ?? PHOTO_MIN_BALANCE_RUB)) {
+            requestStop(
+              job,
+              `баланс AITUNNEL ${liveBal.toFixed(2)} ₽ ≤ ${job.min_balance_rub ?? PHOTO_MIN_BALANCE_RUB} ₽`,
+            );
           }
         } catch (e) {
           const rawHint = e.raw ? ` · raw: ${String(e.raw).replace(/\s+/g, ' ').slice(0, 220)}` : '';
@@ -285,7 +318,10 @@ export function createPhotoJobStore({
           } catch { /* */ }
           pushLog(job, `err ${itemId}: ${e.message}${rawHint}`, 'err');
 
-          if (isFeedFetchError(e)) {
+          if (isFundsError(e)) {
+            // 402: нет средств на прогноз или бюджет ключа — дальше гореть бессмысленно.
+            requestStop(job, `AITUNNEL 402: недостаточно средств или бюджет ключа — ${e.message}`);
+          } else if (isFeedFetchError(e)) {
             job.consecutive_err = 0;
           } else {
             job.consecutive_err = (job.consecutive_err || 0) + 1;

@@ -152,3 +152,68 @@ export async function fetchAitunnelBalance({
     budget: numOrNull(data?.budget),
   };
 }
+
+/**
+ * Настройки текущего ключа: бюджет.remaining, срок, whitelist моделей.
+ * См. https://aitunnel.ru/docs/api/key
+ */
+export async function fetchAitunnelKey({
+  baseUrl,
+  headers = {},
+  fetchImpl = fetch,
+  timeoutMs = 15_000,
+} = {}) {
+  const url = `${String(baseUrl || '').replace(/\/+$/, '')}/aitunnel/key`;
+  const res = await fetchImpl(url, {
+    method: 'GET',
+    headers: { ...(headers || {}) },
+    signal: AbortSignal.timeout(timeoutMs),
+  });
+  const text = await res.text();
+  let data = null;
+  try { data = JSON.parse(text); } catch { /* */ }
+  if (!res.ok) {
+    const msg = data?.error?.message || data?.error || data?.message
+      || `HTTP ${res.status}: ${String(text).slice(0, 180)}`;
+    throw Object.assign(new Error(String(msg)), { status: res.status >= 400 ? res.status : 502 });
+  }
+  const budgetObj = data?.budget && typeof data.budget === 'object' ? data.budget : null;
+  const remaining = budgetObj ? numOrNull(budgetObj.remaining) : null;
+  return {
+    name: typeof data?.name === 'string' ? data.name : null,
+    budget_remaining: remaining,
+    budget: budgetObj
+      ? {
+        remaining,
+        initial: numOrNull(budgetObj.initial),
+        reset_interval: budgetObj.reset_interval || null,
+        reset_at: budgetObj.reset_at || null,
+        reset_in_seconds: numOrNull(budgetObj.reset_in_seconds),
+        low_notify: Boolean(budgetObj.low_notify),
+      }
+      : null,
+    expires_at: data?.expires_at || null,
+    expires_in_seconds: numOrNull(data?.expires_in_seconds),
+    allowed_models: Array.isArray(data?.allowed_models) ? data.allowed_models : data?.allowed_models ?? null,
+  };
+}
+
+/** Эффективный «потолок» средств: min(баланс, бюджет ключа), если оба известны. */
+export function effectiveFundsRub({ balance = null, budget = null } = {}) {
+  const vals = [balance, budget].filter(n => typeof n === 'number' && Number.isFinite(n));
+  if (!vals.length) return null;
+  return Math.min(...vals);
+}
+
+/**
+ * 402: нет средств на прогноз / исчерпан бюджет ключа
+ * (https://aitunnel.ru/docs/errors, FAQ max_tokens).
+ */
+export function isFundsError(err) {
+  if (!err) return false;
+  if (err.funds === true) return true;
+  const status = Number(err.status ?? err.code) || 0;
+  if (status === 402) return true;
+  const msg = String(err.message || err || '');
+  return /\b402\b|недостаточно средств|insufficient.*(fund|balance|credit)|бюджет ключа|key budget|payment required/i.test(msg);
+}

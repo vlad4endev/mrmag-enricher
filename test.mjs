@@ -2818,9 +2818,11 @@ console.log('\nТовар без описания: поиск в сети');
   fs.copyFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), 'config.json'), process.env.SETTINGS_PATH);
   const {
     normalizeProviderUsage, usageCostRub, recordProviderSpend, providerSpentRub,
-    fetchAitunnelBalance, isAitunnelProvider, roundMoney,
+    fetchAitunnelBalance, fetchAitunnelKey, isAitunnelProvider, isFundsError,
+    effectiveFundsRub, roundMoney,
   } = await import('./pipeline/provider_billing.js');
   const { createAlbum, applyDescribeResult, sumPhotoSpend } = await import('./pipeline/photos.js');
+  const { photoLimiterRpm, photoProviderSort } = await import('./pipeline/photo_agent.js');
 
   console.log('\nБиллинг AITUNNEL');
   t('usage.cost_rub и balance из ответа AITUNNEL', () => {
@@ -2846,6 +2848,25 @@ console.log('\nТовар без описания: поиск в сети');
     assert.equal(isAitunnelProvider({ id: 'aitunnel' }), true);
     assert.equal(isAitunnelProvider({ id: 'x', base_url: 'https://api.aitunnel.ru/v1' }), true);
     assert.equal(isAitunnelProvider({ id: 'openrouter', base_url: 'https://openrouter.ai/api/v1' }), false);
+  });
+  t('isFundsError ловит 402 и текст', () => {
+    assert.equal(isFundsError(Object.assign(new Error('нет'), { status: 402 })), true);
+    assert.equal(isFundsError(Object.assign(new Error('x'), { funds: true })), true);
+    assert.equal(isFundsError(new Error('Недостаточно средств на прогноз')), true);
+    assert.equal(isFundsError(new Error('HTTP 429')), false);
+  });
+  t('effectiveFundsRub = min(баланс, бюджет)', () => {
+    assert.equal(effectiveFundsRub({ balance: 100, budget: 40 }), 40);
+    assert.equal(effectiveFundsRub({ balance: 10 }), 10);
+    assert.equal(effectiveFundsRub({}), null);
+  });
+  t('photoLimiterRpm для AITUNNEL выше дефолта OpenRouter', () => {
+    assert.ok(photoLimiterRpm({ chatUrl: 'https://api.aitunnel.ru/v1', providerId: 'aitunnel' }) >= 60);
+    assert.ok(photoLimiterRpm({ chatUrl: 'https://openrouter.ai/api/v1' }) <= 30);
+  });
+  t('photoProviderSort по умолчанию price на AITUNNEL', () => {
+    assert.equal(photoProviderSort('https://api.aitunnel.ru/v1'), 'price');
+    assert.equal(photoProviderSort('https://openrouter.ai/api/v1'), null);
   });
   t('ledger копит списания и не теряет баланс', () => {
     recordProviderSpend('aitunnel', { cost_rub: 0.4, balance: 100 }, dir);
@@ -2874,6 +2895,29 @@ console.log('\nТовар без описания: поиск в сети');
     assert.equal(live.budget, 3);
     assert.equal(calls[0].url, 'https://api.aitunnel.ru/v1/aitunnel/balance');
     assert.equal(calls[0].init.method, 'GET');
+  });
+  await tAsync('GET /aitunnel/key через fetchImpl', async () => {
+    const key = await fetchAitunnelKey({
+      baseUrl: 'https://api.aitunnel.ru/v1',
+      headers: { Authorization: 'Bearer sk-test' },
+      fetchImpl: async (url) => {
+        assert.equal(url, 'https://api.aitunnel.ru/v1/aitunnel/key');
+        return {
+          ok: true,
+          status: 200,
+          async text() {
+            return JSON.stringify({
+              name: 'prod',
+              budget: { remaining: 12.5, initial: 100, reset_interval: 'monthly' },
+              allowed_models: null,
+            });
+          },
+        };
+      },
+    });
+    assert.equal(key.name, 'prod');
+    assert.equal(key.budget_remaining, 12.5);
+    assert.equal(key.budget.initial, 100);
   });
   await tAsync('сумма по альбому после описания', async () => {
     const album = createAlbum('тест', {}, dir);
@@ -3112,6 +3156,79 @@ console.log('\nТовар без описания: поиск в сети');
     assert.ok(done.cost >= 5);
   });
 
+  await tAsync('стоп по usage.balance ≤ порога', async () => {
+    const album = createAlbum('balstop', {}, dir);
+    seedItems(album.id, [
+      { id: 'bals000001', status: 'uploaded' },
+      { id: 'bals000002', status: 'uploaded' },
+      { id: 'bals000003', status: 'uploaded' },
+    ]);
+    let nCalls = 0;
+    const store = createPhotoJobStore({
+      describeOne: async () => {
+        nCalls += 1;
+        return { usage: { cost_rub: 0.5, balance: nCalls === 1 ? 0.4 : 0.1 } };
+      },
+      dir: process.env.PHOTO_JOBS_DIR,
+      concurrency: 1,
+    });
+    const job = store.create({
+      album_id: album.id,
+      model: 'test-model',
+      min_balance_rub: 1,
+      balance_rub: 50,
+    });
+    const done = await waitJob(store, job.id);
+    assert.equal(done.status, 'stopped');
+    assert.match(String(done.stop_reason), /баланс AITUNNEL/);
+    assert.ok(nCalls <= 2, `calls=${nCalls}`);
+  });
+
+  await tAsync('стоп сразу на 402 (бюджет/средства)', async () => {
+    const album = createAlbum('funds402', {}, dir);
+    seedItems(album.id, [
+      { id: 'fund000001', status: 'uploaded' },
+      { id: 'fund000002', status: 'uploaded' },
+      { id: 'fund000003', status: 'uploaded' },
+    ]);
+    let nCalls = 0;
+    const store = createPhotoJobStore({
+      describeOne: async () => {
+        nCalls += 1;
+        throw Object.assign(new Error('Недостаточно средств на прогноз'), { status: 402, funds: true });
+      },
+      dir: process.env.PHOTO_JOBS_DIR,
+      concurrency: 1,
+      maxConsecutiveErrors: 15,
+    });
+    const job = store.create({ album_id: album.id, model: 'test-model' });
+    const done = await waitJob(store, job.id);
+    assert.equal(done.status, 'stopped');
+    assert.match(String(done.stop_reason), /402/);
+    assert.equal(done.err, 1);
+    assert.ok(nCalls <= 2, `calls=${nCalls}`);
+  });
+
+  await tAsync('create с budget_rub=0 → 402', async () => {
+    const album = createAlbum('keybud', {}, dir);
+    seedItems(album.id, [{ id: 'keyb000001', status: 'uploaded' }]);
+    const store = createPhotoJobStore({
+      describeOne: async () => ({ usage: { cost_rub: 0.1 } }),
+      dir: process.env.PHOTO_JOBS_DIR,
+      concurrency: 1,
+    });
+    await assert.rejects(
+      async () => store.create({
+        album_id: album.id,
+        model: 'test-model',
+        balance_rub: 1000,
+        budget_rub: 0,
+        min_balance_rub: 1,
+      }),
+      /бюджет ключа|баланс AITUNNEL/,
+    );
+  });
+
   await tAsync('стоп по серии ошибок API', async () => {
     const album = createAlbum('consec', {}, dir);
     seedItems(album.id, Array.from({ length: 8 }, (_, i) => ({
@@ -3206,6 +3323,42 @@ console.log('\nТовар без описания: поиск в сети');
     assert.ok(calls >= 2, `calls=${calls}`);
     assert.ok(result.caption);
     assert.ok(result.description);
+  });
+
+  await tAsync('vision: provider.sort=price и 402 без ретрая', async () => {
+    let bodies = [];
+    let calls = 0;
+    const tinyPng = Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+      'base64',
+    );
+    await assert.rejects(async () => {
+      await describePhoto({
+        buf: tinyPng,
+        mime: 'image/png',
+        item: { filename: 'x.png' },
+      }, {
+        model: 'test-vision',
+        apiKey: 'sk-test',
+        chatUrl: 'https://api.aitunnel.ru/v1/chat/completions',
+        limiter: { wait: async () => {} },
+        fetchImpl: async (_url, init) => {
+          calls += 1;
+          bodies.push(JSON.parse(init.body));
+          return {
+            ok: false,
+            status: 402,
+            headers: { get: () => null },
+            async text() {
+              return JSON.stringify({ error: { message: 'Недостаточно средств', code: 402 } });
+            },
+          };
+        },
+      });
+    }, (e) => e.status === 402 && e.funds === true);
+    assert.equal(calls, 1, '402 не ретраим');
+    assert.equal(bodies[0].provider?.sort, 'price');
+    assert.ok(bodies[0].max_tokens > 0);
   });
 
   if (prevSettings === undefined) delete process.env.SETTINGS_PATH;

@@ -481,19 +481,22 @@ docker restart nginx_proxy_manager
    открытым текстом, поэтому домен должен быть только на https.
 3. **Том для кэша.** `/data` в контейнере: без него каждый перезапуск обходит
    раздел заново.
-4. **Поднять `proxy_read_timeout` в NPM.** По умолчанию nginx ждёт ответа минуту
-   и обрывает запрос страницей «504 Gateway Time-out». Один товар в
-   `/api/enrich` — это до трёх минут: генерация описания на 900–1800 символов
-   занимает больше минуты сама по себе, плюс до трёх попыток при сбое сети.
-   В хосте NPM → Advanced → Custom Nginx Configuration:
+4. **Поднять `proxy_read_timeout` в NPM (обязательно).** По умолчанию nginx ждёт
+   ответа минуту и обрывает запрос страницей «502/504 Gateway Time-out». Один
+   товар в `/api/enrich` — до трёх минут (генерация + ретраи сети). Без правки
+   прогон сыплется на длинных товарах, а деньги уже списаны.
+   В хосте NPM → Advanced → Custom Nginx Configuration вставьте содержимое
+   [`docker/npm-advanced.conf`](docker/npm-advanced.conf):
 
    ```nginx
-   proxy_read_timeout 300s;
+   proxy_connect_timeout 60s;
    proxy_send_timeout 300s;
+   proxy_read_timeout 300s;
+   send_timeout 300s;
+   client_max_body_size 80m;
    ```
 
-   Без этого прогон сыплется 504-ми на длинных товарах, причём деньги за них
-   уже списаны: сервер дописывает ответ модели в пустоту.
+   После Save — Reload NPM / пересохранить Proxy Host.
 5. **Обновить курс.** `RUB_PER_USD` и `RUB_RATE_DATE` вбиты вручную и в отчётах
    печатаются вместе с датой.
 

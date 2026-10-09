@@ -96,8 +96,9 @@ services:
     volumes:
       - enricher-data:/data
     restart: unless-stopped
-    # Обход каталога и запросы к модели — сетевые ожидания, не счёт.
-    mem_limit: 512m
+    # Обход каталога и vision-прогоны: base64 картинок + concurrency 2 съедают RAM.
+    # 512m на 15k-фиде легко ловит OOM → NPM отвечает 502 «шлюз не дождался».
+    mem_limit: 1024m
     stop_grace_period: 15s
 
 volumes:

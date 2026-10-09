@@ -2106,6 +2106,17 @@ await tAsync('504 от шлюза объясняется, а не вывалив
   }
   finally { globalThis.fetch = realFetch; }
 });
+await tAsync('502 от шлюза тоже указывает на proxy_read_timeout', async () => {
+  const realFetch = globalThis.fetch;
+  const page = '<html><head><title>502 Bad Gateway</title></head><body><center><h1>502 Bad Gateway</h1></center></body></html>';
+  globalThis.fetch = () => reply(page, false, 502);
+  try { await api.apiJson('/api/enrich'); assert.fail('ошибка должна была вылететь'); }
+  catch (e) {
+    assert.match(e.message, /proxy_read_timeout|502/, 'понятная причина');
+    assert.doesNotMatch(e.message, /</);
+  }
+  finally { globalThis.fetch = realFetch; }
+});
 await tAsync('свою ошибку сервера шлюзовое объяснение не подменяет', async () => {
   const realFetch = globalThis.fetch;
   // 502 отдаёт и сам сервер, когда модель не ответила: там JSON и своя причина.

@@ -147,12 +147,16 @@ import {
   uploadPhotos, importFeedOffers, patchPhotoItem, deletePhotoItem, readPhotoFile, buildMlExport,
   applyDescribeResult, patchAlbum, photosDir, PHOTO_LIMITS, sumPhotoSpend,
 } from './pipeline/photos.js';
-import { describePhoto, defaultPhotoSystemPrompt, PHOTO_PROMPT_PLACEHOLDERS, resolvePhotoSystemPrompt } from './pipeline/photo_agent.js';
+import {
+  describePhoto, defaultPhotoSystemPrompt, PHOTO_PROMPT_PLACEHOLDERS,
+  resolvePhotoSystemPrompt, photoLimiterRpm,
+} from './pipeline/photo_agent.js';
 import { parseYml } from './pipeline/yml_feed.js';
 import { createPhotoJobStore } from './pipeline/photo_jobs.js';
 import { analyzeFiles, createRefineJobStore } from './refine/index.js';
 import {
-  isAitunnelProvider, fetchAitunnelBalance, providerSpentRub, touchProviderBalance,
+  isAitunnelProvider, fetchAitunnelBalance, fetchAitunnelKey,
+  providerSpentRub, touchProviderBalance,
   loadProviderUsage,
 } from './pipeline/provider_billing.js';
 import {
@@ -1056,18 +1060,44 @@ async function apiProviderBalance(res, id) {
   };
 
   try {
+    const fetchImpl = (url, init) => providerFetch(url, init, { useProxy: providerUsesProxy(prov) });
     const live = await fetchAitunnelBalance({
       baseUrl: ep.baseUrl,
       headers: ep.headers,
-      fetchImpl: (url, init) => providerFetch(url, init, { useProxy: providerUsesProxy(prov) }),
+      fetchImpl,
     });
     if (typeof live.balance === 'number' || typeof live.budget === 'number') {
       touchProviderBalance(prov.id, live, ROOT);
     }
+    let key = null;
+    try {
+      key = await fetchAitunnelKey({
+        baseUrl: ep.baseUrl,
+        headers: ep.headers,
+        fetchImpl,
+        timeoutMs: 8_000,
+      });
+      // budget из /balance — остаток; из /key — детальнее (remaining). Берём min как «доступно».
+      if (typeof key.budget_remaining === 'number') {
+        const budget = typeof live.budget === 'number'
+          ? Math.min(live.budget, key.budget_remaining)
+          : key.budget_remaining;
+        touchProviderBalance(prov.id, { balance: live.balance, budget }, ROOT);
+        live.budget = budget;
+      }
+    } catch { /* ключ опционален — баланс уже есть */ }
     return json(res, 200, {
       ...payload,
       balance: live.balance,
       budget: live.budget,
+      key: key
+        ? {
+          name: key.name,
+          budget: key.budget,
+          expires_at: key.expires_at,
+          allowed_models: key.allowed_models,
+        }
+        : null,
       updated_at: Date.now(),
     });
   } catch (e) {
@@ -2142,6 +2172,14 @@ async function describePhotoOne({ albumId, itemId, model, provider, onNote = () 
   try { albumCat = getAlbum(albumId, ROOT)?.category || null; } catch { /* */ }
   const dumpCat = file.item?.dump_category || albumCat || null;
   const useDump = Boolean(file.item?.product_id && dumpCat);
+  // AITUNNEL сам RPM не режет — не душим пакетный прогон лимитом OpenRouter (20).
+  const photoRpm = photoLimiterRpm({ chatUrl: ep.chatUrl, providerId: prov.id });
+  const limiterKey = `photo:${prov.id}:${resolvedModel}:${photoRpm}`;
+  let photoLimiter = limiters.get(limiterKey);
+  if (!photoLimiter) {
+    if (limiters.size >= 200) limiters.clear();
+    limiters.set(limiterKey, photoLimiter = new RateLimiter(photoRpm));
+  }
   const result = await describePhoto(file, {
     model: resolvedModel,
     apiKey: null, // auth уже в ep.headers
@@ -2152,7 +2190,7 @@ async function describePhotoOne({ albumId, itemId, model, provider, onNote = () 
     root: ROOT,
     useDump,
     onNote,
-    limiter: limiterFor(`${prov.id}:${resolvedModel}`),
+    limiter: photoLimiter,
     systemPrompt: settings.model?.photo_system_prompt || '',
   });
   const saved = await applyDescribeResult(albumId, itemId, result, ROOT);
@@ -2305,11 +2343,13 @@ async function apiPhotoDescribe(req, res, id) {
   if (!model || typeof model !== 'string') return json(res, 400, { error: 'Не передана модель' });
 
   // Preflight только из кэша — live balance не держим HTTP под NPM (риск 502).
-  // Актуальный баланс пользователь смотрит отдельно через /api/providers/.../balance.
+  // Актуальный баланс / бюджет ключа — через /api/providers/.../balance.
   let balance_rub = null;
+  let budget_rub = null;
   try {
     const cached = loadProviderUsage(ROOT).providers.aitunnel || {};
     if (typeof cached.last_balance === 'number') balance_rub = cached.last_balance;
+    if (typeof cached.last_budget === 'number') budget_rub = cached.last_budget;
   } catch { /* */ }
 
   try {
@@ -2321,6 +2361,7 @@ async function apiPhotoDescribe(req, res, id) {
       force: Boolean(force),
       max_cost_rub: max_cost_rub ?? null,
       balance_rub,
+      budget_rub,
     });
     return json(res, 202, photoStore.summary(job));
   } catch (e) {

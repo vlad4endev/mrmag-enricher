@@ -6,11 +6,32 @@
 
 import { RateLimiter, sleep } from '../lib.js';
 import { getDump } from './dumps.js';
-import { normalizeProviderUsage } from './provider_billing.js';
+import { isAitunnelProvider, isFundsError, normalizeProviderUsage } from './provider_billing.js';
 
-/** HTTP-коды, при которых vision стоит повторить (как enrichment в lib.js). */
+/** HTTP-коды, при которых vision стоит повторить (как enrichment в lib.js).
+ *  402 — НЕ ретраим: нет средств / бюджет ключа (AITUNNEL docs/errors). */
 export const VISION_RETRYABLE = new Set([408, 409, 429, 500, 502, 503, 504, 524]);
 const VISION_TRANSIENT_ATTEMPTS = Math.max(1, Math.min(5, Number(process.env.PHOTO_VISION_RETRIES || 3)));
+
+/**
+ * AITUNNEL сам RPM не режет (docs/limits) — 429 только от апстрим-провайдеров.
+ * Локальный лимитер держим умеренным, чтобы не ловить каскад 429.
+ */
+export function photoLimiterRpm({ chatUrl = '', providerId = '' } = {}) {
+  if (isAitunnelProvider({ id: providerId, base_url: chatUrl })) {
+    return Math.max(1, Math.min(600, Number(process.env.PHOTO_AITUNNEL_RPM || 120)));
+  }
+  return Math.max(1, Math.min(120, Number(process.env.PHOTO_RPM || 30)));
+}
+
+/** Сортировка провайдера AITUNNEL: для пакетов — price (docs/provider). */
+export function photoProviderSort(chatUrl = '') {
+  if (!/aitunnel\.ru/i.test(String(chatUrl || ''))) return null;
+  const raw = String(process.env.PHOTO_PROVIDER_SORT ?? 'price').trim().toLowerCase();
+  if (!raw || raw === 'off' || raw === 'none' || raw === '0') return null;
+  if (raw === 'price' || raw === 'throughput' || raw === 'latency') return raw;
+  return 'price';
+}
 
 function visionRetryAfterMs(res, attempt) {
   const ra = res?.headers?.get?.('retry-after');
@@ -388,7 +409,7 @@ export async function describePhoto(itemFile, opts = {}) {
   if (!model) throw Object.assign(new Error('Не передана модель'), { status: 400 });
 
   const doFetch = typeof fetchImpl === 'function' ? fetchImpl : fetch;
-  const rate = limiter || new RateLimiter(30);
+  const rate = limiter || new RateLimiter(photoLimiterRpm({ chatUrl }));
   const feed = itemFile.item?.feed || null;
   const dump = feed
     ? feedContext(feed)
@@ -430,12 +451,19 @@ export async function describePhoto(itemFile, opts = {}) {
 
   const baseBody = {
     model,
+    // max_tokens обязателен: без него AITUNNEL берёт максимум модели → огромный
+    // прогноз стоимости и 402 (faq/oshibka-nedostatochno-sredstv-max-tokens).
     max_tokens: maxTokens,
     temperature: 0.2,
     messages,
   };
   // OpenRouter-only: остальные шлюзы (AITUNNEL и т.п.) могут отвергнуть неизвестное поле.
   if (/openrouter\.ai/i.test(chatUrl)) baseBody.usage = { include: true };
+  // Пакетный прогон: самый дешёвый апстрим (https://aitunnel.ru/docs/provider).
+  const sort = opts.providerSort !== undefined
+    ? (opts.providerSort || null)
+    : photoProviderSort(chatUrl);
+  if (sort) baseBody.provider = { sort };
 
   // Сначала json_schema (AITUNNEL/Gemini), потом мягкий json_object, потом без формата.
   const formatAttempts = [
@@ -487,7 +515,10 @@ export async function describePhoto(itemFile, opts = {}) {
         status: res.status >= 400 ? res.status : 502,
         code: Number(code) || res.status,
         res,
+        funds: res.status === 402 || Number(code) === 402,
       });
+      // 402 — сразу наружу, без смены формата и без ретрая
+      if (lastHttpErr.funds || isFundsError(lastHttpErr)) throw lastHttpErr;
       // Неподдерживаемый response_format / схема → следующий вариант формата
       const formatRetry = res.status === 400 || res.status === 422
         || /response_format|json_schema|json_object|unsupported|unknown|не поддерж/i.test(msg);

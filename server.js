@@ -75,7 +75,9 @@
  *   GET  /api/photo-jobs/:id             прогресс
  *   POST /api/photo-jobs/:id/stop
  *   DELETE /api/photo-jobs/:id
- *   GET|POST /api/photos/:id/export-ml   выгрузка ML (stream): format=jsonl|json|xml, include_images?
+ *   POST /api/photos/:id/export-ml       собрать ML-файл на диск → {url,count,bytes}
+ *   GET  /api/photos/:id/export-ml       stream (legacy) или ?prepare=1 → JSON как POST
+ *   GET  /api/photos/:id/export-file     скачать готовый файл ?name=photos_<id>.xml
  *
  * Товар без description и annotation не пропускается молча: по имени
  * ищется описание в сети (ensureSource), и адрес найденной страницы
@@ -145,7 +147,7 @@ import { exportTemplatesView } from './pipeline/export_template.js';
 import {
   bootstrapPhotosDir, listAlbums, createAlbum, getAlbum, getPhotoItem, deleteAlbum,
   uploadPhotos, importFeedOffers, patchPhotoItem, deletePhotoItem, readPhotoFile,
-  streamMlExport,
+  streamMlExport, materializeMlExport, resolveMlExportFile,
   applyDescribeResult, patchAlbum, photosDir, PHOTO_LIMITS,
 } from './pipeline/photos.js';
 import { describePhoto, defaultPhotoSystemPrompt, PHOTO_PROMPT_PLACEHOLDERS, resolvePhotoSystemPrompt } from './pipeline/photo_agent.js';
@@ -2384,16 +2386,7 @@ async function apiPhotoDescribe(req, res, id) {
   }
 }
 
-async function apiPhotoExportMl(req, res, id, u) {
-  // GET ?format=xml — нативные скачивания; POST {format} — как раньше в UI.
-  // Ответ стримится кусками: сборка всего XML в RAM на 10–15k рвала соединение
-  // («Failed to fetch») при живом прогоне / нехватке heap.
-  let body = {};
-  if (req.method === 'POST') {
-    const raw = await readBody(req, 64_000);
-    try { body = JSON.parse(raw || '{}'); } catch { return json(res, 400, { error: 'Тело не JSON' }); }
-  }
-  const q = u?.searchParams;
+function parseExportMlOpts(body, q) {
   const fmtRaw = String(body.format ?? q?.get('format') ?? 'jsonl').toLowerCase();
   const format = fmtRaw === 'json' || fmtRaw === 'xml' || fmtRaw === 'yml'
     ? (fmtRaw === 'yml' ? 'xml' : fmtRaw)
@@ -2405,17 +2398,66 @@ async function apiPhotoExportMl(req, res, id, u) {
   const onlyDescribed = body.only_described !== false
     && q?.get('only_described') !== '0'
     && q?.get('only_described') !== 'false';
+  return { format, include_images: includeImages, only_described: onlyDescribed };
+}
+
+async function apiPhotoExportMl(req, res, id, u) {
+  // POST / ?prepare=1 — пишем файл на диск и отдаём маленький JSON {url}.
+  // Браузер качает через GET export-file (Content-Length), без fetch().blob():
+  // blob на 30–80 МБ через NPM стабильно рвался «Failed to fetch».
+  let body = {};
+  if (req.method === 'POST') {
+    const raw = await readBody(req, 64_000);
+    try { body = JSON.parse(raw || '{}'); } catch { return json(res, 400, { error: 'Тело не JSON' }); }
+  }
+  const q = u?.searchParams;
+  const opts = parseExportMlOpts(body, q);
+  const prepare = req.method === 'POST'
+    || q?.get('prepare') === '1'
+    || q?.get('prepare') === 'true'
+    || body.prepare === true;
   try {
-    await streamMlExport(res, id, {
-      format,
-      include_images: includeImages,
-      only_described: onlyDescribed,
-    }, ROOT);
+    if (prepare) {
+      const pack = await materializeMlExport(id, opts, ROOT);
+      return json(res, 200, {
+        ok: true,
+        count: pack.count,
+        filename: pack.filename,
+        format: pack.format,
+        bytes: pack.bytes,
+        url: `/api/photos/${encodeURIComponent(pack.album_id)}/export-file?name=${encodeURIComponent(pack.filename)}`,
+      });
+    }
+    await streamMlExport(res, id, opts, ROOT);
   } catch (e) {
     if (res.headersSent) {
       try { res.end(); } catch { /* */ }
       return;
     }
+    return json(res, e.status || 500, { error: e.message });
+  }
+}
+
+function apiPhotoExportFile(res, id, u) {
+  const name = u.searchParams.get('name') || '';
+  try {
+    const file = resolveMlExportFile(id, name, ROOT);
+    const st = fs.statSync(file);
+    const ext = path.extname(name).slice(1);
+    const mime = ext === 'xml'
+      ? 'application/xml; charset=utf-8'
+      : ext === 'json'
+        ? 'application/json; charset=utf-8'
+        : 'application/x-ndjson; charset=utf-8';
+    res.writeHead(200, {
+      'Content-Type': mime,
+      'Content-Length': st.size,
+      'Content-Disposition': `attachment; filename="${name}"`,
+      'X-Content-Type-Options': 'nosniff',
+      'Cache-Control': 'no-store',
+    });
+    fs.createReadStream(file).pipe(res);
+  } catch (e) {
     return json(res, e.status || 500, { error: e.message });
   }
 }
@@ -2833,6 +2875,10 @@ const server = http.createServer(async (req, res) => {
     if (photoYml && req.method === 'POST') return await apiPhotoImportYml(req, res, photoYml[1]);
     const photoDescribe = u.pathname.match(/^\/api\/photos\/([^/]+)\/describe$/);
     if (photoDescribe && req.method === 'POST') return await apiPhotoDescribe(req, res, photoDescribe[1]);
+    const photoExportFile = u.pathname.match(/^\/api\/photos\/([^/]+)\/export-file$/);
+    if (photoExportFile && req.method === 'GET') {
+      return apiPhotoExportFile(res, photoExportFile[1], u);
+    }
     const photoExport = u.pathname.match(/^\/api\/photos\/([^/]+)\/export-ml$/);
     if (photoExport && (req.method === 'POST' || req.method === 'GET')) {
       return await apiPhotoExportMl(req, res, photoExport[1], u);

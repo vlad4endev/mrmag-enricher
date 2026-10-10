@@ -1023,50 +1023,41 @@ export function prepareMlExport(albumId, {
   };
 }
 
-function writeResChunk(res, chunk) {
+function exportsDir(albumId, root) {
+  return path.join(albumDir(assertAlbumId(albumId), root), 'exports');
+}
+
+/** Безопасное имя файла выгрузки: photos_<albumId>.(xml|json|jsonl) */
+const EXPORT_FILE_RE = /^photos_[a-zA-Z0-9_-]{1,64}\.(xml|json|jsonl)$/;
+
+function writeChunk(writable, chunk) {
   return new Promise((resolve, reject) => {
-    if (res.destroyed || res.writableEnded) {
+    if (writable.destroyed || writable.writableEnded) {
       reject(Object.assign(new Error('клиент отменил выгрузку'), { status: 499 }));
       return;
     }
-    const ok = res.write(chunk);
+    const ok = writable.write(chunk);
     if (ok) return resolve();
     const onDrain = () => { cleanup(); resolve(); };
     const onErr = (e) => { cleanup(); reject(e); };
     const cleanup = () => {
-      res.off('drain', onDrain);
-      res.off('error', onErr);
+      writable.off('drain', onDrain);
+      writable.off('error', onErr);
     };
-    res.once('drain', onDrain);
-    res.once('error', onErr);
+    writable.once('drain', onDrain);
+    writable.once('error', onErr);
   });
 }
 
-/**
- * Стримит ML-выгрузку в HTTP-ответ по одному offer/строке.
- * Не держит весь XML/JSON в RAM — иначе 10–15k описанных → OOM → «Failed to fetch».
- * Заголовки пишутся сразу (TTFB), тело — кусками.
- */
-export async function streamMlExport(res, albumId, {
-  format = 'jsonl',
+/** Пишет тело ML-выгрузки в любой Writable (HTTP / файл) — по одной строке. */
+async function writeMlExportBody(writable, prep, {
   include_images = false,
-  only_described = true,
 } = {}, root) {
-  const prep = prepareMlExport(albumId, { format, only_described }, root);
   const { meta, items } = prep;
-
-  res.writeHead(200, {
-    'Content-Type': prep.mime,
-    'Content-Disposition': `attachment; filename="${prep.filename}"`,
-    'X-Content-Type-Options': 'nosniff',
-    'X-Export-Count': String(prep.count),
-    'Cache-Control': 'no-store',
-  });
-
   const rowOpts = { include_images, album_id: meta.id, root };
 
   if (prep.format === 'xml') {
-    await writeResChunk(res, [
+    await writeChunk(writable, [
       '<?xml version="1.0" encoding="UTF-8"?>',
       '<yml_catalog>',
       '  <shop>',
@@ -1076,34 +1067,106 @@ export async function streamMlExport(res, albumId, {
     for (let i = 0; i < items.length; i++) {
       const row = photoExportRow(items[i], rowOpts);
       assertExportRow(row);
-      await writeResChunk(res, `${photoOfferXml(row, {
+      await writeChunk(writable, `${photoOfferXml(row, {
         index: i,
         picture: items[i].image_url || '',
       })}\n`);
     }
-    await writeResChunk(res, '    </offers>\n  </shop>\n</yml_catalog>\n');
-    res.end();
-    return { count: prep.count, filename: prep.filename, format: prep.format };
+    await writeChunk(writable, '    </offers>\n  </shop>\n</yml_catalog>\n');
+    return;
   }
 
   if (prep.format === 'json') {
-    await writeResChunk(res, '[\n');
+    await writeChunk(writable, '[\n');
     for (let i = 0; i < items.length; i++) {
       const row = photoExportRow(items[i], rowOpts);
       assertExportRow(row);
       const piece = JSON.stringify(row, null, 2).split('\n').map(ln => `  ${ln}`).join('\n');
-      await writeResChunk(res, `${i ? ',\n' : ''}${piece}`);
+      await writeChunk(writable, `${i ? ',\n' : ''}${piece}`);
     }
-    await writeResChunk(res, '\n]\n');
-    res.end();
-    return { count: prep.count, filename: prep.filename, format: prep.format };
+    await writeChunk(writable, '\n]\n');
+    return;
   }
 
   for (let i = 0; i < items.length; i++) {
     const row = photoExportRow(items[i], rowOpts);
     assertExportRow(row);
-    await writeResChunk(res, `${JSON.stringify(row)}\n`);
+    await writeChunk(writable, `${JSON.stringify(row)}\n`);
   }
+}
+
+/**
+ * Собрать выгрузку в файл на диске (photos/<id>/exports/…).
+ * Браузер потом качает готовый файл — без fetch().blob() на десятки МБ
+ * (именно blob через прокси давал «Failed to fetch» даже после стриминга).
+ */
+export async function materializeMlExport(albumId, {
+  format = 'jsonl',
+  include_images = false,
+  only_described = true,
+} = {}, root) {
+  const prep = prepareMlExport(albumId, { format, only_described }, root);
+  const dir = exportsDir(prep.album_id, root);
+  fs.mkdirSync(dir, { recursive: true });
+  const finalPath = path.join(dir, prep.filename);
+  const tmp = `${finalPath}.${process.pid}.${Date.now()}.tmp`;
+  const ws = fs.createWriteStream(tmp);
+  try {
+    await writeMlExportBody(ws, prep, { include_images }, root);
+    await new Promise((resolve, reject) => {
+      ws.end(() => resolve());
+      ws.once('error', reject);
+    });
+    fs.renameSync(tmp, finalPath);
+  } catch (e) {
+    try { ws.destroy(); } catch { /* */ }
+    try { fs.unlinkSync(tmp); } catch { /* */ }
+    throw e;
+  }
+  const st = fs.statSync(finalPath);
+  return {
+    count: prep.count,
+    album_id: prep.album_id,
+    filename: prep.filename,
+    format: prep.format,
+    mime: prep.mime,
+    bytes: st.size,
+    path: finalPath,
+  };
+}
+
+/** Путь к уже собранному файлу выгрузки (только безопасные имена). */
+export function resolveMlExportFile(albumId, filename, root) {
+  const id = assertAlbumId(albumId);
+  const name = String(filename || '');
+  if (!EXPORT_FILE_RE.test(name) || !name.includes(id)) {
+    throw httpError(400, 'Некорректное имя файла выгрузки');
+  }
+  const file = path.join(exportsDir(id, root), name);
+  if (!fs.existsSync(file)) throw httpError(404, 'Файл выгрузки не найден — соберите снова');
+  return file;
+}
+
+/**
+ * Стримит ML-выгрузку в HTTP-ответ по одному offer/строке.
+ * Для UI предпочтителен materializeMlExport + скачивание файла.
+ */
+export async function streamMlExport(res, albumId, {
+  format = 'jsonl',
+  include_images = false,
+  only_described = true,
+} = {}, root) {
+  const prep = prepareMlExport(albumId, { format, only_described }, root);
+
+  res.writeHead(200, {
+    'Content-Type': prep.mime,
+    'Content-Disposition': `attachment; filename="${prep.filename}"`,
+    'X-Content-Type-Options': 'nosniff',
+    'X-Export-Count': String(prep.count),
+    'Cache-Control': 'no-store',
+  });
+
+  await writeMlExportBody(res, prep, { include_images }, root);
   res.end();
   return { count: prep.count, filename: prep.filename, format: prep.format };
 }

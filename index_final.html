@@ -10930,42 +10930,35 @@ async function photoExportMl(format, includeImages){
   if(!photoAlbum){ photoStatus('Нет альбома', false); return; }
   const described=(photoAlbum.items||[]).filter(photoIsDescribed).length;
   if(!described){ photoStatus('Нет описанных фото для выгрузки', false); return; }
-  photoStatus(`Собираем ML-выгрузку (${described})…`);
-  // GET + stream на сервере: не копим весь XML в RAM (POST раньше рвался
-  // «Failed to fetch» на 10–15k при живом прогоне / нехватке heap).
-  const q=new URLSearchParams({ format: format||'jsonl' });
-  if(includeImages) q.set('include_images','1');
-  const url='/api/photos/'+encodeURIComponent(photoAlbum.id)+'/export-ml?'+q.toString();
+  photoStatus(`Собираем файл выгрузки (${described})…`);
+  // 1) POST → сервер пишет XML/JSON на диск, отвечает маленьким JSON.
+  // 2) <a href> качает готовый файл (браузер → диск, без fetch().blob()).
+  // blob на десятки МБ через NPM стабильно давал «Failed to fetch».
   try{
-    const res=await fetch(url,{ method:'GET', credentials:'same-origin' });
-    if(!res.ok){
-      let err='ошибка выгрузки';
-      try{ err=(await res.json()).error||err; }catch{ /* */ }
-      throw new Error(err);
+    const prep=await apiJson('/api/photos/'+encodeURIComponent(photoAlbum.id)+'/export-ml',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      credentials:'same-origin',
+      body:JSON.stringify({ format: format||'jsonl', include_images:!!includeImages }),
+    });
+    if(!prep?.url || !prep?.filename){
+      throw new Error('сервер не вернул ссылку на файл');
     }
-    const exported=Number(res.headers.get('X-Export-Count')||0);
-    if(exported && exported!==described){
-      throw new Error(`Выгрузка неполная: в файле ${exported}, описано ${described}`);
+    if(prep.count && described && prep.count!==described){
+      photoStatus(`В файле ${prep.count}, в интерфейсе ${described} — качаю серверный файл…`, true);
+    }else{
+      const mb=prep.bytes!=null ? ` · ${(Number(prep.bytes)/1e6).toFixed(1)} МБ` : '';
+      photoStatus(`Файл готов: ${prep.count||described}${mb} — скачивание…`, true);
     }
-    const blob=await res.blob();
-    const cd=res.headers.get('Content-Disposition')||'';
-    const m=cd.match(/filename="([^"]+)"/);
     const a=document.createElement('a');
-    a.href=URL.createObjectURL(blob);
-    a.download=m?m[1]:`photos_${photoAlbum.id}.${format==='json'?'json':format==='xml'||format==='yml'?'xml':'jsonl'}`;
+    a.href=prep.url;
+    a.download=prep.filename;
+    a.rel='noopener';
+    document.body.appendChild(a);
     a.click();
-    URL.revokeObjectURL(a.href);
-    photoStatus(`Выгрузка скачана: ${exported||described} из ${described} описанных`, true);
+    a.remove();
   }catch(e){
-    const raw=String(e?.message||e||'');
-    if(/failed to fetch|networkerror|load failed|сеть/i.test(raw)){
-      photoStatus(
-        'Выгрузка оборвалась по сети (большой альбом или прокси). Повторите; если идёт прогон — дождитесь паузы или Стоп, затем снова XML.',
-        false,
-      );
-      return;
-    }
-    photoStatus(raw||'не выгрузилось', false);
+    photoStatus(e.message||'не выгрузилось', false);
   }
 }
 

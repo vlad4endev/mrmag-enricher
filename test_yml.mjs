@@ -185,9 +185,11 @@ console.log('yml ok');
   const direct = photosToYmlXml([row], { imageUrls: [imgUrl] });
   assert.match(direct, /<picture>/);
 
-  // streamMlExport: те же байты, что buildMlExport, без пика RAM на весь файл.
+  // streamMlExport / materializeMlExport: те же байты, что buildMlExport.
   {
-    const { streamMlExport, photoOfferXml } = await import('./pipeline/photos.js');
+    const {
+      streamMlExport, materializeMlExport, resolveMlExportFile, photoOfferXml,
+    } = await import('./pipeline/photos.js');
     assert.match(photoOfferXml(row, { picture: imgUrl }), /<picture>/);
     const chunks = [];
     const fakeRes = {
@@ -207,6 +209,15 @@ console.log('yml ok');
     const body = Buffer.concat(chunks).toString('utf8');
     assert.equal(body, xmlPack.body);
     assert.equal(streamed.count, 2);
+
+    const mat = await materializeMlExport(al.id, { format: 'xml' }, rootE);
+    assert.equal(mat.count, 2);
+    assert.equal(mat.filename, xmlPack.filename);
+    assert.ok(mat.bytes > 0);
+    const onDisk = fs.readFileSync(mat.path, 'utf8');
+    assert.equal(onDisk, xmlPack.body);
+    assert.equal(resolveMlExportFile(al.id, mat.filename, rootE), mat.path);
+    assert.throws(() => resolveMlExportFile(al.id, '../meta.json', rootE), /Некорректное/);
   }
   console.log('ml export schema ok');
 }

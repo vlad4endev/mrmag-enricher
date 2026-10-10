@@ -921,50 +921,58 @@ export function escapeXml(s) {
 }
 
 /**
+ * Один <offer> для XML-выгрузки. picture — URL из image_url товара (не из row).
+ */
+export function photoOfferXml(row, { index = 0, picture = '' } = {}) {
+  const id = String(row.product_id || row.image_id || `photo-${index + 1}`).trim();
+  const lines = [`    <offer id="${escapeXml(id)}">`];
+  if (row.image) lines.push(`      <name>${escapeXml(row.image)}</name>`);
+  const pic = picture || row.image_url || '';
+  if (pic) lines.push(`      <picture>${escapeXml(pic)}</picture>`);
+  for (const key of ['caption', 'objects', 'description', 'alt']) {
+    const val = String(row[key] || '').trim();
+    if (val) lines.push(`      <${key}>${escapeXml(val)}</${key}>`);
+  }
+  if (Array.isArray(row.tags) && row.tags.length) {
+    lines.push('      <tags>');
+    for (const t of row.tags) {
+      const tag = String(t || '').trim();
+      if (tag) lines.push(`        <tag>${escapeXml(tag)}</tag>`);
+    }
+    lines.push('      </tags>');
+  }
+  const attrs = row.attributes && typeof row.attributes === 'object' && !Array.isArray(row.attributes)
+    ? row.attributes
+    : null;
+  if (attrs && Object.keys(attrs).length) {
+    lines.push('      <attributes>');
+    for (const [k, v] of Object.entries(attrs)) {
+      if (v == null || v === false) continue;
+      const name = String(k || '').trim();
+      if (!name) continue;
+      lines.push(`        <param name="${escapeXml(name)}">${escapeXml(String(v))}</param>`);
+    }
+    lines.push('      </attributes>');
+  }
+  if (row.product_id) lines.push(`      <product_id>${escapeXml(row.product_id)}</product_id>`);
+  if (row.image_id) lines.push(`      <image_id>${escapeXml(row.image_id)}</image_id>`);
+  if (row.image_base64) {
+    lines.push(`      <image_base64>${escapeXml(row.image_base64)}</image_base64>`);
+  }
+  lines.push('    </offer>');
+  return lines.join('\n');
+}
+
+/**
  * ML-выгрузка в XML «как в фиде»: yml_catalog → shop → offers → offer.
  * Те же поля, что в JSON (image→name, caption, objects, description, alt, tags,
  * attributes, product_id, image_id) + picture из image_url товара.
  */
 export function photosToYmlXml(photos, { imageUrls = [] } = {}) {
-  const offers = photos.map((row, i) => {
-    const id = String(row.product_id || row.image_id || `photo-${i + 1}`).trim();
-    const lines = [`    <offer id="${escapeXml(id)}">`];
-    if (row.image) lines.push(`      <name>${escapeXml(row.image)}</name>`);
-    const picture = imageUrls[i] || row.image_url || '';
-    if (picture) lines.push(`      <picture>${escapeXml(picture)}</picture>`);
-    for (const key of ['caption', 'objects', 'description', 'alt']) {
-      const val = String(row[key] || '').trim();
-      if (val) lines.push(`      <${key}>${escapeXml(val)}</${key}>`);
-    }
-    if (Array.isArray(row.tags) && row.tags.length) {
-      lines.push('      <tags>');
-      for (const t of row.tags) {
-        const tag = String(t || '').trim();
-        if (tag) lines.push(`        <tag>${escapeXml(tag)}</tag>`);
-      }
-      lines.push('      </tags>');
-    }
-    const attrs = row.attributes && typeof row.attributes === 'object' && !Array.isArray(row.attributes)
-      ? row.attributes
-      : null;
-    if (attrs && Object.keys(attrs).length) {
-      lines.push('      <attributes>');
-      for (const [k, v] of Object.entries(attrs)) {
-        if (v == null || v === false) continue;
-        const name = String(k || '').trim();
-        if (!name) continue;
-        lines.push(`        <param name="${escapeXml(name)}">${escapeXml(String(v))}</param>`);
-      }
-      lines.push('      </attributes>');
-    }
-    if (row.product_id) lines.push(`      <product_id>${escapeXml(row.product_id)}</product_id>`);
-    if (row.image_id) lines.push(`      <image_id>${escapeXml(row.image_id)}</image_id>`);
-    if (row.image_base64) {
-      lines.push(`      <image_base64>${escapeXml(row.image_base64)}</image_base64>`);
-    }
-    lines.push('    </offer>');
-    return lines.join('\n');
-  });
+  const offers = photos.map((row, i) => photoOfferXml(row, {
+    index: i,
+    picture: imageUrls[i] || '',
+  }));
 
   return [
     '<?xml version="1.0" encoding="UTF-8"?>',
@@ -979,22 +987,138 @@ export function photosToYmlXml(photos, { imageUrls = [] } = {}) {
   ].join('\n');
 }
 
+function assertExportRow(row) {
+  for (const key of PHOTO_EXPORT_KEYS) {
+    if (!(key in row)) throw httpError(500, `В выгрузке нет поля «${key}»`);
+  }
+}
+
+/** Нормализация format + список позиций для ML-выгрузки. */
+export function prepareMlExport(albumId, {
+  format = 'jsonl',
+  only_described = true,
+} = {}, root) {
+  const meta = readMeta(assertAlbumId(albumId), root);
+  let items = meta.items.slice();
+  if (only_described) items = items.filter(isPhotoExportable);
+  if (!items.length) throw httpError(400, 'Нет описанных фото для выгрузки');
+
+  const fmt = format === 'yml' ? 'xml' : format;
+  const kind = fmt === 'json' || fmt === 'xml' ? fmt : 'jsonl';
+  const ext = kind === 'xml' ? 'xml' : kind === 'json' ? 'json' : 'jsonl';
+  const mime = kind === 'xml'
+    ? 'application/xml; charset=utf-8'
+    : kind === 'json'
+      ? 'application/json; charset=utf-8'
+      : 'application/x-ndjson; charset=utf-8';
+
+  return {
+    meta,
+    items,
+    format: kind,
+    count: items.length,
+    album_id: meta.id,
+    filename: `photos_${meta.id}.${ext}`,
+    mime,
+  };
+}
+
+function writeResChunk(res, chunk) {
+  return new Promise((resolve, reject) => {
+    if (res.destroyed || res.writableEnded) {
+      reject(Object.assign(new Error('клиент отменил выгрузку'), { status: 499 }));
+      return;
+    }
+    const ok = res.write(chunk);
+    if (ok) return resolve();
+    const onDrain = () => { cleanup(); resolve(); };
+    const onErr = (e) => { cleanup(); reject(e); };
+    const cleanup = () => {
+      res.off('drain', onDrain);
+      res.off('error', onErr);
+    };
+    res.once('drain', onDrain);
+    res.once('error', onErr);
+  });
+}
+
 /**
- * ML-датасет: JSONL / JSON / XML (YML-фид).
- * Все described|ready попадают в файл; ключи строки — стабильный рабочий набор.
- * include_images=false — без base64 (лёгкий).
+ * Стримит ML-выгрузку в HTTP-ответ по одному offer/строке.
+ * Не держит весь XML/JSON в RAM — иначе 10–15k описанных → OOM → «Failed to fetch».
+ * Заголовки пишутся сразу (TTFB), тело — кусками.
+ */
+export async function streamMlExport(res, albumId, {
+  format = 'jsonl',
+  include_images = false,
+  only_described = true,
+} = {}, root) {
+  const prep = prepareMlExport(albumId, { format, only_described }, root);
+  const { meta, items } = prep;
+
+  res.writeHead(200, {
+    'Content-Type': prep.mime,
+    'Content-Disposition': `attachment; filename="${prep.filename}"`,
+    'X-Content-Type-Options': 'nosniff',
+    'X-Export-Count': String(prep.count),
+    'Cache-Control': 'no-store',
+  });
+
+  const rowOpts = { include_images, album_id: meta.id, root };
+
+  if (prep.format === 'xml') {
+    await writeResChunk(res, [
+      '<?xml version="1.0" encoding="UTF-8"?>',
+      '<yml_catalog>',
+      '  <shop>',
+      '    <offers>',
+      '',
+    ].join('\n'));
+    for (let i = 0; i < items.length; i++) {
+      const row = photoExportRow(items[i], rowOpts);
+      assertExportRow(row);
+      await writeResChunk(res, `${photoOfferXml(row, {
+        index: i,
+        picture: items[i].image_url || '',
+      })}\n`);
+    }
+    await writeResChunk(res, '    </offers>\n  </shop>\n</yml_catalog>\n');
+    res.end();
+    return { count: prep.count, filename: prep.filename, format: prep.format };
+  }
+
+  if (prep.format === 'json') {
+    await writeResChunk(res, '[\n');
+    for (let i = 0; i < items.length; i++) {
+      const row = photoExportRow(items[i], rowOpts);
+      assertExportRow(row);
+      const piece = JSON.stringify(row, null, 2).split('\n').map(ln => `  ${ln}`).join('\n');
+      await writeResChunk(res, `${i ? ',\n' : ''}${piece}`);
+    }
+    await writeResChunk(res, '\n]\n');
+    res.end();
+    return { count: prep.count, filename: prep.filename, format: prep.format };
+  }
+
+  for (let i = 0; i < items.length; i++) {
+    const row = photoExportRow(items[i], rowOpts);
+    assertExportRow(row);
+    await writeResChunk(res, `${JSON.stringify(row)}\n`);
+  }
+  res.end();
+  return { count: prep.count, filename: prep.filename, format: prep.format };
+}
+
+/**
+ * ML-датасет: JSONL / JSON / XML (YML-фид) — целиком в строке (тесты / мелкие альбомы).
+ * Для HTTP на 5k+ используйте streamMlExport: иначе пик RAM и обрыв «Failed to fetch».
  */
 export function buildMlExport(albumId, {
   format = 'jsonl',
   include_images = false,
   only_described = true,
 } = {}, root) {
-  const meta = readMeta(assertAlbumId(albumId), root);
-  let items = meta.items.slice();
-  if (only_described) {
-    items = items.filter(isPhotoExportable);
-  }
-  if (!items.length) throw httpError(400, 'Нет описанных фото для выгрузки');
+  const prep = prepareMlExport(albumId, { format, only_described }, root);
+  const { meta, items } = prep;
 
   const photos = items.map((item) => photoExportRow(item, {
     include_images,
@@ -1006,41 +1130,29 @@ export function buildMlExport(albumId, {
   if (photos.length !== items.length) {
     throw httpError(500, `Выгрузка обрезана: ${photos.length} из ${items.length}`);
   }
-  for (const row of photos) {
-    for (const key of PHOTO_EXPORT_KEYS) {
-      if (!(key in row)) throw httpError(500, `В выгрузке нет поля «${key}»`);
-    }
-  }
+  for (const row of photos) assertExportRow(row);
 
-  const fmt = format === 'yml' ? 'xml' : format;
-  const pack = { count: photos.length, album_id: meta.id };
+  const pack = { count: photos.length, album_id: meta.id, filename: prep.filename, mime: prep.mime };
 
-  if (fmt === 'xml') {
+  if (prep.format === 'xml') {
     return {
       ...pack,
-      filename: `photos_${meta.id}.xml`,
-      mime: 'application/xml; charset=utf-8',
       body: photosToYmlXml(photos, {
         imageUrls: items.map(i => i.image_url || null),
       }),
     };
   }
 
-  if (fmt === 'json') {
+  if (prep.format === 'json') {
     return {
       ...pack,
-      filename: `photos_${meta.id}.json`,
-      mime: 'application/json; charset=utf-8',
       body: `${JSON.stringify(photos, null, 2)}\n`,
     };
   }
 
-  const lines = photos.map(r => JSON.stringify(r)).join('\n') + '\n';
   return {
     ...pack,
-    filename: `photos_${meta.id}.jsonl`,
-    mime: 'application/x-ndjson; charset=utf-8',
-    body: lines,
+    body: `${photos.map(r => JSON.stringify(r)).join('\n')}\n`,
   };
 }
 

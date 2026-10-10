@@ -10931,13 +10931,13 @@ async function photoExportMl(format, includeImages){
   const described=(photoAlbum.items||[]).filter(photoIsDescribed).length;
   if(!described){ photoStatus('Нет описанных фото для выгрузки', false); return; }
   photoStatus(`Собираем ML-выгрузку (${described})…`);
+  // GET + stream на сервере: не копим весь XML в RAM (POST раньше рвался
+  // «Failed to fetch» на 10–15k при живом прогоне / нехватке heap).
+  const q=new URLSearchParams({ format: format||'jsonl' });
+  if(includeImages) q.set('include_images','1');
+  const url='/api/photos/'+encodeURIComponent(photoAlbum.id)+'/export-ml?'+q.toString();
   try{
-    const res=await fetch('/api/photos/'+encodeURIComponent(photoAlbum.id)+'/export-ml',{
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
-      credentials:'same-origin',
-      body:JSON.stringify({ format, include_images:!!includeImages }),
-    });
+    const res=await fetch(url,{ method:'GET', credentials:'same-origin' });
     if(!res.ok){
       let err='ошибка выгрузки';
       try{ err=(await res.json()).error||err; }catch{ /* */ }
@@ -10956,7 +10956,17 @@ async function photoExportMl(format, includeImages){
     a.click();
     URL.revokeObjectURL(a.href);
     photoStatus(`Выгрузка скачана: ${exported||described} из ${described} описанных`, true);
-  }catch(e){ photoStatus(e.message||'не выгрузилось', false); }
+  }catch(e){
+    const raw=String(e?.message||e||'');
+    if(/failed to fetch|networkerror|load failed|сеть/i.test(raw)){
+      photoStatus(
+        'Выгрузка оборвалась по сети (большой альбом или прокси). Повторите; если идёт прогон — дождитесь паузы или Стоп, затем снова XML.',
+        false,
+      );
+      return;
+    }
+    photoStatus(raw||'не выгрузилось', false);
+  }
 }
 
 document.addEventListener('click',e=>{

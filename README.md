@@ -494,6 +494,8 @@ docker restart nginx_proxy_manager
    proxy_read_timeout 300s;
    send_timeout 300s;
    client_max_body_size 80m;
+   proxy_request_buffering off;
+   proxy_buffering off;
    ```
 
    После Save — Reload NPM / пересохранить Proxy Host.

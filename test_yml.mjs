@@ -184,5 +184,29 @@ console.log('yml ok');
   assert.equal(ymlAlias.body, xmlPack.body);
   const direct = photosToYmlXml([row], { imageUrls: [imgUrl] });
   assert.match(direct, /<picture>/);
+
+  // streamMlExport: те же байты, что buildMlExport, без пика RAM на весь файл.
+  {
+    const { streamMlExport, photoOfferXml } = await import('./pipeline/photos.js');
+    assert.match(photoOfferXml(row, { picture: imgUrl }), /<picture>/);
+    const chunks = [];
+    const fakeRes = {
+      destroyed: false,
+      writableEnded: false,
+      headers: null,
+      writeHead(code, h) { this.statusCode = code; this.headers = h; },
+      write(chunk) { chunks.push(Buffer.from(chunk)); return true; },
+      end(chunk) { if (chunk) chunks.push(Buffer.from(chunk)); this.writableEnded = true; },
+      once() {},
+      off() {},
+    };
+    const streamed = await streamMlExport(fakeRes, al.id, { format: 'xml' }, rootE);
+    assert.equal(fakeRes.statusCode, 200);
+    assert.equal(String(fakeRes.headers['X-Export-Count']), '2');
+    assert.match(fakeRes.headers['Content-Type'], /xml/);
+    const body = Buffer.concat(chunks).toString('utf8');
+    assert.equal(body, xmlPack.body);
+    assert.equal(streamed.count, 2);
+  }
   console.log('ml export schema ok');
 }

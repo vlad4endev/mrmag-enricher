@@ -75,7 +75,7 @@
  *   GET  /api/photo-jobs/:id             прогресс
  *   POST /api/photo-jobs/:id/stop
  *   DELETE /api/photo-jobs/:id
- *   POST /api/photos/:id/export-ml       выгрузка ML { format: jsonl|json|xml, include_images? }
+ *   GET|POST /api/photos/:id/export-ml   выгрузка ML (stream): format=jsonl|json|xml, include_images?
  *
  * Товар без description и annotation не пропускается молча: по имени
  * ищется описание в сети (ensureSource), и адрес найденной страницы
@@ -144,7 +144,8 @@ import {
 import { exportTemplatesView } from './pipeline/export_template.js';
 import {
   bootstrapPhotosDir, listAlbums, createAlbum, getAlbum, getPhotoItem, deleteAlbum,
-  uploadPhotos, importFeedOffers, patchPhotoItem, deletePhotoItem, readPhotoFile, buildMlExport,
+  uploadPhotos, importFeedOffers, patchPhotoItem, deletePhotoItem, readPhotoFile,
+  streamMlExport,
   applyDescribeResult, patchAlbum, photosDir, PHOTO_LIMITS,
 } from './pipeline/photos.js';
 import { describePhoto, defaultPhotoSystemPrompt, PHOTO_PROMPT_PLACEHOLDERS, resolvePhotoSystemPrompt } from './pipeline/photo_agent.js';
@@ -2383,28 +2384,38 @@ async function apiPhotoDescribe(req, res, id) {
   }
 }
 
-async function apiPhotoExportMl(req, res, id) {
-  const raw = await readBody(req, 64_000);
-  let body;
-  try { body = JSON.parse(raw || '{}'); } catch { return json(res, 400, { error: 'Тело не JSON' }); }
+async function apiPhotoExportMl(req, res, id, u) {
+  // GET ?format=xml — нативные скачивания; POST {format} — как раньше в UI.
+  // Ответ стримится кусками: сборка всего XML в RAM на 10–15k рвала соединение
+  // («Failed to fetch») при живом прогоне / нехватке heap.
+  let body = {};
+  if (req.method === 'POST') {
+    const raw = await readBody(req, 64_000);
+    try { body = JSON.parse(raw || '{}'); } catch { return json(res, 400, { error: 'Тело не JSON' }); }
+  }
+  const q = u?.searchParams;
+  const fmtRaw = String(body.format ?? q?.get('format') ?? 'jsonl').toLowerCase();
+  const format = fmtRaw === 'json' || fmtRaw === 'xml' || fmtRaw === 'yml'
+    ? (fmtRaw === 'yml' ? 'xml' : fmtRaw)
+    : 'jsonl';
+  const includeImages = body.include_images === true
+    || body.include_images === 1
+    || q?.get('include_images') === '1'
+    || q?.get('include_images') === 'true';
+  const onlyDescribed = body.only_described !== false
+    && q?.get('only_described') !== '0'
+    && q?.get('only_described') !== 'false';
   try {
-    const fmt = String(body.format || 'jsonl').toLowerCase();
-    const format = fmt === 'json' || fmt === 'xml' || fmt === 'yml'
-      ? (fmt === 'yml' ? 'xml' : fmt)
-      : 'jsonl';
-    const pack = buildMlExport(id, {
+    await streamMlExport(res, id, {
       format,
-      include_images: Boolean(body.include_images),
-      only_described: body.only_described !== false,
+      include_images: includeImages,
+      only_described: onlyDescribed,
     }, ROOT);
-    res.writeHead(200, {
-      'Content-Type': pack.mime,
-      'Content-Disposition': `attachment; filename="${pack.filename}"`,
-      'X-Content-Type-Options': 'nosniff',
-      'X-Export-Count': String(pack.count ?? ''),
-    });
-    return res.end(pack.body);
   } catch (e) {
+    if (res.headersSent) {
+      try { res.end(); } catch { /* */ }
+      return;
+    }
     return json(res, e.status || 500, { error: e.message });
   }
 }
@@ -2823,7 +2834,9 @@ const server = http.createServer(async (req, res) => {
     const photoDescribe = u.pathname.match(/^\/api\/photos\/([^/]+)\/describe$/);
     if (photoDescribe && req.method === 'POST') return await apiPhotoDescribe(req, res, photoDescribe[1]);
     const photoExport = u.pathname.match(/^\/api\/photos\/([^/]+)\/export-ml$/);
-    if (photoExport && req.method === 'POST') return await apiPhotoExportMl(req, res, photoExport[1]);
+    if (photoExport && (req.method === 'POST' || req.method === 'GET')) {
+      return await apiPhotoExportMl(req, res, photoExport[1], u);
+    }
     const photoItem = u.pathname.match(/^\/api\/photos\/([^/]+)\/items\/([^/]+)$/);
     if (photoItem) {
       if (req.method === 'GET') return apiPhotoItemGet(res, photoItem[1], photoItem[2]);

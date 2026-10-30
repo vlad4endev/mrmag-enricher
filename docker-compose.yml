@@ -94,6 +94,8 @@ services:
       DUMPS_DIR: /data/dumps
       PHOTOS_DIR: /data/photos
       PHOTO_JOBS_DIR: /data/photo_jobs
+      AUDIO_DIR: /data/audio
+      AUDIO_JOBS_DIR: /data/audio_jobs
       REFINE_JOBS_DIR: /data/refine_jobs
     volumes:
       - enricher-data:/data

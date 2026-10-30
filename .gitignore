@@ -29,6 +29,9 @@ dumps/
 # Альбомы фото и vision-прогоны
 photos/
 photo_jobs/
+# Аудио: проекты и STT-прогоны
+audio/
+audio_jobs/
 refine_jobs/
 provider_usage.json
 

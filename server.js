@@ -66,6 +66,7 @@
  *   PATCH /api/photos/:id     переименовать { name? }
  *   DELETE /api/photos/:id    удалить альбом
  *   POST /api/photos/:id/upload  массовая загрузка { files:[{name,data}] }
+ *   PUT  /api/photos/:id/items/:itemId/image  байты картинки товара из фида (шлёт браузер)
  *   PATCH /api/photos/:id/items/:itemId  правка текста
  *   DELETE /api/photos/:id/items/:itemId
  *   GET  /api/photos/:id/file/:itemId    отдать бинарник изображения
@@ -78,6 +79,17 @@
  *   POST /api/photos/:id/export-ml       собрать ML-файл на диск → {url,count,bytes}
  *   GET  /api/photos/:id/export-ml       stream (legacy) или ?prepare=1 → JSON как POST
  *   GET  /api/photos/:id/export-file     скачать готовый файл ?name=photos_<id>.xml
+ *   GET  /api/audio           проекты аудиозаписей
+ *   POST /api/audio           создать проект { name, language?, summary_style? }
+ *   GET  /api/audio/:id       проект + items
+ *   PATCH /api/audio/:id      настройки проекта
+ *   DELETE /api/audio/:id     удалить проект
+ *   POST /api/audio/:id/upload  загрузка { files:[{name,data}] }
+ *   POST /api/audio/:id/process  фоновый прогон STT+summary
+ *   GET  /api/audio/:id/file/:itemId  отдать аудиофайл
+ *   PATCH|DELETE /api/audio/:id/items/:itemId
+ *   GET  /api/audio-jobs       список прогонов аудио
+ *   GET|POST|DELETE /api/audio-jobs/:id[/stop]
  *
  * Товар без description и annotation не пропускается молча: по имени
  * ищется описание в сети (ensureSource), и адрес найденной страницы
@@ -153,6 +165,13 @@ import {
 import { describePhoto, defaultPhotoSystemPrompt, PHOTO_PROMPT_PLACEHOLDERS, resolvePhotoSystemPrompt } from './pipeline/photo_agent.js';
 import { parseYml } from './pipeline/yml_feed.js';
 import { createPhotoJobStore } from './pipeline/photo_jobs.js';
+import {
+  bootstrapAudioDir, listProjects, createProject, getProject, patchProject, deleteProject,
+  uploadAudio, deleteAudioItem, patchAudioItem, readAudioFile, processAudioItem,
+  applyProcessResult, AUDIO_LIMITS, TRANSCRIBE_MODELS, SUMMARY_STYLES, sumAudioSpend,
+  audioDir,
+} from './pipeline/audio.js';
+import { createAudioJobStore } from './pipeline/audio_jobs.js';
 import { analyzeFiles, createRefineJobStore } from './refine/index.js';
 import {
   isAitunnelProvider, fetchAitunnelBalance, providerSpentRub, touchProviderBalance,
@@ -182,6 +201,7 @@ bootstrapSettingsFile(ROOT);
 bootstrapDictionariesDir(ROOT);
 bootstrapDumpsDir(ROOT);
 bootstrapPhotosDir(ROOT);
+bootstrapAudioDir(ROOT);
 {
   const boot = loadSettings(ROOT);
   const def = resolveProvider(boot);
@@ -454,6 +474,20 @@ function readBody(req, limit = 1_000_000) {
       chunks.push(c);
     });
     req.on('end', () => resolve(Buffer.concat(chunks).toString('utf-8')));
+    req.on('error', reject);
+  });
+}
+
+function readBodyBuffer(req, limit) {
+  return new Promise((resolve, reject) => {
+    let size = 0;
+    const chunks = [];
+    req.on('data', c => {
+      size += c.length;
+      if (size > limit) { reject(Object.assign(new Error('Файл слишком велик'), { status: 413 })); req.destroy(); return; }
+      chunks.push(c);
+    });
+    req.on('end', () => resolve(Buffer.concat(chunks)));
     req.on('error', reject);
   });
 }
@@ -1048,7 +1082,8 @@ async function apiProviderBalance(res, id) {
   if (!ep.apiKey) return json(res, 400, { error: 'Нет API-ключа AITUNNEL' });
 
   // Не сканируем все альбомы (sumPhotoSpend) на каждый баланс — на 15k это
-  // JSON.parse(meta) и FATAL heap OOM. Ledger provider_usage.json достаточно.
+  // JSON.parse(meta) и FATAL heap OOM. Ledger provider_usage.json достаточно
+  // (аудио тоже пишет spend через recordProviderSpend).
   const spent_rub = providerSpentRub(prov.id, { photos: 0 }, ROOT);
   const cached = loadProviderUsage(ROOT).providers[prov.id] || {};
   const payload = {
@@ -2170,11 +2205,192 @@ const photoStore = createPhotoJobStore({
     || (process.env.SETTINGS_PATH?.startsWith('/data/') ? '/data/photo_jobs' : path.join(ROOT, 'photo_jobs')),
 });
 
+async function processAudioOne({
+  projectId, itemId, transcribeModel, summaryModel, language, summaryStyle,
+  summarize = true, provider, onNote = () => {},
+}) {
+  const settings = loadSettings(ROOT);
+  const AUDIO_PROVIDER = 'aitunnel';
+  let prov = (settings.providers || []).find(p => p.id === AUDIO_PROVIDER)
+    || (settings.providers || []).find(p => /aitunnel\.ru/i.test(p.base_url || ''));
+  if (!prov) {
+    throw Object.assign(
+      new Error('Для аудио нужен провайдер AITUNNEL — добавьте его в Настройки → Провайдеры'),
+      { status: 400 },
+    );
+  }
+  if (provider && provider !== prov.id && !/aitunnel/i.test(String(provider))) {
+    throw Object.assign(
+      new Error(`Для аудио разрешён только AITUNNEL, получен «${provider}»`),
+      { status: 400 },
+    );
+  }
+  if (prov.enabled === false) {
+    throw Object.assign(new Error('AITUNNEL выключен в настройках'), { status: 400 });
+  }
+  const ep = providerEndpoint(prov, settings);
+  const apiKey = ep.apiKey || API_KEY;
+  if (!apiKey) {
+    throw Object.assign(new Error('Нет API-ключа AITUNNEL'), { status: 400 });
+  }
+  if (!/aitunnel\.ru/i.test(ep.chatUrl || prov.base_url || '')) {
+    throw Object.assign(
+      new Error('Провайдер AITUNNEL должен указывать на api.aitunnel.ru'),
+      { status: 400 },
+    );
+  }
+  const file = await readAudioFile(projectId, itemId, ROOT);
+  const chatModel = summaryModel
+    ? (resolveProviderModel(prov, summaryModel, settings) || summaryModel)
+    : null;
+  const result = await processAudioItem(file, {
+    transcribeModel: transcribeModel || 'whisper-1',
+    summaryModel: chatModel,
+    language: language || 'ru',
+    summaryStyle: summaryStyle || 'meeting',
+    summarize: summarize !== false,
+    apiKey: null,
+    baseUrl: ep.baseUrl,
+    chatUrl: ep.chatUrl,
+    headers: ep.headers || {},
+    fetchImpl: (url, init) => providerFetch(url, init, { useProxy: providerUsesProxy(prov) }),
+    onNote,
+    root: ROOT,
+  });
+  const saved = applyProcessResult(projectId, itemId, result, ROOT);
+  return { item: saved, usage: result.usage };
+}
+
+const audioStore = createAudioJobStore({
+  processOne: processAudioOne,
+  dir: process.env.AUDIO_JOBS_DIR
+    || (process.env.SETTINGS_PATH?.startsWith('/data/') ? '/data/audio_jobs' : path.join(ROOT, 'audio_jobs')),
+});
+
 const refineStore = createRefineJobStore({
   dir: process.env.REFINE_JOBS_DIR
     || (process.env.SETTINGS_PATH?.startsWith('/data/') ? '/data/refine_jobs' : path.join(ROOT, 'refine_jobs')),
   root: ROOT,
 });
+
+function apiAudioList(res) {
+  return json(res, 200, {
+    projects: listProjects(ROOT),
+    limits: AUDIO_LIMITS,
+    transcribe_models: TRANSCRIBE_MODELS,
+    summary_styles: SUMMARY_STYLES,
+  });
+}
+
+async function apiAudioCreate(req, res) {
+  const raw = await readBody(req, 64_000);
+  let body;
+  try { body = JSON.parse(raw || '{}'); } catch { return json(res, 400, { error: 'Тело не JSON' }); }
+  try {
+    const project = createProject(body.name || 'Аудио', {
+      language: body.language,
+      summary_style: body.summary_style,
+      transcribe_model: body.transcribe_model,
+      summary_model: body.summary_model,
+    }, ROOT);
+    return json(res, 201, { project });
+  } catch (e) {
+    return json(res, e.status || 500, { error: e.message });
+  }
+}
+
+function apiAudioGet(res, id) {
+  try { return json(res, 200, { project: getProject(id, ROOT) }); }
+  catch (e) { return json(res, e.status || 500, { error: e.message }); }
+}
+
+async function apiAudioPatch(req, res, id) {
+  const raw = await readBody(req, 64_000);
+  let body;
+  try { body = JSON.parse(raw || '{}'); } catch { return json(res, 400, { error: 'Тело не JSON' }); }
+  try {
+    return json(res, 200, { project: patchProject(id, body || {}, ROOT) });
+  } catch (e) {
+    return json(res, e.status || 500, { error: e.message });
+  }
+}
+
+function apiAudioDelete(res, id) {
+  try { return json(res, 200, deleteProject(id, ROOT)); }
+  catch (e) { return json(res, e.status || 500, { error: e.message }); }
+}
+
+async function apiAudioUpload(req, res, id) {
+  const raw = await readBody(req, BULK_BODY_LIMIT);
+  let body;
+  try { body = JSON.parse(raw || '{}'); } catch { return json(res, 400, { error: 'Тело не JSON' }); }
+  try {
+    return json(res, 200, uploadAudio(id, body.files || [], ROOT));
+  } catch (e) {
+    return json(res, e.status || 500, { error: e.message });
+  }
+}
+
+async function apiAudioProcess(req, res, id) {
+  const raw = await readBody(req, 1_000_000);
+  let body;
+  try { body = JSON.parse(raw || '{}'); } catch { return json(res, 400, { error: 'Тело не JSON' }); }
+  const {
+    transcribe_model, summary_model, language, summary_style, summarize, item_ids,
+  } = body || {};
+  if (!transcribe_model || typeof transcribe_model !== 'string') {
+    return json(res, 400, { error: 'Не передана модель транскрипции' });
+  }
+  if (summarize !== false && (!summary_model || typeof summary_model !== 'string')) {
+    return json(res, 400, { error: 'Не передана модель суммаризации' });
+  }
+  try {
+    const job = audioStore.create({
+      project_id: id,
+      transcribe_model,
+      summary_model: summary_model || null,
+      language: language || 'ru',
+      summary_style: summary_style || 'meeting',
+      summarize: summarize !== false,
+      item_ids: item_ids || null,
+      provider: 'aitunnel',
+    });
+    return json(res, 202, audioStore.summary(job));
+  } catch (e) {
+    return json(res, e.status || 500, { error: e.message });
+  }
+}
+
+async function apiAudioFile(res, projectId, itemId) {
+  try {
+    const { mime, buf } = await readAudioFile(projectId, itemId, ROOT);
+    res.writeHead(200, {
+      'Content-Type': mime,
+      'Content-Length': buf.length,
+      'Cache-Control': 'private, max-age=3600',
+      'X-Content-Type-Options': 'nosniff',
+    });
+    return res.end(buf);
+  } catch (e) {
+    return json(res, e.status || 500, { error: e.message });
+  }
+}
+
+async function apiAudioItemPatch(req, res, projectId, itemId) {
+  const raw = await readBody(req, 1_000_000);
+  let body;
+  try { body = JSON.parse(raw || '{}'); } catch { return json(res, 400, { error: 'Тело не JSON' }); }
+  try {
+    return json(res, 200, { item: patchAudioItem(projectId, itemId, body || {}, ROOT) });
+  } catch (e) {
+    return json(res, e.status || 500, { error: e.message });
+  }
+}
+
+function apiAudioItemDelete(res, projectId, itemId) {
+  try { return json(res, 200, deleteAudioItem(projectId, itemId, ROOT)); }
+  catch (e) { return json(res, e.status || 500, { error: e.message }); }
+}
 
 function apiPhotosList(res) {
   return json(res, 200, { albums: listAlbums(ROOT), limits: PHOTO_LIMITS });
@@ -2725,6 +2941,7 @@ try {
 // не должен стоить оплаченных товаров.
 const resumedJobs = store.restore();
 const resumedPhotoJobs = photoStore.restore();
+const resumedAudioJobs = audioStore.restore();
 const resumedRefineJobs = refineStore.restore();
 
 const server = http.createServer(async (req, res) => {
@@ -2897,6 +3114,53 @@ const server = http.createServer(async (req, res) => {
       if (req.method === 'DELETE') return apiPhotoDelete(res, id);
     }
 
+    // Аудио: проекты, загрузка, STT + суммаризация
+    if (req.method === 'GET'  && u.pathname === '/api/audio') return apiAudioList(res);
+    if (req.method === 'POST' && u.pathname === '/api/audio') return await apiAudioCreate(req, res);
+    if (req.method === 'GET'  && u.pathname === '/api/audio-jobs') {
+      return json(res, 200, { jobs: audioStore.list() });
+    }
+    const audioJob = u.pathname.match(/^\/api\/audio-jobs\/([\w-]+)(\/stop)?$/);
+    if (audioJob) {
+      const [, id, stopping] = audioJob;
+      if (req.method === 'GET' && !stopping) {
+        const job = audioStore.get(id);
+        if (!job) return json(res, 404, { error: 'Прогон аудио не найден' });
+        return json(res, 200, audioStore.state(job, {
+          from: u.searchParams.get('from'),
+          logFrom: u.searchParams.get('logFrom'),
+        }));
+      }
+      if (req.method === 'POST' && stopping) {
+        return audioStore.stop(id)
+          ? json(res, 200, { ok: true })
+          : json(res, 404, { error: 'Прогон аудио не найден' });
+      }
+      if (req.method === 'DELETE' && !stopping) {
+        return audioStore.remove(id)
+          ? json(res, 200, { ok: true })
+          : json(res, 404, { error: 'Прогон аудио не найден' });
+      }
+    }
+    const audioFile = u.pathname.match(/^\/api\/audio\/([^/]+)\/file\/([^/]+)$/);
+    if (audioFile && req.method === 'GET') return await apiAudioFile(res, audioFile[1], audioFile[2]);
+    const audioUpload = u.pathname.match(/^\/api\/audio\/([^/]+)\/upload$/);
+    if (audioUpload && req.method === 'POST') return await apiAudioUpload(req, res, audioUpload[1]);
+    const audioProcess = u.pathname.match(/^\/api\/audio\/([^/]+)\/process$/);
+    if (audioProcess && req.method === 'POST') return await apiAudioProcess(req, res, audioProcess[1]);
+    const audioItem = u.pathname.match(/^\/api\/audio\/([^/]+)\/items\/([^/]+)$/);
+    if (audioItem) {
+      if (req.method === 'PATCH') return await apiAudioItemPatch(req, res, audioItem[1], audioItem[2]);
+      if (req.method === 'DELETE') return apiAudioItemDelete(res, audioItem[1], audioItem[2]);
+    }
+    const audioProject = u.pathname.match(/^\/api\/audio\/([^/]+)$/);
+    if (audioProject) {
+      const id = audioProject[1];
+      if (req.method === 'GET') return apiAudioGet(res, id);
+      if (req.method === 'PATCH') return await apiAudioPatch(req, res, id);
+      if (req.method === 'DELETE') return apiAudioDelete(res, id);
+    }
+
     // Фоновый прогон: поставить, посмотреть, остановить, забыть.
     if (req.method === 'POST' && u.pathname === '/api/jobs')        return await apiJobCreate(req, res);
     if (req.method === 'GET'  && u.pathname === '/api/jobs')        return json(res, 200, { jobs: store.list() });
@@ -2932,7 +3196,9 @@ server.listen(PORT, HOST, () => {
   console.log(`  Вход: ${APP_PASSWORD ? `форма + Basic, пользователь ${APP_USER}` : 'ОТКРЫТ'}`);
   console.log(`  Дампы: ${dumpsDir(ROOT)}`);
   console.log(`  Фото: ${photosDir(ROOT)}`);
+  console.log(`  Аудио: ${audioDir(ROOT)}`);
   if (resumedPhotoJobs) console.log(`  Фото-прогоны на диске: ${resumedPhotoJobs}`);
+  if (resumedAudioJobs) console.log(`  Аудио-прогоны на диске: ${resumedAudioJobs}`);
   if (resumedRefineJobs) console.log(`  Доводка на диске: ${resumedRefineJobs}`);
   try {
     const settings = loadSettings(ROOT);

@@ -1015,8 +1015,21 @@ input[type=range]::-moz-range-thumb{
 .dump-drop:hover,.dump-drop.on{border-color:var(--ac);background:var(--ac-w)}
 .dump-drop i{font-size:22px;color:var(--ac)}
 .dump-drop b{display:block;font-size:13.5px;margin:8px 0 4px}
-.photo-page .app{grid-template-columns:minmax(280px,300px) minmax(240px,280px) minmax(0,1fr)}
-.photo-page .left{background:linear-gradient(180deg,var(--bg2) 0%,color-mix(in srgb,var(--bg3) 55%,var(--bg2)) 100%)}
+.audio-page .app,.photo-page .app{grid-template-columns:minmax(280px,300px) minmax(240px,280px) minmax(0,1fr)}
+.audio-page .left,.photo-page .left{background:linear-gradient(180deg,var(--bg2) 0%,color-mix(in srgb,var(--bg3) 55%,var(--bg2)) 100%)}
+.audio-detail-block{margin:0 0 16px}
+.audio-detail-block h4{margin:0 0 8px;font-size:12px;font-weight:650;color:var(--t3);letter-spacing:.02em;text-transform:uppercase}
+.audio-detail-block pre,.audio-detail-block .audio-md{
+  margin:0;padding:12px 14px;border:1px solid var(--b1);border-radius:10px;background:var(--bg3);
+  font-size:13px;line-height:1.55;color:var(--t1);white-space:pre-wrap;word-break:break-word;max-height:min(42vh,480px);overflow:auto;
+}
+.audio-player{width:100%;margin:0 0 14px;border-radius:10px}
+.audio-ri{grid-template-columns:auto minmax(0,1fr) auto auto}
+.audio-ri .ri-thumb{
+  width:36px;height:36px;border-radius:9px;background:var(--bg3);border:1px solid var(--b1);
+  display:flex;align-items:center;justify-content:center;color:var(--ac);flex-shrink:0;
+}
+.audio-ri .ri-thumb i{font-size:16px}
 .photo-page .left-head{
   padding:14px 14px 12px;border-bottom:1px solid var(--b1);
   background:color-mix(in srgb,var(--ac-w) 35%,var(--bg2));
@@ -2011,6 +2024,10 @@ input[type=range]::-moz-range-thumb{
     <i class="ti ti-photo" aria-hidden="true"></i><span class="ico-fb">▣</span>
     <span class="tip">Фото</span>
   </button>
+  <button class="ntab rbtn" data-page="audio" onclick="showPage('audio',this)" aria-label="Аудио">
+    <i class="ti ti-microphone" aria-hidden="true"></i><span class="ico-fb">◎</span>
+    <span class="tip">Аудио</span>
+  </button>
   <button class="ntab rbtn" data-page="calc" onclick="showPage('calc',this)" aria-label="Калькулятор цен">
     <i class="ti ti-calculator" aria-hidden="true"></i><span class="ico-fb">≡</span>
     <span class="tip">Калькулятор цен</span>
@@ -2402,6 +2419,170 @@ input[type=range]::-moz-range-thumb{
             <li>Создайте <b>альбом</b> и загрузите фото.</li>
             <li>Выберите <b>модель AITUNNEL</b> и нажмите «Описать».</li>
             <li>Откройте фото в списке — справа будет <b>полный текст</b>.</li>
+          </ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+</div>
+
+<!-- ===== PAGE: AUDIO ===== -->
+<div class="page audio-page photo-page" id="page-audio">
+  <header class="head">
+    <div>
+      <h1>Аудио</h1>
+      <div class="crumb">Проект → загрузка → транскрипция Whisper → суммаризация</div>
+    </div>
+  </header>
+<div class="app">
+
+  <aside class="left">
+    <header class="left-head">
+      <div class="left-title" id="audioProjectTitle">Прогон аудио</div>
+      <div class="left-lead">Запись → текст → краткое резюме. Через AITUNNEL.</div>
+      <div class="left-flow" aria-hidden="true"><span>проект</span><i>→</i><span>файл</span><i>→</i><span>обработать</span></div>
+    </header>
+    <div class="left-body">
+      <section class="photo-card">
+        <div class="photo-card-h">
+          <b>Проекты</b>
+          <div style="display:flex;gap:6px">
+            <button type="button" class="sbtn ghost" onclick="audioDeleteProject()" title="Удалить текущий проект"><i class="ti ti-trash"></i></button>
+            <button type="button" class="sbtn primary" onclick="audioCreateProject()"><i class="ti ti-plus"></i> Новый</button>
+          </div>
+        </div>
+        <div class="photo-albums" id="audioProjectList"></div>
+      </section>
+
+      <section class="photo-card">
+        <div class="photo-card-h"><b>Модели AITUNNEL</b></div>
+        <div class="photo-pill" id="audioProvStatus">AITUNNEL</div>
+        <div class="hint" style="margin-bottom:8px">Транскрипция · Whisper / GPT Transcribe</div>
+        <select id="audioSttModel" class="ae-cell" style="height:34px;border:1px solid var(--b1);border-radius:8px;background:var(--bg2);width:100%;margin-bottom:10px" aria-label="Модель транскрипции">
+          <option value="whisper-1">Whisper 1</option>
+          <option value="gpt-4o-mini-transcribe">GPT-4o Mini Transcribe</option>
+          <option value="gpt-4o-transcribe">GPT-4o Transcribe</option>
+        </select>
+        <div class="hint" style="margin-bottom:8px">Суммаризация · chat-модель</div>
+        <div class="msel none" id="audioMsel" onclick="audioToggleDrop()" role="button" tabindex="0"
+             aria-label="Выбрать модель суммаризации" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();audioToggleDrop()}">
+          <span class="msel-n" id="audioMselName">Выберите модель</span>
+          <span class="msel-p" id="audioMselPrice"></span>
+          <i class="ti ti-chevron-down" aria-hidden="true" style="opacity:.4;font-size:11px;flex-shrink:0"></i>
+        </div>
+        <div class="msearch" id="audioMsearch">
+          <input type="text" id="audioMsrch" placeholder="Поиск chat-модели" oninput="audioFilterModels()" autocomplete="off" aria-label="Поиск модели суммаризации">
+          <div class="mdrop" id="audioMdrop"></div>
+        </div>
+      </section>
+
+      <section class="photo-card">
+        <div class="photo-card-h"><b>Параметры</b></div>
+        <label class="ae-fld" style="margin-bottom:8px">Язык
+          <select id="audioLang" style="height:32px;border:1px solid var(--b1);border-radius:7px;background:var(--bg);color:var(--t1)">
+            <option value="ru">Русский</option>
+            <option value="en">English</option>
+            <option value="">Авто</option>
+          </select>
+        </label>
+        <label class="ae-fld">Стиль суммаризации
+          <select id="audioStyle" style="height:32px;border:1px solid var(--b1);border-radius:7px;background:var(--bg);color:var(--t1)">
+            <option value="meeting">Протокол встречи</option>
+            <option value="brief">Краткое резюме</option>
+            <option value="bullets">Ключевые тезисы</option>
+            <option value="actions">Решения и задачи</option>
+          </select>
+        </label>
+        <label class="ae-switch" style="margin-top:10px">
+          <input type="checkbox" id="audioDoSummary" checked>
+          Делать суммаризацию
+        </label>
+      </section>
+
+      <section class="photo-card">
+        <div class="photo-card-h"><b>Загрузка</b></div>
+        <div class="photo-drop" id="audioZone" tabindex="0" role="button" aria-label="Загрузить аудио">
+          <div class="photo-drop-ico" aria-hidden="true"><i class="ti ti-cloud-upload"></i></div>
+          <b>Перетащите или выберите</b>
+          <div class="hint">MP3 · WAV · M4A · OGG · WebM · FLAC · до 25 МБ</div>
+        </div>
+        <input type="file" id="audioFile" accept="audio/*,video/webm,video/mp4,.mp3,.wav,.m4a,.ogg,.webm,.flac,.aac,.mp4" multiple hidden>
+      </section>
+
+      <section class="photo-card">
+        <div class="photo-card-h"><b>Выборка</b></div>
+        <div class="photo-chiprow">
+          <button type="button" class="sbtn ghost" onclick="audioSelectPending()">Без текста</button>
+          <button type="button" class="sbtn ghost" onclick="audioSelectAll()">Все</button>
+          <button type="button" class="sbtn ghost" onclick="audioSelectClear()">Снять</button>
+          <button type="button" class="sbtn danger" onclick="audioDeleteSelected()">Удалить</button>
+        </div>
+      </section>
+
+      <section class="photo-dock" aria-label="Прогон">
+        <div class="photo-card-h"><b>Прогон</b></div>
+        <div class="photo-run">
+          <button type="button" class="sbtn primary" id="audioProcessBtn" onclick="audioStartProcess()"><i class="ti ti-waveform"></i> Обработать</button>
+          <button type="button" class="sbtn ghost" onclick="audioStopProcess()">Стоп</button>
+        </div>
+        <div class="photo-status" id="audioStatusBox">
+          <div id="audioJobHint">Загрузите запись и нажмите «Обработать».</div>
+          <div id="audioStatus">Нет проекта</div>
+        </div>
+      </section>
+    </div>
+  </aside>
+
+  <div class="mid">
+    <div class="mid-h">
+      <div class="runline" id="audioRunline" aria-live="polite"></div>
+      <div class="filters" id="audioFilters">
+        <button type="button" class="fbtn on" data-f="all" onclick="audioSetFilter(this)">Все</button>
+        <button type="button" class="fbtn" data-f="pending" onclick="audioSetFilter(this)">Ожидают</button>
+        <button type="button" class="fbtn" data-f="ok" onclick="audioSetFilter(this)">Готовы</button>
+        <button type="button" class="fbtn" data-f="err" onclick="audioSetFilter(this)">Ошибки</button>
+      </div>
+    </div>
+    <div class="mid-bar"><div class="mid-bar-f" id="audioBarF"></div></div>
+    <div class="runlog" id="audioRunLog">
+      <div class="runlog-h" onclick="audioToggleRunLog(event)" title="Показать или скрыть журнал">
+        <span class="runlog-tog" aria-hidden="true">▸</span>
+        <span class="runlog-t">Ход обработки</span>
+        <span class="runlog-n" id="audioRunLogN">0 шагов</span>
+        <button type="button" class="runlog-clr" onclick="audioClearRunLog(event)" title="Скрыть журнал">✕</button>
+      </div>
+      <pre class="runlog-body" id="audioRunLogBody"><span class="runlog-empty">Здесь появятся шаги транскрипции и суммаризации.</span></pre>
+    </div>
+    <div class="mid-list" id="audioList">
+      <div class="mid-empty">Здесь появится список записей.<br>Создайте проект и загрузите файлы.</div>
+    </div>
+  </div>
+
+  <div class="right">
+    <div class="ph">
+      <div class="ph-top">
+        <span class="pt" id="audioDetailTitle"><i class="ti ti-microphone" aria-hidden="true"></i> Результат</span>
+        <div class="rtabs" id="audioRtabs" style="display:none">
+          <button type="button" class="rtab on" onclick="audioSwitchTab('vis',this)">Текст</button>
+          <button type="button" class="rtab" onclick="audioSwitchTab('json',this)">JSON</button>
+        </div>
+      </div>
+      <div class="ph-actions">
+        <span class="bdg bdg-g" id="audioStatusBdg" style="display:none"></span>
+        <span class="bdg bdg-b" id="audioCpyBtn" style="display:none;cursor:pointer" onclick="audioCopyDetail()" title="Скопировать"><i class="ti ti-copy" aria-hidden="true"></i> Копировать</span>
+      </div>
+    </div>
+    <div class="pb" id="audioDetail">
+      <div class="empty">
+        <div class="guide">
+          <div class="guide-k">Транскрипция и суммаризация</div>
+          <h3>Файл → Whisper → резюме</h3>
+          Слева проект и модели, в центре список записей, справа полный текст и краткое содержание.
+          <ol>
+            <li>Создайте <b>проект</b> и загрузите аудио.</li>
+            <li>Выберите модели AITUNNEL и стиль суммаризации.</li>
+            <li>Нажмите <b>«Обработать»</b> — справа появятся транскрипт и резюме.</li>
           </ol>
         </div>
       </div>
@@ -3444,6 +3625,7 @@ function showPage(id, btn){
   if(id==='settings') loadSettings();
   if(id==='enricher') applyDefaultProviderModels();
   if(id==='photos') photoInit();
+  if(id==='audio') audioInit();
   if(id==='refine') refineInit();
 }
 
@@ -9761,6 +9943,7 @@ function photoStLabel(it){
 
 function photoFileUrlLocal(it){
   if(!photoAlbum||!it) return '';
+  if(it.image_url&&!it.has_file) return it.image_url; // пока сервер не получил файл — браузер показывает картинку магазина напрямую
   return '/api/photos/'+encodeURIComponent(photoAlbum.id)+'/file/'+encodeURIComponent(it.id);
 }
 
@@ -11270,6 +11453,488 @@ function refineDownloadV2(){
   const id=refineJob.category?.id||'all';
   refineSaveJson(`products_v2_refined_${id}.json`, files.products_v2);
   refineSaveJson(`filters_v2_refined_${id}.json`, files.filters_v2);
+}
+
+/* ===== AUDIO: транскрипция + суммаризация ===== */
+const AUDIO_PROVIDER_ID='aitunnel';
+let audioInited=false, audioProjects=[], audioProject=null, audioSel=new Set();
+let audioCurId=null, audioFilter='all', audioModel=null, audioJobId=null, audioPoll=null;
+let audioRunLogLines=[], audioLimits={}, audioTab='vis';
+
+function audioStatus(msg, ok){
+  const el=document.getElementById('audioStatus');
+  const box=document.getElementById('audioStatusBox');
+  if(el) el.textContent=msg||'';
+  if(box){ box.classList.toggle('ok', ok===true); box.classList.toggle('err', ok===false); }
+}
+
+function audioAitunnelSettings(){
+  const list=setPayload?.providers||[];
+  return list.find(p=>p.id===AUDIO_PROVIDER_ID)
+    || list.find(p=>/aitunnel\.ru/i.test(p.base_url||''))
+    || null;
+}
+
+function audioItemById(id){ return (audioProject?.items||[]).find(i=>i.id===id)||null; }
+
+function audioToggleDrop(){
+  const box=document.getElementById('audioMsearch');
+  if(!box) return;
+  box.classList.toggle('on');
+  if(box.classList.contains('on')){
+    document.getElementById('audioMsrch')?.focus();
+    audioFilterModels();
+  }
+}
+
+function audioChatModels(){
+  const list=(allModels||[]).filter(m=>{
+    const pid=m.provider||'';
+    return pid===AUDIO_PROVIDER_ID || /aitunnel/i.test(pid);
+  });
+  // Vision-only модели для суммаризации текста не нужны — оставляем обычный chat.
+  return list.filter(m=>!/whisper|tts|embedding|moderation/i.test(m.id||''));
+}
+
+function audioFilterModels(){
+  const q=(document.getElementById('audioMsrch')?.value||'').trim().toLowerCase();
+  const drop=document.getElementById('audioMdrop');
+  if(!drop) return;
+  let list=audioChatModels();
+  if(q) list=list.filter(m=>(m.id+' '+(m.name||'')).toLowerCase().includes(q));
+  if(!list.length && q){
+    drop.innerHTML=`<div class="mitem" data-id="${esc(q)}" data-manual="1"><span class="mi-n">Использовать «${esc(q)}» как есть</span><span class="mi-p">AITUNNEL</span></div>`;
+  }else{
+    drop.innerHTML=list.slice(0,80).map(m=>{
+      const pr=m.pricing?`<span class="mi-p">${esc(String(m.pricing))}</span>`:'';
+      return `<div class="mitem${audioModel?.id===m.id?' on':''}" data-id="${esc(m.id)}"><span class="mi-n">${esc(m.name||m.id)}</span><span class="mi-prov">AITUNNEL</span>${pr}</div>`;
+    }).join('')||'<div class="mitem none">Нет моделей AITUNNEL — проверьте Настройки</div>';
+  }
+  drop.querySelectorAll('.mitem[data-id]').forEach(x=>x.addEventListener('click',()=>audioPick(x.dataset.id)));
+}
+
+function audioPick(id){
+  const hit=audioChatModels().find(m=>m.id===id);
+  audioModel=hit||{ id, name:id, provider:AUDIO_PROVIDER_ID };
+  document.getElementById('audioMselName').textContent=audioModel.name||audioModel.id;
+  document.getElementById('audioMselPrice').textContent='';
+  document.getElementById('audioMsel')?.classList.remove('none');
+  document.getElementById('audioMsearch')?.classList.remove('on');
+}
+
+function audioPickDefaultModel(){
+  const list=audioChatModels();
+  const prefer=/gemini.*flash|gpt-4o-mini|deepseek/i;
+  const hit=list.find(m=>prefer.test(m.id||''))||list[0];
+  if(hit) audioPick(hit.id);
+}
+
+async function audioInit(){
+  if(!audioInited){
+    audioBindZone();
+    audioInited=true;
+  }
+  if(!setPayload){
+    try{ setPayload=await apiJson('/api/settings'); }catch{ /* */ }
+  }
+  if(!allModels.length){
+    try{ await reloadModels(); }catch{ /* */ }
+  }
+  document.getElementById('audioProvStatus').textContent=audioAitunnelSettings()?'AITUNNEL':'AITUNNEL не настроен';
+  audioPickDefaultModel();
+  await audioLoadProjects();
+}
+
+function audioBindZone(){
+  const zone=document.getElementById('audioZone');
+  const inp=document.getElementById('audioFile');
+  if(!zone||!inp||zone.dataset.bound) return;
+  zone.dataset.bound='1';
+  zone.addEventListener('click',()=>inp.click());
+  zone.addEventListener('keydown',e=>{ if(e.key==='Enter'||e.key===' '){ e.preventDefault(); inp.click(); } });
+  zone.addEventListener('dragover',e=>{ e.preventDefault(); zone.classList.add('on'); });
+  zone.addEventListener('dragleave',()=>zone.classList.remove('on'));
+  zone.addEventListener('drop',e=>{
+    e.preventDefault();
+    zone.classList.remove('on');
+    if(e.dataTransfer?.files?.length) audioIngestFiles([...e.dataTransfer.files]);
+  });
+  inp.addEventListener('change',()=>{
+    const files=[...inp.files||[]];
+    inp.value='';
+    if(files.length) audioIngestFiles(files);
+  });
+}
+
+function fileToDataUrl(file){
+  return new Promise((resolve,reject)=>{
+    const r=new FileReader();
+    r.onload=()=>resolve(r.result);
+    r.onerror=()=>reject(r.error||new Error('чтение файла'));
+    r.readAsDataURL(file);
+  });
+}
+
+async function audioIngestFiles(files){
+  if(!audioProject){
+    await audioCreateProject('Аудио '+new Date().toLocaleDateString('ru-RU'));
+    if(!audioProject) return;
+  }
+  audioStatus('Загрузка…');
+  try{
+    const payload=[];
+    for(const f of files){
+      const data=await fileToDataUrl(f);
+      payload.push({ name:f.name, data });
+    }
+    const out=await apiJson('/api/audio/'+encodeURIComponent(audioProject.id)+'/upload',{
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({ files:payload }),
+    });
+    audioProject=out.project;
+    audioRenderList();
+    audioRenderProjects();
+    const errN=(out.errors||[]).length;
+    audioStatus(`Загружено ${out.added?.length||0}`+(errN?`, ошибок ${errN}`:''), !errN);
+  }catch(e){ audioStatus(e.message||'загрузка не удалась', false); }
+}
+
+async function audioLoadProjects(){
+  try{
+    const data=await apiJson('/api/audio');
+    audioProjects=data.projects||[];
+    audioLimits=data.limits||audioLimits;
+    if(data.transcribe_models?.length){
+      const sel=document.getElementById('audioSttModel');
+      if(sel && sel.options.length<=3){
+        /* список уже в разметке */
+      }
+    }
+    if(audioProject){
+      const still=audioProjects.find(a=>a.id===audioProject.id);
+      if(!still) audioProject=null;
+    }
+    audioRenderProjects();
+    if(audioProject) await audioOpenProject(audioProject.id, true);
+    else if(audioProjects[0]) await audioOpenProject(audioProjects[0].id);
+    else{
+      document.getElementById('audioProjectTitle').textContent='Прогон аудио';
+      document.getElementById('audioList').innerHTML='<div class="mid-empty">Создайте проект слева<br>и загрузите записи.</div>';
+      audioCurId=null;
+      audioRenderDetail();
+      audioStatus('Нет проектов — создайте новый');
+    }
+  }catch(e){ audioStatus(e.message||'не удалось загрузить проекты', false); }
+}
+
+function audioRenderProjects(){
+  const box=document.getElementById('audioProjectList');
+  if(!box) return;
+  if(!audioProjects.length){
+    box.innerHTML='<p class="dump-empty" style="padding:10px 4px">Пока пусто — создайте проект</p>';
+    return;
+  }
+  box.innerHTML=audioProjects.map(a=>`<div class="photo-album${audioProject&&audioProject.id===a.id?' on':''}" onclick="audioOpenProject('${esc(a.id)}')">
+    <strong>${esc(a.name||a.id)}</strong>
+    <div class="sub">готово ${a.done||0}${a.errors?` · ошибок ${a.errors}`:''}</div>
+    <span class="chip">${a.items||0}</span>
+  </div>`).join('');
+}
+
+async function audioCreateProject(forcedName){
+  const name=forcedName!=null
+    ? forcedName
+    : prompt('Название проекта','Аудио '+new Date().toLocaleDateString('ru-RU'));
+  if(name==null) return;
+  try{
+    const data=await apiJson('/api/audio',{
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({
+        name:String(name).trim()||'Аудио',
+        language:document.getElementById('audioLang')?.value||'ru',
+        summary_style:document.getElementById('audioStyle')?.value||'meeting',
+      }),
+    });
+    audioProject=data.project;
+    audioSel=new Set();
+    audioCurId=null;
+    await audioLoadProjects();
+    audioStatus('Проект создан', true);
+  }catch(e){ audioStatus(e.message||'не создан', false); }
+}
+
+async function audioDeleteProject(){
+  if(!audioProject) return;
+  if(!confirm('Удалить проект «'+(audioProject.name||audioProject.id)+'» со всеми записями?')) return;
+  try{
+    await apiJson('/api/audio/'+encodeURIComponent(audioProject.id),{ method:'DELETE' });
+    audioProject=null; audioCurId=null; audioSel=new Set();
+    await audioLoadProjects();
+    audioStatus('Проект удалён', true);
+  }catch(e){ audioStatus(e.message||'не удалён', false); }
+}
+
+async function audioOpenProject(id, silent){
+  try{
+    const data=await apiJson('/api/audio/'+encodeURIComponent(id));
+    audioProject=data.project;
+    document.getElementById('audioProjectTitle').textContent=audioProject.name||'Проект';
+    if(audioProject.language!=null){
+      const lang=document.getElementById('audioLang');
+      if(lang) lang.value=audioProject.language;
+    }
+    if(audioProject.summary_style){
+      const st=document.getElementById('audioStyle');
+      if(st) st.value=audioProject.summary_style;
+    }
+    if(audioProject.transcribe_model){
+      const sm=document.getElementById('audioSttModel');
+      if(sm) sm.value=audioProject.transcribe_model;
+    }
+    audioSel=new Set([...audioSel].filter(x=>audioItemById(x)));
+    if(audioCurId && !audioItemById(audioCurId)) audioCurId=null;
+    audioRenderProjects();
+    audioRenderList();
+    audioRenderDetail();
+    if(!silent) audioStatus((audioProject.items?.length||0)+' записей', true);
+  }catch(e){ audioStatus(e.message||'не открыт', false); }
+}
+
+function audioSetFilter(btn){
+  document.querySelectorAll('#audioFilters .fbtn').forEach(b=>b.classList.toggle('on',b===btn));
+  audioFilter=btn?.dataset?.f||'all';
+  audioRenderList();
+}
+
+function audioFilteredItems(){
+  const items=audioProject?.items||[];
+  if(audioFilter==='pending') return items.filter(i=>i.status==='uploaded'||!i.transcript);
+  if(audioFilter==='ok') return items.filter(i=>i.status==='done');
+  if(audioFilter==='err') return items.filter(i=>i.status==='error');
+  return items;
+}
+
+function audioRenderList(){
+  const box=document.getElementById('audioList');
+  if(!box) return;
+  const items=audioFilteredItems();
+  if(!items.length){
+    box.innerHTML='<div class="mid-empty">Нет записей в этом фильтре.</div>';
+    return;
+  }
+  box.innerHTML=items.map(it=>{
+    const on=audioCurId===it.id?' on':'';
+    const sel=audioSel.has(it.id)?' sel':'';
+    const st=it.status==='done'?'ok':it.status==='error'?'err':'';
+    const dur=it.duration_sec!=null?Math.round(it.duration_sec)+' с':'';
+    return `<div class="ri photo-ri audio-ri${on}${sel} ${st}" onclick="audioSelectItem('${esc(it.id)}')">
+      <button type="button" class="photo-check ae-chk${audioSel.has(it.id)?' on':''}" onclick="event.stopPropagation();audioToggleSel('${esc(it.id)}')">${audioSel.has(it.id)?'✓':''}</button>
+      <div class="ri-thumb" aria-hidden="true"><i class="ti ti-music"></i></div>
+      <div class="ri-body">
+        <div class="ri-name">${esc(it.filename||it.id)}</div>
+        <div class="ri-sub">${esc(it.status)}${dur?' · '+dur:''}${it.error?' · '+esc(String(it.error).slice(0,80)):''}</div>
+      </div>
+      <div class="ri-cost${it.usage?.cost_rub!=null?' has':''}">${it.usage?.cost_rub!=null?formatRub(Number(it.usage.cost_rub)):''}</div>
+    </div>`;
+  }).join('');
+  const done=(audioProject?.items||[]).filter(i=>i.status==='done').length;
+  const total=(audioProject?.items||[]).length||1;
+  const bar=document.getElementById('audioBarF');
+  if(bar) bar.style.width=Math.round((done/total)*100)+'%';
+}
+
+function audioToggleSel(id){
+  if(audioSel.has(id)) audioSel.delete(id); else audioSel.add(id);
+  audioRenderList();
+}
+function audioSelectAll(){ (audioProject?.items||[]).forEach(i=>audioSel.add(i.id)); audioRenderList(); }
+function audioSelectClear(){ audioSel=new Set(); audioRenderList(); }
+function audioSelectPending(){
+  audioSel=new Set((audioProject?.items||[]).filter(i=>i.status==='uploaded'||i.status==='error').map(i=>i.id));
+  audioRenderList();
+}
+async function audioDeleteSelected(){
+  if(!audioProject||!audioSel.size) return;
+  if(!confirm('Удалить выбранные записи ('+audioSel.size+')?')) return;
+  for(const id of [...audioSel]){
+    try{ await apiJson('/api/audio/'+encodeURIComponent(audioProject.id)+'/items/'+encodeURIComponent(id),{method:'DELETE'}); }
+    catch{ /* */ }
+  }
+  audioSel=new Set();
+  await audioOpenProject(audioProject.id, true);
+}
+
+function audioSelectItem(id){
+  audioCurId=id;
+  audioTab='vis';
+  audioRenderList();
+  audioRenderDetail();
+}
+
+function audioSwitchTab(tab, btn){
+  audioTab=tab;
+  document.querySelectorAll('#audioRtabs .rtab').forEach(b=>b.classList.toggle('on',b===btn));
+  audioRenderDetail();
+}
+
+function audioRenderDetail(){
+  const box=document.getElementById('audioDetail');
+  const title=document.getElementById('audioDetailTitle');
+  const bdg=document.getElementById('audioStatusBdg');
+  const cpy=document.getElementById('audioCpyBtn');
+  const tabs=document.getElementById('audioRtabs');
+  const it=audioItemById(audioCurId);
+  if(!it){
+    if(tabs) tabs.style.display='none';
+    if(bdg) bdg.style.display='none';
+    if(cpy) cpy.style.display='none';
+    if(title) title.innerHTML='<i class="ti ti-microphone" aria-hidden="true"></i> Результат';
+    if(box) box.innerHTML=`<div class="empty"><div class="guide"><div class="guide-k">Транскрипция и суммаризация</div><h3>Выберите запись</h3>Откройте файл в списке — справа появятся плеер, транскрипт и резюме.</div></div>`;
+    return;
+  }
+  if(tabs) tabs.style.display='flex';
+  if(bdg){ bdg.style.display='inline-flex'; bdg.textContent=it.status; }
+  if(cpy) cpy.style.display='inline-flex';
+  if(title) title.innerHTML=`<i class="ti ti-microphone" aria-hidden="true"></i> ${esc(it.filename||it.id)}`;
+  if(audioTab==='json'){
+    box.innerHTML=`<pre class="json-view">${esc(JSON.stringify(it,null,2))}</pre>`;
+    return;
+  }
+  const src='/api/audio/'+encodeURIComponent(audioProject.id)+'/file/'+encodeURIComponent(it.id);
+  let html=`<audio class="audio-player" controls src="${src}"></audio>`;
+  if(it.summary){
+    html+=`<div class="audio-detail-block"><h4>Суммаризация</h4><div class="audio-md">${esc(it.summary)}</div></div>`;
+  }
+  if(it.transcript){
+    html+=`<div class="audio-detail-block"><h4>Транскрипт</h4><pre>${esc(it.transcript)}</pre></div>`;
+  }
+  if(!it.transcript && !it.summary){
+    html+=`<div class="empty" style="padding:24px 0"><div class="guide-k">${it.error?esc(it.error):'Ещё не обработано — нажмите «Обработать»'}</div></div>`;
+  }
+  box.innerHTML=html;
+}
+
+function audioCopyDetail(){
+  const it=audioItemById(audioCurId);
+  if(!it) return;
+  const text=[it.summary&&('## Суммаризация\n'+it.summary), it.transcript&&('## Транскрипт\n'+it.transcript)].filter(Boolean).join('\n\n');
+  navigator.clipboard?.writeText(text||JSON.stringify(it,null,2)).then(
+    ()=>audioStatus('Скопировано', true),
+    ()=>audioStatus('Не удалось скопировать', false),
+  );
+}
+
+function audioAppendRunLog(lines){
+  audioRunLogLines.push(...(lines||[]));
+  const body=document.getElementById('audioRunLogBody');
+  const n=document.getElementById('audioRunLogN');
+  if(n) n.textContent=audioRunLogLines.length+' шагов';
+  if(body){
+    body.innerHTML=audioRunLogLines.slice(-200).map(l=>{
+      const cls=l.level==='err'?'err':l.level==='ok'?'ok':'';
+      return `<div class="runlog-line ${cls}">${esc(l.message||'')}</div>`;
+    }).join('')||'<span class="runlog-empty">Пусто</span>';
+  }
+  document.getElementById('audioRunLog')?.classList.add('open');
+}
+function audioToggleRunLog(e){ e?.stopPropagation?.(); document.getElementById('audioRunLog')?.classList.toggle('open'); }
+function audioClearRunLog(e){ e?.stopPropagation?.(); audioRunLogLines=[]; audioAppendRunLog([]); }
+
+async function audioStartProcess(){
+  if(!audioProject){ audioStatus('Сначала проект', false); return; }
+  if(!audioAitunnelSettings()){
+    audioStatus('Добавьте AITUNNEL в Настройки → Провайдеры', false);
+    return;
+  }
+  const doSum=document.getElementById('audioDoSummary')?.checked!==false;
+  if(doSum && !audioModel){ audioStatus('Выберите модель суммаризации', false); return; }
+  const stt=document.getElementById('audioSttModel')?.value||'whisper-1';
+  const language=document.getElementById('audioLang')?.value??'ru';
+  const summary_style=document.getElementById('audioStyle')?.value||'meeting';
+  const item_ids=audioSel.size?[...audioSel]:null;
+  try{
+    // Сохраняем выбор в проект — следующий заход откроется с теми же параметрами.
+    await apiJson('/api/audio/'+encodeURIComponent(audioProject.id),{
+      method:'PATCH', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({
+        language, summary_style,
+        transcribe_model:stt,
+        summary_model:audioModel?.id||null,
+      }),
+    });
+    const job=await apiJson('/api/audio/'+encodeURIComponent(audioProject.id)+'/process',{
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({
+        transcribe_model:stt,
+        summary_model:doSum?(audioModel?.id||null):null,
+        language:language||undefined,
+        summary_style,
+        summarize:doSum,
+        item_ids,
+      }),
+    });
+    audioJobId=job.id;
+    audioRunLogLines=[];
+    audioAppendRunLog([{ message:`Старт ${job.id} · ${job.total} · ${stt}`+(doSum?` → ${audioModel.id}`:''), level:'info' }]);
+    audioStatus(`Прогон ${job.id}: 0/${job.total}`, true);
+    audioPollJob();
+  }catch(e){ audioStatus(e.message||'не запущен', false); }
+}
+
+async function audioStopProcess(){
+  if(!audioJobId) return;
+  try{ await apiJson('/api/audio-jobs/'+encodeURIComponent(audioJobId)+'/stop',{method:'POST'}); }
+  catch(e){ audioStatus(e.message||'стоп не принят', false); }
+}
+
+function audioPollJob(){
+  if(audioPoll) clearInterval(audioPoll);
+  let logFrom=0;
+  let ticks=0;
+  audioPoll=setInterval(async()=>{
+    if(!audioJobId){ clearInterval(audioPoll); return; }
+    try{
+      const st=await apiJson('/api/audio-jobs/'+encodeURIComponent(audioJobId)+'?logFrom='+logFrom);
+      document.getElementById('audioJobHint').textContent=
+        `${st.status}: ${st.done}/${st.total} · ok ${st.ok} · err ${st.err}`
+        +(st.cost?` · ${formatRub(Number(st.cost))}`:'');
+      const bar=document.getElementById('audioBarF');
+      if(bar && st.total) bar.style.width=Math.round((st.done/st.total)*100)+'%';
+      const line=document.getElementById('audioRunline');
+      if(line) line.textContent=`Прогон: ${st.done}/${st.total} · ok ${st.ok} · err ${st.err}`;
+      if(st.log?.length){
+        logFrom=st.log_from+(st.log.length);
+        audioAppendRunLog(st.log.map(l=>({
+          message:l.message||String(l),
+          level:/err|fail|ошиб/i.test(l.message||'')?'err':/ok|готово/i.test(l.message||'')?'ok':'info',
+        })));
+      }
+      ticks++;
+      if(ticks%3===0 && audioProject){
+        try{
+          const data=await apiJson('/api/audio/'+encodeURIComponent(audioProject.id));
+          audioProject=data.project;
+          audioRenderList();
+          audioRenderDetail();
+        }catch{ /* */ }
+      }
+      if(st.status==='done'||st.status==='stopped'||st.status==='interrupted'){
+        clearInterval(audioPoll); audioPoll=null;
+        const keep=audioCurId;
+        await audioOpenProject(audioProject.id, true);
+        if(keep && audioItemById(keep)) audioCurId=keep;
+        audioRenderList(); audioRenderDetail();
+        await audioLoadProjects();
+        audioAppendRunLog([{ message:`Финиш: ${st.status} · ok ${st.ok} · err ${st.err}`, level:st.err?'warn':'ok' }]);
+        audioStatus(st.status==='done'?'Готово':'Прогон остановлен', st.err?false:true);
+        audioJobId=null;
+        refreshAitunnelBills?.({force:true});
+      }
+    }catch(e){
+      clearInterval(audioPoll); audioPoll=null;
+      audioStatus(e.message||'опрос упал', false);
+    }
+  }, 1200);
 }
 
 initTheme();

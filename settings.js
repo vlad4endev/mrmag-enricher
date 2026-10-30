@@ -124,7 +124,7 @@ export const PROVIDER_PRESETS = [
       'claude-sonnet-4.6': 'Claude Sonnet 4.6',
       'claude-sonnet-4.5': 'Claude Sonnet 4.5',
     },
-    notes: 'Ключ с aitunnel.ru (Bearer). Для раздела «Фото» берите модели с image во входе: Gemini / GPT / Claude. Без VPN, оплата в ₽.',
+    notes: 'Ключ с aitunnel.ru (Bearer). «Фото» — vision (Gemini/GPT/Claude). «Аудио» — whisper-1 + chat для суммаризации. Без VPN, оплата в ₽.',
   },
   {
     id: 'yandex',
